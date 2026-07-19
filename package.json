@@ -16,7 +16,9 @@
     "test:races": "vitest run --config vitest.races.config.ts",
     "doctor": "node scripts/doctor.mjs",
     "predev": "node scripts/doctor.mjs",
-    "prebuild": "node scripts/doctor.mjs"
+    "prebuild": "node scripts/doctor.mjs",
+    "postinstall": "prisma generate",
+    "seed:admins": "tsx prisma/seed-admins.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
