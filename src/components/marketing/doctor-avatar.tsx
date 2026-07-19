@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 
-/** Doctor photo with a graceful initials fallback if the image is missing. */
-export function DoctorAvatar({ name, image, className = "" }: { name: string; image?: string; className?: string }) {
+/** Doctor photo with a graceful initials fallback if the image is missing.
+ *  Pass `eager` for above-the-fold photos (the hero) so they load immediately
+ *  instead of waiting on the lazy-load heuristic. */
+export function DoctorAvatar({ name, image, className = "", eager = false }: { name: string; image?: string; className?: string; eager?: boolean }) {
   const [broken, setBroken] = useState(false);
   const ref = useRef<HTMLImageElement>(null);
   const initials = name.replace(/^Dr\.?\s*/i, "").split(" ").map((n) => n[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
@@ -21,5 +23,15 @@ export function DoctorAvatar({ name, image, className = "" }: { name: string; im
       </div>
     );
   }
-  return <img ref={ref} src={image} alt={name} onError={() => setBroken(true)} loading="lazy" className={`object-cover ${className}`} />;
+  return (
+    <img
+      ref={ref}
+      src={image}
+      alt={name}
+      onError={() => setBroken(true)}
+      loading={eager ? "eager" : "lazy"}
+      fetchPriority={eager ? "high" : undefined}
+      className={`object-cover ${className}`}
+    />
+  );
 }
