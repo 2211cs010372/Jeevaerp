@@ -24,19 +24,15 @@ export function resolveOrigin(req: NextRequest): {
   const configured = env().COOKIE_DOMAIN?.replace(/^\./, "");
   if (configured) return { rootDomain: configured, protocol, port: port || undefined };
 
-  // localhost / *.localhost
+  // localhost / *.localhost — modern browsers resolve admin.localhost for free.
   if (hostname === "localhost" || hostname.endsWith(".localhost")) {
     return { rootDomain: "localhost", protocol, port: port || undefined };
   }
 
-  // Bare IP or single-label host -> no subdomain routing possible.
-  const labels = hostname.split(".");
-  if (labels.length < 2 || /^\d+$/.test(labels[labels.length - 1])) {
-    return { protocol, port: port || undefined };
-  }
-
-  // Strip a known portal subdomain to get the root; else assume last two labels.
-  const known = ["admin", "reception", "doctor", "labs", "pharmacy"];
-  const root = known.includes(labels[0]) ? labels.slice(1).join(".") : hostname;
-  return { rootDomain: root, protocol, port: port || undefined };
+  // Any other host — a bare IP, *.vercel.app, or a custom domain that hasn't
+  // set COOKIE_DOMAIN — cannot be assumed to serve wildcard portal subdomains
+  // (e.g. reception.app.vercel.app has no TLS cert). Fall back to path-prefix
+  // routing (/admin, /reception, …), which works on any single host.
+  // To use real subdomains in production, set COOKIE_DOMAIN=.yourdomain.com.
+  return { protocol, port: port || undefined };
 }

@@ -36,13 +36,21 @@ async function roleFromRequest(req: NextRequest): Promise<Role | null> {
 
 export async function middleware(req: NextRequest) {
   const host = req.headers.get("host") ?? "";
-  const sub = host.split(".")[0].split(":")[0];
+  const hostname = host.split(":")[0];
+  const sub = hostname.split(".")[0];
   const { pathname, search } = req.nextUrl;
 
   // API is same-origin on every subdomain — never rewrite or gate it here.
   if (pathname.startsWith("/api")) return NextResponse.next();
 
-  const onPortalSubdomain = isPortalSubdomain(sub);
+  // Subdomain routing only works where wildcard subdomains actually resolve:
+  // local dev (admin.localhost) or a production root with COOKIE_DOMAIN set.
+  // Anywhere else (a bare *.vercel.app, an IP) we route portals by PATH.
+  const cookieDomain = process.env.COOKIE_DOMAIN?.replace(/^\./, "");
+  const subdomainMode =
+    Boolean(cookieDomain) || hostname === "localhost" || hostname.endsWith(".localhost");
+
+  const onPortalSubdomain = subdomainMode && isPortalSubdomain(sub);
 
   if (onPortalSubdomain) {
     const portal = sub as PortalSubdomain;
@@ -84,11 +92,38 @@ export async function middleware(req: NextRequest) {
     return NextResponse.rewrite(url, { request: { headers: h2 } });
   }
 
-  // On the main/public domain: portal route-group paths must not be reachable.
-  if (PORTAL_SUBDOMAINS.some((p) => pathname === `/${p}` || pathname.startsWith(`/${p}/`))) {
-    const url = req.nextUrl.clone();
-    url.pathname = "/not-found";
-    return NextResponse.rewrite(url);
+  // A portal path (/admin, /reception, …) on a non-subdomain request.
+  const pathPortal = PORTAL_SUBDOMAINS.find(
+    (p) => pathname === `/${p}` || pathname.startsWith(`/${p}/`)
+  ) as PortalSubdomain | undefined;
+
+  if (pathPortal) {
+    // Subdomain mode: portals live on their subdomain, never the main host.
+    if (subdomainMode) {
+      const url = req.nextUrl.clone();
+      url.pathname = "/not-found";
+      return NextResponse.rewrite(url);
+    }
+
+    // Path mode (single host / *.vercel.app): gate the portal in place. The
+    // route group /<portal>/… already matches, so no URL rewrite is needed —
+    // we only forward x-portal-path so the portal layout can tell login from app.
+    const isLoginPage = pathname === `/${pathPortal}/login`;
+    if (!isLoginPage) {
+      const role = await roleFromRequest(req);
+      const allowed = role !== null && SUBDOMAIN_ALLOWED_ROLES[pathPortal].includes(role);
+      if (!allowed) {
+        const url = req.nextUrl.clone();
+        url.pathname = `/${pathPortal}/login`;
+        url.search = "";
+        const h = new Headers(req.headers);
+        h.set("x-portal-path", url.pathname);
+        return NextResponse.rewrite(url, { request: { headers: h } });
+      }
+    }
+    const h = new Headers(req.headers);
+    h.set("x-portal-path", pathname);
+    return NextResponse.next({ request: { headers: h } });
   }
 
   return NextResponse.next();
