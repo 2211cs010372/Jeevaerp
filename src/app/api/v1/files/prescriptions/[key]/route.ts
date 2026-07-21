@@ -43,7 +43,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ key: string
       headers: {
         "Content-Type": upload.mimeType || "application/octet-stream",
         // inline so the pharmacist can just look at it in the tab
-        "Content-Disposition": `inline; filename="${encodeURIComponent(upload.fileName)}"`,
+        "Content-Disposition": `inline; filename="${encodeURIComponent(upload.fileName || "prescription")}"`,
         // never let a shared proxy or the browser cache a medical record
         "Cache-Control": "private, no-store, max-age=0",
         "X-Content-Type-Options": "nosniff",

@@ -15,7 +15,7 @@ interface Patient { id: string; displayId: string; fullName: string; phone: stri
 interface Visit { id: string; opNumber: string; visitDate: string; doctorName: string; department: string; }
 interface Med { id: string; name: string; unit: string; inStock: number; }
 interface RxItem { medicineName: string; medicineId?: string; qty: number; dosage: string; }
-interface Existing { id: string; fileName: string; title: string | null; fileUrl: string; status: string; createdAt: string; }
+interface Existing { id: string; appointmentId: string | null; fileName: string | null; title: string | null; fileUrl: string | null; status: string; createdAt: string; }
 interface VitalsForm { bpSystolic: string; bpDiastolic: string; pulse: string; heightCm: string; weightKg: string; tempF: string; spo2: string; }
 const BLANK_VITALS: VitalsForm = { bpSystolic: "", bpDiastolic: "", pulse: "", heightCm: "", weightKg: "", tempF: "", spo2: "" };
 
@@ -710,7 +710,7 @@ export default function UploadPrescriptionPage() {
                   <div key={e.id} className="px-5 py-3.5">
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="truncate text-[14px] font-medium text-[var(--p-ink)]">{e.title || e.fileName}</div>
+                        <div className="truncate text-[14px] font-medium text-[var(--p-ink)]">{e.title || e.fileName || "OPD prescription"}</div>
                         <div className="text-[12px] text-[var(--p-muted)]">{new Date(e.createdAt).toLocaleDateString("en-IN")}</div>
                       </div>
                       <Pill tone={e.status === "DISPENSED" ? "completed" : e.status === "SENT_TO_PHARMACY" ? "waiting" : "neutral"}>
@@ -718,7 +718,11 @@ export default function UploadPrescriptionPage() {
                       </Pill>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      <a href={e.fileUrl} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[12px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">View</a>
+                      {e.fileUrl ? (
+                        <a href={e.fileUrl} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[12px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">View scan</a>
+                      ) : e.appointmentId ? (
+                        <a href={`/print/opd/${e.appointmentId}`} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[12px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">OPD sheet</a>
+                      ) : null}
                       {e.status === "UPLOADED" && (
                         <button onClick={() => sendToPharmacy(e.id)} disabled={busyId === e.id}
                           className="btn-primary rounded-lg px-2.5 py-1 text-[12px] font-semibold text-white disabled:opacity-60">

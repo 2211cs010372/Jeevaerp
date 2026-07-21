@@ -18,7 +18,7 @@ interface Patient {
   isVip?: boolean; remarks?: string | null; createdAt: string;
 }
 interface Appt { id: string; opNumber: string; visitDate: string; time: string; status: string; doctorName: string; department: string; price: string; }
-interface Rx { id: string; fileUrl: string; fileName: string; title: string | null; createdAt: string; }
+interface Rx { id: string; fileUrl: string; fileName: string; title: string | null; createdAt: string; appointmentId: string | null; }
 interface Invoice { id: string; receiptNo: string; source: string; status: string; totalAmount: string; amountPaid: string; createdAt: string; }
 
 const BLOODS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
@@ -264,8 +264,15 @@ export default function PatientDetailPage() {
               <div className="max-h-56 divide-y divide-[var(--p-border)] overflow-y-auto overscroll-contain">
                 {rx.map((r) => (
                   <div key={r.id} className="flex items-center justify-between px-6 py-3">
-                    <div className="text-[14px] text-[var(--p-ink)]">{r.title || r.fileName}</div>
-                    <a href={r.fileUrl} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">View</a>
+                    <div className="text-[14px] text-[var(--p-ink)]">{r.title || r.fileName || "OPD prescription"}</div>
+                    <div className="flex items-center gap-2">
+                      {r.fileUrl && (
+                        <a href={r.fileUrl} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">View scan</a>
+                      )}
+                      {r.appointmentId && (
+                        <a href={`/print/opd/${r.appointmentId}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-[var(--p-teal)] px-2.5 py-1 text-[12px] font-semibold text-white hover:opacity-90">Print OPD sheet</a>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

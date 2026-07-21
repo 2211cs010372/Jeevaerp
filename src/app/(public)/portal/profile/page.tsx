@@ -12,7 +12,7 @@ interface Profile {
   nationality: string | null; preferredLanguage: string | null; memberSince: string;
 }
 interface Appt { opNumber: string; visitDate: string; time: string; status: string; doctorName: string; department: string; price: string; }
-interface Rx { id: string; fileUrl: string; fileName: string; mimeType: string; title: string | null; createdAt: string; appointment: { opNumber: string; visitDate: string; doctorName: string } | null; }
+interface Rx { id: string; fileUrl: string | null; fileName: string | null; mimeType: string | null; title: string | null; createdAt: string; appointment: { opNumber: string; visitDate: string; doctorName: string } | null; }
 
 const LABEL: Record<string, string> = { BOOKED: "Booked", CHECKED_IN: "Checked-in", COMPLETED: "Completed", CANCELLED: "Cancelled" };
 
@@ -159,19 +159,23 @@ export default function PatientProfilePage() {
                     <div key={r.id} className="flex items-center justify-between gap-3 rounded-xl border border-line p-4">
                       <div className="flex items-center gap-3">
                         <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-tint text-blue">
-                          {r.mimeType === "application/pdf" ? "PDF" : "IMG"}
+                          {r.mimeType === "application/pdf" ? "PDF" : r.fileUrl ? "IMG" : "Rx"}
                         </span>
                         <div>
-                          <p className="text-[14px] font-medium text-ink">{r.title || r.fileName}</p>
+                          <p className="text-[14px] font-medium text-ink">{r.title || r.fileName || "Prescription"}</p>
                           <p className="text-[12px] text-muted">
                             {r.appointment ? `${r.appointment.doctorName} · ${r.appointment.visitDate}` : new Date(r.createdAt).toLocaleDateString("en-IN")}
                           </p>
                         </div>
                       </div>
-                      <a href={r.fileUrl} target="_blank" rel="noopener noreferrer" download
-                        className="rounded-full bg-blue px-4 py-2 text-[12px] font-medium text-white transition-colors hover:bg-blue-deep">
-                        Download
-                      </a>
+                      {r.fileUrl ? (
+                        <a href={r.fileUrl} target="_blank" rel="noopener noreferrer" download
+                          className="rounded-full bg-blue px-4 py-2 text-[12px] font-medium text-white transition-colors hover:bg-blue-deep">
+                          Download
+                        </a>
+                      ) : (
+                        <span className="rounded-full bg-blue-tint px-4 py-2 text-[12px] font-medium text-blue-deep">On your visit record</span>
+                      )}
                     </div>
                   ))}
                 </div>

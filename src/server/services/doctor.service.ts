@@ -135,7 +135,7 @@ export async function doctorPatientChart(actor: AuthUser, displayId: string) {
       where: { patientId: patient.id },
       orderBy: { createdAt: "desc" }, take: 20,
       select: {
-        id: true, fileUrl: true, fileName: true, title: true, doctorName: true,
+        id: true, appointmentId: true, fileUrl: true, fileName: true, title: true, doctorName: true,
         status: true, createdAt: true,
         appointment: { select: { opNumber: true, visitDate: true, doctor: { select: { name: true } } } },
       },
@@ -163,11 +163,11 @@ export async function doctorPatientChart(actor: AuthUser, displayId: string) {
     })),
     /** The scanned handwritten prescriptions — the doctor's own record. */
     prescriptions: (scans as {
-      id: string; fileUrl: string; fileName: string; title: string | null; doctorName: string | null;
+      id: string; appointmentId: string | null; fileUrl: string | null; fileName: string | null; title: string | null; doctorName: string | null;
       status: string; createdAt: Date;
       appointment: { opNumber: string; visitDate: Date; doctor: { name: string } } | null;
     }[]).map((p) => ({
-      id: p.id, fileUrl: p.fileUrl, fileName: p.fileName, title: p.title,
+      id: p.id, appointmentId: p.appointmentId, fileUrl: p.fileUrl, fileName: p.fileName, title: p.title,
       doctorName: p.doctorName ?? p.appointment?.doctor.name ?? null,
       status: p.status,
       createdAt: p.createdAt.toISOString().slice(0, 10),

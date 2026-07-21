@@ -12,7 +12,7 @@ interface Chart {
   patient: { displayId: string; fullName: string; age: number | null; gender: string | null; bloodGroup: string | null; phone: string; address: string | null; occupation: string | null; remarks: string | null; isVip: boolean };
   visits: { opNumber: string; visitDate: string; status: string; doctorName: string; department: string }[];
   labs: { id: string; testName: string; status: string; reportFileUrl: string | null; createdAt: string; completedAt: string | null }[];
-  prescriptions: { id: string; fileUrl: string; title: string | null; doctorName: string | null; status: string; createdAt: string; visitDate: string | null }[];
+  prescriptions: { id: string; appointmentId: string | null; fileUrl: string | null; title: string | null; doctorName: string | null; status: string; createdAt: string; visitDate: string | null }[];
 }
 
 function ChartInner() {
@@ -104,8 +104,13 @@ function ChartInner() {
                       <Pill tone={p.status === "DISPENSED" ? "completed" : p.status === "SENT_TO_PHARMACY" ? "waiting" : "neutral"}>
                         {p.status === "DISPENSED" ? "Dispensed" : p.status === "SENT_TO_PHARMACY" ? "At pharmacy" : "Scanned"}
                       </Pill>
-                      <a href={p.fileUrl} target="_blank" rel="noopener noreferrer"
-                        className="rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">View</a>
+                      {p.fileUrl ? (
+                        <a href={p.fileUrl} target="_blank" rel="noopener noreferrer"
+                          className="rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">View scan</a>
+                      ) : p.appointmentId ? (
+                        <a href={`/print/opd/${p.appointmentId}`} target="_blank" rel="noopener noreferrer"
+                          className="rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">OPD sheet</a>
+                      ) : null}
                     </div>
                   </div>
                 ))}

@@ -2,8 +2,6 @@ import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
 import { storeFile } from "@/lib/storage";
 import { logAudit } from "./audit.service";
-import { opdPrintData } from "./appointments.service";
-import { generateOpdPdf } from "@/server/print/opd-pdf";
 import type { AuthUser } from "@/lib/auth/types";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -11,10 +9,13 @@ const ALLOWED = new Set(["application/pdf", "image/jpeg", "image/png", "image/we
 
 export interface PrescriptionUploadDTO {
   id: string;
-  fileUrl: string;
-  fileName: string;
-  mimeType: string;
-  fileSize: number;
+  appointmentId: string | null;
+  /** Null for a typed prescription (view its live OPD sheet at
+   *  /print/opd/{appointmentId}); set only for a genuine scanned upload. */
+  fileUrl: string | null;
+  fileName: string | null;
+  mimeType: string | null;
+  fileSize: number | null;
   title: string | null;
   status: string;
   createdAt: string;
@@ -117,7 +118,7 @@ export async function uploadPrescription(
       ...(cleanItems.length ? { items: { create: cleanItems } } : {}),
     },
     select: {
-      id: true, fileUrl: true, fileName: true, mimeType: true, fileSize: true,
+      id: true, appointmentId: true, fileUrl: true, fileName: true, mimeType: true, fileSize: true,
       title: true, status: true, createdAt: true,
       appointment: { select: { opNumber: true, visitDate: true, doctor: { select: { name: true } } } },
     },
@@ -135,13 +136,15 @@ export async function uploadPrescription(
 }
 
 function toDTO(row: {
-  id: string; fileUrl: string; fileName: string; mimeType: string; fileSize: number;
+  id: string; appointmentId: string | null;
+  fileUrl: string | null; fileName: string | null; mimeType: string | null; fileSize: number | null;
   title: string | null;
   status: string; createdAt: Date;
   appointment: { opNumber: string; visitDate: Date; doctor: { name: string } } | null;
 }): PrescriptionUploadDTO {
   return {
-    id: row.id, fileUrl: row.fileUrl, fileName: row.fileName, mimeType: row.mimeType,
+    id: row.id, appointmentId: row.appointmentId,
+    fileUrl: row.fileUrl, fileName: row.fileName, mimeType: row.mimeType,
     fileSize: row.fileSize, title: row.title, status: row.status, createdAt: row.createdAt.toISOString(),
     appointment: row.appointment
       ? { opNumber: row.appointment.opNumber, visitDate: row.appointment.visitDate.toISOString().slice(0, 10), doctorName: row.appointment.doctor.name }
@@ -203,39 +206,13 @@ export async function sendOpdSheetToPharmacy(
     labs,
   };
 
-  // Same bundle the printed OPD sheet is built from (hospital, patient, doctor,
-  // visit, vitals). We override its rxItems with what reception just typed —
-  // those aren't persisted anywhere yet, so they can't be read back.
-  const bundle = await opdPrintData(input.appointmentId);
-
-  const pdf = await generateOpdPdf({
-    hospital: bundle.hospital,
-    appointment: {
-      opNumber: bundle.appointment.opNumber,
-      visitDate: bundle.appointment.visitDate,
-      time: bundle.appointment.time,
-      referredByName: bundle.appointment.referredByName,
-      visitNumber: bundle.appointment.visitNumber,
-    },
-    doctor: bundle.doctor,
-    patient: bundle.patient,
-    items: cleanItems.map((it) => ({ medicineName: it.medicineName, qty: it.qty, dosage: it.dosage })),
-    vitals: bundle.vitals,
-    clinical,
-  });
-
-  const fileName = `OPD-${bundle.appointment.opNumber}.pdf`;
-  const stored = await storeFile(pdf, { fileName, mimeType: "application/pdf" });
-
+  // A typed prescription is DATA-ONLY — no generated PDF. The OPD sheet is
+  // rendered live from these ℞ items + clinical fields by /print/opd/{id}
+  // (opdPrintData reads this row back), so there's nothing to store as a file.
   const row = await prisma.prescriptionUpload.create({
     data: {
       patientId: appt.patientId,
       appointmentId: input.appointmentId,
-      fileUrl: stored.fileUrl,
-      storage: stored.storage,
-      fileName,
-      mimeType: "application/pdf",
-      fileSize: pdf.length,
       title: input.title?.trim() || null,
       uploadedById: actor.id,
       doctorName: appt.doctor.name,
@@ -247,7 +224,7 @@ export async function sendOpdSheetToPharmacy(
       ...(cleanItems.length ? { items: { create: cleanItems } } : {}),
     },
     select: {
-      id: true, fileUrl: true, fileName: true, mimeType: true, fileSize: true,
+      id: true, appointmentId: true, fileUrl: true, fileName: true, mimeType: true, fileSize: true,
       title: true, status: true, createdAt: true,
       appointment: { select: { opNumber: true, visitDate: true, doctor: { select: { name: true } } } },
     },
@@ -257,7 +234,7 @@ export async function sendOpdSheetToPharmacy(
     action: input.sendNow ? "OPD_SHEET_SENT_TO_PHARMACY" : "OPD_SHEET_SAVED",
     targetTable: "PrescriptionUpload",
     targetId: row.id,
-    meta: { patientId: appt.patientId, appointmentId: input.appointmentId, generated: true },
+    meta: { patientId: appt.patientId, appointmentId: input.appointmentId, sheet: "live" },
     ...ctx,
   });
 
@@ -270,7 +247,7 @@ export async function listPatientPrescriptions(patientId: string): Promise<Presc
     where: { patientId },
     orderBy: { createdAt: "desc" },
     select: {
-      id: true, fileUrl: true, fileName: true, mimeType: true, fileSize: true,
+      id: true, appointmentId: true, fileUrl: true, fileName: true, mimeType: true, fileSize: true,
       title: true, status: true, createdAt: true,
       appointment: { select: { opNumber: true, visitDate: true, doctor: { select: { name: true } } } },
     },
@@ -306,7 +283,7 @@ export async function replacePrescriptionFile(
     where: { id: input.id },
     data,
     select: {
-      id: true, fileUrl: true, fileName: true, mimeType: true, fileSize: true, title: true, status: true, createdAt: true,
+      id: true, appointmentId: true, fileUrl: true, fileName: true, mimeType: true, fileSize: true, title: true, status: true, createdAt: true,
       appointment: { select: { opNumber: true, visitDate: true, doctor: { select: { name: true } } } },
     },
   });

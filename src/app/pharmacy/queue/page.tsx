@@ -11,7 +11,7 @@ import { DiscountInput, PaymentSection, type Tender } from "@/components/portal/
 
 interface RxTypedItem { medicineName: string; medicineId: string | null; qty: number; dosage: string | null; }
 interface Rx {
-  id: string; fileUrl: string | null; fileName: string | null; mimeType: string | null; title: string | null; doctorName: string | null;
+  id: string; appointmentId: string | null; fileUrl: string | null; fileName: string | null; mimeType: string | null; title: string | null; doctorName: string | null;
   status: string; sentToPharmacyAt: string | null; dispensedAt: string | null;
   patient: { id: string; displayId: string; fullName: string; phone: string; age: number | null };
   items: RxTypedItem[];
@@ -181,12 +181,17 @@ export default function RxQueuePage() {
                 </div>
                 <div className="flex shrink-0 items-center gap-2 pt-1">
                   <Pill tone={r.status === "DISPENSED" ? "completed" : "waiting"}>{r.status === "DISPENSED" ? "Dispensed" : "Waiting"}</Pill>
-                  {r.fileUrl && (
+                  {r.fileUrl ? (
                     <a href={r.fileUrl} target="_blank" rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[13px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">
                       <Icon name="file" size={13} /> View scan
                     </a>
-                  )}
+                  ) : r.appointmentId ? (
+                    <a href={`/print/opd/${r.appointmentId}`} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[13px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">
+                      <Icon name="file" size={13} /> OPD sheet
+                    </a>
+                  ) : null}
                   {r.status !== "DISPENSED" && (
                     <button onClick={() => setActive(r)}
                       className="btn-primary inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[14px] font-semibold text-white">
@@ -254,12 +259,17 @@ export default function RxQueuePage() {
                   <div className="flex flex-col border-b border-[var(--p-border)] bg-[var(--p-bg)] md:min-h-0 md:border-b-0 md:border-r">
                     <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--p-border)] px-5 py-3">
                       <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Doctor&apos;s prescription</p>
-                      {active.fileUrl && (
+                      {active.fileUrl ? (
                         <a href={active.fileUrl} target="_blank" rel="noopener noreferrer"
                           className="shrink-0 text-[12px] font-medium text-[var(--p-blue)] hover:underline">
                           Open full size ↗
                         </a>
-                      )}
+                      ) : active.appointmentId ? (
+                        <a href={`/print/opd/${active.appointmentId}`} target="_blank" rel="noopener noreferrer"
+                          className="shrink-0 text-[12px] font-medium text-[var(--p-blue)] hover:underline">
+                          Open OPD sheet ↗
+                        </a>
+                      ) : null}
                     </div>
                     <div className="p-4 md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain">
                       {active.fileUrl ? (
@@ -270,6 +280,10 @@ export default function RxQueuePage() {
                           /* eslint-disable-next-line @next/next/no-img-element */
                           <img src={active.fileUrl} alt="Scanned prescription" className="w-full rounded-lg border border-[var(--p-border)] bg-white" />
                         )
+                      ) : active.appointmentId ? (
+                        /* Typed prescription — read the live OPD sheet (no scan, no PDF file) */
+                        <iframe src={`/print/opd/${active.appointmentId}`} title="OPD sheet"
+                          className="h-[58vh] w-full rounded-lg border border-[var(--p-border)] bg-white md:h-[62vh]" />
                       ) : (
                         <div className="rounded-lg border border-dashed border-[var(--p-border-strong)] px-4 py-8 text-center text-[12px] text-[var(--p-muted)]">
                           No scan attached — this one was typed straight in. The bill on the right is pre-filled from it.

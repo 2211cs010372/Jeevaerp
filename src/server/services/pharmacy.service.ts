@@ -428,7 +428,7 @@ export async function dispense(
 
 /** The pharmacy work queue: scans reception has dispatched here. */
 export async function pharmacyRxQueue(status?: "SENT_TO_PHARMACY" | "DISPENSED"): Promise<{
-  id: string; fileUrl: string; fileName: string; mimeType: string; title: string | null; doctorName: string | null;
+  id: string; appointmentId: string | null; fileUrl: string | null; fileName: string | null; mimeType: string | null; title: string | null; doctorName: string | null;
   status: string; sentToPharmacyAt: string | null; dispensedAt: string | null; createdAt: string;
   patient: { id: string; displayId: string; fullName: string; phone: string; age: number | null };
   items: { medicineName: string; medicineId: string | null; qty: number; dosage: string | null }[];
@@ -438,19 +438,19 @@ export async function pharmacyRxQueue(status?: "SENT_TO_PHARMACY" | "DISPENSED")
     orderBy: { sentToPharmacyAt: "desc" },
     take: 60,
     select: {
-      id: true, fileUrl: true, fileName: true, mimeType: true, title: true, doctorName: true,
+      id: true, appointmentId: true, fileUrl: true, fileName: true, mimeType: true, title: true, doctorName: true,
       status: true, sentToPharmacyAt: true, dispensedAt: true, createdAt: true,
       patient: { select: { id: true, displayId: true, fullName: true, phone: true, age: true } },
       items: { select: { medicineName: true, medicineId: true, qty: true, dosage: true } },
     },
   });
   return rows.map((r: {
-    id: string; fileUrl: string; fileName: string; mimeType: string; title: string | null; doctorName: string | null;
+    id: string; appointmentId: string | null; fileUrl: string | null; fileName: string | null; mimeType: string | null; title: string | null; doctorName: string | null;
     status: string; sentToPharmacyAt: Date | null; dispensedAt: Date | null; createdAt: Date;
     patient: { id: string; displayId: string; fullName: string; phone: string; age: number | null };
     items: { medicineName: string; medicineId: string | null; qty: number; dosage: string | null }[];
   }) => ({
-    id: r.id, fileUrl: r.fileUrl, fileName: r.fileName, mimeType: r.mimeType, title: r.title, doctorName: r.doctorName,
+    id: r.id, appointmentId: r.appointmentId, fileUrl: r.fileUrl, fileName: r.fileName, mimeType: r.mimeType, title: r.title, doctorName: r.doctorName,
     status: r.status,
     sentToPharmacyAt: r.sentToPharmacyAt ? r.sentToPharmacyAt.toISOString() : null,
     dispensedAt: r.dispensedAt ? r.dispensedAt.toISOString() : null,

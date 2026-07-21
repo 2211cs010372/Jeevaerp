@@ -468,12 +468,15 @@ model PrescriptionUpload {
   appointment   Appointment? @relation(fields: [appointmentId], references: [id])
 
   /// Public URL (Cloudinary) OR local path (/uploads/...) depending on storage.
-  fileUrl      String
+  /// Null for a TYPED prescription — that has no file; its OPD sheet is rendered
+  /// live from the ℞ items + clinical fields below. Only a genuine SCANNED upload
+  /// (photo/PDF of a handwritten Rx) carries a file.
+  fileUrl      String?
   /// Storage backend used, so we know how to build/serve the URL.
   storage      String   @default("local")
-  fileName     String
-  mimeType     String
-  fileSize     Int
+  fileName     String?
+  mimeType     String?
+  fileSize     Int?
   /// Free-text title, e.g. "Rheumatology consult — 27 May".
   title        String?
   uploadedById String
