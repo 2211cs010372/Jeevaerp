@@ -6,6 +6,7 @@ import {
   SUBDOMAIN_ALLOWED_ROLES,
   type PortalSubdomain,
 } from "@/lib/auth/portals";
+import { classifyHost } from "@/lib/auth/host";
 import type { Role } from "@/lib/auth/types";
 
 /**
@@ -36,19 +37,15 @@ async function roleFromRequest(req: NextRequest): Promise<Role | null> {
 
 export async function middleware(req: NextRequest) {
   const host = req.headers.get("host") ?? "";
-  const hostname = host.split(":")[0];
-  const sub = hostname.split(".")[0];
   const { pathname, search } = req.nextUrl;
 
   // API is same-origin on every subdomain — never rewrite or gate it here.
   if (pathname.startsWith("/api")) return NextResponse.next();
 
-  // Subdomain routing only works where wildcard subdomains actually resolve:
-  // local dev (admin.localhost) or a production root with COOKIE_DOMAIN set.
-  // Anywhere else (a bare *.vercel.app, an IP) we route portals by PATH.
-  const cookieDomain = process.env.COOKIE_DOMAIN?.replace(/^\./, "");
-  const subdomainMode =
-    Boolean(cookieDomain) || hostname === "localhost" || hostname.endsWith(".localhost");
+  // One classifier decides subdomain vs path routing (shared with resolveOrigin):
+  // a real custom domain (admin.hospital.com) or localhost -> subdomain mode;
+  // a bare *.vercel.app or IP -> path mode. COOKIE_DOMAIN forces subdomain mode.
+  const { subdomainMode, sub } = classifyHost(host, process.env.COOKIE_DOMAIN);
 
   const onPortalSubdomain = subdomainMode && isPortalSubdomain(sub);
 
