@@ -33,14 +33,14 @@ export interface Department {
 }
 
 export const DEPARTMENTS: Department[] = [
-  { index: "01", name: "Cardiology",       blurb: "Chest pain, blood pressure and heart rhythm — assessed the same day, with ECG and echo in-house.", common: "ECG · 2D Echo · TMT",         image: "/images/dept-cardiology.jpg" },
-  { index: "02", name: "Orthopaedics",     blurb: "Fractures, joint pain and spine trouble. Digital X-ray on site, so you don't travel for a scan.", common: "Fractures · Knee · Spine",    image: "/images/dept-orthopaedics.jpg" },
-  { index: "03", name: "Gynaecology",      blurb: "Antenatal care through delivery, and women's health at every stage of life.", common: "Antenatal · Delivery · Scan",                      image: "/images/dept-gynaecology.jpg" },
-  { index: "04", name: "Paediatrics",      blurb: "Newborns to teenagers — vaccinations, fevers, growth checks and the 2 a.m. worries.", common: "Vaccines · Fever · Growth",               image: "/images/dept-paediatrics.jpg" },
-  { index: "05", name: "General Medicine", blurb: "The first door for fever, infection, diabetes and blood pressure. Where most visits start.", common: "Fever · Diabetes · BP",            image: "/images/dept-general-medicine.jpg" },
-  { index: "06", name: "Neurology",        blurb: "Persistent headache, seizures and stroke care, supported by in-house imaging.", common: "Headache · Seizure · Stroke",                   image: "/images/dept-neurology.jpg" },
-  { index: "07", name: "Dermatology",      blurb: "Skin, hair and allergy problems, with lab diagnostics to back the diagnosis.", common: "Skin · Hair · Allergy",                          image: "/images/dept-dermatology.jpg" },
-  { index: "08", name: "ENT",              blurb: "Ear, nose and throat — from hearing tests to minor day procedures.", common: "Hearing · Sinus · Throat",                                 image: "/images/dept-ent.jpg" },
+  { index: "01", name: "Cardiology",       blurb: "Chest pain, blood pressure and heart rhythm — assessed the same day, with ECG and echo in-house.", common: "ECG · 2D Echo · TMT",         image: "/images/dept-cardiology.avif" },
+  { index: "02", name: "Orthopaedics",     blurb: "Fractures, joint pain and spine trouble. Digital X-ray on site, so you don't travel for a scan.", common: "Fractures · Knee · Spine",    image: "/images/dept-orthopaedics.avif" },
+  { index: "03", name: "Gynaecology",      blurb: "Antenatal care through delivery, and women's health at every stage of life.", common: "Antenatal · Delivery · Scan",                      image: "/images/dept-gynaecology.avif" },
+  { index: "04", name: "Paediatrics",      blurb: "Newborns to teenagers — vaccinations, fevers, growth checks and the 2 a.m. worries.", common: "Vaccines · Fever · Growth",               image: "/images/dept-paediatrics.avif" },
+  { index: "05", name: "General Medicine", blurb: "The first door for fever, infection, diabetes and blood pressure. Where most visits start.", common: "Fever · Diabetes · BP",            image: "/images/dept-general-medicine.avif" },
+  { index: "06", name: "Neurology",        blurb: "Persistent headache, seizures and stroke care, supported by in-house imaging.", common: "Headache · Seizure · Stroke",                   image: "/images/dept-neurology.avif" },
+  { index: "07", name: "Dermatology",      blurb: "Skin, hair and allergy problems, with lab diagnostics to back the diagnosis.", common: "Skin · Hair · Allergy",                          image: "/images/dept-dermatology.avif" },
+  { index: "08", name: "ENT",              blurb: "Ear, nose and throat — from hearing tests to minor day procedures.", common: "Hearing · Sinus · Throat",                                 image: "/images/dept-ent.avif" },
 ];
 
 /** Fast lanes for what people actually come in for — each maps to the
@@ -116,9 +116,12 @@ export const JOURNEY = [
 ];
 
 export const IMAGES = {
-  heroBuilding: "/images/hero-building.jpg",
+  heroBuilding: "/images/hospital_banner1.png",
   equipment: "/images/facility-equipment.jpg",
   ward: "/images/facility-ward.jpg",
+  gynaec: "/images/dept-gynocology.avif",
+  paediatric : "/images/dept-paediatric.avif",
+  general : "/images/dept-general-medicine.avif"
 };
 
 /**
