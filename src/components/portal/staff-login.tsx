@@ -62,7 +62,7 @@ export function StaffLogin({ portalName = "Staff" }: { portalName?: string }) {
   const field = "mt-2 w-full border border-[var(--p-border)] bg-white px-4 py-3.5 text-sm text-[var(--p-ink)]";
 
   return (
-    <div className="surface w-full p-8 sm:p-9" style={{ borderRadius: 28 }}>
+    <div className="surface w-full p-8 sm:p-9 rounded-lg " >
       <p className="eyebrow">{portalName} portal</p>
       <h1 className="mt-3 font-serif-p text-[26px] font-semibold leading-tight text-[var(--p-ink)]">
         {mode === "otp" && step === "code" ? "Enter your code" : "Sign in to Jeeva"}
@@ -76,10 +76,10 @@ export function StaffLogin({ portalName = "Staff" }: { portalName?: string }) {
 
       {/* mode toggle — a segmented pill */}
       {!(mode === "otp" && step === "code") && (
-        <div className="mt-6 grid grid-cols-2 gap-1 rounded-full border border-[var(--p-border)] bg-[var(--p-bg)] p-1">
+        <div className="mt-6 grid grid-cols-2 gap-1 rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] p-1">
           {([["otp", "Email code"], ["password", "Password"]] as const).map(([m, t]) => (
             <button key={m} onClick={() => switchMode(m)}
-              className={`rounded-full py-2 text-[12.5px] font-semibold transition-all ${
+              className={`rounded-md py-2 text-[12.5px] font-semibold transition-all ${
                 mode === m ? "bg-white text-[var(--p-blue-deep)] shadow-[var(--p-shadow-sm)]" : "text-[var(--p-muted)] hover:text-[var(--p-ink)]"
               }`}>
               {t}
@@ -139,7 +139,7 @@ export function StaffLogin({ portalName = "Staff" }: { portalName?: string }) {
           </div>
           <button onClick={passwordLogin} disabled={loading}
             className="btn-primary w-full rounded-full py-3.5 text-sm font-semibold text-white disabled:opacity-50">
-            {loading ? "Signing in…" : "Sign in →"}
+            {loading ? "Signing in…" : `Sign in `}
           </button>
         </div>
       )}

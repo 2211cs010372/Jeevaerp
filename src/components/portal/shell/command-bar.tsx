@@ -164,7 +164,7 @@ export function CommandBar({ portal = "reception" }: { portal?: string }) {
         <div className="fixed inset-0 z-[60] flex items-start justify-center bg-[rgba(9,26,52,0.45)] p-4 pt-[12vh] backdrop-blur-sm"
           onClick={close}>
           <div onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg overflow-hidden rounded-2xl border border-[var(--p-border)] bg-[var(--p-surface)] shadow-[var(--p-shadow-lg)]">
+            className="w-full max-w-2xl overflow-hidden rounded-2xl border border-[var(--p-border)] bg-[var(--p-surface)] shadow-[var(--p-shadow-lg)]">
 
             {/* input */}
             <div className="flex items-center gap-3 border-b border-[var(--p-border)] px-4 py-3.5">

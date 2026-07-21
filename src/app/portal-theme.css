@@ -1083,3 +1083,106 @@
 .portal[data-portal="admin"] .flow-step {
     border-radius: 16px;
 }
+
+.portal[data-portal="labs"] {
+    /* neutrals — pine-cast porcelain, identical to admin */
+    --p-ink: #0c1a1c;
+    --p-text: #3d4c4f;
+    --p-muted: #64737a;
+    --p-bg: #f1f3f2;
+    --p-surface: #ffffff;
+    --p-border: #e2e7e5;
+    --p-border-strong: #cdd6d3;
+    /* primary — deep pine, aliased onto the blue slots the components use */
+    --p-blue: #0b544c;
+    --p-blue-deep: #073d37;
+    --p-blue-soft: rgba(11, 84, 76, 0.08);
+    --p-blue-glow: rgba(11, 84, 76, 0.25);
+    /* positive / live — teal lift */
+    --p-cyan: #17705f;
+    --p-cyan-deep: #0b544c;
+    --p-cyan-soft: rgba(23, 112, 95, 0.10);
+    /* semantic — admin's muted brass + emergency red */
+    --p-amber: #a97b3f;
+    --p-amber-soft: rgba(169, 123, 63, 0.12);
+    --p-rose: #c2402f;
+    --p-rose-soft: rgba(194, 64, 47, 0.10);
+    --p-teal: var(--p-blue);
+    --p-teal-deep: var(--p-blue-deep);
+    --p-teal-soft: var(--p-blue-soft);
+    --p-sidebar: rgba(255, 255, 255, 0.78);
+    --p-sidebar-border: var(--p-border);
+    --p-shadow-sm: 0 1px 2px rgba(12, 26, 28, 0.04);
+    --p-shadow: 0 1px 2px rgba(12, 26, 28, 0.04), 0 10px 30px -18px rgba(12, 26, 28, 0.14);
+    --p-shadow-lg: 0 1px 2px rgba(12, 26, 28, 0.05), 0 24px 50px -24px rgba(12, 26, 28, 0.20);
+}
+
+
+/* a quiet pine bloom — same fixed backdrop as admin, no navy aurora */
+
+.portal[data-portal="labs"]::before {
+    background: radial-gradient(760px 420px at 12% -6%, rgba(11, 84, 76, 0.07), transparent 62%), radial-gradient(620px 380px at 92% 4%, rgba(23, 112, 95, 0.06), transparent 60%);
+}
+
+
+/* headings inherit the shared Geist treatment (see base .font-serif-p). */
+
+
+/* surfaces go big-radius and minimal — same geometry as admin's cards.
+   No brand-tab accent strip: admin's cards don't carry one, so reception's
+   no longer does either. */
+
+.portal[data-portal="labs"] .surface {
+    border-radius: 22px;
+}
+
+.portal[data-portal="labs"] .surface-hover:hover {
+    border-color: #c9dcd6;
+    box-shadow: var(--p-shadow-lg);
+    transform: translateY(-2px);
+}
+
+
+/* glass tuned to admin's recipe — light frosted white on BOTH the topbar
+   and the sidebar. No dark rail override: aside.glass just inherits this,
+   same as it does in admin. */
+
+.portal[data-portal="labs"] .glass {
+    background: rgba(255, 255, 255, 0.78);
+    backdrop-filter: blur(16px) saturate(1.4);
+    -webkit-backdrop-filter: blur(16px) saturate(1.4);
+    border-color: rgba(255, 255, 255, 0.85);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 1px 24px -8px rgba(12, 26, 28, 0.08);
+}
+
+.portal[data-portal="labs"] .dotgrid {
+    background-image: radial-gradient(rgba(11, 84, 76, 0.12) 1px, transparent 1px);
+}
+
+
+/* Buttons use the shared Supabase treatment (see base .btn-primary) — the
+   pine accent comes through var(--p-blue). Nothing to override here. */
+
+
+/* rounded utilities scale up inside reception too, matching admin exactly —
+   pills stay pills */
+
+.portal[data-portal="labs"] .rounded-md {
+    border-radius: 10px;
+}
+
+.portal[data-portal="labs"] .rounded-lg {
+    border-radius: 14px;
+}
+
+.portal[data-portal="labs"] .rounded-xl {
+    border-radius: 18px;
+}
+
+.portal[data-portal="labs"] .rounded-2xl {
+    border-radius: 24px;
+}
+
+.portal[data-portal="labs"] .flow-step {
+    border-radius: 16px;
+}

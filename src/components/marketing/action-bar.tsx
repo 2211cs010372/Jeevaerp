@@ -1,62 +1,153 @@
+"use client";
+
 import Link from "next/link";
 import { Reveal } from "@/components/ui/reveal";
 import { HOSPITAL } from "@/lib/data";
+import { Search, CalendarCheck, Bed, PhoneCall, ArrowUpRight } from "lucide-react";
 
 /**
- * The four things visitors actually come to do — surfaced as one bar right
- * under the hero, the way the big hospital groups do it.
+ * North Star Health — Quick Action Bar Redesign
+ * ------------------------------------------------------------------
+ * Interactive high-priority quick action tiles for key healthcare workflows.
  */
+
 const ACTIONS = [
   {
-    href: "/doctors", title: "Find a doctor", sub: "By name or speciality",
-    icon: <><circle cx="11" cy="8" r="4" /><path d="M3 21c0-3.5 3.6-6 8-6 1.1 0 2.2.15 3.1.44" /><circle cx="18" cy="17" r="3.2" /><path d="m20.4 19.4 1.8 1.8" /></>,
+    href: "/doctors",
+    title: "Find a doctor",
+    sub: "By name or specialty",
+    badge: "40+ Doctors",
+    icon: Search,
+    accent: "from-[#EBF3FA] to-[#D5E5F2]",
+    iconColor: "text-[#274472]",
   },
   {
-    href: "/book", title: "Book appointment", sub: "Pick a doctor and a time",
-    icon: <><rect x="3" y="5" width="18" height="16" rx="3" /><path d="M8 3v4M16 3v4M3 10h18M9 15.5l2 2 4-4" /></>,
+    href: "/book",
+    title: "Book appointment",
+    sub: "Instant online slot booking",
+    badge: "Same-day",
+    icon: CalendarCheck,
+    accent: "from-[#F3EFEA] to-[#E5DDD2]",
+    iconColor: "text-[#5A4535]",
   },
   {
-    href: "/#wards", title: "Rooms & prices", sub: "Published, no surprises",
-    icon: <><path d="M3 18V8a2 2 0 0 1 2-2h6v8" /><path d="M11 10h7a3 3 0 0 1 3 3v5" /><path d="M3 18h18M3 21v-3M21 21v-3" /><circle cx="7" cy="10" r="1.6" /></>,
+    href: "/#wards",
+    title: "Rooms & pricing",
+    sub: "Transparent cost breakdown",
+    badge: "Published rates",
+    icon: Bed,
+    accent: "from-[#EBF7F5] to-[#CDEEE9]",
+    iconColor: "text-[#1B5B52]",
   },
 ] as const;
 
 export function ActionBar() {
   return (
-    <section className="px-3 pt-4 sm:px-5">
-      <div className="mx-auto grid max-w-[1280px] grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {ACTIONS.map((a, i) => (
-          <Reveal key={a.title} delay={i * 60}>
-            <Link href={a.href}
-              className="card card-hover group flex h-full items-center gap-4 rounded-[20px] p-5">
-              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[var(--sky-soft)] text-[var(--teal)] transition-colors group-hover:bg-[var(--ink)] group-hover:text-white">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>{a.icon}</svg>
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-[14.5px] font-semibold text-[var(--ink)]">{a.title}</span>
-                <span className="block text-[12px] text-[var(--muted)]">{a.sub}</span>
-              </span>
-              <span aria-hidden className="text-[var(--muted)] transition-transform group-hover:translate-x-1">→</span>
-            </Link>
-          </Reveal>
-        ))}
+    <section className="w-full bg-[#FFFFFF] -mt-[5vw] px-3 py-6 sm:px-6 lg:px-8">
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;600;700&family=Inter:wght@400;500;600&display=swap');
 
-        {/* emergency — the one that is never a marketing tile */}
-        <Reveal delay={180}>
-          <a href={`tel:${HOSPITAL.emergency.replace(/\s/g, "")}`}
-            className="card card-hover group flex h-full items-center gap-4 rounded-[20px] border border-[var(--alert)]/20 !bg-[var(--alert-soft)] p-5">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white text-[var(--alert)]">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" />
-              </svg>
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-[14.5px] font-semibold text-[var(--alert)]">Emergency · 24×7</span>
-              <span className="block font-mono text-[12px] text-[var(--alert-deep)]">{HOSPITAL.emergency}</span>
-            </span>
-            <span aria-hidden className="text-[var(--alert)] transition-transform group-hover:translate-x-1">→</span>
-          </a>
-        </Reveal>
+        .nsh-action-root {
+          --font-display: 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
+          --font-body: 'Inter', ui-sans-serif, system-ui, sans-serif;
+          font-family: var(--font-body);
+        }
+      `}</style>
+
+      <div className="nsh-action-root mx-auto max-w-7xl">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {ACTIONS.map((a, i) => {
+            const Icon = a.icon;
+            return (
+              <Reveal key={a.title} delay={i * 80}>
+                <Link
+                  href={a.href}
+                  className="group relative flex h-full min-h-[140px] flex-col justify-between overflow-hidden rounded-[1.35rem] bg-[#f0eee9] p-1.5 ring-1 ring-black/5 transition-all duration-300  hover:ring-black/10 hover:shadow-lg "
+                >
+                  {/* Subtle top background sheen */}
+                  <div
+                    className={`absolute -right-8 -top-8 h-28 w-28 rounded-full bg-gradient-to-br ${a.accent} opacity-40 blur-xl transition-opacity group-hover:opacity-80`}
+                    aria-hidden
+                  />
+
+                  <div className="bg-white/70 p-4 rounded-[1.15rem]" >
+                    {/* Header Row: Icon + Badge + Arrow */}
+                    <div className="relative z-10 flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div
+                          className={`flex h-11 w-11 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-black/5 ${a.iconColor}`}
+                        >
+                          <Icon className="h-5 w-5" />
+                        </div>
+                        <span className="rounded-full bg-white/80 px-2.5 py-1 text-[11px] font-medium text-[#14181C]/70 backdrop-blur ring-1 ring-black/5">
+                          {a.badge}
+                        </span>
+                      </div>
+
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-[#14181C]/60 shadow-sm ring-1 ring-black/5 transition-all duration-200 group-hover:bg-[#14181C] group-hover:text-white group-hover:shadow-md">
+                        <ArrowUpRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                      </div>
+                    </div>
+
+                    {/* Body Text */}
+                    <div className="relative z-10 pt-4">
+                      <h3 className="font-[family-name:var(--font-display)] text-base font-semibold leading-tight text-[#14181C]">
+                        {a.title}
+                      </h3>
+                      <p className="mt-1 text-xs text-[#14181C]/65">
+                        {a.sub}
+                      </p>
+                    </div>
+                  </div>
+                </Link>
+              </Reveal>
+            );
+          })}
+
+          {/* 24/7 Emergency Card */}
+          <Reveal delay={240}>
+            <a
+              href={`tel:${HOSPITAL.emergency.replace(/\s/g, "")}`}
+              className="group relative flex h-full min-h-[140px] flex-col justify-between overflow-hidden rounded-[1.35rem] bg-[#FFF5F5] p-5 ring-1 ring-[#E53E3E]/20 transition-all duration-300 hover:-translate-y-1 hover:bg-[#FFEAEB] hover:shadow-[0_12px_32px_-8px_rgba(229,62,62,0.2)] hover:ring-[#E53E3E]/30"
+            >
+              {/* Background Glow */}
+              <div
+                className="absolute -right-8 -top-8 h-28 w-28 rounded-full bg-gradient-to-br from-[#FED7D7] to-[#FEB2B2] opacity-60 blur-xl transition-opacity group-hover:opacity-90"
+                aria-hidden
+              />
+
+              {/* Header Row */}
+              <div className="relative z-10 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-[#E53E3E] shadow-sm ring-1 ring-[#E53E3E]/20">
+                    <PhoneCall className="h-5 w-5" />
+                  </div>
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-[#C53030] shadow-sm ring-1 ring-[#E53E3E]/15">
+                    <span className="relative flex h-2 w-2">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#E53E3E] opacity-75"></span>
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-[#E53E3E]"></span>
+                    </span>
+                    24×7 Active
+                  </span>
+                </div>
+
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-[#E53E3E] shadow-sm ring-1 ring-[#E53E3E]/20 transition-all duration-200 group-hover:bg-[#E53E3E] group-hover:text-white">
+                  <ArrowUpRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                </div>
+              </div>
+
+              {/* Content */}
+              <div className="relative z-10 pt-4">
+                <h3 className="font-[family-name:var(--font-display)] text-base font-semibold leading-tight text-[#9B2C2C]">
+                  Emergency Care
+                </h3>
+                <p className="mt-1 font-mono text-xs font-semibold tracking-wider text-[#C53030]">
+                  {HOSPITAL.emergency}
+                </p>
+              </div>
+            </a>
+          </Reveal>
+        </div>
       </div>
     </section>
   );

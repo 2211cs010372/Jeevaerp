@@ -48,43 +48,7 @@ export const PORTALS: Record<string, PortalMeta> = {
       { label: "Patients", href: "/patients", icon: "search" },
       { label: "Schedule", href: "/schedule", icon: "clock" },
     ],
-    groups: [
-      {
-        title: "At the desk",
-        items: [
-          { label: "Today", href: "/", icon: "grid",  },
-          { label: "Register patient", href: "/register", icon: "users",  },
-          { label: "Book appointment", href: "/book", icon: "calendar",  },
-        ],
-      },
-      {
-        title: "After the doctor",
-        items: [
-          { label: "Prescriptions", href: "/prescriptions", icon: "file",  },
-          { label: "Lab tests", href: "/labs", icon: "flask",  },
-        ],
-      },
-      {
-        title: "Money",
-        items: [
-          { label: "Billing", href: "/billing", icon: "receipt", },
-          { label: "Day close", href: "/day-close", icon: "trend",  },
-        ],
-      },
-      {
-        title: "Inpatients",
-        items: [
-          { label: "Admissions", href: "/ipd", icon: "bed",  },
-        ],
-      },
-      {
-        title: "Look up",
-        items: [
-          { label: "Patients", href: "/patients", icon: "search",  },
-          { label: "Schedule", href: "/schedule", icon: "clock",  },
-        ],
-      },
-    ],
+
   },
   admin: {
     key: "admin",

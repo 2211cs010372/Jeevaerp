@@ -113,7 +113,7 @@ export function LetterHead({ hospital, doctor }: {
           <span className="font-bold tracking-tighter text-[25px] flex flex-col leading-[0.8] justify-start text-start "> {doctor.name}</span> <br /> · <span className="font-medium text-[21px] tracking-tighter leading-[0.8]">{doctor.specialization}</span> <br /> · Department of {doctor.department}
         </div>
       )}
-      <div className="w-[550px]" style={{ margin: "0 -11mm" }}>
+      <div className="w-[800px]" style={{ margin: "0 -11mm" }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/images/jeeva-header.jpeg"

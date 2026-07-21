@@ -12,6 +12,10 @@ const schema = z.object({
   CLOUDINARY_CLOUD_NAME: z.string().optional(),
   CLOUDINARY_API_KEY: z.string().optional(),
   CLOUDINARY_API_SECRET: z.string().optional(),
+  // SMS OTP delivery (2Factor.in). Optional — absence => dev console log,
+  // or a hard failure in production. See lib/sms.ts. Same key works for
+  // both the free-trial wallet and a recharged/paid one.
+  TWO_FACTOR_API_KEY: z.string().optional(),
 });
 
 /**

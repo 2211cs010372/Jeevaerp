@@ -62,6 +62,7 @@ export default function RootLayout({
       lang="en"
       className={`${bricolage.variable} ${instrument.variable} ${plexMono.variable} ${fraunces.variable} ${geist.variable} ${geistMono.variable}`}
     >
+      
       <body>{children}</body>
     </html>
   );
