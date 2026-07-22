@@ -410,6 +410,9 @@ model Appointment {
 
   @@index([doctorId, visitDate, status])
   @@index([patientId, createdAt])
+  // Reception counts/lists filter by date+status WITHOUT a doctor, so the
+  // doctor-led index above can't serve them — this one does.
+  @@index([visitDate, status])
 }
 
 // ---------------------------------------------------------------------------
