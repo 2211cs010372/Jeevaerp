@@ -4,7 +4,7 @@ import { env } from "@/lib/env";
 export const ACCESS_COOKIE = "jmh_access";
 export const REFRESH_COOKIE = "jmh_refresh";
 
-const ACCESS_MAX_AGE = 60 * 60 * 12; // 12h — a work shift; mirrors ACCESS_TOKEN_TTL
+const ACCESS_MAX_AGE = 60 * 60 * 12; // 12h - a work shift; mirrors ACCESS_TOKEN_TTL
 const REFRESH_MAX_AGE = 60 * 60 * 24 * 30; // mirrors REFRESH_TOKEN_TTL
 
 function base() {

@@ -1,14 +1,14 @@
-# Day close: blank page + "1 error" — fix
+# Day close: blank page + "1 error" - fix
 
 You're seeing the header but a blank body and a red "1 error" badge (Next.js). A
-blank body is NOT what an empty dataset looks like (that would show ₹0.00 cards) —
+blank body is NOT what an empty dataset looks like (that would show ₹0.00 cards) -
 it means the page hit an error it couldn't render past. Two causes, both handled
 here.
 
 ## 1. Apply these files, then FULLY restart with a clean cache
 
 Overwriting files while `npm run dev` is running very often leaves a stale build
-that shows exactly this (blank + "1 error"). A hot-reload isn't enough — do a full
+that shows exactly this (blank + "1 error"). A hot-reload isn't enough - do a full
 restart and clear the Next cache:
 
     # stop the dev server first (Ctrl + C in its terminal), then:
@@ -21,7 +21,7 @@ restart and clear the Next cache:
 
 `day-close/page.tsx` was hardened so it can never blank out:
 - If the API errors, it shows a clear **"Couldn't load the day"** card with the
-  real message and a **Try again** button — instead of a blank body.
+  real message and a **Try again** button - instead of a blank body.
 - Every field is guarded, so a malformed/partial response can't throw during render.
 - A successful retry clears a previous error.
 
@@ -32,12 +32,12 @@ self-contained: the `fullName` → `name` corrections in `reports.service.ts`
 ## If it's STILL blank after the restart
 
 Then it's a specific build/runtime error the overlay is naming. Click the red
-**"1 error"** badge (bottom-left) — it opens the exact message + file/line — and
+**"1 error"** badge (bottom-left) - it opens the exact message + file/line - and
 send me that text (or paste what's printed in the `npm run dev` terminal). That
 tells me precisely what to fix. A screenshot of the opened overlay is perfect.
 
 ## Files
 
-- `src/app/reception/day-close/page.tsx` — hardened error/empty handling.
-- `src/server/services/reports.service.ts` — refund author `fullName` → `name`.
-- `src/server/services/ipd.service.ts` — charge author `fullName` → `name`.
+- `src/app/reception/day-close/page.tsx` - hardened error/empty handling.
+- `src/server/services/reports.service.ts` - refund author `fullName` → `name`.
+- `src/server/services/ipd.service.ts` - charge author `fullName` → `name`.

@@ -2,7 +2,7 @@ import { Reveal } from "@/components/ui/reveal";
 
 /**
  * Patient stories, scattered like notes around the heading on desktop and
- * stacked on mobile. The quotes are deliberately small and specific — the
+ * stacked on mobile. The quotes are deliberately small and specific - the
  * kind of thing people actually say at the front desk, not review-site copy.
  */
 const STORIES: { quote: string; name: string; role: string; tone: string }[] = [
@@ -23,7 +23,7 @@ const STORIES: { quote: string; name: string; role: string; tone: string }[] = [
     name: "Lakshmi D.", role: "Pharmacy patient", tone: "bg-[var(--sky-soft)] text-[var(--teal-deep)]",
   },
   {
-    quote: "Booked online for my mother at 8 in the morning — she was seen by 8:40.",
+    quote: "Booked online for my mother at 8 in the morning - she was seen by 8:40.",
     name: "Anita R.", role: "Attendant", tone: "bg-[var(--mint-soft)] text-[#3e7d5c]",
   },
 ];
@@ -48,11 +48,11 @@ function Heading() {
   return (
     <div className="text-center">
       <h2 className="display text-[clamp(1.9rem,3.6vw,2.6rem)] text-[var(--ink)]">
-        Real stories, <span className="text-[var(--saffron)]">real care</span> —<br />
+        Real stories, <span className="text-[var(--saffron)]">real care</span> -<br />
         hear from our <span className="text-[var(--teal)]">patients</span>
       </h2>
       <p className="mx-auto mt-4 max-w-md text-[14px] leading-[1.75] text-[var(--muted)]">
-        What people tell us at the desk on their way out — kept short,
+        What people tell us at the desk on their way out - kept short,
         exactly as they said it.
       </p>
     </div>

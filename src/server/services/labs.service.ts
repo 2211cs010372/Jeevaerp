@@ -71,7 +71,7 @@ function toTestDTO(t: TestRow): LabTestDTO {
   };
 }
 
-/** The lab work queue — pending first, newest first. */
+/** The lab work queue - pending first, newest first. */
 export async function listLabTests(status?: "PENDING" | "COMPLETED"): Promise<LabTestDTO[]> {
   const rows: TestRow[] = await prisma.labTest.findMany({
     where: status ? { status } : {},
@@ -82,11 +82,11 @@ export async function listLabTests(status?: "PENDING" | "COMPLETED"): Promise<La
   return rows.map(toTestDTO);
 }
 
-/** Order one or more tests for a patient (walk-in — no doctor visit needed). */
+/** Order one or more tests for a patient (walk-in - no doctor visit needed). */
 /**
  * Order tests for a patient.
  *
- * If the patient is ADMITTED, the tests belong to the stay, not to a visit —
+ * If the patient is ADMITTED, the tests belong to the stay, not to a visit -
  * they file against the admission and the money posts to the ROOM TAB, exactly
  * like pharmacy. Nobody chases an inpatient's family to the lab counter with a
  * bill; it all settles once, at discharge.
@@ -130,7 +130,7 @@ export async function orderTests(
           admissionId: admission?.id ?? null,
           catalogId: c.id,
           testName: c.name,
-          priceAtOrder: c.price, // snapshot — survives catalog price changes
+          priceAtOrder: c.price, // snapshot - survives catalog price changes
           status: "PENDING",
         },
         select: { id: true },
@@ -163,7 +163,7 @@ export async function orderTests(
 
   const rows: TestRow[] = await prisma.labTest.findMany({ where: { id: { in: created } }, select: testSelect });
   const dtos = rows.map(toTestDTO) as LabTestDTO[] & { chargedToRoom?: boolean };
-  // The UI must be able to say "do not take money" — same contract as pharmacy.
+  // The UI must be able to say "do not take money" - same contract as pharmacy.
   dtos.chargedToRoom = !!admission;
   return dtos;
 }
@@ -219,7 +219,7 @@ export async function completeTest(actor: AuthUser, labTestId: string, ctx: { ip
 
 /**
  * Generate a GST bill for one or more lab tests. GST rate comes from each
- * test's catalog entry (0% = exempt, the correct default for diagnostics —
+ * test's catalog entry (0% = exempt, the correct default for diagnostics -
  * the hospital's CA can set real rates per test in the catalog).
  */
 export async function billLabTests(
@@ -296,7 +296,7 @@ export async function labStats(): Promise<{
   return { pending, completedToday, totalToday, revenueToday: revenue.toFixed(2), unbilled, collections: collections.modes };
 }
 
-/** A patient's lab history + last visit — what the lab needs at the counter. */
+/** A patient's lab history + last visit - what the lab needs at the counter. */
 export async function patientLabHistory(displayId: string): Promise<{
   patient: { id: string; displayId: string; fullName: string; phone: string; age: number | null; gender: string | null; bloodGroup: string | null };
   lastVisit: { opNumber: string; visitDate: string; doctorName: string; department: string; status: string } | null;

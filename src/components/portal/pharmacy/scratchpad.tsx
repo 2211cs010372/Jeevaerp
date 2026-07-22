@@ -14,7 +14,7 @@ export { perDayFromDosage, billTotal, type PadLine };
  *   - "Doctor wrote 5 days, I only want 3."
  *   - "The bill says ₹5,000. I have ₹3,000. Give me what fits."
  *
- * Both are the same operation — shorten the course — so the pad does one thing
+ * Both are the same operation - shorten the course - so the pad does one thing
  * two ways: set the days directly, or name a budget and let it find the days.
  *
  * It never silently changes a bill. Every number the pharmacist sees here is the
@@ -22,7 +22,7 @@ export { perDayFromDosage, billTotal, type PadLine };
  * formula the invoice uses.
  *
  * ANTIBIOTICS ARE DIFFERENT. Cutting a paracetamol course short leaves someone
- * with a headache. Cutting an antibiotic course short breeds resistant bacteria —
+ * with a headache. Cutting an antibiotic course short breeds resistant bacteria -
  * it is worse than not starting. So a short-supplied `courseCritical` medicine
  * raises a blocking warning that has to be acknowledged, and the reason lands on
  * the invoice. The pad makes the trade-off visible instead of easy.
@@ -65,7 +65,7 @@ export function DispenseScratchpad({
   );
   const giving = useMemo(() => billTotal(lines, discount), [lines, discount]);
 
-  /** Anything course-critical being cut short — the one case that isn't just money. */
+  /** Anything course-critical being cut short - the one case that isn't just money. */
   const shorted = lines.filter((l) => l.prescribedQty > 0 && l.qty < l.prescribedQty);
   const abxShorted = shortedCourseCritical(lines);
   const isShort = shorted.length > 0;
@@ -73,7 +73,7 @@ export function DispenseScratchpad({
   function setDays(days: number) {
     if (days < 1) return;
     onChange(lines.map((l) => {
-      if (l.perDay <= 0) return l;                       // ointments, inhalers — days mean nothing
+      if (l.perDay <= 0) return l;                       // ointments, inhalers - days mean nothing
       const want = Math.ceil(l.perDay * days);
       return { ...l, qty: Math.max(1, Math.min(want, l.inStock)) };
     }));
@@ -82,7 +82,7 @@ export function DispenseScratchpad({
 
   /**
    * Work backwards from money: what's the longest course that fits?
-   * Walks days down from the prescription rather than shaving random quantities —
+   * Walks days down from the prescription rather than shaving random quantities -
    * 3 days of everything is a real (if short) course; 5 days of one drug and none
    * of another is just a mess.
    */
@@ -91,8 +91,8 @@ export function DispenseScratchpad({
     if (!target || target <= 0) return;
 
     // No dosage patterns at all (walk-in counter): there are no "days" to shorten,
-    // so scale the quantities down proportionally instead. Same idea — everyone
-    // gets less of everything — just without a course to reason about.
+    // so scale the quantities down proportionally instead. Same idea - everyone
+    // gets less of everything - just without a course to reason about.
     if (scalable.length === 0) {
       for (let f = 100; f >= 1; f--) {
         const trial = lines.map((l) => ({ ...l, qty: Math.max(1, Math.floor((l.qty * f) / 100)) }));
@@ -120,12 +120,12 @@ export function DispenseScratchpad({
         setNote(
           d >= ceiling
             ? `The full ${ceiling}-day course already fits ₹${money(target)}.`
-            : `${d} day${d === 1 ? "" : "s"} fits — ₹${money(billTotal(trial, discount))}. The full ${ceiling} days would be ₹${money(asPrescribed)}.`
+            : `${d} day${d === 1 ? "" : "s"} fits - ₹${money(billTotal(trial, discount))}. The full ${ceiling} days would be ₹${money(asPrescribed)}.`
         );
         return;
       }
     }
-    // Even one day is over budget — say so plainly instead of silently doing nothing.
+    // Even one day is over budget - say so plainly instead of silently doing nothing.
     setNote(`Even a single day comes to more than ₹${money(target)}. Remove a medicine, or the patient needs to spend more.`);
   }
 
@@ -145,8 +145,8 @@ export function DispenseScratchpad({
               <p className="text-[12px] font-semibold text-[var(--p-ink)]">Days of medicine</p>
               <p className="text-[11px] text-[var(--p-muted)]">
                 {prescribedDays > 0
-                  ? <>Doctor wrote <b className="text-[var(--p-ink)]">{prescribedDays} days</b>. Giving <b className="text-[var(--p-ink)]">{givingDays || "—"}</b>.</>
-                  : <>Set a course length — quantities follow the dosage pattern.</>}
+                  ? <>Doctor wrote <b className="text-[var(--p-ink)]">{prescribedDays} days</b>. Giving <b className="text-[var(--p-ink)]">{givingDays || "-"}</b>.</>
+                  : <>Set a course length - quantities follow the dosage pattern.</>}
               </p>
             </div>
             <div className="flex items-center gap-1.5">
@@ -169,7 +169,7 @@ export function DispenseScratchpad({
       {/* BUDGET */}
       <div className="mb-3 rounded-lg border border-[var(--p-border)] bg-white p-3">
         <p className="text-[12px] font-semibold text-[var(--p-ink)]">&ldquo;I only have this much&rdquo;</p>
-        <p className="mb-2 text-[11px] text-[var(--p-muted)]">Name the amount — it finds the longest course that fits.</p>
+        <p className="mb-2 text-[11px] text-[var(--p-muted)]">Name the amount - it finds the longest course that fits.</p>
         <div className="flex gap-2">
           <div className="flex flex-1 items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2">
             <span className="text-[13px] font-semibold text-[var(--p-muted)]">₹</span>
@@ -206,20 +206,20 @@ export function DispenseScratchpad({
       {abxShorted.length > 0 && (
         <div className="mt-3 rounded-lg border-2 border-[var(--p-rose)] bg-[var(--p-rose-soft)] p-3">
           <p className="flex items-center gap-1.5 text-[12px] font-bold text-[var(--p-rose)]">
-            <Icon name="alert" size={14} /> Stop — this is an antibiotic
+            <Icon name="alert" size={14} /> Stop - this is an antibiotic
           </p>
           <p className="mt-1 text-[12px] leading-relaxed text-[var(--p-rose)]">
             {abxShorted.map((l) => l.name).join(", ")} {abxShorted.length === 1 ? "is" : "are"} being cut short.
-            <b> A half-finished antibiotic course is worse than none</b> — the infection survives and comes back resistant.
+            <b> A half-finished antibiotic course is worse than none</b> - the infection survives and comes back resistant.
             Give the full course, or talk to the doctor about a cheaper one. Don&apos;t just give fewer days.
           </p>
           <p className="mt-1.5 text-[11px] text-[var(--p-rose)]">
-            The other medicines can safely be trimmed instead — try the days control above with the antibiotic left at full.
+            The other medicines can safely be trimmed instead - try the days control above with the antibiotic left at full.
           </p>
         </div>
       )}
 
-      {/* WHY — goes on the bill */}
+      {/* WHY - goes on the bill */}
       {isShort && (
         <div className="mt-3">
           <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">

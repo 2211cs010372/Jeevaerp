@@ -11,7 +11,7 @@ export const GET = handler(async (req) => {
   return NextResponse.json({ catalog: await listAllCatalog() });
 });
 
-/** Create or update a lab test — this is where GST rates are set. */
+/** Create or update a lab test - this is where GST rates are set. */
 export const POST = handler(async (req) => {
   const actor = await requireRole(req, "ADMIN");
   const i = await parseBody(req, catalogItemSchema);

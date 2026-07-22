@@ -12,13 +12,13 @@ import { api } from "@/lib/api-client";
  * to remember:
  *
  *   An admitted patient's reports, prescriptions and tests belong to their STAY.
- *   Everything files against the admission, and the money goes on the room tab —
+ *   Everything files against the admission, and the money goes on the room tab -
  *   settled once, at discharge. Nobody chases a family to three counters.
  *
  *   An outpatient's belong to their VISIT, and they pay before they leave.
  *
  * Reception should never have to know which is which. So the moment a patient is
- * picked, the software asks the bed board, and says so — loudly, in colour, with
+ * picked, the software asks the bed board, and says so - loudly, in colour, with
  * the ward and bed on it. The receptionist reads it; they don't decide it.
  */
 
@@ -55,7 +55,7 @@ const days = (iso: string) =>
   Math.max(1, Math.ceil((Date.now() - new Date(iso).getTime()) / 86400000));
 
 /**
- * @param what  what's being filed — "This prescription", "These tests"
+ * @param what  what's being filed - "This prescription", "These tests"
  */
 export function AdmissionBanner({
   admission,
@@ -75,7 +75,7 @@ export function AdmissionBanner({
     );
   }
 
-  // ── OUTPATIENT — the quiet, common case. Say it once, calmly. ──
+  // ── OUTPATIENT - the quiet, common case. Say it once, calmly. ──
   if (!admission) {
     return (
       <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-[var(--p-border)] bg-[var(--p-surface)] px-4 py-3">
@@ -89,7 +89,7 @@ export function AdmissionBanner({
     );
   }
 
-  // ── INPATIENT — loud, unmissable, and it tells the desk what NOT to do. ──
+  // ── INPATIENT - loud, unmissable, and it tells the desk what NOT to do. ──
   return (
     <div className="ip-banner mb-4 overflow-hidden rounded-xl">
       <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
@@ -99,7 +99,7 @@ export function AdmissionBanner({
           </span>
           <div className="min-w-0">
             <p className="flex flex-wrap items-center gap-x-2 text-[14px] font-bold text-white">
-              Admitted — inpatient
+              Admitted - inpatient
               <span className="rounded bg-white/25 px-1.5 py-0.5 font-mono text-[11px] font-semibold">
                 {admission.ipNumber}
               </span>
@@ -118,7 +118,7 @@ export function AdmissionBanner({
 
       <div className="bg-white/95 px-4 py-2.5">
         <p className="text-[12.5px] leading-relaxed text-[var(--p-ink)]">
-          <b>{what} goes on the room tab</b> — filed against this stay, not a visit.
+          <b>{what} goes on the room tab</b> - filed against this stay, not a visit.
           Charges settle once, in the discharge bill. <b className="text-[var(--p-rose)]">Do not take money at the counter.</b>
         </p>
       </div>

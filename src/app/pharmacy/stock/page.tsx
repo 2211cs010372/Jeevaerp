@@ -20,7 +20,7 @@ const blankMed = { id: "", name: "", genericName: "", manufacturer: "", hsnCode:
 const blankBatch = { batchNo: "", expiryDate: "", quantity: "", mrp: "", purchasePrice: "", supplierRef: "" };
 
 /** Fixed reasons keep the stock ledger auditable. Free text invites "adj" and "fix". */
-const REMOVE_REASONS = ["Expired — pulled from shelf", "Damaged / broken", "Spillage", "Returned to supplier", "Stock count correction"];
+const REMOVE_REASONS = ["Expired - pulled from shelf", "Damaged / broken", "Spillage", "Returned to supplier", "Stock count correction"];
 const EXPIRY_WARN_DAYS = 90;
 
 const daysUntil = (iso: string) => {
@@ -31,7 +31,7 @@ const dmy = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice
 
 /** Nobody should do date arithmetic at a counter. */
 function expiry(iso: string | null): { text: string; sub: string; tone: "ok" | "warn" | "bad" | "none" } {
-  if (!iso) return { text: "—", sub: "no stock", tone: "none" };
+  if (!iso) return { text: "-", sub: "no stock", tone: "none" };
   const d = daysUntil(iso);
   if (d < 0) return { text: "Expired", sub: dmy(iso), tone: "bad" };
   if (d === 0) return { text: "Today", sub: dmy(iso), tone: "bad" };
@@ -74,7 +74,7 @@ export default function StockPage() {
   }, [q]);
   useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t); }, [load]);
 
-  // "/" focuses search — hands stay on the keyboard during a rush
+  // "/" focuses search - hands stay on the keyboard during a rush
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if (e.key === "/" && document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "SELECT") {
@@ -85,7 +85,7 @@ export default function StockPage() {
     return () => window.removeEventListener("keydown", k);
   }, []);
 
-  // Escape closes whichever modal is open — never mid-save, so a request in
+  // Escape closes whichever modal is open - never mid-save, so a request in
   // flight can't be orphaned by a stray key press.
   useEffect(() => {
     if (!receiving && !remove && !editMed) return;
@@ -115,7 +115,7 @@ export default function StockPage() {
     }
   }, [meds, tab]);
 
-  /** Group by physical rack — this is the order you actually walk the shelves in. */
+  /** Group by physical rack - this is the order you actually walk the shelves in. */
   const racks = useMemo(() => {
     const map = new Map<string, Med[]>();
     for (const m of shown) {
@@ -130,7 +130,7 @@ export default function StockPage() {
 
   async function toggle(m: Med) {
     if (expanded === m.id) { setExpanded(null); return; }
-    setExpanded(m.id); setBatches([]); setBatchesLoading(true); // clear first — no stale batches flashing
+    setExpanded(m.id); setBatches([]); setBatchesLoading(true); // clear first - no stale batches flashing
     try { const r = await api.get<{ batches: Batch[] }>(`/pharmacy/medicines/${m.id}/batches`); setBatches(r.batches); }
     catch { setBatches([]); }
     finally { setBatchesLoading(false); }
@@ -160,7 +160,7 @@ export default function StockPage() {
     setBusy(true); setError(null);
     try {
       await api.post("/pharmacy/adjust", { batchId: remove.batch.id, delta: -qty, reason: rmReason });
-      setFlash(`Removed ${qty} ${remove.med.unit}s from batch ${remove.batch.batchNo} — ${rmReason.toLowerCase()}.`);
+      setFlash(`Removed ${qty} ${remove.med.unit}s from batch ${remove.batch.batchNo} - ${rmReason.toLowerCase()}.`);
       const med = remove.med;
       setRemove(null); setRmQty(""); setRmReason(REMOVE_REASONS[0]);
       await load();
@@ -189,10 +189,10 @@ export default function StockPage() {
 
   const openEdit = (m: Med) => setEditMed({
     id: m.id, name: m.name, genericName: m.genericName ?? "",
-    manufacturer: m.manufacturer ?? "",  // was hardcoded "" — every edit WIPED the manufacturer
+    manufacturer: m.manufacturer ?? "",  // was hardcoded "" - every edit WIPED the manufacturer
     hsnCode: m.hsnCode ?? "", gstRatePct: m.gstRatePct, unit: m.unit,
     reorderThreshold: String(m.reorderThreshold), rackLocation: m.rackLocation ?? "",
-    active: m.active,                    // was hardcoded true — a discontinued medicine silently came back
+    active: m.active,                    // was hardcoded true - a discontinued medicine silently came back
     courseCritical: m.courseCritical,
   });
 
@@ -209,7 +209,7 @@ export default function StockPage() {
     const e = expiry(m.nearestExpiry);
     const out = m.inStock === 0;
     const open = expanded === m.id;
-    // meter reads full at 3x the reorder line — the shape tells you "comfortable" at a glance
+    // meter reads full at 3x the reorder line - the shape tells you "comfortable" at a glance
     const pct = Math.min(100, Math.round((m.inStock / Math.max(1, m.reorderThreshold * 3)) * 100));
     return (
       <div className="stk-row" style={{ ["--d" as string]: `${Math.min(i, 12) * 22}ms` }}>
@@ -230,7 +230,7 @@ export default function StockPage() {
             <div className="col-[2] hidden md:block">
               <span className="lbl">Rack</span>
               {m.rackLocation ? <span className="bin">{m.rackLocation}</span>
-                : <span className="bin bin-empty">—</span>}
+                : <span className="bin bin-empty">-</span>}
             </div>
           )}
 
@@ -244,7 +244,7 @@ export default function StockPage() {
             </div>
             <div className="mt-1 text-[10px] font-semibold text-[var(--p-muted)]">
               {out ? <span className="text-[var(--p-rose)]">Out of stock</span>
-                : m.lowStock ? <span className="text-[var(--p-amber)]">Below {m.reorderThreshold} — reorder</span>
+                : m.lowStock ? <span className="text-[var(--p-amber)]">Below {m.reorderThreshold} - reorder</span>
                 : <>Reorder at {m.reorderThreshold}</>}
             </div>
           </div>
@@ -270,7 +270,7 @@ export default function StockPage() {
         {m.expiredQty > 0 && (
           <button onClick={() => toggle(m)} className="pull-strip">
             <Icon name="alert" size={14} />
-            <span><b>{m.expiredQty} {m.unit}s expired</b> and still sitting on the shelf — open batches and remove them.</span>
+            <span><b>{m.expiredQty} {m.unit}s expired</b> and still sitting on the shelf - open batches and remove them.</span>
           </button>
         )}
 
@@ -282,7 +282,7 @@ export default function StockPage() {
             {batchesLoading ? (
               <div className="flex items-center gap-2 py-3 text-[12px] text-[var(--p-muted)]"><Spinner size={14} /> Loading batches…</div>
             ) : batches.length === 0 ? (
-              <p className="py-3 text-[12px] text-[var(--p-muted)]">No batches yet — use <b>Receive</b> to add one.</p>
+              <p className="py-3 text-[12px] text-[var(--p-muted)]">No batches yet - use <b>Receive</b> to add one.</p>
             ) : (
               <div className="space-y-1.5">
                 {batches.map((b, bi) => (
@@ -387,7 +387,7 @@ export default function StockPage() {
         <section data-rise className="surface grid place-items-center px-6 py-20 text-center">
           <span className="grid h-12 w-12 place-items-center rounded-xl bg-[var(--p-cyan-soft)] text-[var(--p-cyan-deep)]"><Icon name="check" size={22} /></span>
           <p className="mt-3 text-[14px] font-semibold text-[var(--p-ink)]">
-            {tab === "ALL" ? "No medicines found." : "Nothing here — that's good news."}
+            {tab === "ALL" ? "No medicines found." : "Nothing here - that's good news."}
           </p>
           <p className="mt-1 text-[12px] text-[var(--p-muted)]">
             {tab === "ALL" ? "Try a different search, or add a medicine." : "This list is empty because nothing needs your attention."}
@@ -407,7 +407,7 @@ export default function StockPage() {
             return (
               <section key={rack} data-rise className="surface overflow-hidden">
                 <div className="flex flex-wrap items-center gap-3 border-b border-[var(--p-border)] bg-[var(--p-bg)] px-5 py-3">
-                  {/* the shelf, drawn — how full it is, and whether anything on it is dead */}
+                  {/* the shelf, drawn - how full it is, and whether anything on it is dead */}
                   <ShelfGlyph
                     label={rack === "UNASSIGNED" ? "?" : rack}
                     filled={items.length}
@@ -491,7 +491,7 @@ export default function StockPage() {
                 </select>
               </Field>
               <p className="rounded-lg bg-[var(--p-amber-soft)] px-3 py-2 text-[11px] leading-relaxed text-[#8a6414]">
-                Recorded against your name in the stock ledger. This is <b>not a sale</b> — no bill is raised, the shelf count just drops.
+                Recorded against your name in the stock ledger. This is <b>not a sale</b> - no bill is raised, the shelf count just drops.
               </p>
             </div>
             <div className="flex justify-end gap-3 border-t border-[var(--p-border)] p-5">
@@ -512,7 +512,7 @@ export default function StockPage() {
           <div className="surface w-full max-w-md bg-white">
             <div className="border-b border-[var(--p-border)] px-6 py-4">
               <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">{editMed.id ? "Edit medicine" : "Add medicine"}</h3>
-              <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">Details only — to change quantities use <b>Receive</b> or <b>Remove</b>.</p>
+              <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">Details only - to change quantities use <b>Receive</b> or <b>Remove</b>.</p>
             </div>
             <div className="grid gap-4 p-6 sm:grid-cols-2">
               <Field label="Name" span><input className={fld} value={editMed.name} onChange={(e) => setEditMed({ ...editMed, name: e.target.value })} autoFocus /></Field>
@@ -527,7 +527,7 @@ export default function StockPage() {
             {editMed.id && (
               <label className="mx-6 mb-4 flex items-start gap-2.5 rounded-lg border border-[var(--p-border)] px-3 py-2.5 text-[12px] leading-relaxed text-[var(--p-text)]">
                 <input type="checkbox" checked={editMed.active} onChange={(e) => setEditMed({ ...editMed, active: e.target.checked })} className="mt-0.5 h-4 w-4 accent-[var(--p-blue)]" />
-                <span>Still stocked. Untick to discontinue — it leaves the counter, but its billing history stays intact.</span>
+                <span>Still stocked. Untick to discontinue - it leaves the counter, but its billing history stays intact.</span>
               </label>
             )}
             <label className="mx-6 mb-3 flex cursor-pointer items-start gap-2.5 rounded-lg border border-[var(--p-border)] px-3 py-2.5 text-[12px] leading-relaxed text-[var(--p-text)]">
@@ -535,12 +535,12 @@ export default function StockPage() {
                 onChange={(e) => setEditMed({ ...editMed, courseCritical: e.target.checked })}
                 className="mt-0.5 h-4 w-4 accent-[var(--p-rose)]" />
               <span>
-                <b>Full course required</b> — antibiotic, TB or antimalarial drug. The dispense scratchpad
+                <b>Full course required</b> - antibiotic, TB or antimalarial drug. The dispense scratchpad
                 will warn loudly if anyone tries to give a patient fewer days than the doctor prescribed.
               </span>
             </label>
             <p className="mx-6 mb-4 rounded-lg bg-[var(--p-amber-soft)] px-3 py-2 text-[11px] leading-relaxed text-[#8a6414]">
-              <strong>Medicines ARE taxable</strong> — usually 5%, some at 12%. Unlike lab tests, which are exempt. Confirm rates with your CA.
+              <strong>Medicines ARE taxable</strong> - usually 5%, some at 12%. Unlike lab tests, which are exempt. Confirm rates with your CA.
             </p>
             <div className="flex justify-end gap-3 border-t border-[var(--p-border)] p-5">
               <button onClick={() => setEditMed(null)} className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm text-[var(--p-text)]">Cancel</button>
@@ -553,7 +553,7 @@ export default function StockPage() {
   );
 }
 
-/* Craft layer. Density and precision over spectacle — this screen is used with a
+/* Craft layer. Density and precision over spectacle - this screen is used with a
    patient waiting, so every effect here is either informational or under 200ms. */
 const CSS = `
 .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
@@ -627,7 +627,7 @@ const CSS = `
 @keyframes sheetIn { from { opacity:0; transform: translateY(10px) scale(.985) } to { opacity:1; transform:none } }
 @media (prefers-reduced-motion: reduce) { .modal-veil, .modal-veil > * { animation:none } }
 
-/* the rack glyph — a small drawn shelf, not a bar chart. Boxes read ok/low/dead
+/* the rack glyph - a small drawn shelf, not a bar chart. Boxes read ok/low/dead
    at a glance; the frame is just structure, so it stays neutral. */
 .shelf { display:inline-flex; flex-shrink:0; align-items:center; gap:8px; }
 .shelf svg { width:44px; height:41px; flex-shrink:0; overflow:visible; }
@@ -644,7 +644,7 @@ const CSS = `
  * A rack, drawn as a rack.
  *
  * "A2" in a coloured square tells a pharmacist nothing. A shelf with boxes on it
- * tells them how full it is before they read a single word — and a red box tells
+ * tells them how full it is before they read a single word - and a red box tells
  * them something on that shelf is expired and needs pulling TODAY. The board
  * should read like the room it describes.
  */
@@ -653,7 +653,7 @@ function ShelfGlyph({
 }: {
   label: string; filled: number; lowCount: number; deadCount: number; unassigned: boolean;
 }) {
-  // three shelves, up to 4 boxes each — the shape of the shelf, not a bar chart
+  // three shelves, up to 4 boxes each - the shape of the shelf, not a bar chart
   const SLOTS = 12;
   const boxes = Math.min(filled, SLOTS);
   const dead = Math.min(deadCount, boxes);

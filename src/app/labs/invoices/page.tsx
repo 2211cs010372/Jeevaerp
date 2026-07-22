@@ -79,7 +79,7 @@ export default function InvoicesPage() {
       <div data-rise className="surface dotgrid mb-6 px-6 py-5">
         <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Lab invoices</h1>
         <p className="mt-1 text-[13px] leading-relaxed text-[var(--p-muted)]">
-          Unpaid invoices can be edited. Once paid, an invoice can only be <strong>cancelled and reissued</strong> — a tax invoice is a legal record and is never silently rewritten.
+          Unpaid invoices can be edited. Once paid, an invoice can only be <strong>cancelled and reissued</strong> - a tax invoice is a legal record and is never silently rewritten.
         </p>
       </div>
 

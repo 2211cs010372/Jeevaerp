@@ -10,7 +10,7 @@ export const addBatchSchema = z.object({
   supplierRef: z.string().trim().max(60).optional(),
 });
 
-/** Bulk stock receipt — from a spreadsheet or a keyed-in scanned invoice.
+/** Bulk stock receipt - from a spreadsheet or a keyed-in scanned invoice.
  *  Each row identifies its medicine by catalog id (preferred) or by name. */
 export const bulkAddBatchesSchema = z.object({
   rows: z.array(

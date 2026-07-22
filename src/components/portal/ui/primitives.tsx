@@ -3,7 +3,7 @@
 import { useCountUp } from "@/lib/portal/use-count-up";
 import { Icon, type IconName } from "./icons";
 
-/** Bordered surface card — the base of the whole dashboard aesthetic. */
+/** Bordered surface card - the base of the whole dashboard aesthetic. */
 export function Card({
   children, className = "", enter, style,
 }: { children: React.ReactNode; className?: string; enter?: number; style?: React.CSSProperties }) {
@@ -20,7 +20,7 @@ export function Card({
 
 /**
  * KPI tile. The number counts up on first paint, and the icon sits in a tinted
- * chip — teal, because these are health/volume signals rather than actions.
+ * chip - teal, because these are health/volume signals rather than actions.
  */
 export function Kpi({
   icon, label, value, prefix = "", suffix = "", sub, decimals = 0, delay = 0,
@@ -38,7 +38,7 @@ export function Kpi({
       style={{ animationDelay: `${delay}ms` }}
       className="surface surface-hover group relative overflow-hidden p-5"
     >
-      {/* corner bloom — picks up on hover */}
+      {/* corner bloom - picks up on hover */}
       <span className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-[var(--p-cyan-soft)] opacity-0 blur-2xl transition-opacity duration-300 group-hover:opacity-100" />
 
       <div className="flex items-center gap-2.5">

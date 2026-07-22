@@ -7,13 +7,13 @@ import { Spinner } from "@/components/portal/ui/form-atoms";
 import { api } from "@/lib/api-client";
 
 /**
- * THE COMMAND BAR — ⌘K / Ctrl+K, or click the search box.
+ * THE COMMAND BAR - ⌘K / Ctrl+K, or click the search box.
  *
  * A front desk is a queue of interruptions. Somebody walks up mid-task and says
  * a name. Before this, finding them meant: stop, look at the sidebar, decide
  * which of nine pages is right, navigate, search again. Now it's one keystroke
- * from any screen, and the RESULT carries the actions — book, check in, upload
- * an Rx, admit — so the receptionist never has to know which page owns which verb.
+ * from any screen, and the RESULT carries the actions - book, check in, upload
+ * an Rx, admit - so the receptionist never has to know which page owns which verb.
  *
  * Deliberately searches PATIENTS, not pages. Staff don't think "I need the
  * prescriptions page"; they think "Ramesh Kumar is standing here."
@@ -33,14 +33,14 @@ interface Med {
 
 interface Action { label: string; href: string; icon: IconName; hint: string; }
 
-/** Days until a batch expires — negative means it's already dead on the shelf. */
+/** Days until a batch expires - negative means it's already dead on the shelf. */
 function daysTo(iso: string | null): number | null {
   if (!iso) return null;
   const d = Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000);
   return Number.isFinite(d) ? d : null;
 }
 
-/** What you can do TO a patient — the verbs, in the order the desk uses them. */
+/** What you can do TO a patient - the verbs, in the order the desk uses them. */
 const patientActions = (uhid: string): Action[] => [
   { label: "Open patient file", href: `/patients/${uhid}`, icon: "search", hint: "History, visits, bills" },
   { label: "Book appointment",  href: `/book?patient=${uhid}`, icon: "calendar", hint: "Pick a doctor & slot" },
@@ -49,7 +49,7 @@ const patientActions = (uhid: string): Action[] => [
   { label: "Admit to a bed",    href: `/ipd?patient=${uhid}`, icon: "bed", hint: "Inpatient admission" },
 ];
 
-/** Jump targets when nothing is typed yet — different job, different verbs. */
+/** Jump targets when nothing is typed yet - different job, different verbs. */
 const QUICK_RECEPTION: Action[] = [
   { label: "Register a new patient", href: "/register", icon: "users", hint: "First visit → gives them a UHID" },
   { label: "Book an appointment",    href: "/book", icon: "calendar", hint: "Doctor, slot, fee" },
@@ -101,7 +101,7 @@ export function CommandBar({ portal = "reception" }: { portal?: string }) {
   /**
    * A receptionist searching means "who is standing here?".
    * A pharmacist searching means "do we have it, where is it, is it still good?".
-   * Same key, different question — so the bar answers the one the desk is asking.
+   * Same key, different question - so the bar answers the one the desk is asking.
    */
   useEffect(() => {
     if (picked) return;
@@ -150,7 +150,7 @@ export function CommandBar({ portal = "reception" }: { portal?: string }) {
 
   return (
     <>
-      {/* the always-visible trigger — nobody discovers a shortcut they can't see */}
+      {/* the always-visible trigger - nobody discovers a shortcut they can't see */}
       <button onClick={() => setOpen(true)}
         className="flex min-w-[190px] items-center gap-2.5 rounded-lg border border-[var(--p-border)] bg-[var(--p-surface)] px-3.5 py-2 text-left transition-colors hover:border-[var(--p-blue)] lg:min-w-[280px]">
         <Icon name="search" size={15} />
@@ -183,7 +183,7 @@ export function CommandBar({ portal = "reception" }: { portal?: string }) {
             </div>
 
             <div className="max-h-[52vh] overflow-y-auto">
-              {/* MEDICINE matches — rack, stock and expiry are the whole answer.
+              {/* MEDICINE matches - rack, stock and expiry are the whole answer.
                   Deliberately opaque and high-contrast: a pharmacist reading a
                   strength through frosted glass is how the wrong box gets handed over. */}
               {!picked && isPharmacy && meds.length > 0 && (
@@ -214,7 +214,7 @@ export function CommandBar({ portal = "reception" }: { portal?: string }) {
                               {m.inStock === 0 ? "OUT OF STOCK" : `${m.inStock} ${m.unit}${m.inStock === 1 ? "" : "s"}`}
                             </span>
                             {dead ? (
-                              <span className="font-semibold text-[var(--p-rose)]">EXPIRED — pull it</span>
+                              <span className="font-semibold text-[var(--p-rose)]">EXPIRED - pull it</span>
                             ) : soon ? (
                               <span className="font-semibold text-[var(--p-amber)]">expires in {d}d</span>
                             ) : d !== null ? (
@@ -266,7 +266,7 @@ export function CommandBar({ portal = "reception" }: { portal?: string }) {
                 </div>
               )}
 
-              {/* actions — either for the picked patient, or the quick jumps */}
+              {/* actions - either for the picked patient, or the quick jumps */}
               {rows.length > 0 && (
                 <>
                   <p className="px-4 pb-1 pt-3 text-[11px] font-bold uppercase tracking-wider text-[var(--p-muted)]">

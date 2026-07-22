@@ -61,6 +61,11 @@ export const addChargeSchema = z.object({
   gstRatePct: z.coerce.number().min(0).max(28).optional(),
 });
 
+/** Nursing / observation notes for the stay. */
+export const admissionNotesSchema = z.object({
+  notes: z.string().max(4000),
+});
+
 /** Moving a patient to another bed mid-stay. */
 export const transferBedSchema = z.object({
   toBedId: z.string().trim().min(1, "Pick a bed"),

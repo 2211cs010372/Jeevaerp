@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Bricolage_Grotesque, Fraunces, Geist, Geist_Mono, IBM_Plex_Mono, Instrument_Sans } from "next/font/google";
 import "./globals.css";
 
-/* The staff portals' type system — Geist for the UI, Geist Mono for data
+/* The staff portals' type system - Geist for the UI, Geist Mono for data
    (IDs, prices, timings). The modern-software sans, scoped to .portal so the
    public marketing site keeps its own display faces. */
 const geist = Geist({
@@ -36,7 +36,7 @@ const plexMono = IBM_Plex_Mono({
   display: "swap",
 });
 
-/* The portals' heading face (.font-serif-p) — italic included, since the
+/* The portals' heading face (.font-serif-p) - italic included, since the
    reception theme leans on the serif italic accent. */
 const fraunces = Fraunces({
   subsets: ["latin"],
@@ -47,8 +47,8 @@ const fraunces = Fraunces({
 
 export const metadata: Metadata = {
   title: {
-    default: "Jeeva Multispeciality Hospital — Hanamkonda",
-    template: "%s — Jeeva Multispeciality Hospital",
+    default: "Jeeva Multispeciality Hospital - Hanamkonda",
+    template: "%s - Jeeva Multispeciality Hospital",
   },
   description:
     "Your health, our care. Multispeciality hospital in Hanamkonda: 24/7 emergency, specialized doctors, in-house diagnostics and pharmacy.",

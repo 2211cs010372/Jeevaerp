@@ -7,15 +7,15 @@ import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 
 /**
- * DAY CLOSE — the shift handover.
+ * DAY CLOSE - the shift handover.
  *
  * At the end of a shift a receptionist counts the cash drawer and hands it over.
  * Until now Jeeva couldn't tell them what the number *should* be, so "reconciling"
- * meant trusting the drawer — which isn't reconciliation, it's hope.
+ * meant trusting the drawer - which isn't reconciliation, it's hope.
  *
  * The rule everyone gets wrong, stated on the page itself:
  * a refund paid by UPI does NOT come out of the cash box. Cash in hand is
- * cash taken minus cash given back — in cash — and nothing else.
+ * cash taken minus cash given back - in cash - and nothing else.
  */
 
 interface ModeTotal { mode: string; collected: number; refunded: number; net: number; count: number; }
@@ -123,7 +123,7 @@ export default function DayClosePage() {
                     </span>
                     <span className="flex-1 text-right font-mono text-[13px] text-[var(--p-ink)]">₹{money(m.collected)}</span>
                     <span className={`w-[110px] text-right font-mono text-[13px] ${m.refunded > 0 ? "text-[var(--p-rose)]" : "text-[var(--p-muted)]"}`}>
-                      {m.refunded > 0 ? `−₹${money(m.refunded)}` : "—"}
+                      {m.refunded > 0 ? `−₹${money(m.refunded)}` : "-"}
                     </span>
                     <span className="w-[110px] text-right font-mono text-[14px] font-bold text-[var(--p-ink)]">₹{money(m.net)}</span>
                   </div>
@@ -132,7 +132,7 @@ export default function DayClosePage() {
                   <span className="w-[110px] text-[12px] font-bold uppercase tracking-wide text-[var(--p-muted)]">Total</span>
                   <span className="flex-1 text-right font-mono text-[14px] font-semibold text-[var(--p-ink)]">₹{money(data.totals?.collected ?? 0)}</span>
                   <span className="w-[110px] text-right font-mono text-[14px] font-semibold text-[var(--p-rose)]">
-                    {(data.totals?.refunded ?? 0) > 0 ? `−₹${money(data.totals?.refunded ?? 0)}` : "—"}
+                    {(data.totals?.refunded ?? 0) > 0 ? `−₹${money(data.totals?.refunded ?? 0)}` : "-"}
                   </span>
                   <span className="w-[110px] text-right font-mono text-[16px] font-bold text-[var(--p-teal)]">₹{money(data.totals?.net ?? 0)}</span>
                 </div>
@@ -219,7 +219,7 @@ export default function DayClosePage() {
                   ₹{money(data.cashInHand ?? 0)}
                 </p>
                 <p className="mt-2 text-[11px] leading-relaxed text-[var(--p-text)]">
-                  Cash taken <b>minus cash refunded</b>. A UPI refund never comes out of this drawer —
+                  Cash taken <b>minus cash refunded</b>. A UPI refund never comes out of this drawer -
                   only cash does.
                 </p>
               </div>
@@ -261,7 +261,7 @@ export default function DayClosePage() {
                 )}
 
                 <p className="text-[11px] leading-relaxed text-[var(--p-muted)]">
-                  This is a reconciliation aid, not a lock — nothing is written when you count.
+                  This is a reconciliation aid, not a lock - nothing is written when you count.
                   Print it and staple it to the handover.
                 </p>
               </div>

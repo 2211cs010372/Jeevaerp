@@ -26,9 +26,10 @@ const SOURCE_LABEL: Record<string, string> = {
 const money = (v: string | number) => `₹${Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const GENDER: Record<string, string> = { MALE: "M", FEMALE: "F", OTHER: "O" };
 
-/** The Jeeva bill — one Bill-of-Supply layout used by every portal, with a
+/** The Jeeva bill - one Bill-of-Supply layout used by every portal, with a
  *  QR code (scan to verify) and a Code128 barcode of the receipt number. */
-export function InvoiceSheet() {
+/** "staff" reads the staff endpoint; "portal" reads the patient-scoped one. */
+export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal" } = {}) {
   const { invoiceId } = useParams<{ invoiceId: string }>();
   const [inv, setInv] = useState<Invoice | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -36,10 +37,11 @@ export function InvoiceSheet() {
   const barcodeRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {
-    api.get<{ invoice: Invoice }>(`/billing/invoice/${invoiceId}`)
+    const path = source === "portal" ? `/portal/invoice/${invoiceId}` : `/billing/invoice/${invoiceId}`;
+    api.get<{ invoice: Invoice }>(path)
       .then((r) => setInv(r.invoice))
       .catch((e) => setError(e instanceof ApiClientError ? e.message : "Couldn't load the bill."));
-  }, [invoiceId]);
+  }, [invoiceId, source]);
 
   useEffect(() => {
     if (!inv) return;
@@ -48,7 +50,7 @@ export function InvoiceSheet() {
     if (barcodeRef.current) {
       try {
         JsBarcode(barcodeRef.current, inv.receiptNo, { format: "CODE128", displayValue: false, height: 30, width: 1.35, margin: 0, background: "transparent", lineColor: "#17211e" });
-      } catch { /* non-encodable receipt — barcode simply omitted */ }
+      } catch { /* non-encodable receipt - barcode simply omitted */ }
     }
   }, [inv]);
 
@@ -59,8 +61,8 @@ export function InvoiceSheet() {
   const gstApplies = Number(inv.cgstAmount) > 0 || Number(inv.sgstAmount) > 0;
   const discPctNum = Number(inv.subtotal) > 0 ? (Number(inv.discountAmount) / Number(inv.subtotal)) * 100 : 0;
   const discPct = discPctNum % 1 === 0 ? discPctNum.toFixed(0) : discPctNum.toFixed(1);
-  const ageSex = [inv.patient.age != null ? `${inv.patient.age}y` : null, inv.patient.gender ? GENDER[inv.patient.gender] ?? inv.patient.gender : null].filter(Boolean).join(" / ") || "—";
-  const payMode = inv.payments.length ? inv.payments.map((p) => p.mode).join(", ") : "—";
+  const ageSex = [inv.patient.age != null ? `${inv.patient.age}y` : null, inv.patient.gender ? GENDER[inv.patient.gender] ?? inv.patient.gender : null].filter(Boolean).join(" / ") || "-";
+  const payMode = inv.payments.length ? inv.payments.map((p) => p.mode).join(", ") : "-";
 
   const Meta = ({ k, v }: { k: string; v: string }) => (
     <div className="flex items-baseline gap-1.5">
@@ -116,12 +118,12 @@ export function InvoiceSheet() {
         <div className="rule mt-2 grid grid-cols-[2fr_1fr] gap-x-6 py-4 mb-10">
           <div className="space-y-1">
             <Meta k="Patient" v={inv.patient.fullName} />
-            <Meta k="Address" v={inv.patient.address || "—"} />
+            <Meta k="Address" v={inv.patient.address || "-"} />
           </div>
           <div className="space-y-1 ">
             <Meta k="Age/Sex" v={ageSex} />
             <Meta k="Phone" v={inv.patient.phone} />
-            <Meta k="Payor" v={inv.payments.length ? "Self" : "—"} />
+            <Meta k="Payor" v={inv.payments.length ? "Self" : "-"} />
           </div>
         </div>
 
@@ -143,7 +145,7 @@ export function InvoiceSheet() {
               <tr key={i} className="align-top">
                 <td className="rule py-[6px] pr-1 font-mono text-[11px] text-[#57655f]">{i + 1}</td>
                 <td className="rule py-[6px] pr-2">{it.description}</td>
-                <td className="rule py-[6px] pr-2 font-mono text-[11px]">{it.hsnSac ?? "—"}</td>
+                <td className="rule py-[6px] pr-2 font-mono text-[11px]">{it.hsnSac ?? "-"}</td>
                 <td className="rule py-[6px] pr-2 text-right font-mono">{it.qty}</td>
                 <td className="rule py-[6px] pr-2 text-right font-mono">{money(it.unitPrice)}</td>
                 <td className="rule py-[6px] pr-2 text-right font-mono">{Number(it.gstRatePct) ? `${it.gstRatePct}%` : "Exempt"}</td>

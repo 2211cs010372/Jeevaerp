@@ -46,7 +46,7 @@ export default function CatalogPage() {
         <div>
           <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Lab catalog & GST</h1>
           <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-[var(--p-muted)]">
-            <strong>This is where GST rates are set.</strong> Diagnostic services are generally GST-exempt (0%) under Notification 12/2017 — that&apos;s the default. Have your CA confirm which tests, if any, are taxable, then set the rate here. Invoices update automatically (CGST + SGST, each half the rate).
+            <strong>This is where GST rates are set.</strong> Diagnostic services are generally GST-exempt (0%) under Notification 12/2017 - that&apos;s the default. Have your CA confirm which tests, if any, are taxable, then set the rate here. Invoices update automatically (CGST + SGST, each half the rate).
           </p>
         </div>
         <PrimaryButton onClick={() => setEdit({ ...blank })}><Icon name="plus" size={15} /> Add test</PrimaryButton>
@@ -73,7 +73,7 @@ export default function CatalogPage() {
               {items.map((i) => (
                 <tr key={i.id} className={i.active ? "" : "opacity-55"}>
                   <td className="px-6 py-3 font-medium text-[var(--p-ink)]">{i.name}</td>
-                  <td className="py-3 font-mono text-[12px] text-[var(--p-muted)]">{i.code ?? "—"}</td>
+                  <td className="py-3 font-mono text-[12px] text-[var(--p-muted)]">{i.code ?? "-"}</td>
                   <td className="py-3 text-right font-mono">₹{i.price}</td>
                   <td className="py-3 text-center">
                     {Number(i.gstRatePct) === 0

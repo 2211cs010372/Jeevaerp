@@ -12,7 +12,7 @@ import type { Role } from "@/lib/auth/types";
 /**
  * Two jobs:
  *  1. Rewrite a portal subdomain to its route group (admin.… -> /admin/…).
- *  2. Enforce that the session's ROLE is allowed on that subdomain — a wrong
+ *  2. Enforce that the session's ROLE is allowed on that subdomain - a wrong
  *     role (or no session) is bounced to that portal's /login. This is the
  *     server-side gate; the login redirectTo is only a client convenience.
  *
@@ -39,7 +39,7 @@ export async function middleware(req: NextRequest) {
   const host = req.headers.get("host") ?? "";
   const { pathname, search } = req.nextUrl;
 
-  // API is same-origin on every subdomain — never rewrite or gate it here.
+  // API is same-origin on every subdomain - never rewrite or gate it here.
   if (pathname.startsWith("/api")) return NextResponse.next();
 
   // One classifier decides subdomain vs path routing (shared with resolveOrigin):
@@ -103,7 +103,7 @@ export async function middleware(req: NextRequest) {
     }
 
     // Path mode (single host / *.vercel.app): gate the portal in place. The
-    // route group /<portal>/… already matches, so no URL rewrite is needed —
+    // route group /<portal>/… already matches, so no URL rewrite is needed -
     // we only forward x-portal-path so the portal layout can tell login from app.
     const isLoginPage = pathname === `/${pathPortal}/login`;
     if (!isLoginPage) {

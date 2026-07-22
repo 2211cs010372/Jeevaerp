@@ -31,7 +31,7 @@ function allowedDays(days: string): Set<number> {
   return s;
 }
 
-/** Demo availability until GET /api/v1/public/slots lands — deterministic, so it looks real. */
+/** Demo availability until GET /api/v1/public/slots lands - deterministic, so it looks real. */
 function isBooked(doctorId: string, date: string, slot: string) {
   let h = 0;
   for (const ch of doctorId + date + slot) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
@@ -42,7 +42,7 @@ const label = "font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--mut
 const field =
   "mt-2.5 w-full rounded-[14px] border border-[var(--line-strong)] bg-white px-4 py-3 text-sm text-[var(--ink)] outline-none transition-colors focus:border-[var(--teal)]";
 
-/* ---- the sticky profile rail — everything about the chosen doctor --------- */
+/* ---- the sticky profile rail - everything about the chosen doctor --------- */
 
 function DoctorProfile({ doctor, date, slot, name }: { doctor?: Doctor; date: string; slot: string; name: string }) {
   if (!doctor) {
@@ -97,15 +97,15 @@ function DoctorProfile({ doctor, date, slot, name }: { doctor?: Doctor; date: st
         <dl className="mt-4 space-y-2.5 rounded-[var(--r-sm)] bg-[var(--teal-soft)] p-4">
           <div className="flex items-baseline justify-between gap-4">
             <dt className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-[var(--teal)]">Date</dt>
-            <dd className="font-mono text-[13px] text-[var(--ink)]">{date || "—"}</dd>
+            <dd className="font-mono text-[13px] text-[var(--ink)]">{date || "-"}</dd>
           </div>
           <div className="flex items-baseline justify-between gap-4">
             <dt className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-[var(--teal)]">Time</dt>
-            <dd className="font-mono text-[13px] text-[var(--ink)]">{slot || "—"}</dd>
+            <dd className="font-mono text-[13px] text-[var(--ink)]">{slot || "-"}</dd>
           </div>
           <div className="flex items-baseline justify-between gap-4">
             <dt className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-[var(--teal)]">Patient</dt>
-            <dd className="truncate text-[13px] font-medium text-[var(--ink)]">{name.trim() || "—"}</dd>
+            <dd className="truncate text-[13px] font-medium text-[var(--ink)]">{name.trim() || "-"}</dd>
           </div>
         </dl>
 
@@ -180,9 +180,9 @@ export function BookingForm() {
   return (
     <div className="grid items-start gap-8 lg:grid-cols-[7fr_5fr]">
       <div className="card rounded-[var(--r-lg)] p-6 sm:p-8">
-        {/* 01 — department */}
+        {/* 01 - department */}
         <div>
-          <p className={label}>01 — Department</p>
+          <p className={label}>01 - Department</p>
           <div className="mt-3 flex flex-wrap gap-2">
             {DEPARTMENTS.map((d) => {
               const active = dept === d.name;
@@ -198,9 +198,9 @@ export function BookingForm() {
           </div>
         </div>
 
-        {/* 02 — doctor */}
+        {/* 02 - doctor */}
         <div className="mt-8 border-t border-[var(--line)] pt-7">
-          <p className={label}>02 — Doctor</p>
+          <p className={label}>02 - Doctor</p>
           <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
             {doctors.map((d) => {
               const active = doctorId === d.id;
@@ -225,11 +225,11 @@ export function BookingForm() {
           </div>
         </div>
 
-        {/* 03 — date & time, generated from the doctor's OPD window */}
+        {/* 03 - date & time, generated from the doctor's OPD window */}
         <div className="mt-8 border-t border-[var(--line)] pt-7">
           <div className="grid gap-6 sm:grid-cols-2">
             <div>
-              <label className={label} htmlFor="date">03 — Date</label>
+              <label className={label} htmlFor="date">03 - Date</label>
               <input id="date" type="date" min={today} value={date}
                 onChange={(e) => { setDate(e.target.value); setSlot(""); }} className={field} />
               {doctor && !dayOk && (
@@ -251,7 +251,7 @@ export function BookingForm() {
             </div>
           </div>
 
-          <p className={`${label} mt-6`}>04 — Time slot {doctor ? <span className="normal-case tracking-normal">· {doctor.opd}</span> : ""}</p>
+          <p className={`${label} mt-6`}>04 - Time slot {doctor ? <span className="normal-case tracking-normal">· {doctor.opd}</span> : ""}</p>
           {doctor && date && dayOk ? (
             <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
               {slots.map((s) => {
@@ -278,14 +278,14 @@ export function BookingForm() {
           )}
         </div>
 
-        {/* 05 — patient */}
+        {/* 05 - patient */}
         <div className="mt-8 grid gap-6 border-t border-[var(--line)] pt-7 sm:grid-cols-2">
           <div>
-            <label className={label} htmlFor="name">05 — Patient name</label>
+            <label className={label} htmlFor="name">05 - Patient name</label>
             <input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" className={field} />
           </div>
           <div>
-            <label className={label} htmlFor="phone">06 — Mobile number</label>
+            <label className={label} htmlFor="phone">06 - Mobile number</label>
             <input id="phone" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="10-digit mobile" className={field} inputMode="numeric" />
           </div>
         </div>

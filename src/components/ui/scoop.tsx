@@ -3,7 +3,7 @@ import type { CSSProperties, ReactNode } from "react";
 type Corner = "tl" | "tr" | "bl" | "br";
 
 /**
- * The scoop — an inverted-radius corner notch cut out of a rounded panel,
+ * The scoop - an inverted-radius corner notch cut out of a rounded panel,
  * with content (a pill CTA, a chip, an arrow button) docked inside the bite.
  * Parent must be `relative`; `bg` must match the colour BEHIND the panel.
  */

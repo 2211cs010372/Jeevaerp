@@ -12,7 +12,7 @@ models = re.findall(r"model (\w+) \{", schema)
 enums = re.findall(r"enum (\w+) \{", schema)
 
 out = [
-    "// AUTO-GENERATED from prisma/schema.prisma — do not edit by hand.",
+    "// AUTO-GENERATED from prisma/schema.prisma - do not edit by hand.",
     "// Run: python3 regen-shim.py   (after EVERY schema change)",
     'declare module "@prisma/client" {',
     "  export namespace Prisma {",

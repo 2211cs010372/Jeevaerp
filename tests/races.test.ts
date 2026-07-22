@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { PrismaClient } from "@prisma/client";
 
 /**
- * RACE CONDITION TESTS — needs a real Postgres.
+ * RACE CONDITION TESTS - needs a real Postgres.
  *
  *   createdb jeeva_test
  *   DATABASE_URL="postgresql://.../jeeva_test" npx prisma migrate deploy
@@ -20,7 +20,7 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 const HAS_DB = !!process.env.DATABASE_URL;
 
-describe.skipIf(!HAS_DB)("races — exactly one winner", () => {
+describe.skipIf(!HAS_DB)("races - exactly one winner", () => {
   let doctorId: string;
   let slotId: string;
   let patientIds: string[] = [];
@@ -101,7 +101,7 @@ describe.skipIf(!HAS_DB)("races — exactly one winner", () => {
   it("a CANCELLED appointment's slot can be booked by someone else", async () => {
     // This is the invariant behind making slotId nullable. If it regresses,
     // every cancellation silently burns a slot forever and nobody notices for
-    // months — until the doctor's calendar is mysteriously full.
+    // months - until the doctor's calendar is mysteriously full.
     const slot = await prisma.doctorSlot.create({
       data: { doctorId, date: new Date("2099-02-01"), startTime: "11:00", endTime: "11:15", isBooked: true },
     });

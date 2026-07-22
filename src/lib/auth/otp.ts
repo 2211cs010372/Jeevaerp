@@ -15,7 +15,7 @@ export function hashOtp(code: string): string {
   return createHash("sha256").update(code).digest("hex");
 }
 
-/** Constant-time comparison — no early-exit timing signal. */
+/** Constant-time comparison - no early-exit timing signal. */
 export function verifyOtp(code: string, storedHash: string): boolean {
   const a = Buffer.from(hashOtp(code), "hex");
   const b = Buffer.from(storedHash, "hex");

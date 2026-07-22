@@ -18,7 +18,7 @@ export default function PatientsPage() {
   const [rows, setRows] = useState<PatientRow[]>([]);
   // ── DUPLICATES ──
   // Same person, two UHIDs. Their history is split, so a doctor checking
-  // allergies sees half of it. Not an admin annoyance — a clinical hazard.
+  // allergies sees half of it. Not an admin annoyance - a clinical hazard.
   interface DupPatient {
     id: string; displayId: string; fullName: string; age: number | null;
     gender: string | null; createdAt: string; visits: number; bills: number; admitted: boolean;
@@ -83,7 +83,7 @@ export default function PatientsPage() {
       )}
 
       {/* ─────────── POSSIBLE DUPLICATES ───────────
-          Same phone, two UHIDs. Almost always one person registered twice —
+          Same phone, two UHIDs. Almost always one person registered twice -
           once at a walk-in, once in an emergency by a different clerk. Their
           history is split, so a doctor checking allergies sees half of it. */}
       {dups.length > 0 && (
@@ -95,7 +95,7 @@ export default function PatientsPage() {
             </h2>
             <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--p-text)]">
               Same phone number, different Jeeva IDs. If it&apos;s one person, their history is
-              currently <b>split across two records</b> — a doctor checking allergies would see
+              currently <b>split across two records</b> - a doctor checking allergies would see
               only half of it.
             </p>
           </div>
@@ -132,13 +132,13 @@ export default function PatientsPage() {
                 {g.patients.some((p) => p.admitted) ? (
                   <p className="mt-3 rounded-lg bg-[var(--p-bg)] px-3 py-2 text-[12px] text-[var(--p-muted)]">
                     One of these is <b>currently admitted</b>. Merging would move their identity out from
-                    under a live admission — discharge them first.
+                    under a live admission - discharge them first.
                   </p>
                 ) : g.patients.length === 2 ? (
                   <button
                     onClick={() => { setMerging({ group: g, keepId: g.patients[0].id }); setMergeReason(""); }}
                     className="mt-3 inline-flex items-center gap-2 rounded-lg border border-[var(--p-amber)]/50 px-3.5 py-2 text-[13px] font-semibold text-[#8a6414] transition-colors hover:bg-[var(--p-amber-soft)]">
-                    <Icon name="users" size={14} /> These are the same person — merge
+                    <Icon name="users" size={14} /> These are the same person - merge
                   </button>
                 ) : (
                   <p className="mt-3 text-[12px] text-[var(--p-muted)]">
@@ -194,7 +194,7 @@ export default function PatientsPage() {
               <div className="rounded-lg bg-[var(--p-rose-soft)] px-4 py-3">
                 <p className="text-[12px] leading-relaxed text-[var(--p-rose)]">
                   <b>This cannot be undone.</b> Every visit, bill, lab test, prescription and admission
-                  moves onto the record you keep. The other Jeeva ID stops working — anyone who quotes
+                  moves onto the record you keep. The other Jeeva ID stops working - anyone who quotes
                   it will be told it doesn&apos;t exist.
                 </p>
                 <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--p-text)]">
@@ -218,7 +218,7 @@ export default function PatientsPage() {
               </button>
               <button onClick={doMerge} disabled={mergeBusy || mergeReason.trim().length < 3}
                 className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-rose)] px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-40">
-                {mergeBusy ? <><Spinner /> Merging…</> : <>Merge — permanently</>}
+                {mergeBusy ? <><Spinner /> Merging…</> : <>Merge - permanently</>}
               </button>
             </div>
           </div>

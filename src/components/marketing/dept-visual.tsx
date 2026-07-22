@@ -5,7 +5,7 @@ import { DeptIcon } from "@/components/marketing/dept-icon";
 
 /**
  * Department photo with a designed fallback: until the file in `src` exists
- * in /public/images, a quiet icon tile renders instead — so dropping real
+ * in /public/images, a quiet icon tile renders instead - so dropping real
  * photography in later needs zero code changes.
  */
 export function DeptVisual({ name, src, className = "" }: { name: string; src?: string; className?: string }) {

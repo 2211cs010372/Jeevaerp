@@ -1,5 +1,5 @@
 /**
- * INVOICE MATH — deliberately pure.
+ * INVOICE MATH - deliberately pure.
  *
  * This used to live inside `createInvoice`'s Prisma `$transaction`. That meant you
  * could not check whether a bill added up without standing up a Postgres database,
@@ -7,7 +7,7 @@
  * tests at all.
  *
  * Nothing in here touches the database, the clock, or the network. Given the same
- * lines it returns the same numbers, every time, in about a microsecond — so it can
+ * lines it returns the same numbers, every time, in about a microsecond - so it can
  * be tested to death.
  *
  * The arithmetic is unchanged from the original. Do not "tidy" it: the rounding
@@ -23,7 +23,7 @@ export interface CalcLine {
 }
 
 /** Whatever extra fields the caller's line carried (batchId, labTestId, hsnSac…)
- *  travel through untouched — the calc only ADDS qty/gstRatePct/amount. */
+ *  travel through untouched - the calc only ADDS qty/gstRatePct/amount. */
 export type CalcItem<L extends CalcLine = CalcLine> = L & {
   qty: number;
   gstRatePct: number;
@@ -42,19 +42,19 @@ export interface InvoiceTotals<L extends CalcLine = CalcLine> {
   total: number;
 }
 
-/** Money is rounded to paise at every step — never carried as a float tail. */
+/** Money is rounded to paise at every step - never carried as a float tail. */
 export const r2 = (n: number) => Math.round(n * 100) / 100;
 
 export class InvoiceMathError extends Error {}
 
 /**
- * Discount is spread across lines *proportionally, before tax* — not slapped on
+ * Discount is spread across lines *proportionally, before tax* - not slapped on
  * the end. This matters: a bill with an exempt consultation and a taxable medicine
  * must not have the whole discount silently eaten by the taxable line, because that
  * would change the GST owed to the government.
  *
  * CGST and SGST are each half the line tax (intra-state, Telangana 36). Inter-state
- * IGST is NOT handled — Jeeva bills locally. If that ever changes, this is the one
+ * IGST is NOT handled - Jeeva bills locally. If that ever changes, this is the one
  * function to touch.
  */
 export function computeInvoiceTotals<L extends CalcLine>(
@@ -97,7 +97,7 @@ export function computeInvoiceTotals<L extends CalcLine>(
 
    `amountPaid` was computed as `payments.reduce(...)` in FIVE separate places.
    Introducing refunds without a single shared definition of "what does this
-   patient actually owe" would mean five chances to get it wrong — and a silently
+   patient actually owe" would mean five chances to get it wrong - and a silently
    wrong balance in a hospital is money that quietly disappears.
 
    So there is exactly one function. Everything uses it. It is tested.
@@ -125,7 +125,7 @@ export function netPaid(payments: MoneyLine[], refunds: MoneyLine[] = []): numbe
   return r2(grossPaid(payments) - totalRefunded(refunds));
 }
 
-/** Still owed. Never negative — an overpayment is a refund, not a negative debt. */
+/** Still owed. Never negative - an overpayment is a refund, not a negative debt. */
 export function balanceDue(total: number, payments: MoneyLine[], refunds: MoneyLine[] = []): number {
   return Math.max(0, r2(total - netPaid(payments, refunds)));
 }
@@ -145,11 +145,11 @@ export function refundable(payments: MoneyLine[], refunds: MoneyLine[] = []): nu
    SPLIT PAYMENTS
    ════════════════════════════════════════════════════════════════════════════
 
-   One bill can be settled across several tenders at the counter — the classic
+   One bill can be settled across several tenders at the counter - the classic
    case being "₹500 cash and the rest on UPI". The database already allows many
    Payment rows per invoice and every "how much has this bill been paid" number
    already sums across them (grossPaid / netPaid), so a split needs no new
-   storage — only this one shared, tested guard, so that no counter can collect
+   storage - only this one shared, tested guard, so that no counter can collect
    MORE than the bill in the same breath it is raised.
    ══════════════════════════════════════════════════════════════════════════ */
 
@@ -162,7 +162,7 @@ export function sumPayments(payments: MoneyLine[]): number {
  * Throws unless a split is legal to collect against a bill of `total`:
  *  · every leg is a positive amount (no ₹0 "cash" line padding the receipt), and
  *  · the legs together do not exceed the bill (a penny of float slack allowed).
- * Under-paying is fine — that just leaves a balance due.
+ * Under-paying is fine - that just leaves a balance due.
  */
 export function assertPaymentsWithinTotal(total: number, payments: MoneyLine[]): void {
   for (const p of payments) {
@@ -188,11 +188,11 @@ export function assertRefundable(
   const max = refundable(payments, refunds);
   if (max === 0) throw new RefundError("Nothing was ever collected on this bill");
   if (r2(amount) > max) {
-    throw new RefundError(`Only ₹${max.toFixed(2)} was collected — you can't refund more than that`);
+    throw new RefundError(`Only ₹${max.toFixed(2)} was collected - you can't refund more than that`);
   }
 }
 
-/** PAID / PARTIALLY_PAID / PENDING / REFUNDED — derived, never guessed. */
+/** PAID / PARTIALLY_PAID / PENDING / REFUNDED - derived, never guessed. */
 export function invoiceStatusFrom(
   total: number,
   payments: MoneyLine[],

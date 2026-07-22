@@ -3,7 +3,7 @@ import { Scoop } from "@/components/ui/scoop";
 import { Vitals } from "@/components/marketing/vitals";
 import { HOSPITAL } from "@/lib/data";
 
-/** Address, hours, contact — one rounded panel, Maps docked in the photo. */
+/** Address, hours, contact - one rounded panel, Maps docked in the photo. */
 export function Visit() {
   return (
     <section id="visit" className="px-3 py-16 sm:px-5 lg:py-24">
@@ -19,7 +19,7 @@ export function Visit() {
 
         <Reveal delay={120} className="mt-12">
           <div className="card grid gap-2 rounded-[var(--r-xl)] p-3 lg:grid-cols-[6fr_6fr]">
-            {/* the actual street — with Maps docked in the scooped corner */}
+            {/* the actual street - with Maps docked in the scooped corner */}
             <div className="relative min-h-[320px]">
               <img
                 src="/images/hospital_banner.jpeg"

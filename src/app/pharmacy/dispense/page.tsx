@@ -83,7 +83,7 @@ export default function DispensePage() {
           <span className="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--p-blue-soft)] text-[var(--p-blue-deep)]"><Icon name="bed" size={26} /></span>
           <h3 className="mt-4 font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Charged to the room</h3>
           <p className="mt-1 text-[13px] text-[var(--p-muted)]">
-            Admitted patient — <span className="font-mono font-semibold text-[var(--p-ink)]">{toRoom.ipNumber}</span>
+            Admitted patient - <span className="font-mono font-semibold text-[var(--p-ink)]">{toRoom.ipNumber}</span>
           </p>
           <p className="mt-4 rounded-lg bg-[var(--p-amber-soft)] px-4 py-2.5 text-left text-[12px] leading-relaxed text-[#8a6414]">
             <b>Do not take money.</b> These medicines are on the patient&apos;s room tab and settle in the
@@ -167,7 +167,7 @@ export default function DispensePage() {
                         {m.inStock === 0 ? "Out of stock" : `${m.inStock} in stock`}{m.nearestExpiry && ` · exp ${m.nearestExpiry}`} · GST {m.gstRatePct}%
                       </div>
                     </div>
-                    <span className="font-mono text-[12px]">{m.mrp ? `₹${m.mrp}` : "—"}</span>
+                    <span className="font-mono text-[12px]">{m.mrp ? `₹${m.mrp}` : "-"}</span>
                   </button>
                 ))}
               </div>

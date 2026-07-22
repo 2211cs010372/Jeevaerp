@@ -78,7 +78,7 @@ export default function LabBillingPage() {
       <div data-rise className="surface dotgrid mb-6 px-6 py-5">
         <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Generate lab bill</h1>
         <p className="mt-1 text-[13px] text-[var(--p-muted)]">
-          GST is applied per test from the catalog. Diagnostic services are set to <strong>0% (exempt)</strong> by default — your CA can change rates per test.
+          GST is applied per test from the catalog. Diagnostic services are set to <strong>0% (exempt)</strong> by default - your CA can change rates per test.
         </p>
       </div>
 
@@ -238,7 +238,7 @@ function InvoiceView({ invoice, onNew }: { invoice: Invoice; onNew: () => void }
             {invoice.items.map((it, i) => (
               <tr key={i}>
                 <td className="px-8 py-3 text-[var(--p-ink)]">{it.description}</td>
-                <td className="py-3 font-mono text-[12px] text-[var(--p-muted)]">{it.hsnSac ?? "—"}</td>
+                <td className="py-3 font-mono text-[12px] text-[var(--p-muted)]">{it.hsnSac ?? "-"}</td>
                 <td className="py-3 text-center">{it.qty}</td>
                 <td className="py-3 text-right font-mono">₹{it.unitPrice}</td>
                 <td className="py-3 text-center font-mono text-[12px]">{Number(it.gstRatePct) === 0 ? "Exempt" : `${it.gstRatePct}%`}</td>

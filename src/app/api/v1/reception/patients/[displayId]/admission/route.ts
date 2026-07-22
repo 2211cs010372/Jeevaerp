@@ -6,7 +6,7 @@ import { activeAdmissionFor } from "@/server/services/ipd.service";
 export const dynamic = "force-dynamic";
 
 /**
- * "Is this patient admitted?" — returns the live admission, or null.
+ * "Is this patient admitted?" - returns the live admission, or null.
  *
  * The segment is named [displayId] because Next.js requires one slug name per
  * path position and the sibling routes already claim it. But callers legitimately

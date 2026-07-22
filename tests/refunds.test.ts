@@ -10,7 +10,7 @@ const p = (...amts: number[]) => amts.map((amount) => ({ amount }));
  * Money leaving a hospital. Every one of these is a way a real till gets emptied.
  */
 
-describe("THE INVARIANT — you cannot refund what you never collected", () => {
+describe("THE INVARIANT - you cannot refund what you never collected", () => {
   it("refuses a refund on a bill nobody paid", () => {
     expect(() => assertRefundable(500, "changed mind", [], [])).toThrow(RefundError);
   });
@@ -33,7 +33,7 @@ describe("THE INVARIANT — you cannot refund what you never collected", () => {
 
   it("refuses ₹0 and negative refunds", () => {
     expect(() => assertRefundable(0, "nothing", p(500))).toThrow(RefundError);
-    // a negative refund is a payment in disguise — it would ADD to the till
+    // a negative refund is a payment in disguise - it would ADD to the till
     expect(() => assertRefundable(-500, "sneaky", p(500))).toThrow(RefundError);
   });
 
@@ -53,7 +53,7 @@ describe("what the hospital is actually holding", () => {
   });
 
   it("balance due never goes NEGATIVE", () => {
-    // Overpaid ₹200. That's a refund owed — NOT a negative debt that would
+    // Overpaid ₹200. That's a refund owed - NOT a negative debt that would
     // quietly subtract from the day's takings.
     expect(balanceDue(500, p(700))).toBe(0);
   });

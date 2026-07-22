@@ -75,7 +75,7 @@ function Spark({ data, color }: { data: number[]; color: string }) {
   );
 }
 
-/** Numbered section header with a one-line explanation — the dashboard teaches. */
+/** Numbered section header with a one-line explanation - the dashboard teaches. */
 function SectionHead({ index, title, desc, right }: { index: string; title: string; desc?: string; right?: React.ReactNode }) {
   return (
     <div className="mb-4 mt-8 flex flex-wrap items-end justify-between gap-3 first:mt-0">
@@ -151,9 +151,9 @@ function statusChip(status: string) {
   return <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${map[status] ?? "bg-[var(--p-border)]/40 text-[var(--p-muted)]"}`}>{label[status] ?? status[0] + status.slice(1).toLowerCase()}</span>;
 }
 
-/** Big gridded revenue chart — area for daily, bars for monthly, with a max reference line. */
+/** Big gridded revenue chart - area for daily, bars for monthly, with a max reference line. */
 /** Revenue sources as curved lines. Colours are the dataviz validated
- *  categorical order (blue/green/magenta/yellow) — all-pairs CVD-safe — with a
+ *  categorical order (blue/green/magenta/yellow) - all-pairs CVD-safe - with a
  *  neutral grey for the folded "Other". Identity is carried by the legend +
  *  tooltip, never colour alone. */
 const REV_SERIES = [
@@ -266,7 +266,7 @@ function RevenueChart({ mode, daily, monthly }: {
         )}
       </div>
 
-      {/* legend — identity is never colour-alone */}
+      {/* legend - identity is never colour-alone */}
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 px-1">
         {REV_SERIES.map((s) => (
           <span key={s.key} className="flex items-center gap-1.5 text-[11.5px] text-[var(--p-muted)]">
@@ -323,7 +323,7 @@ export default function AdminOverview() {
         <p className="font-mono text-[10.5px] uppercase tracking-[0.016em] text-[#7fcab8]">Admin console · as of {nowLabel}</p>
         <h1 className="mt-2 font-serif-p text-[clamp(24px,3vw,32px)] font-semibold">Hospital overview</h1>
         <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-white/60">
-          The live financial and operational picture across OPD, IPD, laboratory and pharmacy —
+          The live financial and operational picture across OPD, IPD, laboratory and pharmacy -
           every number updates as bills post and patients move.
         </p>
         <div className="mt-5 flex flex-wrap gap-2">
@@ -488,7 +488,7 @@ export default function AdminOverview() {
             </section>
 
             <SectionHead index="06 · Today's movement" title="Appointments and bills as they land"
-              desc="The same live lists the reception and billing desks are working from — statuses update as patients move." />
+              desc="The same live lists the reception and billing desks are working from - statuses update as patients move." />
             <div className="grid gap-6 lg:grid-cols-2">
               <section data-rise className="surface overflow-hidden">
                 <CardHead title="Today's appointments" hint="Every booking on today's list, with its live status"

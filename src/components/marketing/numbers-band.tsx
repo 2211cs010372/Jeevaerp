@@ -5,7 +5,7 @@ import { Reveal, CountUp } from "@/components/ui/reveal";
 import { WARDS, DEPARTMENTS } from "@/lib/data";
 
 /**
- * North Star Health — Numbers Band Component
+ * North Star Health - Numbers Band Component
  * ------------------------------------------------------------------
  * High-impact statistics banner featuring warm #f0eee9 framing, deep
  * #14181C midnight background, glassmorphic dividers, and dynamic counters.

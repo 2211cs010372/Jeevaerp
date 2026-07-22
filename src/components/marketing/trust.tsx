@@ -7,7 +7,7 @@ import { DEPARTMENTS, DOCTORS } from "@/lib/data";
 import { ArrowUpRight } from "lucide-react";
 
 /** 
- * North Star Health — Trust Component
+ * North Star Health - Trust Component
  * ------------------------------------------------------------------
  * Bento-style trust section aligned with the North Star Health aesthetic:
  * warm #f0eee9 framing, deep #14181C dark accents, and #274472 navy branding.
@@ -52,7 +52,7 @@ export function Trust() {
                 <span className="text-2xl font-light text-[#274472]">+</span>
               </div>
               <p className="mt-3 max-w-[210px] text-xs leading-relaxed text-white/75">
-                specialized departments under one roof — most visits never leave the building
+                specialized departments under one roof - most visits never leave the building
               </p>
             </div>
             
@@ -92,7 +92,7 @@ export function Trust() {
                     Connect with our medical specialists
                   </h3>
                   <p className="mt-2 max-w-sm text-xs leading-relaxed text-[#14181C]/70">
-                    Book a time with a dedicated doctor — your complete medical history is accessible on their screen when you sit down.
+                    Book a time with a dedicated doctor - your complete medical history is accessible on their screen when you sit down.
                   </p>
                 </div>
 
@@ -107,7 +107,7 @@ export function Trust() {
                 </Link>
               </div>
 
-              {/* Orbit Graphic — Glassmorphic Avatar Layers */}
+              {/* Orbit Graphic - Glassmorphic Avatar Layers */}
               <div aria-hidden className="relative mx-auto hidden h-[150px] w-[150px] md:block">
                 {/* Outer Orbit Ring */}
                 <div className="absolute inset-0 rounded-full border border-[#14181C]/10 animate-[spin_60s_linear_infinite]">

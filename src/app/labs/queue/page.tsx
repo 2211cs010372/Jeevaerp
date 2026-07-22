@@ -101,7 +101,7 @@ export default function LabQueuePage() {
                     {t.billed && <span className="badge !py-0.5 !text-[10px]">billed</span>}
                   </div>
                   <div className="mt-0.5 text-[12px] text-[var(--p-muted)]">
-                    {t.patient?.fullName ?? "—"} · <span className="tabular">{t.patient?.displayId ?? "—"}</span>
+                    {t.patient?.fullName ?? "-"} · <span className="tabular">{t.patient?.displayId ?? "-"}</span>
                     {t.appointment ? ` · ${t.appointment.doctorName} (${t.appointment.opNumber})` : " · walk-in"}
                   </div>
                 </div>

@@ -5,7 +5,7 @@ import { Reveal, CountUp } from "@/components/ui/reveal";
 import { WARDS } from "@/lib/data";
 
 /**
- * North Star Health — Facilities Component
+ * North Star Health - Facilities Component
  * ------------------------------------------------------------------
  * Bento-style layout matching the North Star Health aesthetic:
  * warm #f0eee9 framing, #14181C dark accents, glassmorphic white cards, 
@@ -27,21 +27,21 @@ const FACILITIES = [
   {
     tag: "01 // DIAGNOSTICS",
     title: "In-house laboratory",
-    text: "Routine blood work in about 30 minutes — reports land on your record and your phone, and stay there for every future visit.",
+    text: "Routine blood work in about 30 minutes - reports land on your record and your phone, and stay there for every future visit.",
     icon: <g {...stroke}><path d="M9 3h6M10 3v6.3L4.8 18a2.4 2.4 0 0 0 2.1 3.6h10.2a2.4 2.4 0 0 0 2.1-3.6L14 9.3V3" /><path d="M7.5 15h9" /></g>,
     featured: false,
   },
   {
     tag: "02 // IMAGING",
     title: "Digital X-ray & imaging",
-    text: "On-site X-ray for fractures and spine, imaging support for neurology — scans are read with your full history in view.",
+    text: "On-site X-ray for fractures and spine, imaging support for neurology - scans are read with your full history in view.",
     icon: <g {...stroke}><rect x="4" y="3" width="16" height="18" rx="2.5" /><path d="M12 6v12M8.5 9h7M9.5 12h5M10.5 15h3" /></g>,
     featured: false,
   },
   {
     tag: "03 // CARDIOLOGY",
     title: "ECG · 2D Echo · TMT",
-    text: "Cardiac work-ups the same day — chest pain and rhythm complaints are assessed without a referral across town.",
+    text: "Cardiac work-ups the same day - chest pain and rhythm complaints are assessed without a referral across town.",
     icon: <g {...stroke}><path d="M3 12h4l2-4 3.5 8 2.5-5 1.5 1h4.5" /></g>,
     featured: false,
   },
@@ -55,14 +55,14 @@ const FACILITIES = [
   {
     tag: "05 // EMERGENCY",
     title: "24×7 emergency",
-    text: "A doctor on duty around the clock, every day of the year — walk straight in, no booking, no front-desk queue.",
+    text: "A doctor on duty around the clock, every day of the year - walk straight in, no booking, no front-desk queue.",
     icon: <g {...stroke}><path d="M12 3l8 4v5c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V7l8-4Z" /><path d="M12 8.5v6M9 11.5h6" /></g>,
     featured: false,
   },
   {
     tag: "06 // INPATIENT",
     title: "Inpatient wards & ICU",
-    text: "General, semi-private and private rooms plus a monitored ICU — with attendant arrangements and published day rates.",
+    text: "General, semi-private and private rooms plus a monitored ICU - with attendant arrangements and published day rates.",
     bedsCount: totalBeds(),
     icon: <g {...stroke}><path d="M3 18V8a2 2 0 0 1 2-2h6v8h10a0 0 0 0 1 0 0v4" /><path d="M11 10h7a3 3 0 0 1 3 3" /><path d="M3 18h18M3 21v-3M21 21v-3" /><circle cx="7" cy="10" r="1.6" /></g>,
     featured: true, // Midnight Navy highlight card
@@ -100,7 +100,7 @@ export function Facilities() {
           <Reveal delay={80}>
             <p className="max-w-sm text-xs sm:text-sm leading-relaxed text-[#14181C]/70">
               The point of a multispeciality building is that the test, the scan and
-              the medicine are a corridor away — not another trip across town.
+              the medicine are a corridor away - not another trip across town.
             </p>
           </Reveal>
         </div>

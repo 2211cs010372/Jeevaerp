@@ -7,7 +7,7 @@ import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, PaymentMode, ChargeCategory } from "@prisma/client";
 
 // ---------------------------------------------------------------------------
-// IPD — inpatient admissions.
+// IPD - inpatient admissions.
 //
 // The shape of the flow: pick the patient by their Jeeva ID, check the bed
 // board, admit them onto an AVAILABLE bed with an attending doctor and the
@@ -18,7 +18,7 @@ import type { Prisma, PaymentMode, ChargeCategory } from "@prisma/client";
 
 const DAY_MS = 86_400_000;
 
-/** Charged per started day, minimum 1 — standard hospital practice. */
+/** Charged per started day, minimum 1 - standard hospital practice. */
 export function stayDays(admittedAt: Date, until: Date): number {
   return Math.max(1, Math.ceil((until.getTime() - admittedAt.getTime()) / DAY_MS));
 }
@@ -81,14 +81,14 @@ export async function setBedStatus(
 ): Promise<void> {
   const bed = await prisma.bed.findUnique({ where: { id: input.bedId }, select: { id: true, status: true } });
   if (!bed) throw new ApiError(404, "Bed not found");
-  if (bed.status === "OCCUPIED") throw new ApiError(400, "That bed is occupied — discharge the patient first");
+  if (bed.status === "OCCUPIED") throw new ApiError(400, "That bed is occupied - discharge the patient first");
   await prisma.bed.update({ where: { id: input.bedId }, data: { status: input.status } });
   await logAudit(actor, { action: "BED_STATUS_SET", targetTable: "Bed", targetId: input.bedId, meta: { status: input.status }, ...ctx });
 }
 
 /**
  * The bed board: every ward, every bed, who's in it. This is the availability
- * check — reception admits straight off this screen.
+ * check - reception admits straight off this screen.
  */
 export async function bedBoard(): Promise<{
   summary: { total: number; available: number; occupied: number; maintenance: number };
@@ -174,7 +174,7 @@ export async function admitPatient(
       where: { displayId: input.patientDisplayId.toUpperCase() },
       select: { id: true, displayId: true, fullName: true, mergedIntoId: true, deletedAt: true },
     });
-    if (!patient || patient.mergedIntoId || patient.deletedAt) throw new ApiError(404, "Patient not found — check the Jeeva ID");
+    if (!patient || patient.mergedIntoId || patient.deletedAt) throw new ApiError(404, "Patient not found - check the Jeeva ID");
 
     // One active admission per patient. A person cannot be in two beds.
     const already = await tx.admission.findFirst({
@@ -183,13 +183,13 @@ export async function admitPatient(
     });
     if (already) throw new ApiError(409, `${patient.fullName} is already admitted (${already.ipNumber})`);
 
-    // Claim the bed atomically — two receptionists racing for the last ICU
+    // Claim the bed atomically - two receptionists racing for the last ICU
     // bed must not both win.
     const claim = await tx.bed.updateMany({
       where: { id: input.bedId, status: "AVAILABLE" },
       data: { status: "OCCUPIED" },
     });
-    if (claim.count === 0) throw new ApiError(409, "That bed was just taken or is unavailable — pick another from the board");
+    if (claim.count === 0) throw new ApiError(409, "That bed was just taken or is unavailable - pick another from the board");
 
     const bed = await tx.bed.findUnique({
       where: { id: input.bedId },
@@ -343,12 +343,12 @@ export async function dischargePatient(
     return { ...a, dischargedAt };
   });
 
-  // ── BED LINES — one per LEG of the stay ──
+  // ── BED LINES - one per LEG of the stay ──
   //
   // A patient who moved General → ICU on day 3 did not spend the whole stay in
   // either. Billing one flat rate would rob one side or the other. So each
   // BedStay is priced on its own, at the rate that ward carried when they were
-  // in it — a mid-stay price revision can never reach back and re-price days
+  // in it - a mid-stay price revision can never reach back and re-price days
   // already lived.
   const stays = await prisma.bedStay.findMany({
     where: { admissionId: adm.id },
@@ -365,7 +365,7 @@ export async function dischargePatient(
     ? (stays as StayRow[]).map((st) => {
         const days = stayDays(st.fromDate, st.toDate ?? adm.dischargedAt);
         return {
-          description: `Bed · ${st.wardName} · ${st.bed?.bedNo ?? "—"} · ${days} day${days > 1 ? "s" : ""}`,
+          description: `Bed · ${st.wardName} · ${st.bed?.bedNo ?? "-"} · ${days} day${days > 1 ? "s" : ""}`,
           qty: days,
           unitPrice: Number(st.dailyCharge.toString()),
           gstRatePct: Number(st.gstRatePct.toString()),
@@ -386,12 +386,20 @@ export async function dischargePatient(
       patientId: adm.patientId,
       source: "IPD",
       admissionId: adm.id,
-      // The bed is only the first line (or lines — see above). Everything on the
-      // running tab — procedures, oxygen, doctor rounds, lab tests, medicines sent
-      // up from the pharmacy — is billed here, once, at discharge. Each line keeps
+      // The bed is only the first line (or lines - see above). Everything on the
+      // running tab - procedures, oxygen, doctor rounds, lab tests, medicines sent
+      // up from the pharmacy - is billed here, once, at discharge. Each line keeps
       // its own GST rate: a ₹5,500 room and a 12% syrup are not taxed the same way.
       lines: [
         ...bedLines,
+        // Nursing care - assigned by default, billed at the same flat per-day rate
+        // the running tab has been showing all along (days × NURSE_FEE_PER_DAY).
+        {
+          description: `Nursing care · ${stayDays(adm.admittedAt, adm.dischargedAt)} day(s) × ₹${NURSE_FEE_PER_DAY}`,
+          qty: stayDays(adm.admittedAt, adm.dischargedAt),
+          unitPrice: NURSE_FEE_PER_DAY,
+          gstRatePct: 0,
+        },
         ...(adm.charges as ChargeLine[]).map((c) => ({
           description: c.description,
           qty: c.qty,
@@ -409,7 +417,7 @@ export async function dischargePatient(
   // ── ADVANCE ──
   // The deposit taken at admission is money the hospital ALREADY holds. Record it
   // against this invoice as a payment, so the family is asked only for the
-  // balance — and if the advance exceeds the bill, the difference shows up as
+  // balance - and if the advance exceeds the bill, the difference shows up as
   // refundable rather than quietly disappearing.
   const advances = await prisma.admissionAdvance.findMany({
     where: { admissionId: adm.id },
@@ -455,11 +463,11 @@ export async function ipdStats(): Promise<{ admitted: number; availableBeds: num
  *
  * Idempotent (upsert by ward name, upsert by ward+bed number), so it is safe to
  * press twice and safe to run against a half-configured hospital. Same shape as
- * the seed — this exists so go-live doesn't require a developer at a terminal.
+ * the seed - this exists so go-live doesn't require a developer at a terminal.
  *
  * GST: room rent over ₹5,000/day (non-ICU) attracts 5%; below that it is exempt,
  * and ICU is exempt regardless. Only Private (₹5,500) carries a rate here. The
- * client's CA has the final say — admin can edit every rate afterwards.
+ * client's CA has the final say - admin can edit every rate afterwards.
  */
 export async function setupStandardWards(
   actor: AuthUser,
@@ -529,7 +537,7 @@ export async function addAdmissionCharge(
   });
   if (!adm) throw new ApiError(404, "Admission not found");
   if (adm.status !== "ADMITTED") {
-    throw new ApiError(409, "This patient is already discharged — their bill is closed");
+    throw new ApiError(409, "This patient is already discharged - their bill is closed");
   }
   if (input.qty < 1) throw new ApiError(400, "Quantity must be at least 1");
   if (input.unitPrice < 0) throw new ApiError(400, "Price can't be negative");
@@ -565,7 +573,7 @@ export async function removeAdmissionCharge(
   });
   if (!charge) throw new ApiError(404, "Charge not found");
   if (charge.admission.status !== "ADMITTED") {
-    throw new ApiError(409, "That stay is already billed — the charge can't be removed");
+    throw new ApiError(409, "That stay is already billed - the charge can't be removed");
   }
   if (charge.sourceRef) {
     // Deleting it here would silently un-bill medicine that physically left the shelf.
@@ -578,6 +586,139 @@ export async function removeAdmissionCharge(
   });
 }
 
+/**
+ * Nursing / observation notes for the stay - shift-handover text, not billed.
+ * Kept in the same Admission.notes the discharge step already appends to, so the
+ * discharge summary and the running sheet read one source of truth.
+ */
+export async function updateAdmissionNotes(
+  actor: AuthUser,
+  admissionId: string,
+  notes: string,
+  ctx: { ipAddress?: string; userAgent?: string }
+): Promise<{ notes: string | null }> {
+  const adm = await prisma.admission.findUnique({
+    where: { id: admissionId },
+    select: { id: true, status: true, ipNumber: true },
+  });
+  if (!adm) throw new ApiError(404, "Admission not found");
+  if (adm.status !== "ADMITTED") throw new ApiError(409, "This stay is closed - its notes are final");
+
+  const clean = notes.trim() || null;
+  await prisma.admission.update({ where: { id: admissionId }, data: { notes: clean } });
+  await logAudit(actor, {
+    action: "IPD_NOTES_UPDATED", targetTable: "Admission", targetId: admissionId,
+    meta: { ipNumber: adm.ipNumber }, ...ctx,
+  });
+  return { notes: clean };
+}
+
+/**
+ * Everything a discharge summary needs, assembled from what the stay already
+ * holds - nothing is typed twice. Reason and observation notes come off the
+ * admission; diagnosis / advice / follow-up and the medicine list come off the
+ * IP prescriptions filed during the stay; investigations are the lab tests run
+ * in the admission window; and the bill is the same running sheet, frozen.
+ */
+export async function dischargeSummaryData(admissionId: string) {
+  const sheet = await admissionSheet(admissionId);
+
+  const adm = await prisma.admission.findUnique({
+    where: { id: admissionId },
+    select: {
+      ipNumber: true, status: true, admittedAt: true, dischargedAt: true, reason: true, notes: true,
+      patient: {
+        select: {
+          displayId: true, fullName: true, age: true, gender: true, phone: true,
+          address: true, city: true, bloodGroup: true, dob: true,
+        },
+      },
+      doctor: { select: { name: true, specialization: true, department: true } },
+      prescriptionUploads: {
+        orderBy: { createdAt: "asc" },
+        select: {
+          diagnosis: true, advice: true, labsAdvised: true, nextVisit: true,
+          items: { select: { medicineName: true, qty: true, dosage: true }, orderBy: { id: "asc" } },
+        },
+      },
+    },
+  });
+  if (!adm) throw new ApiError(404, "Admission not found");
+
+  const hospital = await prisma.hospitalConfig.findFirst();
+
+  // Lab tests ordered while the patient was in - the stay's investigations.
+  const until = adm.dischargedAt ?? new Date();
+  const labs = await prisma.labTest.findMany({
+    where: { patientId: sheet.admission.patient.id, createdAt: { gte: adm.admittedAt, lte: until } },
+    orderBy: { createdAt: "asc" },
+    select: { testName: true, status: true, reportFileUrl: true, createdAt: true },
+  });
+
+  // ── Clinical narrative, derived (never typed twice) ──
+  type Rx = { diagnosis: string | null; advice: string | null; labsAdvised: string | null; nextVisit: string | null; items: { medicineName: string; qty: number; dosage: string | null }[] };
+  const rxs = adm.prescriptionUploads as Rx[];
+  const firstOf = (pick: (r: Rx) => string | null) => rxs.map(pick).map((v) => v?.trim()).filter(Boolean) as string[];
+  const diagnosis = firstOf((r) => r.diagnosis)[0] ?? null;
+  const advice = [...new Set(firstOf((r) => r.advice))].join(" ") || null;
+  const nextVisit = firstOf((r) => r.nextVisit).slice(-1)[0] ?? null;
+  const labsAdvised = [...new Set(rxs.flatMap((r) => (r.labsAdvised ?? "").split("\n")).map((s) => s.trim()).filter(Boolean))];
+
+  // Medicines on discharge - one row per drug, dosage from its latest mention.
+  const medMap = new Map<string, { name: string; qty: number; dosage: string | null }>();
+  for (const r of rxs) {
+    for (const it of r.items) {
+      const key = it.medicineName.trim().toLowerCase();
+      if (!key) continue;
+      const prev = medMap.get(key);
+      medMap.set(key, { name: it.medicineName.trim(), qty: (prev?.qty ?? 0) + it.qty, dosage: it.dosage?.trim() || prev?.dosage || null });
+    }
+  }
+
+  const iso = (d: Date | null) => (d ? d.toISOString() : null);
+  return {
+    hospital,
+    generatedAt: new Date().toISOString(),
+    admission: {
+      ipNumber: adm.ipNumber,
+      status: adm.status,
+      admittedAt: adm.admittedAt.toISOString(),
+      dischargedAt: iso(adm.dischargedAt),
+      days: sheet.days,
+      wardName: sheet.admission.wardName,
+      bedNo: sheet.admission.bedNo,
+      reason: adm.reason,
+      observations: adm.notes,
+    },
+    patient: {
+      displayId: adm.patient.displayId, fullName: adm.patient.fullName, age: adm.patient.age,
+      gender: adm.patient.gender, phone: adm.patient.phone, address: adm.patient.address,
+      city: adm.patient.city, bloodGroup: adm.patient.bloodGroup,
+      dob: adm.patient.dob ? adm.patient.dob.toISOString().slice(0, 10) : null,
+    },
+    doctor: adm.doctor,
+    clinical: { diagnosis, advice, nextVisit, labsAdvised },
+    medicines: [...medMap.values()],
+    investigations: labs.map((l) => ({
+      testName: l.testName, status: l.status, reportReady: Boolean(l.reportFileUrl),
+      date: l.createdAt.toISOString().slice(0, 10),
+    })),
+    // The frozen bill - same numbers as the running sheet.
+    bill: {
+      legs: sheet.legs, bedTotal: sheet.bedTotal, nurseTotal: sheet.nurseTotal, nursePerDay: sheet.nursePerDay,
+      charges: sheet.charges, chargesTotal: sheet.chargesTotal,
+      grandTotal: sheet.grandTotal, advanceTotal: sheet.advanceTotal, balance: sheet.balance,
+    },
+  };
+}
+
+/**
+ * Nursing care is assigned to every admitted patient by default and accrues at a
+ * flat rate per day - like the bed, it grows with the length of stay and is
+ * derived (not a stored charge line) so it can never go stale or be half-removed.
+ */
+export const NURSE_FEE_PER_DAY = 200;
+
 /** The full running tab: bed so far + every charge, with a live total. */
 export async function admissionSheet(admissionId: string): Promise<{
   admission: {
@@ -589,6 +730,10 @@ export async function admissionSheet(admissionId: string): Promise<{
   };
   days: number;
   bedTotal: string;
+  /** Assigned nursing care, days × NURSE_FEE_PER_DAY. Derived, not a stored line. */
+  nurseTotal: string;
+  nursePerDay: string;
+  notes: string | null;
   charges: ChargeDTO[];
   chargesTotal: string;
   grandTotal: string;
@@ -602,7 +747,7 @@ export async function admissionSheet(admissionId: string): Promise<{
   const a = await prisma.admission.findUnique({
     where: { id: admissionId },
     select: {
-      id: true, ipNumber: true, status: true, admittedAt: true, dischargedAt: true, reason: true,
+      id: true, ipNumber: true, status: true, admittedAt: true, dischargedAt: true, reason: true, notes: true,
       wardNameAtAdmit: true, dailyChargeAtAdmit: true, gstRatePctAtAdmit: true,
       attendantName: true, attendantPhone: true, attendantRelation: true,
       bed: { select: { bedNo: true } },
@@ -651,7 +796,7 @@ export async function admissionSheet(admissionId: string): Promise<{
     const daily = Number(st.dailyCharge.toString());
     return {
       wardName: st.wardName,
-      bedNo: st.bed?.bedNo ?? "—",
+      bedNo: st.bed?.bedNo ?? "-",
       dailyCharge: daily.toFixed(2),
       days: d,
       total: (d * daily).toFixed(2),
@@ -685,6 +830,10 @@ export async function admissionSheet(admissionId: string): Promise<{
   });
   const chargesTotal = charges.reduce((s, c) => s + Number(c.amount), 0);
 
+  // ── NURSING ── assigned by default, one flat fee per day of stay.
+  const nurseTotal = days * NURSE_FEE_PER_DAY;
+  const grandTotal = bedTotal + nurseTotal + chargesTotal;
+
   return {
     admission: {
       id: a.id, ipNumber: a.ipNumber, status: a.status,
@@ -696,20 +845,23 @@ export async function admissionSheet(admissionId: string): Promise<{
     },
     days,
     bedTotal: bedTotal.toFixed(2),
+    nurseTotal: nurseTotal.toFixed(2),
+    nursePerDay: NURSE_FEE_PER_DAY.toFixed(2),
+    notes: a.notes,
     chargesTotal: chargesTotal.toFixed(2),
-    grandTotal: (bedTotal + chargesTotal).toFixed(2),
+    grandTotal: grandTotal.toFixed(2),
     charges,
     legs,
     advanceTotal: advanceTotal.toFixed(2),
     // Never negative. An advance bigger than the bill is a REFUND owed, not a
     // negative debt that would quietly subtract from the day's takings.
-    balance: Math.max(0, bedTotal + chargesTotal - advanceTotal).toFixed(2),
+    balance: Math.max(0, grandTotal - advanceTotal).toFixed(2),
   };
 }
 
 /**
  * Post a pharmacy dispense to an inpatient's room instead of billing them at the
- * counter. An admitted patient does NOT pay for medicine at the pharmacy window —
+ * counter. An admitted patient does NOT pay for medicine at the pharmacy window -
  * it goes on the tab and settles at discharge. Returns false when the upload isn't
  * tied to a live admission, so the caller bills normally.
  */
@@ -738,7 +890,7 @@ export async function chargePharmacyToRoom(
   }
 }
 
-/** Beds that can actually be filled right now, grouped by ward — for the admit form. */
+/** Beds that can actually be filled right now, grouped by ward - for the admit form. */
 export async function availableBeds(): Promise<{
   id: string; name: string; category: string; floor: string | null;
   dailyCharge: string; gstRatePct: string;
@@ -772,8 +924,8 @@ export async function availableBeds(): Promise<{
  * Is this patient in a bed RIGHT NOW?
  *
  * The single question the whole IP/OP switch turns on. Reception asks it the
- * moment a patient is picked, and everything downstream — where a prescription
- * files, where a lab test bills — follows from the answer. Returns null for an
+ * moment a patient is picked, and everything downstream - where a prescription
+ * files, where a lab test bills - follows from the answer. Returns null for an
  * outpatient, which is the overwhelmingly common case.
  */
 export async function activeAdmissionFor(patientRef: string): Promise<{
@@ -804,9 +956,9 @@ export async function activeAdmissionFor(patientRef: string): Promise<{
     id: adm.id,
     ipNumber: adm.ipNumber,
     admittedAt: adm.admittedAt,
-    wardName: adm.bed?.ward?.name ?? "—",
-    bedNo: adm.bed?.bedNo ?? "—",
-    doctorName: adm.doctor?.name ?? "—",
+    wardName: adm.bed?.ward?.name ?? "-",
+    bedNo: adm.bed?.bedNo ?? "-",
+    doctorName: adm.doctor?.name ?? "-",
     reason: adm.reason,
   };
 }
@@ -815,12 +967,12 @@ export async function activeAdmissionFor(patientRef: string): Promise<{
  * TRANSFER a patient to another bed, mid-stay.
  *
  * General → ICU is the single most common event in a hospital, and until now the
- * only way to do it was discharge-and-readmit — which SPLITS ONE STAY INTO TWO
+ * only way to do it was discharge-and-readmit - which SPLITS ONE STAY INTO TWO
  * BILLS and hands the family two invoices for one illness.
  *
  * Instead: close the current BedStay, open a new one at the new ward's rate. The
  * old bed is freed, the new one taken, atomically. The discharge bill then prices
- * each leg on its own — 3 days General, 4 days ICU — which is both what actually
+ * each leg on its own - 3 days General, 4 days ICU - which is both what actually
  * happened and what the patient should pay.
  */
 export async function transferBed(
@@ -850,7 +1002,7 @@ export async function transferBed(
     if (!toBed) throw new ApiError(404, "That bed doesn't exist");
     if (toBed.status !== "AVAILABLE") throw new ApiError(409, "That bed isn't free");
 
-    // Atomic claim — two clerks can't move two patients into one bed.
+    // Atomic claim - two clerks can't move two patients into one bed.
     const claim = await tx.bed.updateMany({
       where: { id: toBed.id, status: "AVAILABLE" },
       data: { status: "OCCUPIED" },
@@ -903,8 +1055,8 @@ export async function transferBed(
 
     return {
       ipNumber: adm.ipNumber,
-      fromWard: adm.bed?.ward?.name ?? "—",
-      fromBed: adm.bed?.bedNo ?? "—",
+      fromWard: adm.bed?.ward?.name ?? "-",
+      fromBed: adm.bed?.bedNo ?? "-",
       toWard: toBed.ward.name,
       toBed: toBed.bedNo,
       newDailyCharge: toBed.ward.dailyCharge.toString(),
@@ -916,7 +1068,7 @@ export async function transferBed(
  * The deposit taken at admission.
  *
  * Every hospital takes one. Without it a family can run up lakhs and walk out,
- * and the hospital has no recourse. Adjusted against the discharge bill — and if
+ * and the hospital has no recourse. Adjusted against the discharge bill - and if
  * the advance turns out to EXCEED the final bill, the difference is refunded,
  * not quietly kept.
  */
@@ -962,7 +1114,7 @@ export async function addAdvance(
   return { ipNumber: adm.ipNumber, totalAdvance: total.toFixed(2) };
 }
 
-/** Free beds a patient could be moved INTO — never their own, never occupied. */
+/** Free beds a patient could be moved INTO - never their own, never occupied. */
 export async function transferTargets(admissionId: string): Promise<{
   wards: { id: string; name: string; dailyCharge: string; gstRatePct: string; beds: { id: string; bedNo: string }[] }[];
 }> {

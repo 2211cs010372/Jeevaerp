@@ -1,7 +1,7 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- RECEPTION → PRODUCTION
 --   Refund            money going back to a patient, with a reason and an author
---   BedStay           one row per bed occupied — a stay can now cross wards
+--   BedStay           one row per bed occupied - a stay can now cross wards
 --   AdmissionAdvance  the deposit taken at admission
 -- ─────────────────────────────────────────────────────────────────────────────
 

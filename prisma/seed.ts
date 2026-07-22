@@ -30,10 +30,10 @@ async function main() {
   // Profile fields (photo, qualification, experience…) power the booking cards
   // and the public directory. Photos live in /public/images.
   const doctors = [
-    { username: "doctor.rao",   phone: "9000001001", email: "rao@jeeva.local",   name: "Dr. K. Rao",   specialization: "Interventional Cardiologist", department: "Cardiology",   fee: 700, qualification: "MBBS, MD, DM (Cardiology)", experienceYears: 18, age: 49, languages: "Telugu, English, Hindi", photoUrl: "/images/doctor-1.avif",  bio: "Two decades treating chest pain, blood pressure and heart rhythm — with ECG, 2D echo and TMT done the same day, in-house." },
+    { username: "doctor.rao",   phone: "9000001001", email: "rao@jeeva.local",   name: "Dr. K. Rao",   specialization: "Interventional Cardiologist", department: "Cardiology",   fee: 700, qualification: "MBBS, MD, DM (Cardiology)", experienceYears: 18, age: 49, languages: "Telugu, English, Hindi", photoUrl: "/images/doctor-1.avif",  bio: "Two decades treating chest pain, blood pressure and heart rhythm - with ECG, 2D echo and TMT done the same day, in-house." },
     { username: "doctor.menon", phone: "9000001002", email: "menon@jeeva.local", name: "Dr. S. Menon", specialization: "Obstetrician & Gynaecologist", department: "Gynaecology",  fee: 600, qualification: "MBBS, MS (OBG)",            experienceYears: 14, age: 43, languages: "Telugu, English, Malayalam", photoUrl: "/images/doctor-2.avif",  bio: "Antenatal care through delivery, and women's health at every stage of life." },
     { username: "doctor.verma", phone: "9000001003", email: "verma@jeeva.local", name: "Dr. A. Verma", specialization: "Orthopaedic Surgeon",          department: "Orthopaedics", fee: 650, qualification: "MBBS, MS (Ortho)",          experienceYears: 16, age: 46, languages: "Telugu, English, Hindi", photoUrl: "/images/doctor-3.avif",  bio: "Fractures, joint pain and spine trouble, with digital X-ray on site so you don't travel for a scan." },
-    { username: "doctor.das",   phone: "9000001004", email: "das@jeeva.local",   name: "Dr. P. Das",   specialization: "Paediatrician",                department: "Paediatrics",  fee: 400, qualification: "MBBS, DCH, MD (Paed)",      experienceYears: 11, age: 38, languages: "Telugu, English, Bengali", photoUrl: "/images/doctor-10.avif", bio: "Newborns to teenagers — vaccinations, fevers, growth checks and the 2 a.m. worries." },
+    { username: "doctor.das",   phone: "9000001004", email: "das@jeeva.local",   name: "Dr. P. Das",   specialization: "Paediatrician",                department: "Paediatrics",  fee: 400, qualification: "MBBS, DCH, MD (Paed)",      experienceYears: 11, age: 38, languages: "Telugu, English, Bengali", photoUrl: "/images/doctor-10.avif", bio: "Newborns to teenagers - vaccinations, fevers, growth checks and the 2 a.m. worries." },
   ];
   for (const d of doctors) {
     const user = await prisma.user.upsert({
@@ -106,7 +106,7 @@ async function main() {
         state: "Telangana",
         stateCode: "36",
         pincode: "506001",
-        gstin: "36AACCA1234F1Z5", // placeholder — replace with the real GSTIN
+        gstin: "36AACCA1234F1Z5", // placeholder - replace with the real GSTIN
         phone: "9704691308",
         email: "info@jeevamultispecialityhospital.com",
         defaultLabGstPct: 0, // diagnostics are generally GST-exempt
@@ -119,8 +119,8 @@ async function main() {
   // confirm and override any test that is actually taxable.
   const labTests = [
     { name: "Complete Blood Picture (CBP)", code: "CBP", price: 300 },
-    { name: "Blood Sugar — Fasting", code: "FBS", price: 120 },
-    { name: "Blood Sugar — Postprandial", code: "PPBS", price: 120 },
+    { name: "Blood Sugar - Fasting", code: "FBS", price: 120 },
+    { name: "Blood Sugar - Postprandial", code: "PPBS", price: 120 },
     { name: "HbA1c", code: "HBA1C", price: 600 },
     { name: "Lipid Profile", code: "LIPID", price: 800 },
     { name: "Liver Function Test (LFT)", code: "LFT", price: 900 },
@@ -185,7 +185,7 @@ async function main() {
 
   for (const [i, m] of medicines.entries()) {
     // `update: {}` was a trap. On a database that already had these medicines,
-    // the upsert matched by name, ran an EMPTY update, and skipped them — so any
+    // the upsert matched by name, ran an EMPTY update, and skipped them - so any
     // column added to the seed AFTER the first run (rackLocation, courseCritical)
     // never reached existing rows. The racks were in this file and would never
     // have arrived in the database. Re-seeding must REPAIR, not silently skip.
@@ -225,7 +225,7 @@ async function main() {
       },
     });
 
-    // every 4th medicine also gets an older batch expiring soon — FEFO must
+    // every 4th medicine also gets an older batch expiring soon - FEFO must
     // dispense THIS one first, and it should show up under alerts.
     if (i % 4 === 0) {
       await prisma.stockBatch.upsert({

@@ -3,7 +3,7 @@ import { Reveal } from "@/components/ui/reveal";
 import { Scoop } from "@/components/ui/scoop";
 import { JOURNEY } from "@/lib/data";
 
-/** A visit, in order — one wide rounded panel, the CTA docked in its corner. */
+/** A visit, in order - one wide rounded panel, the CTA docked in its corner. */
 export function Journey() {
   return (
     <section className="px-3 py-8 sm:px-5">

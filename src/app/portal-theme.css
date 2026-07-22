@@ -1,5 +1,5 @@
 /* ============================================================================
-   JEEVA ERP — Portal theme
+   JEEVA ERP - Portal theme
    Light & airy. Electric blue + teal on cool white. Refined hairline borders
    with glass depth. Scoped under .portal so the public site is untouched.
 
@@ -10,7 +10,7 @@
    ========================================================================== */
 
 .portal {
-    /* ---- Neutrals: cool, blue-cast — never warm grey ---- */
+    /* ---- Neutrals: cool, blue-cast - never warm grey ---- */
     --p-ink: #091a34;
     /* headings, near-black with a blue cast */
     --p-text: #40506a;
@@ -67,7 +67,7 @@
 }
 
 
-/* SIGNATURE — aurora bloom. A soft blue/teal light source behind the canvas.
+/* SIGNATURE - aurora bloom. A soft blue/teal light source behind the canvas.
    Gives flat white depth without adding noise. Fixed, so it never scrolls away. */
 
 .portal::before {
@@ -85,7 +85,7 @@
 }
 
 
-/* headings — Geist, the same UI face at a heavier weight. Clean software
+/* headings - Geist, the same UI face at a heavier weight. Clean software
    look; no serif. (Class name kept for compatibility across the pages.) */
 
 .portal .font-serif-p {
@@ -95,7 +95,7 @@
 }
 
 
-/* data — Geist Mono: IDs, prices, timings, counts, the eyebrow labels */
+/* data - Geist Mono: IDs, prices, timings, counts, the eyebrow labels */
 
 .portal .font-mono,
 .portal .tabular,
@@ -114,7 +114,7 @@
 /* ============================ SURFACES ==================================== */
 
 
-/* Bordered card — the workhorse. Hairline + a whisper of elevation. */
+/* Bordered card - the workhorse. Hairline + a whisper of elevation. */
 
 .portal .surface {
     background: var(--p-surface);
@@ -124,7 +124,7 @@
 }
 
 
-/* Interactive card — lifts and picks up a blue edge on hover. */
+/* Interactive card - lifts and picks up a blue edge on hover. */
 
 .portal .surface-hover {
     transition: border-color 0.2s ease, box-shadow 0.25s ease, transform 0.25s ease;
@@ -137,7 +137,7 @@
 }
 
 
-/* Glass — frosted, translucent, with a light-catching top edge. Used for the
+/* Glass - frosted, translucent, with a light-catching top edge. Used for the
    sticky topbar and sidebar so content blurs beneath them as you scroll. */
 
 .portal .glass {
@@ -178,7 +178,7 @@
 }
 
 
-/* Focus ring — visible, on-brand, keyboard-accessible. */
+/* Focus ring - visible, on-brand, keyboard-accessible. */
 
 .portal .ring:focus,
 .portal .ring:focus-visible {
@@ -196,7 +196,7 @@
 }
 
 
-/* Primary button — solid accent with real depth: a soft top-light gradient,
+/* Primary button - solid accent with real depth: a soft top-light gradient,
    a layered shadow (contact + hover glow), a lift on hover and a quick
    settle on press. Semibold, 6px radius. Every portal shares the shape;
    only the accent (var(--p-blue)) changes. Applies to .btn-primary and the
@@ -257,7 +257,7 @@
 /* ============================ INPUTS ===================================== */
 
 
-/* One field recipe for every portal — Supabase style: 6px radius, a defined
+/* One field recipe for every portal - Supabase style: 6px radius, a defined
    border, a faint inset depth, and a soft accent focus ring. Matches the
    buttons. Pages keep their own sizing/spacing; this sets the skin. */
 
@@ -286,7 +286,7 @@
 }
 
 
-/* selects — drop the native arrow, draw our own chevron so the closed control
+/* selects - drop the native arrow, draw our own chevron so the closed control
    matches the field skin (the OS still renders the open option list). */
 
 .portal select {
@@ -306,7 +306,7 @@
 }
 
 
-/* date fields — tint the native calendar button so it reads as ours, and make
+/* date fields - tint the native calendar button so it reads as ours, and make
    the whole field open the picker on click. */
 
 .portal input[type="date"],
@@ -348,7 +348,7 @@
 /* ============================ SCOOP ====================================== */
 
 
-/* Inverted-radius corner notch — same trick as the public site. Parent must
+/* Inverted-radius corner notch - same trick as the public site. Parent must
    be `relative`; --scoop-bg must match the colour BEHIND the panel. */
 
 .portal .scoop {
@@ -539,7 +539,7 @@
 
 
 /* ============================================================================
-   PHARMACY — mirrors ADMIN verbatim ("porcelain pine")
+   PHARMACY - mirrors ADMIN verbatim ("porcelain pine")
    Scoped to [data-portal="pharmacy"]. Nothing here touches the other portals.
 
    By request, the pharmacy now runs the exact same visual system as the
@@ -547,7 +547,7 @@
    22px card radius, the same light frosted sidebar (no dark rail, no brand
    tab), the same dotgrid canvas bloom. Every input, label, select, textarea,
    card and form already reads its skin from the shared .surface / .glass /
-   .btn-primary rules and the CSS custom properties below — so duplicating
+   .btn-primary rules and the CSS custom properties below - so duplicating
    admin's token values here is nearly the entire change.
 
    ── THE ONE RULE (kept from v1, unchanged by the reskin) ────────────────────
@@ -555,18 +555,18 @@
    differ by one letter (Metformin / Metronidazole), strengths that differ by
    one digit (250 / 500), and expiry dates that decide whether a drug is
    medicine or poison. Names, quantities, dates and prices always sit on flat,
-   opaque white at full contrast — that's a patient-safety rule, not a theme
+   opaque white at full contrast - that's a patient-safety rule, not a theme
    choice, so it stays exactly as it was below, regardless of skin.
 
    Kept as its own scoped copy (rather than just reusing [data-portal="admin"]
    on the pharmacy shell) because CSS custom properties don't cascade across
    sibling attribute selectors, and because pharmacy keeps its own nav, brand
-   label, pages and safety rules — only the skin changes. If the palette
+   label, pages and safety rules - only the skin changes. If the palette
    changes, change it in both this block and the ADMIN block below.
    ========================================================================== */
 
 .portal[data-portal="pharmacy"] {
-    /* neutrals — pine-cast porcelain, identical to admin */
+    /* neutrals - pine-cast porcelain, identical to admin */
     --p-ink: #0c1a1c;
     --p-text: #3d4c4f;
     --p-muted: #64737a;
@@ -574,20 +574,20 @@
     --p-surface: #ffffff;
     --p-border: #e2e7e5;
     --p-border-strong: #cdd6d3;
-    /* primary — deep pine, aliased onto the blue slots the components use */
+    /* primary - deep pine, aliased onto the blue slots the components use */
     --p-blue: #0b544c;
     --p-blue-deep: #073d37;
     --p-blue-soft: rgba(11, 84, 76, 0.08);
     --p-blue-glow: rgba(11, 84, 76, 0.25);
-    /* positive / live — teal lift */
+    /* positive / live - teal lift */
     --p-cyan: #17705f;
     --p-cyan-deep: #0b544c;
     --p-cyan-soft: rgba(23, 112, 95, 0.10);
-    /* quiet slate-indigo — batch-import's "needs review" chip only. Admin
+    /* quiet slate-indigo - batch-import's "needs review" chip only. Admin
        has no equivalent slot for this, so it stays pharmacy's own colour. */
     --p-violet: #5b6b9e;
     --p-violet-soft: rgba(91, 107, 158, 0.12);
-    /* semantic — admin's muted brass + emergency red */
+    /* semantic - admin's muted brass + emergency red */
     --p-amber: #a97b3f;
     --p-amber-soft: rgba(169, 123, 63, 0.12);
     --p-rose: #c2402f;
@@ -603,17 +603,17 @@
 }
 
 
-/* a quiet pine bloom — same fixed backdrop as admin, no turquoise wash */
+/* a quiet pine bloom - same fixed backdrop as admin, no turquoise wash */
 
 .portal[data-portal="pharmacy"]::before {
     background: radial-gradient(760px 420px at 12% -6%, rgba(11, 84, 76, 0.07), transparent 62%), radial-gradient(620px 380px at 92% 4%, rgba(23, 112, 95, 0.06), transparent 60%);
 }
 
 
-/* surfaces go big-radius and minimal — same geometry as admin's cards.
+/* surfaces go big-radius and minimal - same geometry as admin's cards.
    No brand-tab accent strip: admin's cards don't carry one, so pharmacy's
    no longer does either. The opaque-white safety rule for medicine names
-   stays put, right below — see THE ONE RULE above. */
+   stays put, right below - see THE ONE RULE above. */
 
 .portal[data-portal="pharmacy"] .surface {
     border-radius: 22px;
@@ -631,7 +631,7 @@
 }
 
 
-/* glass tuned to admin's recipe — light frosted white on BOTH the topbar
+/* glass tuned to admin's recipe - light frosted white on BOTH the topbar
    and the sidebar. No dark rail override: aside.glass just inherits this,
    same as it does in admin. */
 
@@ -648,10 +648,10 @@
 }
 
 
-/* Buttons use the shared Supabase treatment (see base .btn-primary) — the
+/* Buttons use the shared Supabase treatment (see base .btn-primary) - the
    pine accent comes through var(--p-blue). Nothing to override here.
    Every input still gets an instant focus ring (not just .ring-tagged
-   ones) — a counter-speed affordance, not a colour choice, so it stays. */
+   ones) - a counter-speed affordance, not a colour choice, so it stays. */
 
 .portal[data-portal="pharmacy"] input:focus,
 .portal[data-portal="pharmacy"] select:focus,
@@ -661,7 +661,7 @@
 }
 
 
-/* medicine names: the most important text in the building — always opaque,
+/* medicine names: the most important text in the building - always opaque,
    regardless of skin */
 
 .portal[data-portal="pharmacy"] .rx-name {
@@ -693,7 +693,7 @@
 }
 
 
-/* rounded utilities scale up inside pharmacy too, matching admin exactly —
+/* rounded utilities scale up inside pharmacy too, matching admin exactly -
    pills stay pills */
 
 .portal[data-portal="pharmacy"] .rounded-md {
@@ -853,7 +853,7 @@
 
 
 /* ============================================================================
-   RECEPTION — mirrors ADMIN verbatim ("porcelain pine")
+   RECEPTION - mirrors ADMIN verbatim ("porcelain pine")
    Scoped to [data-portal="reception"]. Nothing here touches the other portals.
 
    By request, the front desk now runs the exact same visual system as the
@@ -862,18 +862,18 @@
    tab), the same dotgrid canvas bloom. Every input, label, select, textarea,
    datalist, card and form already reads its skin from the shared
    .surface / .glass / .btn-primary rules and the CSS custom properties above
-   — so duplicating admin's token values here is the entire change; nothing
+   - so duplicating admin's token values here is the entire change; nothing
    in the reception pages themselves needs to move.
 
    Kept as its own scoped copy (rather than just reusing [data-portal="admin"]
    on the reception shell) because CSS custom properties don't cascade across
    sibling attribute selectors, and because reception keeps its own nav,
-   brand label and pages — only the skin changes. If the palette changes,
+   brand label and pages - only the skin changes. If the palette changes,
    change it in both this block and the ADMIN block below.
    ========================================================================== */
 
 .portal[data-portal="reception"] {
-    /* neutrals — pine-cast porcelain, identical to admin */
+    /* neutrals - pine-cast porcelain, identical to admin */
     --p-ink: #0c1a1c;
     --p-text: #3d4c4f;
     --p-muted: #64737a;
@@ -881,16 +881,16 @@
     --p-surface: #ffffff;
     --p-border: #e2e7e5;
     --p-border-strong: #cdd6d3;
-    /* primary — deep pine, aliased onto the blue slots the components use */
+    /* primary - deep pine, aliased onto the blue slots the components use */
     --p-blue: #0b544c;
     --p-blue-deep: #073d37;
     --p-blue-soft: rgba(11, 84, 76, 0.08);
     --p-blue-glow: rgba(11, 84, 76, 0.25);
-    /* positive / live — teal lift */
+    /* positive / live - teal lift */
     --p-cyan: #17705f;
     --p-cyan-deep: #0b544c;
     --p-cyan-soft: rgba(23, 112, 95, 0.10);
-    /* semantic — admin's muted brass + emergency red */
+    /* semantic - admin's muted brass + emergency red */
     --p-amber: #a97b3f;
     --p-amber-soft: rgba(169, 123, 63, 0.12);
     --p-rose: #c2402f;
@@ -906,7 +906,7 @@
 }
 
 
-/* a quiet pine bloom — same fixed backdrop as admin, no navy aurora */
+/* a quiet pine bloom - same fixed backdrop as admin, no navy aurora */
 
 .portal[data-portal="reception"]::before {
     background: radial-gradient(760px 420px at 12% -6%, rgba(11, 84, 76, 0.07), transparent 62%), radial-gradient(620px 380px at 92% 4%, rgba(23, 112, 95, 0.06), transparent 60%);
@@ -916,7 +916,7 @@
 /* headings inherit the shared Geist treatment (see base .font-serif-p). */
 
 
-/* surfaces go big-radius and minimal — same geometry as admin's cards.
+/* surfaces go big-radius and minimal - same geometry as admin's cards.
    No brand-tab accent strip: admin's cards don't carry one, so reception's
    no longer does either. */
 
@@ -931,7 +931,7 @@
 }
 
 
-/* glass tuned to admin's recipe — light frosted white on BOTH the topbar
+/* glass tuned to admin's recipe - light frosted white on BOTH the topbar
    and the sidebar. No dark rail override: aside.glass just inherits this,
    same as it does in admin. */
 
@@ -948,11 +948,11 @@
 }
 
 
-/* Buttons use the shared Supabase treatment (see base .btn-primary) — the
+/* Buttons use the shared Supabase treatment (see base .btn-primary) - the
    pine accent comes through var(--p-blue). Nothing to override here. */
 
 
-/* rounded utilities scale up inside reception too, matching admin exactly —
+/* rounded utilities scale up inside reception too, matching admin exactly -
    pills stay pills */
 
 .portal[data-portal="reception"] .rounded-md {
@@ -977,17 +977,17 @@
 
 
 /* ============================================================================
-   ADMIN — "porcelain pine"
+   ADMIN - "porcelain pine"
    Scoped to [data-portal="admin"]. Nothing here touches the other portals.
 
    Matched to the public site's v4 design system: deep pine on cool porcelain,
    oversized rounded corners, flat minimal surfaces, Bricolage display type.
-   Same tokens, same geometry — the admin panel reads as the same product as
+   Same tokens, same geometry - the admin panel reads as the same product as
    the website.
    ========================================================================== */
 
 .portal[data-portal="admin"] {
-    /* neutrals — pine-cast porcelain, same as the public site */
+    /* neutrals - pine-cast porcelain, same as the public site */
     --p-ink: #0c1a1c;
     --p-text: #3d4c4f;
     --p-muted: #64737a;
@@ -995,16 +995,16 @@
     --p-surface: #ffffff;
     --p-border: #e2e7e5;
     --p-border-strong: #cdd6d3;
-    /* primary — deep pine, aliased onto the blue slots the components use */
+    /* primary - deep pine, aliased onto the blue slots the components use */
     --p-blue: #0b544c;
     --p-blue-deep: #073d37;
     --p-blue-soft: rgba(11, 84, 76, 0.08);
     --p-blue-glow: rgba(11, 84, 76, 0.25);
-    /* positive / live — teal lift */
+    /* positive / live - teal lift */
     --p-cyan: #17705f;
     --p-cyan-deep: #0b544c;
     --p-cyan-soft: rgba(23, 112, 95, 0.10);
-    /* semantic — the site's muted brass + emergency red */
+    /* semantic - the site's muted brass + emergency red */
     --p-amber: #a97b3f;
     --p-amber-soft: rgba(169, 123, 63, 0.12);
     --p-rose: #c2402f;
@@ -1030,7 +1030,7 @@
 /* headings inherit the shared Geist treatment (see base .font-serif-p). */
 
 
-/* surfaces go big-radius and minimal — same geometry as the site's cards */
+/* surfaces go big-radius and minimal - same geometry as the site's cards */
 
 .portal[data-portal="admin"] .surface {
     border-radius: 22px;
@@ -1058,11 +1058,11 @@
 }
 
 
-/* Buttons use the shared Supabase treatment (see base .btn-primary) — the
+/* Buttons use the shared Supabase treatment (see base .btn-primary) - the
    pine accent comes through var(--p-blue). Nothing to override here. */
 
 
-/* rounded utilities scale up inside admin — pills stay pills */
+/* rounded utilities scale up inside admin - pills stay pills */
 
 .portal[data-portal="admin"] .rounded-md {
     border-radius: 10px;
@@ -1085,7 +1085,7 @@
 }
 
 .portal[data-portal="labs"] {
-    /* neutrals — pine-cast porcelain, identical to admin */
+    /* neutrals - pine-cast porcelain, identical to admin */
     --p-ink: #0c1a1c;
     --p-text: #3d4c4f;
     --p-muted: #64737a;
@@ -1093,16 +1093,16 @@
     --p-surface: #ffffff;
     --p-border: #e2e7e5;
     --p-border-strong: #cdd6d3;
-    /* primary — deep pine, aliased onto the blue slots the components use */
+    /* primary - deep pine, aliased onto the blue slots the components use */
     --p-blue: #0b544c;
     --p-blue-deep: #073d37;
     --p-blue-soft: rgba(11, 84, 76, 0.08);
     --p-blue-glow: rgba(11, 84, 76, 0.25);
-    /* positive / live — teal lift */
+    /* positive / live - teal lift */
     --p-cyan: #17705f;
     --p-cyan-deep: #0b544c;
     --p-cyan-soft: rgba(23, 112, 95, 0.10);
-    /* semantic — admin's muted brass + emergency red */
+    /* semantic - admin's muted brass + emergency red */
     --p-amber: #a97b3f;
     --p-amber-soft: rgba(169, 123, 63, 0.12);
     --p-rose: #c2402f;
@@ -1118,7 +1118,7 @@
 }
 
 
-/* a quiet pine bloom — same fixed backdrop as admin, no navy aurora */
+/* a quiet pine bloom - same fixed backdrop as admin, no navy aurora */
 
 .portal[data-portal="labs"]::before {
     background: radial-gradient(760px 420px at 12% -6%, rgba(11, 84, 76, 0.07), transparent 62%), radial-gradient(620px 380px at 92% 4%, rgba(23, 112, 95, 0.06), transparent 60%);
@@ -1128,7 +1128,7 @@
 /* headings inherit the shared Geist treatment (see base .font-serif-p). */
 
 
-/* surfaces go big-radius and minimal — same geometry as admin's cards.
+/* surfaces go big-radius and minimal - same geometry as admin's cards.
    No brand-tab accent strip: admin's cards don't carry one, so reception's
    no longer does either. */
 
@@ -1143,7 +1143,7 @@
 }
 
 
-/* glass tuned to admin's recipe — light frosted white on BOTH the topbar
+/* glass tuned to admin's recipe - light frosted white on BOTH the topbar
    and the sidebar. No dark rail override: aside.glass just inherits this,
    same as it does in admin. */
 
@@ -1160,11 +1160,11 @@
 }
 
 
-/* Buttons use the shared Supabase treatment (see base .btn-primary) — the
+/* Buttons use the shared Supabase treatment (see base .btn-primary) - the
    pine accent comes through var(--p-blue). Nothing to override here. */
 
 
-/* rounded utilities scale up inside reception too, matching admin exactly —
+/* rounded utilities scale up inside reception too, matching admin exactly -
    pills stay pills */
 
 .portal[data-portal="labs"] .rounded-md {

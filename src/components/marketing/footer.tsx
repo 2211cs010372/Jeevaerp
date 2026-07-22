@@ -2,7 +2,7 @@ import Link from "next/link";
 import { HOSPITAL, DEPARTMENTS } from "@/lib/data";
 
 /**
- * Navy footer — practical columns and a stay-in-touch strip. Every icon here
+ * Navy footer - practical columns and a stay-in-touch strip. Every icon here
  * does something real (call, mail, directions); no dead social links.
  */
 export function Footer() {
@@ -18,7 +18,7 @@ export function Footer() {
               <span className="text-[17px] font-semibold">{HOSPITAL.shortName}</span>
             </div>
             <p className="mt-4 max-w-xs text-[13px] leading-[1.7] text-white/55">
-              {HOSPITAL.tagline} — {DEPARTMENTS.length} departments, one building,
+              {HOSPITAL.tagline} - {DEPARTMENTS.length} departments, one building,
               one record for every patient.
             </p>
           </div>

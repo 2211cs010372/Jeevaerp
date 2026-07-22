@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 /**
- * Renders the photo at `src` (drop files into /public/images — see IMAGES.md).
+ * Renders the photo at `src` (drop files into /public/images - see IMAGES.md).
  * Until the file exists, shows a designed placeholder so layouts read
  * correctly. Swapping in real photography requires zero code changes.
  */

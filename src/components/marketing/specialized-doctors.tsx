@@ -8,7 +8,7 @@ import { DOCTORS } from "@/lib/data";
 import { ArrowUpRight, Clock, Star, Calendar } from "lucide-react";
 
 /**
- * North Star Health — Specialized Doctors Component
+ * North Star Health - Specialized Doctors Component
  * ------------------------------------------------------------------
  * Glassmorphic doctor cards with warm #f0eee9 framing, deep #14181C accents,
  * and #274472 navy highlights displaying rich clinical data points.

@@ -48,7 +48,7 @@ export default function WardsPage() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  /** Idempotent — safe to press twice. */
+  /** Idempotent - safe to press twice. */
   async function setupStandard() {
     setBusy(true); setError(null);
     try {
@@ -71,7 +71,7 @@ export default function WardsPage() {
         dailyCharge: Number(wardModal.dailyCharge || 0),
         gstRatePct: Number(wardModal.gstRatePct || 0),
       });
-      setNotice(wardModal.id ? "Ward updated." : "Ward created — now add beds to it.");
+      setNotice(wardModal.id ? "Ward updated." : "Ward created - now add beds to it.");
       setWardModal(null);
       await load();
     } catch (e) { setError(e instanceof ApiClientError ? e.message : "Could not save ward."); }
@@ -107,7 +107,7 @@ export default function WardsPage() {
         <div>
           <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Wards &amp; beds</h1>
           <p className="mt-1 text-[13px] text-[var(--p-muted)]">
-            Set the daily bed charge per ward. Rooms above ₹5,000/day (non-ICU) attract 5% GST — confirm rates with your CA.
+            Set the daily bed charge per ward. Rooms above ₹5,000/day (non-ICU) attract 5% GST - confirm rates with your CA.
           </p>
         </div>
         <PrimaryButton onClick={() => setWardModal({ ...emptyWard })}><Icon name="plus" size={15} /> New ward</PrimaryButton>
@@ -126,7 +126,7 @@ export default function WardsPage() {
       ) : !board?.wards.length ? (
         <div data-rise className="surface dotgrid flex flex-col items-center px-6 py-16 text-center">
           <span className="flex h-12 w-12 items-center justify-center rounded-full border border-[var(--p-border)] bg-white text-[var(--p-muted)]"><Icon name="bed" size={20} /></span>
-          <p className="mt-3 text-[14px] font-semibold text-[var(--p-ink)]">No wards yet — so reception has no beds to admit into.</p>
+          <p className="mt-3 text-[14px] font-semibold text-[var(--p-ink)]">No wards yet - so reception has no beds to admit into.</p>
           <p className="mt-1 max-w-md text-[13px] leading-relaxed text-[var(--p-muted)]">
             Start with the standard layout and edit the rates afterwards, or build your own ward from scratch.
           </p>
@@ -142,7 +142,7 @@ export default function WardsPage() {
           </div>
           <p className="mt-4 max-w-md text-[11px] leading-relaxed text-[var(--p-muted)]">
             General ₹1,500 ×10 · Semi-Private ₹3,000 ×6 · Private ₹5,500 ×4 (5% GST) · ICU ₹8,000 ×4.
-            Room rent above ₹5,000/day attracts GST — confirm the rates with the CA.
+            Room rent above ₹5,000/day attracts GST - confirm the rates with the CA.
           </p>
         </div>
       ) : (
@@ -171,7 +171,7 @@ export default function WardsPage() {
                     const tone = occ ? "var(--p-blue-deep)" : maint ? "var(--p-muted)" : "var(--p-cyan-deep)";
                     return (
                       <button key={b.id} onClick={() => !occ && toggleMaintenance(b)} disabled={occ || busyBed === b.id}
-                        title={occ ? `${b.patient?.fullName ?? "Occupied"} — discharge from reception` : maint ? "Click to bring back in service" : "Click to mark under maintenance"}
+                        title={occ ? `${b.patient?.fullName ?? "Occupied"} - discharge from reception` : maint ? "Click to bring back in service" : "Click to mark under maintenance"}
                         className={`flex min-h-[92px] flex-col rounded-xl border p-3 text-left transition-colors disabled:cursor-default ${
                           occ ? "border-[var(--p-blue)]/35 bg-[var(--p-blue-soft)]"
                           : maint ? "border-[var(--p-border)] bg-[var(--p-bg)]"
@@ -243,7 +243,7 @@ export default function WardsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="surface w-full max-w-sm overflow-hidden bg-white">
             <div className="flex items-center justify-between border-b border-[var(--p-border)] px-6 py-4">
-              <h3 className="text-[15px] font-semibold text-[var(--p-ink)]">Add beds — {bedsModal.wardName}</h3>
+              <h3 className="text-[15px] font-semibold text-[var(--p-ink)]">Add beds - {bedsModal.wardName}</h3>
               <button onClick={() => setBedsModal(null)} className="text-[var(--p-muted)]">✕</button>
             </div>
             <div className="space-y-4 p-6">
@@ -251,7 +251,7 @@ export default function WardsPage() {
                 <Field label="How many? *"><input className={fld} value={bedCount} onChange={(e) => setBedCount(e.target.value.replace(/\D/g, ""))} inputMode="numeric" /></Field>
                 <Field label="Number prefix"><input className={fld} value={bedPrefix} onChange={(e) => setBedPrefix(e.target.value.toUpperCase())} placeholder="GEN" /></Field>
               </div>
-              <p className="text-[11px] text-[var(--p-muted)]">Beds continue from the highest existing number — e.g. {bedPrefix || "GEN"}-05, {bedPrefix || "GEN"}-06…</p>
+              <p className="text-[11px] text-[var(--p-muted)]">Beds continue from the highest existing number - e.g. {bedPrefix || "GEN"}-05, {bedPrefix || "GEN"}-06…</p>
             </div>
             {error && <div className="border-t border-[var(--p-border)] bg-[var(--p-rose-soft)] px-6 py-2.5 text-[12px] text-[var(--p-rose)]">{error}</div>}
             <div className="flex justify-end gap-3 border-t border-[var(--p-border)] p-5">

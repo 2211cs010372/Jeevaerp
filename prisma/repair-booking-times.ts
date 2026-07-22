@@ -6,7 +6,7 @@
  * The booking service used to select the slot WITHOUT `startTime`, so it wrote
  * `timeAtBooking: undefined`. The column carries `@default("00:00")`, so Prisma
  * quietly stored midnight rather than throwing. Every appointment booked through
- * the desk (as opposed to rescheduled) has the wrong time on it — on the queue,
+ * the desk (as opposed to rescheduled) has the wrong time on it - on the queue,
  * on the printed OPD sheet, everywhere.
  *
  * The good news: `slotId` was written correctly, so the true time is still
@@ -26,7 +26,7 @@ async function main() {
   });
 
   if (broken.length === 0) {
-    console.log("✓ Nothing to repair — no appointment is stuck at 00:00.");
+    console.log("✓ Nothing to repair - no appointment is stuck at 00:00.");
     return;
   }
 
@@ -45,7 +45,7 @@ async function main() {
       // The slot was deleted (or genuinely holds no time). We cannot invent one:
       // guessing a consultation time on a medical record is worse than leaving it
       // visibly wrong. Report it and move on.
-      console.log(`  ⚠ ${a.opNumber} — slot missing, cannot recover. Fix by hand.`);
+      console.log(`  ⚠ ${a.opNumber} - slot missing, cannot recover. Fix by hand.`);
       orphaned++;
       continue;
     }
@@ -63,7 +63,7 @@ async function main() {
     console.log(`⚠ ${orphaned} could not be recovered (their slot is gone). Correct these by hand.`);
   }
 
-  // Anything at 00:00 with NO slot at all was likely cancelled — its slot was
+  // Anything at 00:00 with NO slot at all was likely cancelled - its slot was
   // released and slotId nulled. Flag them so nobody is surprised later.
   const noSlot = await prisma.appointment.count({
     where: { timeAtBooking: "00:00", slotId: null },

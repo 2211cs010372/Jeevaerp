@@ -6,7 +6,7 @@ import { Reveal } from "@/components/ui/reveal";
 import { DeptIcon } from "@/components/marketing/dept-icon";
 
 /**
- * North Star Health — Care Model Component
+ * North Star Health - Care Model Component
  * ------------------------------------------------------------------
  * Bento-style grid showcasing the Jeeva Care Framework. Uses North Star's 
  * signature warm canvas (#f0eee9), deep midnight (#14181C), and navy (#274472).
@@ -69,7 +69,7 @@ export function CareModel() {
                   Sovereign medical attention.
                 </h3>
                 <p className="mt-2.5 text-xs sm:text-sm leading-relaxed text-[#14181C]/75">
-                  Skilled, attentive listeners — your doctor analyzes your entire consolidated medical profile before you say a single word.
+                  Skilled, attentive listeners - your doctor analyzes your entire consolidated medical profile before you say a single word.
                 </p>
               </div>
 

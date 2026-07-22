@@ -56,7 +56,7 @@ export interface PortalDatePickerProps {
   value: string;
   /** Fires the plain ISO string directly (not an event) */
   onChange: (isoDate: string) => void;
-  /** ISO yyyy-mm-dd — dates before this are disabled */
+  /** ISO yyyy-mm-dd - dates before this are disabled */
   min?: string;
   /** Which portal accent to key the selection state off. Defaults to teal. */
   accent?: "teal" | "blue";
@@ -70,7 +70,7 @@ const ACCENT_VARS: Record<NonNullable<PortalDatePickerProps["accent"]>, { base: 
 };
 
 /** Drop-in replacement for <input type="date">. Same value/min contract;
- *  onChange fires the plain ISO string directly (not an event) — call
+ *  onChange fires the plain ISO string directly (not an event) - call
  *  sites using onChange={(e) => setX(e.target.value)} become onChange={setX}. */
 export function PortalDatePicker({
   value,

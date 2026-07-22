@@ -1,7 +1,7 @@
 import { Scoop } from "@/components/ui/scoop";
 import { HOSPITAL } from "@/lib/data";
 
-/** The one loud thing on the page — and it's for emergencies only. */
+/** The one loud thing on the page - and it's for emergencies only. */
 export function EmergencyBand() {
   return (
     <section className="px-3 py-8 sm:px-5">

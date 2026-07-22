@@ -7,10 +7,10 @@ import { SmartImage } from "../ui/smart-image";
 import { IMAGES, HOSPITAL, DEPARTMENTS } from "@/lib/data";
 
 /**
- * Hero — a full-bleed photo of the hospital, framed as a rounded card that sits
+ * Hero - a full-bleed photo of the hospital, framed as a rounded card that sits
  * below the navbar. A porcelain gradient off the left keeps the pine headline
  * readable over the photo; two bento cards float bottom-right on desktop and
- * stack under the copy on mobile. Pine/porcelain tokens, Bricolage display —
+ * stack under the copy on mobile. Pine/porcelain tokens, Bricolage display -
  * same language as the rest of the site. No external fonts, real hospital data.
  */
 export function Hero() {
@@ -51,7 +51,7 @@ export function Hero() {
           </h1>
 
           <p className="hero-rise max-w-md text-[15px] leading-relaxed text-[var(--ink-soft)] sm:text-[15.5px]" style={{ animationDelay: ".16s" }}>
-            Patient-first care across {DEPARTMENTS.length} specialties in {city} — from routine
+            Patient-first care across {DEPARTMENTS.length} specialties in {city} - from routine
             checkups to complex trauma, built around the people we treat, not the paperwork.
           </p>
 
@@ -73,7 +73,7 @@ export function Hero() {
           </div>
         </div>
 
-        {/* bento cards — stacked under the copy on mobile, floated bottom-right on desktop */}
+        {/* bento cards - stacked under the copy on mobile, floated bottom-right on desktop */}
         <div className="relative z-10 flex gap-3 p-6 pt-0 sm:gap-4 sm:p-10 sm:pt-0 lg:absolute lg:bottom-12 lg:right-12 lg:p-0">
           <HeroCard img="/images/KPI1.avif" badge="Care team" text="Every patient gets a personal care plan, day or night." delay=".34s" />
           <HeroCard img="/images/bed.avif" badge="50+ beds" text="Private rooms and modern equipment, built to help you recover well." delay=".42s" />

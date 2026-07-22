@@ -1,11 +1,11 @@
 /**
- * ONE classifier for how a given request host should route portals — shared by
+ * ONE classifier for how a given request host should route portals - shared by
  * the middleware (which enforces it) and resolveOrigin (which builds post-login
  * redirect URLs), so the two can never disagree. Pure string work → edge-safe.
  *
  * Two routing shapes:
- *   • subdomain — admin.example.com → /admin        (real domains, localhost)
- *   • path      — example.com/admin                 (*.vercel.app, bare IPs)
+ *   • subdomain - admin.example.com → /admin        (real domains, localhost)
+ *   • path      - example.com/admin                 (*.vercel.app, bare IPs)
  *
  * Subdomain routing needs wildcard subdomains that actually resolve + carry a
  * TLS cert. That's true for a real custom domain and for *.localhost, but NOT
@@ -30,7 +30,7 @@ export function classifyHost(host: string, cookieDomain?: string): HostRouting {
   const labels = hostname.split(".");
   const sub = labels[0] ?? "";
 
-  // Explicit config wins — ".root.com" → "root.com".
+  // Explicit config wins - ".root.com" → "root.com".
   const configured = cookieDomain?.replace(/^\./, "");
   if (configured) return { subdomainMode: true, rootDomain: configured, sub, port };
 

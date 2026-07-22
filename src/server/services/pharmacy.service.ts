@@ -20,15 +20,15 @@ export interface MedicineDTO {
   id: string; name: string; genericName: string | null; manufacturer: string | null;
   hsnCode: string | null; gstRatePct: string; unit: string; rackLocation: string | null;
   reorderThreshold: number; active: boolean;
-  courseCritical: boolean;   // antibiotic / TB drug — a partial course is harmful
+  courseCritical: boolean;   // antibiotic / TB drug - a partial course is harmful
   inStock: number;              // sum of non-expired batch qty
-  expiredQty: number;           // expired stock STILL PHYSICALLY ON THE SHELF — must be pulled
+  expiredQty: number;           // expired stock STILL PHYSICALLY ON THE SHELF - must be pulled
   mrp: string | null;           // MRP of the batch we'd dispense next (FEFO)
   nearestExpiry: string | null; // that batch's expiry
   lowStock: boolean;
 }
 
-/** Catalog with live stock. Stock excludes expired batches — they can't be sold. */
+/** Catalog with live stock. Stock excludes expired batches - they can't be sold. */
 export async function listMedicines(query?: string): Promise<MedicineDTO[]> {
   const today = new Date(); today.setHours(0, 0, 0, 0);
 
@@ -49,7 +49,7 @@ export async function listMedicines(query?: string): Promise<MedicineDTO[]> {
       gstRatePct: true, unit: true, rackLocation: true, reorderThreshold: true, active: true,
       courseCritical: true,
       batches: {
-        // ALL batches with stock — expired ones are split out below so the
+        // ALL batches with stock - expired ones are split out below so the
         // pharmacist is told what to physically pull off the shelf.
         where: { quantity: { gt: 0 } },
         orderBy: { expiryDate: "asc" }, // FEFO
@@ -100,7 +100,7 @@ export async function addBatch(
   if (!med) throw new ApiError(404, "Medicine not found");
 
   await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    // A batch number is unique per medicine — receiving the same batch again tops it up.
+    // A batch number is unique per medicine - receiving the same batch again tops it up.
     const batch = await tx.stockBatch.upsert({
       where: { medicineId_batchNo: { medicineId: input.medicineId, batchNo: input.batchNo.trim() } },
       update: {
@@ -148,7 +148,7 @@ export interface BulkBatchRow {
 export interface BulkBatchResult { row: number; medicine: string; batchNo: string; ok: boolean; error?: string; created?: boolean; }
 
 /**
- * Receive many batches at once — from a parsed spreadsheet or a keyed-in
+ * Receive many batches at once - from a parsed spreadsheet or a keyed-in
  * scanned invoice. Each row is committed on its own, so one bad line (a
  * medicine that isn't in the catalog, an expired date) fails alone and the
  * rest still land. Returns a per-row report so the counter can see exactly
@@ -189,7 +189,7 @@ export async function bulkAddBatches(
         if (found) {
           medId = found.id; medName = found.name;
         } else if (r.createNew && (r.medicine || "").trim().length > 1) {
-          // New product off the invoice — create it, then stock it. name is unique.
+          // New product off the invoice - create it, then stock it. name is unique.
           const nm = r.medicine!.trim();
           const med = await prisma.medicine.upsert({
             where: { name: nm },
@@ -271,7 +271,7 @@ export async function adjustStock(
 }
 
 /**
- * FEFO — First Expiry, First Out. The correct rule for pharmacy: always dispense
+ * FEFO - First Expiry, First Out. The correct rule for pharmacy: always dispense
  * the batch that expires soonest, so stock doesn't die on the shelf. A single
  * line may span several batches if one doesn't cover the quantity.
  */
@@ -301,7 +301,7 @@ async function pickBatchesFEFO(
   if (remaining > 0) {
     const med = await tx.medicine.findUnique({ where: { id: medicineId }, select: { name: true } });
     const have = qtyNeeded - remaining;
-    throw new ApiError(400, `Not enough stock for ${med?.name ?? "that medicine"} — need ${qtyNeeded}, only ${have} available`);
+    throw new ApiError(400, `Not enough stock for ${med?.name ?? "that medicine"} - need ${qtyNeeded}, only ${have} available`);
   }
   return picks;
 }
@@ -309,7 +309,7 @@ async function pickBatchesFEFO(
 /**
  * Dispense against a scanned prescription (or as a walk-in OTC sale).
  * Decrements stock FEFO, writes a ledger row per batch, and raises a TAXABLE
- * GST invoice — medicines are 5%/12%, unlike diagnostics which are exempt.
+ * GST invoice - medicines are 5%/12%, unlike diagnostics which are exempt.
  */
 export async function dispense(
   actor: AuthUser,
@@ -318,7 +318,7 @@ export async function dispense(
     prescriptionUploadId?: string;
     items: { medicineId: string; qty: number }[];
     discountAmount?: number;
-    /** Set when the patient is taking less than was prescribed — recorded on the bill. */
+    /** Set when the patient is taking less than was prescribed - recorded on the bill. */
     shortSupplyReason?: string;
     payment?: { mode: "CASH" | "UPI" | "CARD" | "NETBANKING" | "OTHER"; amount: number; reference?: string };
     payments?: { mode: "CASH" | "UPI" | "CARD" | "NETBANKING" | "OTHER"; amount: number; reference?: string }[];
@@ -345,7 +345,7 @@ export async function dispense(
       for (const p of picks) {
         // decrement stock
         await tx.stockBatch.update({ where: { id: p.batchId }, data: { quantity: { decrement: p.qty } } });
-        // ledger row — full traceability of which batch went to which patient
+        // ledger row - full traceability of which batch went to which patient
         await tx.stockTransaction.create({
           data: { batchId: p.batchId, type: "DISPENSE", qty: -p.qty, reason: "Dispensed", performedById: actor.id },
         });
@@ -366,7 +366,7 @@ export async function dispense(
   // ── Is this patient lying in a bed upstairs? ────────────────────────────────
   // An admitted patient does NOT pay at the medicine counter. The medicine goes
   // on their room tab and settles in the discharge bill. Billing them here would
-  // make them pay twice — once at the window, once at discharge.
+  // make them pay twice - once at the window, once at discharge.
   const liveAdmission = await prisma.admission.findFirst({
     where: { patientId: input.patientId, status: "ADMITTED" },
     select: { id: true, ipNumber: true },
@@ -395,7 +395,7 @@ export async function dispense(
       meta: { ipNumber: liveAdmission.ipNumber, lines: lines.length }, ...ctx,
     });
 
-    // No invoice — deliberately. The caller is told so it can say so on screen.
+    // No invoice - deliberately. The caller is told so it can say so on screen.
     return { chargedToRoom: true as const, ipNumber: liveAdmission.ipNumber, invoice: null };
   }
 
@@ -460,7 +460,7 @@ export async function pharmacyRxQueue(status?: "SENT_TO_PHARMACY" | "DISPENSED")
   }));
 }
 
-/** Batches for one medicine (FEFO order) — what the pharmacist sees on the shelf. */
+/** Batches for one medicine (FEFO order) - what the pharmacist sees on the shelf. */
 export async function medicineBatches(medicineId: string) {
   const rows = await prisma.stockBatch.findMany({
     where: { medicineId },
@@ -485,7 +485,7 @@ export async function medicineBatches(medicineId: string) {
   });
 }
 
-/** Pharmacy profit numbers — reusable by the pharmacy dashboard and the admin overview. */
+/** Pharmacy profit numbers - reusable by the pharmacy dashboard and the admin overview. */
 export async function pharmacyProfitSummary(): Promise<{
   profitToday: string; marginPct: number;
   stockValueCost: string; stockValueMrp: string; potentialProfit: string;
@@ -567,7 +567,7 @@ export async function pharmacyStats(): Promise<{
   const lowStock = (meds as MedB[])
     .filter((m) => m.batches.reduce((s, b) => s + b.quantity, 0) <= m.reorderThreshold).length;
 
-  // Realized gross profit today — only lines whose batch has a known purchase rate.
+  // Realized gross profit today - only lines whose batch has a known purchase rate.
   let profitToday = 0, costedRevenue = 0;
   for (const it of todayItems as { qty: number; unitPrice: { toString(): string }; batch: { purchasePrice: { toString(): string } | null } | null }[]) {
     const pp = it.batch?.purchasePrice;
@@ -600,7 +600,7 @@ export async function pharmacyStats(): Promise<{
   };
 }
 
-/** Expiry & reorder watchlist — the report a pharmacist actually acts on. */
+/** Expiry & reorder watchlist - the report a pharmacist actually acts on. */
 export async function stockAlerts(): Promise<{
   expiring: { batchId: string; medicine: string; batchNo: string; expiryDate: string; quantity: number; daysLeft: number }[];
   lowStock: { medicineId: string; name: string; inStock: number; reorderThreshold: number }[];

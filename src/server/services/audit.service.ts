@@ -5,7 +5,7 @@ import type { Prisma } from "@prisma/client";
 /**
  * Append an audit-trail row. Staff actions set actorUserId; patient actions
  * set actorPatientId (exactly one, per the schema). Best-effort and never
- * throws into the caller — an audit failure must not break the real action.
+ * throws into the caller - an audit failure must not break the real action.
  */
 export async function logAudit(
   actor: AuthUser,

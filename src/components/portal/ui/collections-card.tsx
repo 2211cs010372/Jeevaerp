@@ -1,12 +1,12 @@
 "use client";
 
 /**
- * Collections-by-payment-type card — the "counter" tally.
+ * Collections-by-payment-type card - the "counter" tally.
  *
  * Reception has always had this at day-close; this is the same split (CASH /
  * UPI / CARD / …) as a reusable card so the pharmacy till, the lab till and the
  * admin (all counters) can see what they took today and in what form. Fed a
- * plain array so it stays a dumb presentational component — the maths lives in
+ * plain array so it stays a dumb presentational component - the maths lives in
  * `collectionByMode` on the server.
  */
 

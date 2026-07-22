@@ -46,7 +46,7 @@ export default function AdminDayClosePage() {
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--p-teal)]">Admin console</p>
           <h1 className="mt-1 font-serif-p text-[24px] font-semibold text-[var(--p-ink)]">Day close</h1>
-          <p className="mt-1 text-[13px] text-[var(--p-muted)]">Hospital-wide collections for a day — by payment type and by counter.</p>
+          <p className="mt-1 text-[13px] text-[var(--p-muted)]">Hospital-wide collections for a day - by payment type and by counter.</p>
         </div>
         <input type="date" value={date} max={todayISO()} onChange={(e) => setDate(e.target.value)}
           className="rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-[13px] text-[var(--p-ink)] outline-none focus:border-[var(--p-teal)]" />
@@ -90,7 +90,7 @@ export default function AdminDayClosePage() {
                     <span className="w-[90px] text-[13px] font-semibold text-[var(--p-ink)]">{m.mode}</span>
                     <span className="w-[46px] text-right font-mono text-[12px] text-[var(--p-muted)]">{m.count}×</span>
                     <span className="flex-1 text-right font-mono text-[13px] text-[var(--p-ink)]">₹{money(m.collected)}</span>
-                    <span className={`w-[90px] text-right font-mono text-[13px] ${m.refunded > 0 ? "text-[var(--p-rose)]" : "text-[var(--p-muted)]"}`}>{m.refunded > 0 ? `−₹${money(m.refunded)}` : "—"}</span>
+                    <span className={`w-[90px] text-right font-mono text-[13px] ${m.refunded > 0 ? "text-[var(--p-rose)]" : "text-[var(--p-muted)]"}`}>{m.refunded > 0 ? `−₹${money(m.refunded)}` : "-"}</span>
                     <span className="w-[100px] text-right font-mono text-[14px] font-bold text-[var(--p-ink)]">₹{money(m.net)}</span>
                   </div>
                 ))}

@@ -5,7 +5,7 @@ import { logAudit } from "./audit.service";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, ClaimStatus } from "@prisma/client";
 
-/** The insurers and TPAs a hospital front office deals with most. Editable —
+/** The insurers and TPAs a hospital front office deals with most. Editable -
  *  the form also accepts a free-typed name for anything not on the list. */
 export const INSURERS = [
   "Star Health", "HDFC ERGO", "ICICI Lombard", "Bajaj Allianz", "Care Health",

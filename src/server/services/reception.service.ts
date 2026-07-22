@@ -8,7 +8,7 @@ import type { Prisma } from "@prisma/client";
 
 /**
  * Patient shape returned to reception. Referral fields (referredByName /
- * referralSource) are ADMIN-ONLY and deliberately excluded here — one
+ * referralSource) are ADMIN-ONLY and deliberately excluded here - one
  * serializer, so the admin-only fact can never leak from a desk response.
  */
 export interface PatientDTO {
@@ -151,7 +151,7 @@ export async function getPatientByDisplayId(displayId: string): Promise<PatientD
 /**
  * Update a patient's registered details (reception/admin). Name parts recompute
  * fullName so search stays correct. Referral is a snapshot and is NOT editable
- * here — changing history would be exactly the drift we designed against.
+ * here - changing history would be exactly the drift we designed against.
  */
 export async function updatePatient(
   actor: AuthUser,
@@ -219,11 +219,11 @@ export async function updateOwnContact(
 }
 
 /**
- * DUPLICATE PATIENTS — the same human, registered twice.
+ * DUPLICATE PATIENTS - the same human, registered twice.
  *
  * It happens constantly: someone walks in, gives a phone number, gets a UHID.
  * Six months later they're admitted in an emergency and a different clerk
- * registers them again. Now their history is split across two records — and a
+ * registers them again. Now their history is split across two records - and a
  * doctor checking allergies sees half of it. That is a clinical hazard, not an
  * admin annoyance.
  *
@@ -273,7 +273,7 @@ export async function findDuplicates(): Promise<{
       .map(([phone, list]) => ({
         phone,
         patients: list
-          // Oldest first — the original record is almost always the one to keep,
+          // Oldest first - the original record is almost always the one to keep,
           // because it's the one with the longest history behind it.
           .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
           .map((p) => ({
@@ -292,8 +292,8 @@ export async function findDuplicates(): Promise<{
  * Fold `mergeId` into `keepId`.
  *
  * Everything medical and financial moves across: visits, bills, lab tests,
- * prescriptions, admissions. The duplicate record is NOT deleted — nothing
- * medical ever is — it's marked `mergedIntoId` and becomes invisible to every
+ * prescriptions, admissions. The duplicate record is NOT deleted - nothing
+ * medical ever is - it's marked `mergedIntoId` and becomes invisible to every
  * read in the system, while remaining in the audit trail forever.
  *
  * This is irreversible by design. A merge that could be undone would tempt

@@ -26,7 +26,7 @@ const QUICK_LINKS: { href: string; label: string }[] = [
   { href: "/alerts", label: "Alerts" },
 ];
 
-/** Numbered section header with a one-line explanation — the dashboard teaches. */
+/** Numbered section header with a one-line explanation - the dashboard teaches. */
 function SectionHead({ index, title, desc, right }: { index: string; title: string; desc?: string; right?: React.ReactNode }) {
   return (
     <div className="mb-4 mt-8 flex flex-wrap items-end justify-between gap-3 first:mt-0">
@@ -66,7 +66,7 @@ export default function PharmacyDashboard() {
         <h1 className="mt-2 font-serif-p text-[clamp(24px,3vw,32px)] font-semibold">Dispensing counter</h1>
         <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-black/60">
           Reception scans the doctor&apos;s handwritten prescription and it lands here.
-          Dispense against the scan — the system picks the earliest-expiry batch,
+          Dispense against the scan - the system picks the earliest-expiry batch,
           checks stock, and prints a GST bill against the patient&apos;s Jeeva ID.
         </p>
 
@@ -83,7 +83,7 @@ export default function PharmacyDashboard() {
             </span>
             {stats.expired > 0 && (
               <span className="rounded-full bg-[#e5484d]/20 px-3.5 py-1.5 font-mono text-[11.5px] text-[#ffa8ab]">
-                {stats.expired} expired — quarantine
+                {stats.expired} expired - quarantine
               </span>
             )}
           </div>
@@ -146,7 +146,7 @@ export default function PharmacyDashboard() {
 
       {/* ---- 03 · how the counter works ---- */}
       <SectionHead index="03 · How this counter works" title="The pharmacist's day, drawn"
-        desc="The flow below names the two things that go wrong at pharmacy counters — dispensing from the wrong batch, and billing without checking expiry. The system blocks both." />
+        desc="The flow below names the two things that go wrong at pharmacy counters - dispensing from the wrong batch, and billing without checking expiry. The system blocks both." />
       <PharmacyFlow counts={{
         waiting: stats?.pendingRx ?? 0,
         low: stats?.lowStock ?? 0,
@@ -156,7 +156,7 @@ export default function PharmacyDashboard() {
 
       {/* ---- 04 · work waiting ---- */}
       <SectionHead index="04 · Work waiting" title="The prescription queue"
-        desc="The same list reception sees — open the scan beside the dispensing form so the doctor's handwriting is never retyped from memory." />
+        desc="The same list reception sees - open the scan beside the dispensing form so the doctor's handwriting is never retyped from memory." />
       <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr]">
         <section data-rise className="surface overflow-hidden">
           <div className="flex items-center justify-between border-b border-[var(--p-border)] px-6 py-4">

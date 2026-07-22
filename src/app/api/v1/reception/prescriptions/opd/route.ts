@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * Generate the OPD prescription sheet from the entered data and file it as a
- * prescription — optionally dispatching it to the pharmacy queue in one step.
+ * prescription - optionally dispatching it to the pharmacy queue in one step.
  * No scan required. Reception / admin only.
  */
 export const POST = handler(async (req) => {

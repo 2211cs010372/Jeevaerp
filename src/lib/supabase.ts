@@ -5,7 +5,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
  *
  * Uses the NEW-format publishable key (`sb_publishable_…`), which is the public
  * replacement for the legacy `anon` key and is safe to ship to the browser.
- * Secrets (service-role / secret keys) must NEVER live in a NEXT_PUBLIC_ var —
+ * Secrets (service-role / secret keys) must NEVER live in a NEXT_PUBLIC_ var -
  * keep those server-side only.
  *
  * The app's system-of-record is still Prisma + Postgres. This client is for
@@ -24,7 +24,7 @@ export function getSupabase(): SupabaseClient | null {
   if (client) return client;
   if (!supabaseUrl || !supabasePublishableKey) {
     if (process.env.NODE_ENV !== "production") {
-      console.warn("[supabase] NEXT_PUBLIC_SUPABASE_URL / _PUBLISHABLE_KEY not set — client disabled.");
+      console.warn("[supabase] NEXT_PUBLIC_SUPABASE_URL / _PUBLISHABLE_KEY not set - client disabled.");
     }
     return null;
   }

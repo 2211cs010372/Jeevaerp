@@ -8,7 +8,7 @@ import { Icon, type IconName } from "@/components/portal/ui/icons";
  * The pharmacist's day, drawn.
  *
  * Reception's rail follows a PATIENT through the building. The pharmacy's follows
- * a PRESCRIPTION across the counter — different job, different verbs. Where the
+ * a PRESCRIPTION across the counter - different job, different verbs. Where the
  * receptionist asks "who's next?", the pharmacist asks "do we have it, is it
  * still good, and can they afford it?"
  *
@@ -59,7 +59,7 @@ export function PharmacyFlow({ counts }: { counts: PharmacyCounts }) {
             <Icon name="pill" size={13} />
           </span>
           <span className="text-[13px] font-semibold text-[var(--p-ink)]">How a prescription crosses the counter</span>
-          <span className="hidden text-[12px] text-[var(--p-muted)] sm:inline">— every step is a page. Tap one.</span>
+          <span className="hidden text-[12px] text-[var(--p-muted)] sm:inline">- every step is a page. Tap one.</span>
         </span>
         <span className={`text-[12px] text-[var(--p-muted)] transition-transform duration-200 ${open ? "rotate-90" : ""}`}>
           <Icon name="chevron" size={14} />
@@ -103,7 +103,7 @@ export function PharmacyFlow({ counts }: { counts: PharmacyCounts }) {
 
           <p className="mt-3 px-1 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
             Press <kbd className="rounded border border-[var(--p-border)] bg-[var(--p-bg)] px-1 py-0.5 font-mono text-[10px] font-semibold">⌘K</kbd> anywhere
-            and type a medicine name — it tells you the rack, what&apos;s left, and how long it&apos;s good for.
+            and type a medicine name - it tells you the rack, what&apos;s left, and how long it&apos;s good for.
           </p>
         </div>
       )}

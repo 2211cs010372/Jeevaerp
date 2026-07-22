@@ -2,7 +2,7 @@
  * Public site content.
  *
  * Copy principle: a person landing here is usually worried, often on a phone,
- * often on behalf of a parent. They want three answers fast — can I be seen
+ * often on behalf of a parent. They want three answers fast - can I be seen
  * today, where are you, and who will I see. Everything else is secondary.
  * No "world-class healthcare solutions". Plain words, specific facts.
  */
@@ -33,22 +33,22 @@ export interface Department {
 }
 
 export const DEPARTMENTS: Department[] = [
-  { index: "01", name: "Cardiology",       blurb: "Chest pain, blood pressure and heart rhythm — assessed the same day, with ECG and echo in-house.", common: "ECG · 2D Echo · TMT",         image: "/images/dept-cardiology.avif" },
+  { index: "01", name: "Cardiology",       blurb: "Chest pain, blood pressure and heart rhythm - assessed the same day, with ECG and echo in-house.", common: "ECG · 2D Echo · TMT",         image: "/images/dept-cardiology.avif" },
   { index: "02", name: "Orthopaedics",     blurb: "Fractures, joint pain and spine trouble. Digital X-ray on site, so you don't travel for a scan.", common: "Fractures · Knee · Spine",    image: "/images/dept-orthopaedics.avif" },
   { index: "03", name: "Gynaecology",      blurb: "Antenatal care through delivery, and women's health at every stage of life.", common: "Antenatal · Delivery · Scan",                      image: "/images/dept-gynaecology.avif" },
-  { index: "04", name: "Paediatrics",      blurb: "Newborns to teenagers — vaccinations, fevers, growth checks and the 2 a.m. worries.", common: "Vaccines · Fever · Growth",               image: "/images/dept-paediatrics.avif" },
+  { index: "04", name: "Paediatrics",      blurb: "Newborns to teenagers - vaccinations, fevers, growth checks and the 2 a.m. worries.", common: "Vaccines · Fever · Growth",               image: "/images/dept-paediatrics.avif" },
   { index: "05", name: "General Medicine", blurb: "The first door for fever, infection, diabetes and blood pressure. Where most visits start.", common: "Fever · Diabetes · BP",            image: "/images/dept-general-medicine.avif" },
   { index: "06", name: "Neurology",        blurb: "Persistent headache, seizures and stroke care, supported by in-house imaging.", common: "Headache · Seizure · Stroke",                   image: "/images/dept-neurology.avif" },
   { index: "07", name: "Dermatology",      blurb: "Skin, hair and allergy problems, with lab diagnostics to back the diagnosis.", common: "Skin · Hair · Allergy",                          image: "/images/dept-dermatology.avif" },
-  { index: "08", name: "ENT",              blurb: "Ear, nose and throat — from hearing tests to minor day procedures.", common: "Hearing · Sinus · Throat",                                 image: "/images/dept-ent.avif" },
+  { index: "08", name: "ENT",              blurb: "Ear, nose and throat - from hearing tests to minor day procedures.", common: "Hearing · Sinus · Throat",                                 image: "/images/dept-ent.avif" },
 ];
 
-/** Fast lanes for what people actually come in for — each maps to the
+/** Fast lanes for what people actually come in for - each maps to the
  *  department that treats it, pre-filtered on the booking page. */
 export const QUICK_NEEDS = [
-  { label: "Fever & infections", note: "Seasonal fevers, flu, typhoid — seen same day.", dept: "General Medicine", icon: "Fever" },
+  { label: "Fever & infections", note: "Seasonal fevers, flu, typhoid - seen same day.", dept: "General Medicine", icon: "Fever" },
   { label: "Disease prevention", note: "Vaccinations, screenings and health checkups.",  dept: "General Medicine", icon: "Prevention" },
-  { label: "Children",           note: "Newborn care to teens — growth and vaccines.",   dept: "Paediatrics",      icon: "Paediatrics" },
+  { label: "Children",           note: "Newborn care to teens - growth and vaccines.",   dept: "Paediatrics",      icon: "Paediatrics" },
   { label: "Pregnancy",          note: "Antenatal visits, scans and safe delivery.",     dept: "Gynaecology",      icon: "Gynaecology" },
 ] as const;
 
@@ -87,14 +87,14 @@ export const STATS = [
 
 /**
  * The care model. Replaces the old generic blurbs.
- * Each pillar is a claim we can actually stand behind — because the ERP
+ * Each pillar is a claim we can actually stand behind - because the ERP
  * behind this site genuinely does it.
  */
 export const CARE_MODEL = [
   {
     index: "01",
     title: "One ID, for life",
-    text: "You are registered once and given a permanent Jeeva ID. Every visit, every scan, every prescription and every bill attaches to that one number — so nothing is lost between departments, and nothing is asked of you twice.",
+    text: "You are registered once and given a permanent Jeeva ID. Every visit, every scan, every prescription and every bill attaches to that one number - so nothing is lost between departments, and nothing is asked of you twice.",
   },
   {
     index: "02",
@@ -110,7 +110,7 @@ export const CARE_MODEL = [
 
 export const JOURNEY = [
   { step: "01", title: "Register",    text: "The front desk issues your permanent Jeeva ID. It takes about two minutes, and you only ever do it once." },
-  { step: "02", title: "Consult",     text: "You meet your doctor with your full history already open in front of them — no lost files, no repeating yourself." },
+  { step: "02", title: "Consult",     text: "You meet your doctor with your full history already open in front of them - no lost files, no repeating yourself." },
   { step: "03", title: "Diagnostics", text: "Any tests advised go straight to our lab. Reports upload to your record the moment they are ready." },
   { step: "04", title: "Pharmacy",    text: "Prescribed medicines are dispensed against your ID from verified, batch-tracked stock. GST bill in hand." },
 ];
@@ -125,7 +125,7 @@ export const IMAGES = {
 };
 
 /**
- * Rooms & pricing — PUBLISHED, deliberately.
+ * Rooms & pricing - PUBLISHED, deliberately.
  * Most hospital sites hide rates; families find out at the billing counter on
  * the worst day of their week. These are the same figures the ERP charges from
  * (and locks at admission), so the website and the bill cannot disagree.
@@ -146,31 +146,31 @@ export const WARDS = [
     includes: ["Continuous monitoring", "Critical-care nursing", "Ventilator support"] },
 ] as const;
 
-/** Questions the front desk answers fifty times a day — answered once, here. */
+/** Questions the front desk answers fifty times a day - answered once, here. */
 export const FAQ = [
   {
     q: "What should I bring on my first visit?",
-    a: "Just yourself, a phone number, and any old reports or prescriptions you have. Reception registers you in about two minutes and issues your Jeeva ID (it looks like JMH2026OP00123). Every visit after that, the ID is all you need — your history is already with us.",
+    a: "Just yourself, a phone number, and any old reports or prescriptions you have. Reception registers you in about two minutes and issues your Jeeva ID (it looks like JMH2026OP00123). Every visit after that, the ID is all you need - your history is already with us.",
   },
   {
     q: "Do I pay before or after seeing the doctor?",
-    a: "The consultation is billed when you book at the desk — you'll get a printed receipt with the fee on it. Medicines and lab tests, if the doctor advises any, are billed separately at the pharmacy and lab counters, so you only ever pay for what you actually take.",
+    a: "The consultation is billed when you book at the desk - you'll get a printed receipt with the fee on it. Medicines and lab tests, if the doctor advises any, are billed separately at the pharmacy and lab counters, so you only ever pay for what you actually take.",
   },
   {
     q: "How do I collect my lab reports?",
-    a: "Routine blood work is usually ready in about 30 minutes. You can collect a printout from the lab counter, or sign in to the patient portal with your Jeeva ID and download it from your phone — every report you've ever had here stays in one place.",
+    a: "Routine blood work is usually ready in about 30 minutes. You can collect a printout from the lab counter, or sign in to the patient portal with your Jeeva ID and download it from your phone - every report you've ever had here stays in one place.",
   },
   {
     q: "Can my medicines be bought outside?",
-    a: "Of course. The doctor's prescription is yours — our in-house pharmacy simply has the medicines the doctors here actually prescribe, checks expiry dates automatically, and bills with proper GST receipts. If we're short-stocked, we'll say so rather than substitute quietly.",
+    a: "Of course. The doctor's prescription is yours - our in-house pharmacy simply has the medicines the doctors here actually prescribe, checks expiry dates automatically, and bills with proper GST receipts. If we're short-stocked, we'll say so rather than substitute quietly.",
   },
   {
     q: "Can someone stay with an admitted patient?",
-    a: "Yes — one attendant per patient, and we record their name and phone at admission so the ward can reach the right person immediately. General ward has attendant chairs; private rooms have a proper attendant bed.",
+    a: "Yes - one attendant per patient, and we record their name and phone at admission so the ward can reach the right person immediately. General ward has attendant chairs; private rooms have a proper attendant bed.",
   },
   {
     q: "What payment methods do you accept?",
-    a: "Cash, UPI, and cards at every counter — consultation, pharmacy, lab, and admissions. Every payment gets a printed, GST-compliant receipt with a receipt number, and any past bill can be reprinted at the desk if you lose yours.",
+    a: "Cash, UPI, and cards at every counter - consultation, pharmacy, lab, and admissions. Every payment gets a printed, GST-compliant receipt with a receipt number, and any past bill can be reprinted at the desk if you lose yours.",
   },
 ] as const;
 

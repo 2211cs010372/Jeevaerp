@@ -17,14 +17,14 @@ interface Ordered { id: string; testName: string; priceAtOrder: string | null; b
 
 const money = (n: number) => n.toLocaleString("en-IN", { minimumFractionDigits: 2 });
 
-/** ?patient=JMH… — same deep-link contract as every other reception page. */
+/** ?patient=JMH… - same deep-link contract as every other reception page. */
 function PatientFromUrl({ onFound }: { onFound: (p: Patient) => void }) {
   const params = useSearchParams();
   useEffect(() => {
     const pid = params.get("patient");
     if (!pid) return;
     api.get<{ patient: Patient }>(`/reception/patients/${encodeURIComponent(pid)}`)
-      .then((r) => onFound(r.patient)).catch(() => {});
+      .then((r) => onFound(r.patient)).catch(() => { });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return null;
@@ -50,7 +50,7 @@ export default function LabOrderPage() {
   const [done, setDone] = useState<{ tests: Ordered[]; invoice?: { id: string; receiptNo: string; totalAmount: string } } | null>(null);
 
   useEffect(() => {
-    api.get<{ catalog: CatalogItem[] }>("/labs/catalog").then((r) => setCatalog(r.catalog)).catch(() => {});
+    api.get<{ catalog: CatalogItem[] }>("/labs/catalog").then((r) => setCatalog(r.catalog)).catch(() => { });
   }, []);
 
   // patient search
@@ -65,7 +65,7 @@ export default function LabOrderPage() {
     return () => clearTimeout(t);
   }, [q, patient]);
 
-  // a lab test is usually ordered off a doctor's chit — link it to that visit if there is one
+  // a lab test is usually ordered off a doctor's chit - link it to that visit if there is one
   useEffect(() => {
     if (!patient) { setVisits([]); setVisitId(""); return; }
     api.get<{ visits: Visit[] }>(`/reception/patients/${patient.displayId}/completed-visits`)
@@ -82,7 +82,7 @@ export default function LabOrderPage() {
   const total = useMemo(() => chosen.reduce((s, c) => s + Number(c.price), 0), [chosen]);
   const collect = Math.max(0, total - labDisc);
   const paidModes = payments.map((p) => p.mode).join(" + ");
-  // Diagnostics are GST-exempt in India — the total the patient pays IS the sum of prices.
+  // Diagnostics are GST-exempt in India - the total the patient pays IS the sum of prices.
   const anyTaxable = chosen.some((c) => Number(c.gstRatePct) > 0);
 
   const reset = useCallback(() => {
@@ -101,7 +101,7 @@ export default function LabOrderPage() {
       });
 
       // INPATIENT: orderTests already posted these to the room tab. Raising a
-      // counter invoice here would bill the same blood draw twice — once now,
+      // counter invoice here would bill the same blood draw twice - once now,
       // once at discharge. So we hard-stop, regardless of the "bill now" toggle.
       if (admission) { setDone({ tests: tests.tests }); return; }
 
@@ -136,7 +136,7 @@ export default function LabOrderPage() {
               {done.tests.map((t) => (
                 <div key={t.id} className="flex items-center justify-between rounded-lg border border-[var(--p-border)] px-3.5 py-2 text-[14px]">
                   <span className="text-[var(--p-ink)]">{t.testName}</span>
-                  <span className="font-mono text-[var(--p-muted)]">₹{t.priceAtOrder ?? "—"}</span>
+                  <span className="font-mono text-[var(--p-muted)]">₹{t.priceAtOrder ?? "-"}</span>
                 </div>
               ))}
             </div>
@@ -187,7 +187,7 @@ export default function LabOrderPage() {
       <div data-rise className="surface dotgrid mb-5 px-6 py-5">
         <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Lab tests</h1>
         <p className="mt-1 max-w-[600px] text-[14px] leading-relaxed text-[var(--p-muted)]">
-          Patient walks up with the doctor&apos;s chit — pick the tests, take the money, send it to the lab. One counter, one trip.
+          Patient walks up with the doctor&apos;s chit - pick the tests, take the money, send it to the lab. One counter, one trip.
         </p>
       </div>
 
@@ -195,7 +195,7 @@ export default function LabOrderPage() {
 
       <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
         <div className="space-y-5">
-          {/* 1 — patient */}
+          {/* 1 - patient */}
           <InpatientPicker
             pickedPatientId={patient?.id}
             onPick={(ip) => {
@@ -246,21 +246,39 @@ export default function LabOrderPage() {
               {patient && visits.length > 0 && (
                 <div className="mt-4">
                   <label className="mb-1.5 block text-[12px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
-                    Which consultation ordered these? <span className="font-normal normal-case">(optional)</span>
+                    Which consultation ordered these?{" "}
+                    <span className="font-normal normal-case">(optional)</span>
                   </label>
-                  <select value={visitId} onChange={(e) => setVisitId(e.target.value)}
-                    className="w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm outline-none focus:border-[var(--p-teal)]">
-                    <option value="">Walk-in — no consultation</option>
+
+                  <input
+                    list="consultation-list"
+                    placeholder="Search consultation..."
+                    className="w-full rounded-xl border border-[var(--p-border)] bg-white px-3 py-2 text-sm outline-none focus:border-[var(--p-teal)]"
+                    onChange={(e) => {
+                      const selected = visits.find(
+                        (v) =>
+                          `${v.visitDate} · ${v.doctorName} · ${v.opNumber}` === e.target.value
+                      );
+
+                      setVisitId(selected?.id ?? "");
+                    }}
+                  />
+
+                  <datalist id="consultation-list">
+                    <option value="Walk-in - no consultation" />
                     {visits.map((v) => (
-                      <option key={v.id} value={v.id}>{v.visitDate} · {v.doctorName} · {v.opNumber}</option>
+                      <option
+                        key={v.id}
+                        value={`${v.visitDate} · ${v.doctorName} · ${v.opNumber}`}
+                      />
                     ))}
-                  </select>
+                  </datalist>
                 </div>
               )}
             </div>
           </section>
 
-          {/* 2 — tests */}
+          {/* 2 - tests */}
           {patient && <AdmissionBanner admission={admission} checking={checkingAdm} what="These tests" />}
 
           <section data-rise className="surface overflow-hidden">
@@ -283,8 +301,7 @@ export default function LabOrderPage() {
                     const on = !!picked[c.id];
                     return (
                       <button key={c.id} onClick={() => setPicked({ ...picked, [c.id]: !on })}
-                        className={`flex items-center justify-between rounded-lg border px-3.5 py-2.5 text-left transition-colors ${
-                          on ? "border-[var(--p-teal)] bg-[var(--p-teal-soft)]" : "border-[var(--p-border)] hover:border-[var(--p-teal)]"}`}>
+                        className={`flex items-center justify-between rounded-lg border px-3.5 py-2.5 text-left transition-colors ${on ? "border-[var(--p-teal)] bg-[var(--p-teal-soft)]" : "border-[var(--p-border)] hover:border-[var(--p-teal)]"}`}>
                         <span className="min-w-0">
                           <span className={`block truncate text-[14px] ${on ? "font-semibold text-[var(--p-ink)]" : "text-[var(--p-text)]"}`}>{c.name}</span>
                           {c.code && <span className="block font-mono text-[11px] text-[var(--p-muted)]">{c.code}</span>}
@@ -324,17 +341,17 @@ export default function LabOrderPage() {
                 </div>
                 {!anyTaxable && (
                   <p className="text-[12px] text-[var(--p-muted)]">
-                    Diagnostics are <b>GST-exempt</b> — no tax added.
+                    Diagnostics are <b>GST-exempt</b> - no tax added.
                   </p>
                 )}
 
                 {admission ? (
                   /* No payment control at all for an inpatient. A "take the money
-                     now" checkbox on screen — even unticked — is an invitation to
+                     now" checkbox on screen - even unticked - is an invitation to
                      charge a family twice for one blood draw. */
                   <div className="!mt-4 rounded-lg border border-[var(--p-blue)]/30 bg-[var(--p-blue-soft)] px-3 py-3">
                     <p className="text-[13px] font-semibold text-[var(--p-ink)]">
-                      Charged to the room — <span className="font-mono">{admission.ipNumber}</span>
+                      Charged to the room - <span className="font-mono">{admission.ipNumber}</span>
                     </p>
                     <p className="mt-1 text-[12px] leading-relaxed text-[var(--p-text)]">
                       These tests post straight to the room tab and settle in the discharge bill.
@@ -345,7 +362,7 @@ export default function LabOrderPage() {
                   <label className="!mt-4 flex cursor-pointer items-start gap-2.5 rounded-lg border border-[var(--p-border)] px-3 py-2.5">
                     <input type="checkbox" checked={billNow} onChange={(e) => setBillNow(e.target.checked)} className="mt-0.5 h-4 w-4 accent-[var(--p-teal)]" />
                     <span className="text-[13px] leading-relaxed text-[var(--p-text)]">
-                      <b>Take the money now</b> — orders and bills in one step.
+                      <b>Take the money now</b> - orders and bills in one step.
                     </span>
                   </label>
                 )}

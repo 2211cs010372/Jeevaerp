@@ -11,7 +11,7 @@ import type { Prisma, PaymentMode } from "@prisma/client";
  * drift. Prisma Decimal accepts strings, so we build strings and let Postgres
  * store exact numeric(10,2).
  */
-// r2 comes from @/server/billing/calc — one rounding definition, not two.
+// r2 comes from @/server/billing/calc - one rounding definition, not two.
 const s2 = (n: number) => r2(n).toFixed(2);
 
 export type InvoiceSourceT = "CONSULTATION" | "LAB" | "PHARMACY" | "IPD" | "OTHER";
@@ -57,7 +57,7 @@ export interface InvoiceDTO {
 
 /**
  * Creates an invoice with GST split. For intra-state supply (hospital and
- * patient both in Telangana) GST splits equally into CGST + SGST — this is how
+ * patient both in Telangana) GST splits equally into CGST + SGST - this is how
  * Indian GST invoices must show it. A 0% line (exempt) contributes zero tax,
  * which is the correct behaviour for most diagnostic services.
  */
@@ -77,7 +77,7 @@ export async function createInvoice(
     /** Optionally record a payment immediately (walk-in pays at the counter). */
     payment?: PaymentInput;
     /**
-     * A split settlement — part cash, part UPI, etc. Recorded as several Payment
+     * A split settlement - part cash, part UPI, etc. Recorded as several Payment
      * rows against the one bill. Takes precedence over `payment` when present.
      */
     payments?: PaymentInput[];
@@ -139,7 +139,7 @@ export async function createInvoice(
       select: { id: true },
     });
 
-    // optional immediate payment — one tender, or a split (part cash, part UPI).
+    // optional immediate payment - one tender, or a split (part cash, part UPI).
     // `payments` (plural) wins when given; otherwise fall back to the single
     // `payment`. Zero-amount legs are dropped so an unused split box adds nothing.
     const tenders = (input.payments?.length ? input.payments : input.payment ? [input.payment] : [])
@@ -182,7 +182,7 @@ export async function createInvoice(
 /**
  * Record one or more tenders against an existing invoice; recomputes status.
  * Passing several `payments` settles the balance as a split (part cash, part
- * UPI) in a single motion — each becomes its own Payment row, exactly as if
+ * UPI) in a single motion - each becomes its own Payment row, exactly as if
  * they had been taken one after another.
  */
 export async function recordPayments(
@@ -273,7 +273,7 @@ export async function getInvoice(invoiceId: string): Promise<InvoiceDTO> {
   const config = await prisma.hospitalConfig.findFirst();
 
   // NET of refunds. Summing payments alone would show a fully refunded bill as
-  // PAID — and the money would be gone from the drawer but still on the books.
+  // PAID - and the money would be gone from the drawer but still on the books.
   const paid = netPaid(
     inv.payments.map((x: { amount: { toString(): string } }) => ({ amount: Number(x.amount.toString()) })),
     (inv.refunds ?? []).map((x: { amount: { toString(): string } }) => ({ amount: Number(x.amount.toString()) }))
@@ -360,7 +360,7 @@ export async function updateInvoice(
     }
     const total = r2(taxable + cgst + sgst);
 
-    // swap the items wholesale (receiptNo is preserved — same invoice, corrected)
+    // swap the items wholesale (receiptNo is preserved - same invoice, corrected)
     await tx.invoiceItem.deleteMany({ where: { invoiceId: inv.id } });
     await tx.invoice.update({
       where: { id: inv.id },
@@ -385,7 +385,7 @@ export async function updateInvoice(
 }
 
 /**
- * Cancel an invoice. Never deleted — status flips to CANCELLED and it stays in
+ * Cancel an invoice. Never deleted - status flips to CANCELLED and it stays in
  * the ledger forever. Any lab tests on it are released so they can be re-billed.
  */
 export async function cancelInvoice(
@@ -468,7 +468,7 @@ export async function listInvoices(source?: InvoiceSourceT, limit = 50): Promise
 }
 
 /**
- * REFUND — money going back across the counter.
+ * REFUND - money going back across the counter.
  *
  * The single most dangerous operation in the whole ERP: it takes cash OUT of a
  * hospital. Every guard lives in `assertRefundable`, which is pure and tested,

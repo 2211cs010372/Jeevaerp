@@ -12,7 +12,7 @@ interface Inv {
   totalAmount: string; amountPaid: string; createdAt: string;
   /** Money already handed back. */
   refunded: string;
-  /** The ceiling — the desk never has to work it out. */
+  /** The ceiling - the desk never has to work it out. */
   refundable: string;
   /** Distinct payment types on this bill: [] unpaid, ["CASH"], ["CASH","UPI"] (split). */
   paymentModes: string[];
@@ -149,7 +149,7 @@ export default function BillingPage() {
         </p>
       </div>
 
-      {/* the till — what you hand over at the end of the shift */}
+      {/* the till - what you hand over at the end of the shift */}
       <div data-rise className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="surface px-5 py-4">
           <div className="text-[12px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Collected today</div>
@@ -167,7 +167,7 @@ export default function BillingPage() {
         </div>
         <div className="surface flex items-center px-5 py-4">
           <p className="text-[13px] leading-relaxed text-[var(--p-muted)]">
-            These are <b className="text-[var(--p-ink)]">today&apos;s live bills only</b> — voided ones are excluded, so this
+            These are <b className="text-[var(--p-ink)]">today&apos;s live bills only</b> - voided ones are excluded, so this
             is what should physically be in the drawer.
           </p>
         </div>
@@ -204,7 +204,7 @@ export default function BillingPage() {
       <section data-rise className="surface overflow-hidden">
         {filtered.length === 0 && !loading ? (
           <p className="py-16 text-center text-[14px] text-[var(--p-muted)]">
-            {tab === "DUE" ? "Nothing outstanding — every bill is settled." : "No bills here."}
+            {tab === "DUE" ? "Nothing outstanding - every bill is settled." : "No bills here."}
           </p>
         ) : (
           <div className="divide-y divide-[var(--p-border)]">
@@ -241,7 +241,7 @@ export default function BillingPage() {
                     {i.status === "REFUNDED" ? "Refunded" : voided ? "Voided" : bal > 0 ? "Part paid" : "Paid"}
                   </Pill>
 
-                  {/* how it was paid — cash, UPI, or both (split) — across every portal's bills */}
+                  {/* how it was paid - cash, UPI, or both (split) - across every portal's bills */}
                   {i.paymentModes.length > 0 && (
                     <span
                       title={i.paymentModes.length > 1 ? "Split payment" : "Payment type"}
@@ -261,7 +261,7 @@ export default function BillingPage() {
 
                   <div className="flex items-center gap-2">
                     {/* Refund is only offered when there is money to give back.
-                        A cancelled bill is the COMMON case — you void the visit,
+                        A cancelled bill is the COMMON case - you void the visit,
                         then you return the fee. */}
                     {Number(i.refundable) > 0 && (
                       <button onClick={() => {
@@ -412,7 +412,7 @@ export default function BillingPage() {
                   ))}
                 </div>
                 <p className="mt-1.5 text-[11px] text-[var(--p-muted)]">
-                  A UPI refund does not come out of the cash drawer — the day-close depends on this being right.
+                  A UPI refund does not come out of the cash drawer - the day-close depends on this being right.
                 </p>
               </Field>
 
@@ -456,7 +456,7 @@ export default function BillingPage() {
               <input value={voidReason} onChange={(e) => setVoidReason(e.target.value)} autoFocus
                 placeholder="Billed the wrong patient / duplicate…" className={fld} />
               <p className="rounded-lg bg-[var(--p-amber-soft)] px-3 py-2 text-[12px] leading-relaxed text-[#8a6414]">
-                The bill is marked <b>cancelled</b>, not deleted — the receipt number stays used, which is what GST expects.
+                The bill is marked <b>cancelled</b>, not deleted - the receipt number stays used, which is what GST expects.
                 {Number(voiding.amountPaid) > 0 && <> This bill already took <b>₹{money(voiding.amountPaid)}</b>; voiding it does <b>not</b> hand the cash back.</>}
               </p>
             </div>

@@ -10,7 +10,7 @@ import { api, ApiClientError } from "@/lib/api-client";
  *    username exists in the DB.
  *  - Password: username + password fallback.
  * On success the API returns an absolute redirectTo (the role's portal), so we
- * do a full navigation — the cookie is domain-wide and valid on arrival.
+ * do a full navigation - the cookie is domain-wide and valid on arrival.
  */
 export function StaffLogin({ portalName = "Staff" }: { portalName?: string }) {
   const [mode, setMode] = useState<"otp" | "password">("otp");
@@ -74,7 +74,7 @@ export function StaffLogin({ portalName = "Staff" }: { portalName?: string }) {
           : "Enter your username and password."}
       </p>
 
-      {/* mode toggle — a segmented pill */}
+      {/* mode toggle - a segmented pill */}
       {!(mode === "otp" && step === "code") && (
         <div className="mt-6 grid grid-cols-2 gap-1 rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] p-1">
           {([["otp", "Email code"], ["password", "Password"]] as const).map(([m, t]) => (

@@ -9,12 +9,12 @@ import { api } from "@/lib/api-client";
  *
  * A receptionist doing outpatient work searches for a person: "Ramesh Kumar".
  * A receptionist doing INPATIENT work never does. The ward rings down and says
- * "ICU bed 3's reports are here" — the bed IS the identifier. Making them
+ * "ICU bed 3's reports are here" - the bed IS the identifier. Making them
  * remember and type a name they were never told is a small cruelty repeated
  * fifty times a day.
  *
  * So: every admitted patient, grouped by ward, tappable by bed. One tap loads the
- * patient AND their admission — no second lookup, no leaving the page.
+ * patient AND their admission - no second lookup, no leaving the page.
  */
 
 export interface Inpatient {
@@ -29,7 +29,7 @@ export interface Inpatient {
   patient: { id: string; displayId: string; fullName: string; age: number | null; gender: string | null; phone: string };
 }
 
-/** Little occupied-bed mark — same glyph language as the bed board. */
+/** Little occupied-bed mark - same glyph language as the bed board. */
 function BedMark() {
   return (
     <svg viewBox="0 0 76 46" className="w-9" aria-hidden>
@@ -59,7 +59,7 @@ export function InpatientPicker({
       .catch(() => setRows([]));
   }, []);
 
-  // Nothing admitted — don't clutter the page with an empty accordion.
+  // Nothing admitted - don't clutter the page with an empty accordion.
   if (rows !== null && rows.length === 0) return null;
 
   const wards = new Map<string, Inpatient[]>();
@@ -83,7 +83,7 @@ export function InpatientPicker({
             <span className="block text-[12px] text-[var(--p-muted)]">
               {rows === null
                 ? "Loading the wards…"
-                : `${rows.length} patient${rows.length === 1 ? "" : "s"} admitted right now — no need to search by name.`}
+                : `${rows.length} patient${rows.length === 1 ? "" : "s"} admitted right now - no need to search by name.`}
             </span>
           </span>
         </span>

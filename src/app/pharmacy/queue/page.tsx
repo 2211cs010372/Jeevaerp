@@ -56,7 +56,7 @@ export default function RxQueuePage() {
       .then((r) => setMeds(r.medicines)).catch(() => setMeds([]));
   }, [active, search]);
 
-  // Reception already typed the medicines from the handwriting — pre-fill the
+  // Reception already typed the medicines from the handwriting - pre-fill the
   // bill with every line that matched the catalog. Two clicks instead of ten.
   useEffect(() => {
     if (!active) return;
@@ -102,7 +102,7 @@ export default function RxQueuePage() {
 
   // Short supply = giving less than the doctor prescribed. Two consequences:
   // a reason is required, and if an ANTIBIOTIC is the thing being cut, we refuse
-  // to let it through on a shrug — that's a resistance risk, not a discount.
+  // to let it through on a shrug - that's a resistance risk, not a discount.
   const shortLines = lines.filter((l) => l.prescribedQty > 0 && l.qty < l.prescribedQty);
   const isShort = shortLines.length > 0;
   const abxShort = shortLines.some((l) => l.courseCritical);
@@ -205,7 +205,7 @@ export default function RxQueuePage() {
         )}
       </section>
 
-      {/* DISPENSE panel — scan on the left to read, bill on the right to build.
+      {/* DISPENSE panel - scan on the left to read, bill on the right to build.
           Height discipline: every zone owns its scroll; money + the dispense
           button are pinned and can never be pushed out of view. */}
       {active && (
@@ -227,7 +227,7 @@ export default function RxQueuePage() {
                 <span className="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--p-blue-soft)] text-[var(--p-blue-deep)]"><Icon name="bed" size={26} /></span>
                 <h3 className="mt-4 font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Charged to the room</h3>
                 <p className="mt-1 text-[13px] text-[var(--p-muted)]">
-                  This patient is admitted — <span className="font-mono font-semibold text-[var(--p-ink)]">{toRoom.ipNumber}</span>
+                  This patient is admitted - <span className="font-mono font-semibold text-[var(--p-ink)]">{toRoom.ipNumber}</span>
                 </p>
                 <p className="mt-3 max-w-sm rounded-lg bg-[var(--p-amber-soft)] px-4 py-2.5 text-[12px] leading-relaxed text-[#8a6414]">
                   <b>Do not take money.</b> The medicines are on their room tab and will be settled in the discharge bill.
@@ -281,12 +281,12 @@ export default function RxQueuePage() {
                           <img src={active.fileUrl} alt="Scanned prescription" className="w-full rounded-lg border border-[var(--p-border)] bg-white" />
                         )
                       ) : active.appointmentId ? (
-                        /* Typed prescription — read the live OPD sheet (no scan, no PDF file) */
+                        /* Typed prescription - read the live OPD sheet (no scan, no PDF file) */
                         <iframe src={`/print/opd/${active.appointmentId}`} title="OPD sheet"
                           className="h-[58vh] w-full rounded-lg border border-[var(--p-border)] bg-white md:h-[62vh]" />
                       ) : (
                         <div className="rounded-lg border border-dashed border-[var(--p-border-strong)] px-4 py-8 text-center text-[12px] text-[var(--p-muted)]">
-                          No scan attached — this one was typed straight in. The bill on the right is pre-filled from it.
+                          No scan attached - this one was typed straight in. The bill on the right is pre-filled from it.
                         </div>
                       )}
 
@@ -312,7 +312,7 @@ export default function RxQueuePage() {
 
                   {/* ---- RIGHT: build the bill ---- */}
                   <div className="flex flex-col md:min-h-0">
-                    {/* search — results only appear while typing, so they never bury the bill */}
+                    {/* search - results only appear while typing, so they never bury the bill */}
                     <div className="shrink-0 border-b border-[var(--p-border)] p-3">
                       <div className="flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-3 py-2">
                         <Icon name="search" size={15} />
@@ -341,8 +341,8 @@ export default function RxQueuePage() {
                                 </div>
                               </div>
                               <span className="flex shrink-0 items-center gap-2">
-                                {inBill && <span className="rounded-full bg-[var(--p-cyan-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--p-cyan-deep)]">✓ in bill — tap for +1</span>}
-                                <span className="font-mono text-[12px] text-[var(--p-ink)]">{m.mrp ? `₹${m.mrp}` : "—"}</span>
+                                {inBill && <span className="rounded-full bg-[var(--p-cyan-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--p-cyan-deep)]">✓ in bill - tap for +1</span>}
+                                <span className="font-mono text-[12px] text-[var(--p-ink)]">{m.mrp ? `₹${m.mrp}` : "-"}</span>
                               </span>
                             </button>
                           );
@@ -350,7 +350,7 @@ export default function RxQueuePage() {
                       </div>
                     )}
 
-                    {/* the working area: bill lines, scratchpad, money — one scroll */}
+                    {/* the working area: bill lines, scratchpad, money - one scroll */}
                     <div className="space-y-4 p-4 md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain">
                       <div>
                         <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
@@ -358,7 +358,7 @@ export default function RxQueuePage() {
                         </p>
                         {lines.length === 0 ? (
                           <p className="rounded-lg border border-dashed border-[var(--p-border-strong)] px-4 py-8 text-center text-[12px] text-[var(--p-muted)]">
-                            Nothing pre-matched — read the scan on the left, then search above to add each medicine.
+                            Nothing pre-matched - read the scan on the left, then search above to add each medicine.
                           </p>
                         ) : (
                           <div className="space-y-2">
@@ -367,7 +367,7 @@ export default function RxQueuePage() {
                                 <div className="min-w-0 flex-1 basis-40">
                                   <div className="flex items-center gap-1.5">
                                     {l.courseCritical && (
-                                      <span title="Course-critical (antibiotic) — don't cut this one short" className="shrink-0 text-[var(--p-rose)]"><Icon name="alert" size={12} /></span>
+                                      <span title="Course-critical (antibiotic) - don't cut this one short" className="shrink-0 text-[var(--p-rose)]"><Icon name="alert" size={12} /></span>
                                     )}
                                     <span className="rx-name truncate text-[13px] font-medium text-[var(--p-ink)]">{l.name}</span>
                                   </div>
@@ -419,7 +419,7 @@ export default function RxQueuePage() {
                       </div>
                     </div>
 
-                    {/* pinned money strip — always visible, whatever scrolls above */}
+                    {/* pinned money strip - always visible, whatever scrolls above */}
                     <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-6 gap-y-1 border-t border-[var(--p-border)] bg-[var(--p-bg)] px-4 py-2.5 text-[12px]">
                       <span className="text-[var(--p-muted)]">Subtotal <span className="font-mono text-[var(--p-ink)]">₹{subtotal.toFixed(2)}</span></span>
                       {disc > 0 && <span className="text-[var(--p-muted)]">Discount <span className="font-mono text-[var(--p-ink)]">−₹{disc.toFixed(2)}</span></span>}
@@ -436,7 +436,7 @@ export default function RxQueuePage() {
                     {blockedReason
                       ? <span className="font-semibold text-[var(--p-rose)]">Say why the patient is taking less before you dispense.</span>
                       : abxShort
-                        ? <span className="font-semibold text-[var(--p-rose)]">An antibiotic course is being cut short — reconsider.</span>
+                        ? <span className="font-semibold text-[var(--p-rose)]">An antibiotic course is being cut short - reconsider.</span>
                         : "Batches are picked automatically by earliest expiry (FEFO)."}
                   </p>
                   <PrimaryButton onClick={submit} disabled={busy || lines.length === 0 || blockedReason || (payNow && !payValid)}>

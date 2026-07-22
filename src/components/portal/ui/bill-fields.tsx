@@ -1,13 +1,13 @@
 "use client";
 
 /**
- * Shared bill fields — one discount control and one payment control, used by
+ * Shared bill fields - one discount control and one payment control, used by
  * every place that raises a bill (reception, pharmacy, labs, IPD discharge).
  *
  * Two things the counter kept asking for live here so they behave identically
  * on every receipt:
- *   · DiscountInput  — enter a discount as a PERCENTAGE (default) or a flat ₹.
- *   · PaymentSection — take the money as one tender, or SPLIT it (part cash,
+ *   · DiscountInput  - enter a discount as a PERCENTAGE (default) or a flat ₹.
+ *   · PaymentSection - take the money as one tender, or SPLIT it (part cash,
  *                      part UPI) across the one bill.
  *
  * Neither talks to the server. DiscountInput hands back the resolved rupee
@@ -50,7 +50,7 @@ const fldBase = "w-full rounded-lg border border-[var(--p-border)] bg-white px-3
 
 /**
  * Discount as a percentage of the subtotal (default) or a flat rupee amount.
- * Emits the resolved rupee `amount` — the parent uses that for its live total
+ * Emits the resolved rupee `amount` - the parent uses that for its live total
  * and sends it to the server unchanged.
  */
 export function DiscountInput({
@@ -61,7 +61,7 @@ export function DiscountInput({
 }: {
   subtotal: number;
   accent?: Accent;
-  /** A discount already on the bill (rupees) — starts the field in ₹ mode. */
+  /** A discount already on the bill (rupees) - starts the field in ₹ mode. */
   initialAmount?: number;
   onChange: (d: { amount: number; pct: number; isPct: boolean }) => void;
 }) {
@@ -166,7 +166,7 @@ export function PaymentSection({
   cb.current = onChange;
   useEffect(() => {
     cb.current({ payments, valid });
-    // primitive deps only — payments is derived from exactly these
+    // primitive deps only - payments is derived from exactly these
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t, split, mode, reference, cashRaw, upiRef]);
 

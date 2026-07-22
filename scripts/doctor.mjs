@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * jeeva doctor — run before dev/build.
+ * jeeva doctor - run before dev/build.
  *
  * TWO JOBS.
  *
@@ -10,7 +10,7 @@
  *    a message that doesn't name the offending folder. This finds it and names it.
  *
  * 2. FILES STRANDED BY A ZIP DROP. This project is delivered as zips. Extracting a
- *    zip only ever ADDS and OVERWRITES — it can never DELETE. So every time a file
+ *    zip only ever ADDS and OVERWRITES - it can never DELETE. So every time a file
  *    is moved or removed upstream, the old copy stays on disk forever, quietly,
  *    until it breaks something. That's exactly how the slug collision above
  *    happened: a route was moved, and both copies then existed locally.
@@ -25,7 +25,7 @@ const APP = "src/app";
 
 /** Paths upstream has deleted. A zip can't remove them, so we do. */
 const STALE = [
-  // moved to patients/[displayId]/admission — Next allows one slug per position
+  // moved to patients/[displayId]/admission - Next allows one slug per position
   "src/app/api/v1/reception/patients/[patientId]",
 ];
 

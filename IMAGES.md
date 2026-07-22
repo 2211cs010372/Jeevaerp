@@ -1,6 +1,6 @@
 # Photo shot list
 
-Drop these files into `/public/images/` and the design completes itself —
+Drop these files into `/public/images/` and the design completes itself -
 no code changes needed. Until a file exists, a designed placeholder renders
 in its place (navy gradient with the expected path printed on it).
 
@@ -13,4 +13,4 @@ in its place (navy gradient with the expected path printed on it).
 
 Tips: keep every image under ~400 KB (use squoosh.app), JPG for photos.
 When real photography is finalised, switch `SmartImage` to `next/image`
-for automatic optimisation — it's a one-component change.
+for automatic optimisation - it's a one-component change.

@@ -1,4 +1,4 @@
-# Sprint 2 (backend) — Reception register + search
+# Sprint 2 (backend) - Reception register + search
 
 ## What's new
 - Real APIs that save & read patients from Postgres (no more demo data on these screens)
@@ -7,7 +7,7 @@
 - Audit logging on registration (who registered whom, with IP/UA)
 - Slot-generation utility ready for the next pass (booking)
 
-## The schema changed — you must migrate
+## The schema changed - you must migrate
 
 Two schema edits landed: `Patient.age`, `Patient.bloodGroup`, and the new UHID
 format. Run:
@@ -38,12 +38,12 @@ npm run dev
 | GET  | `/api/v1/reception/patients?q=` | Search by name / UHID / phone (newest first) |
 | GET  | `/api/v1/reception/patients/[displayId]` | Pull one patient by UHID |
 
-## Try it (the CORRECT URLs — no doubled `/reception`)
+## Try it (the CORRECT URLs - no doubled `/reception`)
 
 1. Sign in: `reception.localhost:3000/login` → `reception@jeeva.local` / `Password123!`
-2. Register: `reception.localhost:3000/register` — fill the form, submit.
+2. Register: `reception.localhost:3000/register` - fill the form, submit.
    The OP slip shows a **real** issued ID (e.g. JMH2026OP00002), saved to DB.
-3. Search: `reception.localhost:3000/patients` — type a name/ID; results come
+3. Search: `reception.localhost:3000/patients` - type a name/ID; results come
    live from Postgres. Your just-registered patient appears at the top.
 4. Confirm persistence: the new patient can now log in at
    `localhost:3000/portal/login` with their issued UHID.

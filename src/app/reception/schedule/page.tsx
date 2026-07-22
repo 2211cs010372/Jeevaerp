@@ -93,7 +93,7 @@ export default function SchedulePage() {
       <div data-rise className="surface dotgrid mb-5 px-6 py-5">
         <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Doctor schedule</h1>
         <p className="mt-1 max-w-[600px] text-[14px] leading-relaxed text-[var(--p-muted)]">
-          See a doctor&apos;s whole day, and close it when they&apos;re away — so reception stops selling slots
+          See a doctor&apos;s whole day, and close it when they&apos;re away - so reception stops selling slots
           for a doctor who isn&apos;t coming in.
         </p>
       </div>
@@ -115,7 +115,7 @@ export default function SchedulePage() {
           {anyBlocked ? (
             <button onClick={clearLeave} disabled={busy}
               className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-teal)] px-4 py-2 text-[14px] font-semibold text-[var(--p-teal)] transition-colors hover:bg-[var(--p-teal-soft)] disabled:opacity-50">
-              {busy ? <Spinner size={13} /> : <Icon name="check" size={14} />} Doctor is back — reopen day
+              {busy ? <Spinner size={13} /> : <Icon name="check" size={14} />} Doctor is back - reopen day
             </button>
           ) : (
             <button onClick={() => { setLeaveOpen(true); setLeaveReason(""); }} disabled={busy || !day?.slots.length}
@@ -180,7 +180,7 @@ export default function SchedulePage() {
                       </span>
                     </div>
                     <div className="mt-1.5 text-[12px] text-[var(--p-muted)]">
-                      {isBlocked ? (s.blockReason ?? "Unavailable") + " — tap to reopen" : "Tap to block this hour"}
+                      {isBlocked ? (s.blockReason ?? "Unavailable") + " - tap to reopen" : "Tap to block this hour"}
                     </div>
                   </button>
                 );
@@ -211,7 +211,7 @@ export default function SchedulePage() {
               {booked > 0 && (
                 <p className="rounded-lg bg-[var(--p-amber-soft)] px-3 py-2 text-[12px] leading-relaxed text-[#8a6414]">
                   <b>{booked} patient{booked === 1 ? " has" : "s have"} already booked today.</b> I will <b>not</b> cancel them
-                  behind their back — you&apos;ll get their phone numbers so you can ring them and reschedule properly.
+                  behind their back - you&apos;ll get their phone numbers so you can ring them and reschedule properly.
                 </p>
               )}
             </div>
@@ -226,14 +226,14 @@ export default function SchedulePage() {
         </div>
       )}
 
-      {/* THE CALL LIST — patients who still think they have an appointment */}
+      {/* THE CALL LIST - patients who still think they have an appointment */}
       {callList && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="surface w-full max-w-lg bg-white">
             <div className="border-b border-[var(--p-border)] px-6 py-4">
               <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Ring these {callList.length} patient{callList.length === 1 ? "" : "s"}</h3>
               <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">
-                They&apos;re still booked with {day?.doctor.name} today and don&apos;t know yet. Their visits are untouched — reschedule or cancel each one deliberately.
+                They&apos;re still booked with {day?.doctor.name} today and don&apos;t know yet. Their visits are untouched - reschedule or cancel each one deliberately.
               </p>
             </div>
             <div className="max-h-72 divide-y divide-[var(--p-border)] overflow-y-auto">

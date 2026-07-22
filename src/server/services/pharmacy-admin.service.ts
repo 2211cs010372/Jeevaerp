@@ -3,7 +3,7 @@ import { logAudit } from "./audit.service";
 import type { AuthUser } from "@/lib/auth/types";
 
 /**
- * Create or edit a medicine. This is where the GST rate is set —
+ * Create or edit a medicine. This is where the GST rate is set -
  * medicines ARE taxable in India (commonly 5%, some at 12%), unlike
  * diagnostic services which are exempt.
  */

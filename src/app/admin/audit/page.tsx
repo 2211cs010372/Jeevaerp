@@ -20,7 +20,7 @@ export default function AuditPage() {
     <PortalScroll>
       <div data-rise className="surface dotgrid mb-6 px-6 py-5">
         <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Audit log</h1>
-        <p className="mt-1 text-[13px] text-[var(--p-muted)]">Every significant action — who did what, and when. Nothing is deleted.</p>
+        <p className="mt-1 text-[13px] text-[var(--p-muted)]">Every significant action - who did what, and when. Nothing is deleted.</p>
       </div>
 
       <section data-rise className="surface overflow-hidden">

@@ -4,12 +4,12 @@ import { useEffect, useRef } from "react";
 
 /**
  * Reveals [data-rise] elements as they scroll into view. Smooth scrolling is
- * native CSS — no JS scroll hijacking, so inner scroll containers work normally.
+ * native CSS - no JS scroll hijacking, so inner scroll containers work normally.
  * Respects prefers-reduced-motion.
  *
  * Elements present at mount use scroll-reveal. Elements that mount LATER (e.g.
  * content rendered after an async data load) can't be caught by the observer set
- * up at mount, so a MutationObserver reveals them as soon as they appear — this
+ * up at mount, so a MutationObserver reveals them as soon as they appear - this
  * is what keeps data-driven pages from rendering a blank body once data arrives.
  */
 export function PortalScroll({ children }: { children: React.ReactNode }) {

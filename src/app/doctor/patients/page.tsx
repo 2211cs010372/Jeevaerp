@@ -65,10 +65,10 @@ function ChartInner() {
               </div>
             </div>
             <div className="grid grid-cols-2 gap-px bg-[var(--p-border)] sm:grid-cols-4">
-              <F k="Age / Sex" v={`${c.patient.age ?? "—"} / ${c.patient.gender?.[0] ?? "—"}`} />
-              <F k="Blood group" v={c.patient.bloodGroup ?? "—"} />
+              <F k="Age / Sex" v={`${c.patient.age ?? "-"} / ${c.patient.gender?.[0] ?? "-"}`} />
+              <F k="Blood group" v={c.patient.bloodGroup ?? "-"} />
               <F k="Phone" v={c.patient.phone} />
-              <F k="Occupation" v={c.patient.occupation ?? "—"} />
+              <F k="Occupation" v={c.patient.occupation ?? "-"} />
             </div>
             {c.patient.remarks && (
               <p className="border-t border-[var(--p-border)] bg-[var(--p-amber-soft)] px-6 py-3 text-[12px] text-[#8a6414]">

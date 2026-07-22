@@ -70,7 +70,7 @@ export function PortalLogin() {
       </h1>
       <p className="mt-2 text-[13px] leading-relaxed text-muted">
         {step === "id"
-          ? "It's printed on your OP slip — like JMH2026OP00123. We'll text a one-time code to your registered mobile."
+          ? "It's printed on your OP slip - like JMH2026OP00123. We'll text a one-time code to your registered mobile."
           : `A 6-digit code was sent to ${sentTo}. It expires in 5 minutes.`}
       </p>
 

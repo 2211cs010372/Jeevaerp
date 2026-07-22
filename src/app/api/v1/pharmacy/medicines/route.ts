@@ -16,7 +16,7 @@ export const GET = handler(async (req) => {
   return NextResponse.json({ medicines: await listMedicines(q) });
 });
 
-/** Add or edit a medicine — this is where the GST rate (5% / 12%) is set. */
+/** Add or edit a medicine - this is where the GST rate (5% / 12%) is set. */
 export const POST = handler(async (req) => {
   const actor = await requireRole(req, "PHARMACIST", "ADMIN");
   const i = await parseBody(req, medicineSchema);

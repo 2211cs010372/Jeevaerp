@@ -13,15 +13,17 @@ export interface DoctorDTO {
 }
 export interface SlotDTO { id: string; startTime: string; endTime: string; }
 
-/** Reception-facing appointment (NO referral fields — those are admin-only). */
+/** Reception-facing appointment (NO referral fields - those are admin-only). */
 export interface AppointmentDTO {
   checkedInAt?: string | null;
   id: string; opNumber: string; time: string; status: string; type: string; price: string;
+  /** True once a prescription / OPD sheet has been filed against this visit. */
+  hasRx: boolean;
   patient: { id: string; displayId: string; name: string };
   doctor: { id: string; name: string; department: string };
 }
 
-/** Admin-facing appointment — INCLUDES the referral snapshot. */
+/** Admin-facing appointment - INCLUDES the referral snapshot. */
 export interface AdminAppointmentDTO extends AppointmentDTO {
   visitDate: string;
   referredByName: string | null;
@@ -52,24 +54,15 @@ export async function listAvailableSlots(doctorId: string, date: string): Promis
   const day = new Date(date);
   if (Number.isNaN(day.getTime())) throw new ApiError(400, "Invalid date");
   day.setHours(0, 0, 0, 0);
-  const rows = await prisma.doctorSlot.findMany({
+  // Every still-open slot for the day. Past-today slots are NOT dropped here -
+  // the desk shows the whole day and greys the passed ones out (un-bookable),
+  // rather than silently starting the grid mid-afternoon. The client marks
+  // "past" by the wall clock; bookAppointment refuses a passed slot as a net.
+  return prisma.doctorSlot.findMany({
     where: { doctorId, date: day, isBooked: false, isBlocked: false },
     orderBy: { startTime: "asc" },
     select: { id: true, startTime: true, endTime: true },
   });
-
-  // Real-time: for today, a slot whose start time has already passed can't be
-  // booked — drop it so the grid only ever offers times still ahead of the clock.
-  const now = new Date();
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-  if (day.getTime() === todayStart.getTime()) {
-    const nowMin = now.getHours() * 60 + now.getMinutes();
-    return rows.filter((s: SlotDTO) => {
-      const [h, m] = s.startTime.split(":").map(Number);
-      return h * 60 + m > nowMin;
-    });
-  }
-  return rows;
 }
 
 /**
@@ -85,7 +78,7 @@ export async function bookAppointment(
     patientId: string; slotId: string; type: "WALKIN" | "ONLINE";
     referredByName?: string; referralSource?: string;
     /** Reception can bill the consultation in the same motion, so the patient
-     *  leaves the desk with an OP number AND a receipt — one queue, not two. */
+     *  leaves the desk with an OP number AND a receipt - one queue, not two. */
     billNow?: {
       discountAmount?: number;
       payment?: { mode: "CASH" | "UPI" | "CARD" | "NETBANKING" | "OTHER"; amount: number; reference?: string };
@@ -116,7 +109,7 @@ export async function bookAppointment(
     if (!slot) throw new ApiError(404, "That time slot no longer exists");
     if (slot.isBooked) throw new ApiError(409, "That slot was just taken. Please pick another.");
     // Defence in depth: never let the column default swallow this again.
-    if (!slot.startTime) throw new ApiError(500, "That slot has no start time — tell IT before booking.");
+    if (!slot.startTime) throw new ApiError(500, "That slot has no start time - tell IT before booking.");
 
     const claim = await tx.doctorSlot.updateMany({
       where: { id: slot.id, isBooked: false }, data: { isBooked: true },
@@ -162,13 +155,13 @@ export async function bookAppointment(
 
   const dto = {
     id: appt.id, opNumber: appt.opNumber, time: appt.timeAtBooking, status: appt.status,
-    type: appt.type, price: appt.priceAtBooking.toString(),
+    type: appt.type, price: appt.priceAtBooking.toString(), hasRx: false,
     patient: { id: appt.patient.id, displayId: appt.patient.displayId, name: appt.patient.fullName },
     doctor: appt.doctor,
   };
 
   // Book + bill in one motion. The consultation invoice reuses the same
-  // engine as labs/pharmacy — consultation is GST-exempt by default.
+  // engine as labs/pharmacy - consultation is GST-exempt by default.
   if (input.billNow) {
     const invoice = await createInvoice(
       actor,
@@ -199,6 +192,8 @@ const apptSelect = {
   referredByName: true, referralSource: true, timeAtBooking: true, checkedInAt: true,
   patient: { select: { id: true, displayId: true, fullName: true } },
   doctor: { select: { id: true, name: true, department: true } },
+  // Has a prescription / OPD sheet been filed for this visit yet?
+  _count: { select: { prescriptionUploads: true } },
 } as const;
 
 type ApptRow = {
@@ -208,9 +203,10 @@ type ApptRow = {
   timeAtBooking: string; checkedInAt: Date | null;
   patient: { id: string; displayId: string; fullName: string };
   doctor: { id: string; name: string; department: string };
+  _count: { prescriptionUploads: number };
 };
 
-/** Reception queue for today — referral STRIPPED. */
+/** Reception queue for today - referral STRIPPED. */
 export async function todaysAppointments(): Promise<AppointmentDTO[]> {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const rows: ApptRow[] = await prisma.appointment.findMany({
@@ -220,13 +216,14 @@ export async function todaysAppointments(): Promise<AppointmentDTO[]> {
   return rows.map((a) => ({
     id: a.id, opNumber: a.opNumber, time: a.timeAtBooking, status: a.status, type: a.type,
     price: a.priceAtBooking.toString(),
+    hasRx: a._count.prescriptionUploads > 0,
     checkedInAt: a.checkedInAt ? a.checkedInAt.toISOString() : null,
     patient: { id: a.patient.id, displayId: a.patient.displayId, name: a.patient.fullName },
     doctor: a.doctor,
   }));
 }
 
-/** ADMIN-ONLY appointment history — INCLUDES referral snapshot. */
+/** ADMIN-ONLY appointment history - INCLUDES referral snapshot. */
 export async function adminAppointmentHistory(limit = 100): Promise<AdminAppointmentDTO[]> {
   const MODE_ORDER = ["CASH", "UPI", "CARD", "NETBANKING", "OTHER"];
   const rows = await prisma.appointment.findMany({
@@ -252,6 +249,7 @@ export async function adminAppointmentHistory(limit = 100): Promise<AdminAppoint
     return {
       id: a.id, opNumber: a.opNumber, time: a.timeAtBooking, status: a.status, type: a.type,
       price: a.priceAtBooking.toString(),
+      hasRx: a._count.prescriptionUploads > 0,
       visitDate: a.visitDate.toISOString().slice(0, 10),
       referredByName: a.referredByName, referralSource: a.referralSource,
       patient: { id: a.patient.id, displayId: a.patient.displayId, name: a.patient.fullName },
@@ -274,7 +272,7 @@ export async function receptionTodayStats(): Promise<{
     prisma.patient.count({ where: { createdAt: { gte: today, lt: tomorrow } } }),
   ]);
   // "waiting" = arrived and sitting outside the doctor's room. It is NOT
-  // "total minus completed" — that counted people who hadn't walked in yet.
+  // "total minus completed" - that counted people who hadn't walked in yet.
   return { total, expected, waiting: checkedIn, checkedIn, completed, newPatients };
 }
 
@@ -301,7 +299,7 @@ export async function opdPrintData(appointmentId: string): Promise<{
 
   const [hospital, visitNumber, upload, vitals] = await Promise.all([
     prisma.hospitalConfig.findFirst(),
-    // "#Visit: 3" the way the paper shows it — this visit's ordinal for the patient.
+    // "#Visit: 3" the way the paper shows it - this visit's ordinal for the patient.
     prisma.appointment.count({ where: { patientId: a.patientId, createdAt: { lte: a.createdAt } } }),
     prisma.prescriptionUpload.findFirst({
       where: { appointmentId: a.id },
@@ -337,7 +335,7 @@ export async function opdPrintData(appointmentId: string): Promise<{
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VITALS — BP, pulse, height, weight, temp, SpO2 for one visit. Printed blank
+// VITALS - BP, pulse, height, weight, temp, SpO2 for one visit. Printed blank
 // at booking for the triage pen; reception types the handwritten numbers back
 // in here afterwards, same two-step paper-first flow as the ℞ table.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -363,7 +361,7 @@ function toVitalsDTO(v: {
   };
 }
 
-/** Fetch the vitals typed in so far for this visit (or null — nothing typed yet). */
+/** Fetch the vitals typed in so far for this visit (or null - nothing typed yet). */
 export async function getVitals(appointmentId: string): Promise<VitalsDTO | null> {
   const v = await prisma.vitals.findUnique({ where: { appointmentId } });
   return v ? toVitalsDTO(v) : null;
@@ -371,11 +369,11 @@ export async function getVitals(appointmentId: string): Promise<VitalsDTO | null
 
 /**
  * Upsert vitals for a visit. Every field optional and independently
- * overwritable — reception fills in whatever the handwritten sheet has,
+ * overwritable - reception fills in whatever the handwritten sheet has,
  * and can come back and add the rest later without clobbering what's there
  * (fields left out of `input` are simply not part of this call's `data`,
  * but since this is a full-row upsert a caller resubmitting the whole form
- * is the expected pattern — same as the ℞ item list on prescriptions).
+ * is the expected pattern - same as the ℞ item list on prescriptions).
  */
 export async function recordVitals(
   actor: AuthUser,
@@ -417,7 +415,7 @@ export async function recordVitals(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VISIT LIFECYCLE — the front desk's actual verbs.
+// VISIT LIFECYCLE - the front desk's actual verbs.
 // The schema always had CHECKED_IN / CANCELLED / checkedInAt / cancelledAt.
 // Nothing ever wrote them, so "Checked in" read 0 forever and a booking could
 // never be undone. These close that loop.
@@ -475,12 +473,12 @@ export async function undoCheckIn(
  * Cancel a visit AND RELEASE THE SLOT so someone else can take it.
  *
  * The release is the whole point. Appointment.slotId is UNIQUE, so if a cancelled
- * row kept holding its slot, that time would be burned forever — no one could
+ * row kept holding its slot, that time would be burned forever - no one could
  * ever book it again. We null slotId (Postgres permits many NULLs under a unique
  * index) and flip the slot back to isBooked=false. The visit row itself is kept:
  * nothing medical is hard-deleted, and timeAtBooking preserves when it *was*.
  *
- * Any bill already raised for this visit is deliberately NOT touched — refunding
+ * Any bill already raised for this visit is deliberately NOT touched - refunding
  * money is a separate, deliberate act. The caller is told a paid bill exists.
  */
 export async function cancelAppointment(
@@ -503,7 +501,7 @@ export async function cancelAppointment(
     });
     if (!appt) throw new ApiError(404, "Appointment not found");
     if (appt.status === "CANCELLED") throw new ApiError(409, "Already cancelled");
-    if (appt.status === "COMPLETED") throw new ApiError(409, "This visit is already complete — it can't be cancelled");
+    if (appt.status === "COMPLETED") throw new ApiError(409, "This visit is already complete - it can't be cancelled");
 
     // release the slot back to the pool
     if (appt.slotId) {
@@ -546,7 +544,7 @@ export async function cancelAppointment(
  *
  * Same doctor only, deliberately: the consultation fee was snapshotted at booking
  * and may already be billed. Moving to a different doctor could silently change
- * what the patient owes. If they want another doctor, cancel and rebook — that
+ * what the patient owes. If they want another doctor, cancel and rebook - that
  * makes the money decision explicit instead of hiding it inside a reschedule.
  *
  * The new slot is claimed with the same atomic updateMany used at booking, so two
@@ -564,7 +562,7 @@ export async function rescheduleAppointment(
     });
     if (!appt) throw new ApiError(404, "Appointment not found");
     if (appt.status === "COMPLETED") throw new ApiError(409, "This visit is already complete");
-    if (appt.status === "CANCELLED") throw new ApiError(409, "This visit was cancelled — book a new one");
+    if (appt.status === "CANCELLED") throw new ApiError(409, "This visit was cancelled - book a new one");
 
     const slot = await tx.doctorSlot.findUnique({
       where: { id: input.newSlotId },
@@ -576,7 +574,7 @@ export async function rescheduleAppointment(
     }
     if (slot.id === appt.slotId) throw new ApiError(400, "That's the slot it's already in");
 
-    // atomic claim — identical guarantee to booking
+    // atomic claim - identical guarantee to booking
     const claim = await tx.doctorSlot.updateMany({
       where: { id: slot.id, isBooked: false }, data: { isBooked: true },
     });
@@ -611,7 +609,7 @@ export async function rescheduleAppointment(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DOCTOR AVAILABILITY — leave / surgery / emergency.
+// DOCTOR AVAILABILITY - leave / surgery / emergency.
 // Without this, a doctor could be on leave and reception would keep selling
 // their slots. The patient arrives to an empty room.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -673,7 +671,7 @@ export async function doctorDaySchedule(doctorId: string, date: string): Promise
  * Mark a doctor unavailable for a day.
  *
  * Blocks every FREE slot. Slots that are already BOOKED are deliberately left
- * alone — cancelling a patient's visit behind their back would be worse than the
+ * alone - cancelling a patient's visit behind their back would be worse than the
  * problem. Instead we hand the caller the list of affected patients (with phone
  * numbers) so the desk can ring them and reschedule or cancel, one by one, on
  * purpose.
@@ -743,7 +741,7 @@ export async function clearDoctorLeave(
   return { reopened: res.count };
 }
 
-/** Block or reopen ONE slot — the doctor stepped out for an hour, not the day. */
+/** Block or reopen ONE slot - the doctor stepped out for an hour, not the day. */
 export async function toggleSlotBlock(
   actor: AuthUser,
   input: { slotId: string; blocked: boolean; reason?: string },
@@ -753,7 +751,7 @@ export async function toggleSlotBlock(
     where: { id: input.slotId }, select: { id: true, isBooked: true },
   });
   if (!slot) throw new ApiError(404, "Slot not found");
-  if (slot.isBooked) throw new ApiError(409, "That slot has a patient in it — reschedule or cancel the visit first");
+  if (slot.isBooked) throw new ApiError(409, "That slot has a patient in it - reschedule or cancel the visit first");
 
   await prisma.doctorSlot.update({
     where: { id: input.slotId },

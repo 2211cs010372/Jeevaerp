@@ -4,7 +4,7 @@ import { DeptVisual } from "@/components/marketing/dept-visual";
 import { DEPARTMENTS, STATS, HOSPITAL } from "@/lib/data";
 
 /**
- * Departments — wears the hero's material language: one framed porcelain shell
+ * Departments - wears the hero's material language: one framed porcelain shell
  * (two-column header + deep-pine feature panel + welded stat rail), followed by
  * a grid of real department photography as pine-tinted tiles. Same tokens as the
  * hero, so the page reads as one system.
@@ -44,7 +44,7 @@ export function Departments() {
                   <span className="idx mt-1 shrink-0">(002)</span>
                   <p className="text-[15px] leading-[1.75] text-[var(--ink-soft)]">
                     From a racing heart to a child&apos;s fever, most of a family&apos;s care lives
-                    under one roof in {HOSPITAL.locality.split(",")[0]} — each department staffed by
+                    under one roof in {HOSPITAL.locality.split(",")[0]} - each department staffed by
                     its own specialists, with lab, imaging and pharmacy a corridor away.
                   </p>
                 </div>
@@ -61,7 +61,7 @@ export function Departments() {
               </Reveal>
             </div>
 
-            {/* feature panel — the building */}
+            {/* feature panel - the building */}
             <Reveal delay={140} className="relative min-h-[360px] lg:min-h-0">
               <div className="relative h-full min-h-[360px] overflow-hidden rounded-[26px] bg-[var(--pine-ink)]">
                 <div aria-hidden className="pointer-events-none absolute -right-16 -top-16 z-10 h-72 w-72 rounded-full bg-[radial-gradient(circle,rgba(23,112,95,0.5),transparent_65%)]" />
@@ -79,7 +79,7 @@ export function Departments() {
                     One roof, one record
                   </p>
                   <p className="mt-1.5 text-[14px] leading-snug text-white">
-                    Consult, test and collect medicines in a single visit — every step on your
+                    Consult, test and collect medicines in a single visit - every step on your
                     permanent Jeeva ID.
                   </p>
                 </div>

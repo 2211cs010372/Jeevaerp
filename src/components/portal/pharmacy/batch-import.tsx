@@ -175,7 +175,7 @@ export function BatchImport({ meds, onClose, onDone }: {
         },
       });
       const parsed = parseInvoiceText(data.text);
-      if (!parsed.length) setError("Couldn't read any line items — try a sharper, straighter photo, or key the rows in below.");
+      if (!parsed.length) setError("Couldn't read any line items - try a sharper, straighter photo, or key the rows in below.");
       else setRows(parsed);
     } catch {
       setError("OCR couldn't run on this file. Key the rows in below instead.");
@@ -246,12 +246,12 @@ export function BatchImport({ meds, onClose, onDone }: {
             {report.results.some((r) => !r.ok) && (
               <div className="mt-4 overflow-hidden rounded-xl border border-[var(--p-rose)]/30">
                 <p className="bg-[var(--p-rose-soft)] px-4 py-2 text-[12px] font-semibold text-[var(--p-rose)]">
-                  {report.results.filter((r) => !r.ok).length} rows didn&apos;t import — fix and try again:
+                  {report.results.filter((r) => !r.ok).length} rows didn&apos;t import - fix and try again:
                 </p>
                 <div className="divide-y divide-[var(--p-border)]">
                   {report.results.filter((r) => !r.ok).map((r) => (
                     <div key={r.row} className="flex items-center justify-between gap-3 px-4 py-2 text-[12px]">
-                      <span className="text-[var(--p-ink)]">Row {r.row}: <b>{r.medicine || "—"}</b> · {r.batchNo || "no batch"}</span>
+                      <span className="text-[var(--p-ink)]">Row {r.row}: <b>{r.medicine || "-"}</b> · {r.batchNo || "no batch"}</span>
                       <span className="text-[var(--p-rose)]">{r.error}</span>
                     </div>
                   ))}
@@ -316,19 +316,19 @@ export function BatchImport({ meds, onClose, onDone }: {
                         </button>
                         <p className="mt-3 text-[12px] leading-relaxed text-[var(--p-muted)]">
                           Reads the batch numbers, expiry, quantity, MRP and rate straight off the scan. It runs on
-                          this computer — nothing is uploaded. <b className="text-[var(--p-ink)]">Always check the rows</b> —
+                          this computer - nothing is uploaded. <b className="text-[var(--p-ink)]">Always check the rows</b> -
                           OCR can misread a digit, and the invoice&apos;s product names won&apos;t match your catalog,
                           so pick the matching medicine for each (red = not matched yet).
                         </p>
                       </>
                     ) : scanPdf ? (
                       <p className="text-[12px] leading-relaxed text-[var(--p-muted)]">
-                        OCR works on a <b>photo or image</b> of the invoice. For a PDF, export a page as an image —
+                        OCR works on a <b>photo or image</b> of the invoice. For a PDF, export a page as an image -
                         or key the rows into the grid below.
                       </p>
                     ) : (
                       <p className="text-[12px] leading-relaxed text-[var(--p-muted)]">
-                        Upload a clear, straight photo of the invoice and press <b>Extract</b> — the batch lines fill
+                        Upload a clear, straight photo of the invoice and press <b>Extract</b> - the batch lines fill
                         in automatically. You can also type rows by hand below.
                       </p>
                     )}
@@ -336,12 +336,12 @@ export function BatchImport({ meds, onClose, onDone }: {
                 </div>
               )}
 
-              {/* unmatched-medicine helper — the invoice's product names won't be in
+              {/* unmatched-medicine helper - the invoice's product names won't be in
                   the catalog, so let the whole lot be created in one click. */}
               {rows.length > 0 && unmatchedCount > 0 && (
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--p-amber)]/25 bg-[var(--p-amber-soft)] px-3.5 py-2.5">
                   <span className="text-[12px] text-[#8a5a14]">
-                    <b>{unmatchedCount}</b> {unmatchedCount === 1 ? "medicine isn't" : "medicines aren't"} in your catalog yet — add them as new products, or pick the matching one per row.
+                    <b>{unmatchedCount}</b> {unmatchedCount === 1 ? "medicine isn't" : "medicines aren't"} in your catalog yet - add them as new products, or pick the matching one per row.
                   </span>
                   <button onClick={markAllNew} className="shrink-0 rounded-md bg-white px-3 py-1.5 text-[12px] font-semibold text-[var(--p-blue)] ring-1 ring-[var(--p-border-strong)] hover:ring-[var(--p-blue)]">
                     Add all as new medicines
@@ -349,7 +349,7 @@ export function BatchImport({ meds, onClose, onDone }: {
                 </div>
               )}
 
-              {/* the rows editor — shared by both tabs */}
+              {/* the rows editor - shared by both tabs */}
               {rows.length > 0 && (
                 <div className="overflow-x-auto rounded-xl border border-[var(--p-border)]">
                   <table className="w-full min-w-[820px] border-collapse text-[12px]">
@@ -384,14 +384,14 @@ export function BatchImport({ meds, onClose, onDone }: {
                               ) : r.medicine.trim() ? (
                                 <button onClick={() => toggleNew(i)} className="rounded-md px-2 py-1 text-[11px] font-semibold text-[var(--p-blue)] ring-1 ring-[var(--p-border-strong)] hover:ring-[var(--p-blue)]">+ add new</button>
                               ) : (
-                                <span className="text-[11px] text-[var(--p-muted)]">—</span>
+                                <span className="text-[11px] text-[var(--p-muted)]">-</span>
                               )}
                             </td>
                             <td className="px-1.5 py-1.5"><input value={r.batchNo} onChange={(e) => setCell(i, "batchNo", e.target.value)} placeholder="B123" className={`${inp} ${r.batchNo || !ok.batch ? (ok.batch ? "" : bad) : ""}`} /></td>
                             <td className="px-1.5 py-1.5"><input type="date" min={today} value={r.expiry} onChange={(e) => setCell(i, "expiry", e.target.value)} className={`${inp} ${r.expiry && !ok.expiry ? bad : ""}`} /></td>
                             <td className="px-1.5 py-1.5"><input inputMode="numeric" value={r.qty} onChange={(e) => setCell(i, "qty", e.target.value.replace(/[^\d]/g, ""))} placeholder="0" className={`${inp} ${r.qty && !ok.qty ? bad : ""}`} /></td>
                             <td className="px-1.5 py-1.5"><input inputMode="decimal" value={r.mrp} onChange={(e) => setCell(i, "mrp", e.target.value.replace(/[^\d.]/g, ""))} placeholder="0.00" className={`${inp} ${r.mrp && !ok.mrp ? bad : ""}`} /></td>
-                            <td className="px-1.5 py-1.5"><input inputMode="decimal" value={r.rate} onChange={(e) => setCell(i, "rate", e.target.value.replace(/[^\d.]/g, ""))} placeholder="—" className={`${inp} ${r.rate && !ok.rate ? bad : ""}`} /></td>
+                            <td className="px-1.5 py-1.5"><input inputMode="decimal" value={r.rate} onChange={(e) => setCell(i, "rate", e.target.value.replace(/[^\d.]/g, ""))} placeholder="-" className={`${inp} ${r.rate && !ok.rate ? bad : ""}`} /></td>
                             <td className="px-1.5 py-1.5 text-center"><button onClick={() => removeRow(i)} aria-label="Remove row" className="text-[var(--p-rose)] hover:opacity-70">✕</button></td>
                           </tr>
                         );

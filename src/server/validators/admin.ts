@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const createStaffSchema = z.object({
-  /** role.name — e.g. reception.ravi */
+  /** role.name - e.g. reception.ravi */
   username: z.string().trim().toLowerCase()
     .regex(/^(admin|reception|labs|pharmacy|doctor)\.[a-z0-9_]{2,30}$/, "Username must be role.name (e.g. reception.ravi)"),
   name: z.string().trim().min(2).max(80),

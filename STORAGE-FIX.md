@@ -1,4 +1,4 @@
-# Prescription storage — bug fix + a privacy hole I found
+# Prescription storage - bug fix + a privacy hole I found
 
 ## 1. Your 500 (`Invalid cloud_name jeeva`)
 
@@ -20,7 +20,7 @@ return Boolean(e.CLOUDINARY_CLOUD_NAME && e.CLOUDINARY_API_KEY && e.CLOUDINARY_A
 
 ---
 
-## 2. The thing I found while fixing it — please read
+## 2. The thing I found while fixing it - please read
 
 Uploads were being written to `public/uploads/prescriptions/`.
 
@@ -31,22 +31,22 @@ matcher is:
 matcher: ["/((?!_next|favicon.ico|.*\\..*).*)"]
 ```
 
-`.*\..*` excludes any path containing a dot — so a `.pdf` **never even reaches the
+`.*\..*` excludes any path containing a dot - so a `.pdf` **never even reaches the
 middleware**. It was served straight off disk.
 
 **Every prescription scan was publicly downloadable by anyone with the URL. No login.**
 Patient name, doctor, medicines. You wrote DPDP Act 2023 compliance into the SDA for
-this client — this would have breached it on day one.
+this client - this would have breached it on day one.
 
 ### What I changed
 
-- Scans now go to **`storage/prescriptions/`** — outside the web root, not served by Next.
+- Scans now go to **`storage/prescriptions/`** - outside the web root, not served by Next.
 - New authenticated route: **`GET /api/v1/files/prescriptions/[key]`**
   - clinical staff (reception / pharmacy / doctor / admin) -> any scan
   - a patient -> **only their own** (ownership check against `patientId`)
   - lab techs -> no access (they have no reason to read prescriptions)
   - path-traversal guarded, `Cache-Control: private, no-store`, `X-Content-Type-Options: nosniff`
-- `/storage/` and `/public/uploads/` added to `.gitignore` — **patient records must never hit git**.
+- `/storage/` and `/public/uploads/` added to `.gitignore` - **patient records must never hit git**.
 
 **The UI didn't need a single change.** Everything already renders `fileUrl`; that value
 is now the authenticated route instead of a static path, and the browser sends the
@@ -59,7 +59,7 @@ rm -rf public/uploads          # I removed it here; remove it in your repo too
 ```
 
 Any prescriptions you uploaded during testing point at the old `/uploads/...` path and
-will 404. Just re-upload them — it's dev data.
+will 404. Just re-upload them - it's dev data.
 
 ---
 
@@ -67,7 +67,7 @@ will 404. Just re-upload them — it's dev data.
 
 Even correctly configured, Cloudinary's `secure_url` is **public by default**. Anyone
 with the link gets the file. To make it safe you'd need `type=authenticated` plus signed
-delivery URLs — real work, and you'd still be shipping Indian patients' health records
+delivery URLs - real work, and you'd still be shipping Indian patients' health records
 to a US provider, which is exactly the cross-border transfer question DPDP makes you
 answer.
 
@@ -77,7 +77,7 @@ the opposite of that.
 **Keep the scans on the hospital's own server** (local disk + the authenticated route
 that's now in place). It is simpler, cheaper, and more defensible. If the client later
 wants off-box durability, use an India-region S3-compatible bucket with a **private ACL**
-and signed URLs, or MinIO on their own hardware — not a public media CDN.
+and signed URLs, or MinIO on their own hardware - not a public media CDN.
 
 The Cloudinary code path is still there if you disagree; it just isn't the default, and
 it now carries a comment saying exactly what you'd have to fix first.

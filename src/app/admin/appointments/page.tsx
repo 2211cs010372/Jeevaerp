@@ -62,7 +62,7 @@ export default function AdminAppointmentsPage() {
       .then((r) => setRows(r.appointments)).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
-  // Referred count by person — ranked.
+  // Referred count by person - ranked.
   const referrers = useMemo(() => {
     const m = new Map<string, number>();
     for (const r of rows) { const n = r.referredByName?.trim(); if (n) m.set(n, (m.get(n) ?? 0) + 1); }

@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import Lenis from "lenis";
 
 /**
- * Smooth scrolling — PUBLIC SITE ONLY.
+ * Smooth scrolling - PUBLIC SITE ONLY.
  *
  * Lenis gives the page the weighted, cinematic scroll the reference sites have.
  * It is deliberately not mounted in the working portals: a receptionist tabbing

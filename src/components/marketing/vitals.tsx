@@ -1,4 +1,4 @@
-/** The signature divider — one calm ECG pulse in a long flat line. */
+/** The signature divider - one calm ECG pulse in a long flat line. */
 export function Vitals({ className = "" }: { className?: string }) {
   return (
     <svg className={`vitals static ${className}`} viewBox="0 0 1200 28" preserveAspectRatio="none" aria-hidden>

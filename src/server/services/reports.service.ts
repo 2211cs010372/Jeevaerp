@@ -2,11 +2,11 @@ import { prisma } from "@/lib/prisma";
 import { r2 } from "@/server/billing/calc";
 
 /**
- * DAY CLOSE — what should physically be in the drawer right now.
+ * DAY CLOSE - what should physically be in the drawer right now.
  *
  * At the end of a shift a receptionist counts the cash and hands it over. Until
  * now Jeeva could not tell them what the number *should* be, so the only way to
- * reconcile was to trust the drawer — which is not reconciliation, it's hope.
+ * reconcile was to trust the drawer - which is not reconciliation, it's hope.
  *
  * The rule this encodes, and it's the one people get wrong:
  *
@@ -29,16 +29,16 @@ export interface ModeTotal {
 
 export interface DayClose {
   date: string;
-  /** Every mode, even the ones with no activity — a missing row reads as a bug. */
+  /** Every mode, even the ones with no activity - a missing row reads as a bug. */
   modes: ModeTotal[];
   totals: { collected: number; refunded: number; net: number };
   /** The number the receptionist physically counts. */
   cashInHand: number;
   bills: number;
   refundCount: number;
-  /** Per-counter (receptionist) tally — how many payments each took and how much. */
+  /** Per-counter (receptionist) tally - how many payments each took and how much. */
   byCounter: { name: string; count: number; amount: number }[];
-  /** Refunds are listed individually — money leaving a hospital gets named. */
+  /** Refunds are listed individually - money leaving a hospital gets named. */
   refunds: {
     receiptNo: string; patient: string; amount: number;
     mode: string; reason: string; by: string; at: string;
@@ -131,12 +131,12 @@ export async function dayClose(dateISO?: string): Promise<DayClose> {
     refundCount: refunds.length,
     byCounter,
     refunds: (refunds as R[]).map((x) => ({
-      receiptNo: x.invoice?.receiptNo ?? "—",
-      patient: x.invoice?.patient?.fullName ?? "—",
+      receiptNo: x.invoice?.receiptNo ?? "-",
+      patient: x.invoice?.patient?.fullName ?? "-",
       amount: Number(x.amount.toString()),
       mode: x.mode,
       reason: x.reason,
-      by: x.refundedBy?.name ?? "—",
+      by: x.refundedBy?.name ?? "-",
       at: x.createdAt.toISOString(),
     })),
     outstanding: (invoices as {
@@ -154,7 +154,7 @@ export async function dayClose(dateISO?: string): Promise<DayClose> {
         );
         return {
           receiptNo: i.receiptNo,
-          patient: i.patient?.fullName ?? "—",
+          patient: i.patient?.fullName ?? "-",
           total, paid,
           due: r2(Math.max(0, total - paid)),
         };
@@ -170,7 +170,7 @@ export type CounterSource = "CONSULTATION" | "LAB" | "PHARMACY" | "IPD" | "OTHER
 /**
  * Collections for a day, broken down by payment type (CASH / UPI / CARD / …).
  *
- * This is the "what did this counter take, and in what form" number — the same
+ * This is the "what did this counter take, and in what form" number - the same
  * split reception sees at day-close, but reusable per till. Pass `sources` to
  * scope it to one counter (e.g. the pharmacist only reconciles PHARMACY money);
  * omit it for a hospital-wide view (admin). Refunds are netted per mode and are

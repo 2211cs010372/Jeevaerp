@@ -16,7 +16,7 @@ export function PortalShell({
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
-  // pathname arrives rewritten as /reception/... — strip the portal prefix to match nav hrefs.
+  // pathname arrives rewritten as /reception/... - strip the portal prefix to match nav hrefs.
   const localPath = pathname.replace(new RegExp(`^/${portalKey}`), "") || "/";
 
   const [me, setMe] = useState<{ name: string; role: string } | null>(null);
@@ -30,7 +30,7 @@ export function PortalShell({
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
-  // The sign-in screen carries its own full-screen layout — no sidebar or topbar.
+  // The sign-in screen carries its own full-screen layout - no sidebar or topbar.
   if (localPath === "/login") return <>{children}</>;
 
   async function logout() {
@@ -98,7 +98,7 @@ export function PortalShell({
 
   return (
     /* data-portal lets one portal carry its own skin without leaking into the
-       others — the pharmacy's glass theme is scoped to [data-portal="pharmacy"]. */
+       others - the pharmacy's glass theme is scoped to [data-portal="pharmacy"]. */
     <div className="portal min-h-screen" data-portal={meta.key}>
       <div className="flex min-h-screen">
         {/* ---- Sidebar: frosted glass, light ---- */}
@@ -140,7 +140,7 @@ export function PortalShell({
 
         {/* ---- Main ---- */}
         <div className="flex min-w-0 flex-1 flex-col">
-          {/* sticky glass topbar — content blurs under it as you scroll */}
+          {/* sticky glass topbar - content blurs under it as you scroll */}
           <header className="glass sticky top-0 z-30 flex items-center justify-between border-b border-[var(--p-border)] px-5 py-3.5 md:px-8">
             <div className="flex items-center gap-3">
               <button
@@ -154,7 +154,7 @@ export function PortalShell({
             </div>
 
             <div className="flex items-center gap-3">
-              {/* one keystroke to anyone, from any screen — the desk's single busiest move */}
+              {/* one keystroke to anyone, from any screen - the desk's single busiest move */}
               <CommandBar portal={meta.key} />
               <span className="hidden items-center gap-1.5 rounded-full border border-[var(--p-border)] bg-white/60 px-3 py-1 text-[12px] font-medium text-[var(--p-muted)] xl:inline-flex">
                 <span className="h-1.5 w-1.5 rounded-full bg-[var(--p-cyan)]" />

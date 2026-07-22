@@ -22,6 +22,7 @@ interface Sheet {
     doctor: { name: string; department: string };
   };
   days: number; bedTotal: string; charges: Charge[]; chargesTotal: string; grandTotal: string;
+  nurseTotal: string; nursePerDay: string; notes: string | null;
   /** One row per bed occupied. Two rows = they were transferred mid-stay. */
   legs: { wardName: string; bedNo: string; dailyCharge: string; days: number; total: string; current: boolean }[];
   advanceTotal: string;
@@ -57,6 +58,11 @@ export default function AdmissionSheetPage() {
   const [price, setPrice] = useState("");
   const [gst, setGst] = useState("0");
 
+  // nursing / observation notes
+  const [notes, setNotes] = useState("");
+  const [notesDirty, setNotesDirty] = useState(false);
+  const [savingNotes, setSavingNotes] = useState(false);
+
   // IP prescription
   // ── TRANSFER ── General → ICU. Until now the only way was discharge+readmit,
   //    which splits one stay into two bills.
@@ -87,7 +93,7 @@ export default function AdmissionSheetPage() {
         `/ipd/admissions/${admissionId}/transfer`,
         { toBedId: xferBed, reason: xferReason.trim() || undefined }
       );
-      setFlash(`Moved to ${r.toWard} · ${r.toBed}. Billed at ₹${r.newDailyCharge}/day from today — the days already spent keep their old rate.`);
+      setFlash(`Moved to ${r.toWard} · ${r.toBed}. Billed at ₹${r.newDailyCharge}/day from today - the days already spent keep their old rate.`);
       setXferOpen(false); setXferReason("");
       await load();
     } catch (e) { setErr(e instanceof ApiClientError ? e.message : "Could not transfer."); }
@@ -101,7 +107,7 @@ export default function AdmissionSheetPage() {
       const r = await api.post<{ totalAdvance: string }>(`/ipd/admissions/${admissionId}/advance`, {
         amount: Number(advAmt), mode: advMode,
       });
-      setFlash(`Advance taken. ₹${r.totalAdvance} held against this stay — it comes off the discharge bill.`);
+      setFlash(`Advance taken. ₹${r.totalAdvance} held against this stay - it comes off the discharge bill.`);
       setAdvOpen(false); setAdvAmt("");
       await load();
     } catch (e) { setErr(e instanceof ApiClientError ? e.message : "Could not record the advance."); }
@@ -124,9 +130,25 @@ export default function AdmissionSheetPage() {
   }, [admissionId]);
   useEffect(() => { load(); }, [load]);
 
+  // Seed the notes editor from the loaded sheet, unless the user is mid-edit.
+  useEffect(() => {
+    if (sheet && !notesDirty) setNotes(sheet.notes ?? "");
+  }, [sheet, notesDirty]);
+
   useEffect(() => {
     api.get<{ medicines: Med[] }>("/pharmacy/medicines").then((r) => setMeds(r.medicines)).catch(() => {});
   }, []);
+
+  async function saveNotes() {
+    setSavingNotes(true); setErr(null);
+    try {
+      await api.patch(`/ipd/admissions/${admissionId}/notes`, { notes });
+      setNotesDirty(false);
+      setFlash("Notes saved to the stay.");
+      await load();
+    } catch (e) { setErr(e instanceof ApiClientError ? e.message : "Could not save the notes."); }
+    finally { setSavingNotes(false); }
+  }
 
   const lineTotal = useMemo(() => (Number(qty || 0) * Number(price || 0)).toFixed(2), [qty, price]);
 
@@ -172,7 +194,7 @@ export default function AdmissionSheetPage() {
       if (!res.ok) throw new ApiClientError(res.status, (await res.json().catch(() => ({}))).error ?? "Upload failed");
 
       setFlash(send
-        ? "Prescription sent to the pharmacy — the medicines will be charged to this room, not to the patient at the counter."
+        ? "Prescription sent to the pharmacy - the medicines will be charged to this room, not to the patient at the counter."
         : "Prescription saved to the stay.");
       setRxOpen(false); setFile(null); setRxItems([{ name: "", medicineId: null, qty: "1", dosage: "" }]);
       await load();
@@ -232,6 +254,11 @@ export default function AdmissionSheetPage() {
               <Icon name="file" size={15} /> Add prescription
             </button>
           )}
+          <a href={`/print/discharge/${a.id}`} target="_blank" rel="noopener noreferrer"
+            title={discharged ? "The discharge summary for this stay" : "Interim summary - the discharge document, as it stands"}
+            className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+            <Icon name="file" size={15} /> Discharge summary
+          </a>
           <Link href="/ipd/inpatients" className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
             Inpatients
           </Link>
@@ -247,11 +274,12 @@ export default function AdmissionSheetPage() {
       {err && <div data-rise className="mb-4 rounded-lg border border-[var(--p-rose)]/25 bg-[var(--p-rose-soft)] px-4 py-3 text-[14px] text-[var(--p-rose)]">{err}</div>}
 
       <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
+        <div className="space-y-5">
         {/* THE TAB */}
         <section data-rise className="surface overflow-hidden">
           <div className="flex items-center justify-between border-b border-[var(--p-border)] px-5 py-3.5">
             <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">The running tab</h3>
-            <span className="badge">{sheet.charges.length + 1} lines</span>
+            <span className="badge">{sheet.charges.length + 2} lines</span>
           </div>
 
           <div className="divide-y divide-[var(--p-border)]">
@@ -270,9 +298,23 @@ export default function AdmissionSheetPage() {
               <span className="font-mono text-[14px] font-bold text-[var(--p-ink)]">₹{money(sheet.bedTotal)}</span>
             </div>
 
+            {/* nursing care - assigned by default, accrues per day like the bed */}
+            <div className="flex items-center justify-between gap-3 bg-[var(--p-bg)] px-5 py-3.5">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-[14px] font-semibold text-[var(--p-ink)]">Nursing care</span>
+                  <span className="shrink-0 rounded bg-[var(--p-blue-soft)] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[var(--p-blue-deep)]">Assigned</span>
+                </div>
+                <div className="text-[12px] text-[var(--p-muted)]">
+                  {sheet.days} day{sheet.days === 1 ? "" : "s"} × ₹{money(sheet.nursePerDay)} · charged automatically
+                </div>
+              </div>
+              <span className="font-mono text-[14px] font-bold text-[var(--p-ink)]">₹{money(sheet.nurseTotal)}</span>
+            </div>
+
             {sheet.charges.length === 0 ? (
               <p className="px-5 py-8 text-center text-[13px] text-[var(--p-muted)]">
-                Nothing else on the tab yet. Add procedures, oxygen, doctor rounds below —
+                Nothing else on the tab yet. Add procedures, oxygen, doctor rounds below -
                 pharmacy medicines land here automatically.
               </p>
             ) : sheet.charges.map((c) => (
@@ -328,11 +370,41 @@ export default function AdmissionSheetPage() {
                 </div>
               </div>
               <p className="mt-2 text-[12px] text-[var(--p-muted)]">
-                Most hospital services are GST-exempt — leave it 0 unless your CA says otherwise.
+                Most hospital services are GST-exempt - leave it 0 unless your CA says otherwise.
               </p>
             </div>
           )}
         </section>
+
+        {/* NURSING / OBSERVATION NOTES - shift handover text, not billed */}
+        <section data-rise className="surface overflow-hidden">
+          <div className="flex items-center justify-between border-b border-[var(--p-border)] px-5 py-3.5">
+            <div>
+              <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Nursing &amp; observation notes</h3>
+              <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">Shift handover - vitals, intake, how the night went. Not billed; carried onto the discharge summary.</p>
+            </div>
+            {notesDirty && <span className="rounded bg-[var(--p-amber-soft)] px-2 py-0.5 text-[11px] font-semibold text-[#8a6414]">Unsaved</span>}
+          </div>
+          <div className="p-5">
+            <textarea
+              value={notes}
+              onChange={(e) => { setNotes(e.target.value); setNotesDirty(true); }}
+              disabled={discharged}
+              rows={5}
+              placeholder="e.g. 08:00 - BP 130/80, afebrile, tolerating orals. 14:00 - dressing changed, wound clean…"
+              className="w-full resize-y rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm leading-relaxed text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)] disabled:opacity-60" />
+            {!discharged && (
+              <div className="mt-3 flex items-center justify-end gap-3">
+                {notesDirty && <button onClick={() => { setNotes(sheet.notes ?? ""); setNotesDirty(false); }} className="text-[13px] font-medium text-[var(--p-muted)] hover:text-[var(--p-ink)]">Discard</button>}
+                <button onClick={saveNotes} disabled={savingNotes || !notesDirty}
+                  className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">
+                  {savingNotes ? <><Spinner /> Saving…</> : <><Icon name="check" size={14} /> Save notes</>}
+                </button>
+              </div>
+            )}
+          </div>
+        </section>
+        </div>
 
         {/* TOTAL */}
         <aside data-rise className="surface h-fit overflow-hidden lg:sticky lg:top-4">
@@ -341,7 +413,7 @@ export default function AdmissionSheetPage() {
           </div>
           <div className="space-y-2.5 p-5">
             {/* Each leg of the stay, priced at the rate it actually carried. Two
-                rows here means the patient was moved — and the bill says so. */}
+                rows here means the patient was moved - and the bill says so. */}
             {sheet.legs.length > 1 ? (
               sheet.legs.map((l, i) => (
                 <div key={i} className="flex items-center justify-between text-[14px]">
@@ -361,6 +433,11 @@ export default function AdmissionSheetPage() {
             )}
 
             <div className="flex items-center justify-between text-[14px]">
+              <span className="text-[var(--p-muted)]">Nursing ({sheet.days}d × ₹{money(sheet.nursePerDay)})</span>
+              <span className="font-mono text-[var(--p-ink)]">₹{money(sheet.nurseTotal)}</span>
+            </div>
+
+            <div className="flex items-center justify-between text-[14px]">
               <span className="text-[var(--p-muted)]">Charges ({sheet.charges.length})</span>
               <span className="font-mono text-[var(--p-ink)]">₹{money(sheet.chargesTotal)}</span>
             </div>
@@ -370,7 +447,7 @@ export default function AdmissionSheetPage() {
               <span className="font-mono text-[18px] font-bold text-[var(--p-ink)]">₹{money(sheet.grandTotal)}</span>
             </div>
 
-            {/* The deposit. Reception took this money — it must be visible, or
+            {/* The deposit. Reception took this money - it must be visible, or
                 they'll ask the family for the full total at discharge. */}
             {Number(sheet.advanceTotal) > 0 && (
               <>
@@ -385,7 +462,7 @@ export default function AdmissionSheetPage() {
                 {Number(sheet.advanceTotal) > Number(sheet.grandTotal) && (
                   <p className="rounded-lg bg-[var(--p-amber-soft)] px-3 py-2 text-[12px] leading-relaxed text-[#8a6414]">
                     <b>The advance is larger than the bill.</b> ₹{money(String(Number(sheet.advanceTotal) - Number(sheet.grandTotal)))} must
-                    be <b>refunded</b> at discharge — not kept.
+                    be <b>refunded</b> at discharge - not kept.
                   </p>
                 )}
               </>
@@ -393,7 +470,7 @@ export default function AdmissionSheetPage() {
             <p className="text-[12px] leading-relaxed text-[var(--p-muted)]">
               {discharged
                 ? "This stay is closed. The invoice was raised at discharge."
-                : "Bed charges grow each day. GST is applied per line at discharge — the room and a 12% syrup aren't taxed the same."}
+                : "Bed charges grow each day. GST is applied per line at discharge - the room and a 12% syrup aren't taxed the same."}
             </p>
           </div>
           {!discharged && (
@@ -428,7 +505,7 @@ export default function AdmissionSheetPage() {
                 <button onClick={() => fileRef.current?.click()}
                   className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--p-border-strong)] px-4 py-6 text-[14px] text-[var(--p-muted)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
                   <Icon name="file" size={16} />
-                  {file ? <span className="font-medium text-[var(--p-ink)]">{file.name}</span> : "PDF, JPG or PNG — up to 10MB"}
+                  {file ? <span className="font-medium text-[var(--p-ink)]">{file.name}</span> : "PDF, JPG or PNG - up to 10MB"}
                 </button>
               </div>
 
@@ -453,7 +530,7 @@ export default function AdmissionSheetPage() {
                           </datalist>
                           {r.name.trim() && (
                             <span className={`absolute right-2 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full ${match ? "bg-[var(--p-cyan)]" : "bg-[var(--p-amber)]"}`}
-                              title={match ? "In the catalog — pharmacy gets it pre-filled" : "Free text — pharmacy will type it"} />
+                              title={match ? "In the catalog - pharmacy gets it pre-filled" : "Free text - pharmacy will type it"} />
                           )}
                         </div>
                         <input className={`${fld} w-16`} value={r.qty} inputMode="numeric" placeholder="Qty"
@@ -495,7 +572,7 @@ export default function AdmissionSheetPage() {
 
       {/* ─────────── TRANSFER ───────────
           The bill keeps EACH LEG at its own rate. Three days in General then four
-          in ICU is billed as exactly that — not seven days at whichever rate
+          in ICU is billed as exactly that - not seven days at whichever rate
           happened to be last. */}
       {xferOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setXferOpen(false)}>
@@ -519,7 +596,7 @@ export default function AdmissionSheetPage() {
                     <select value={xferBed} onChange={(e) => setXferBed(e.target.value)}
                       className="w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]">
                       {xferWards.map((w) => (
-                        <optgroup key={w.id} label={`${w.name} — ₹${Number(w.dailyCharge).toLocaleString("en-IN")}/day`}>
+                        <optgroup key={w.id} label={`${w.name} - ₹${Number(w.dailyCharge).toLocaleString("en-IN")}/day`}>
                           {w.beds.map((b) => <option key={b.id} value={b.id}>{w.name} · {b.bedNo}</option>)}
                         </optgroup>
                       ))}
@@ -535,7 +612,7 @@ export default function AdmissionSheetPage() {
 
                   <p className="rounded-lg bg-[var(--p-blue-soft)] px-3 py-2.5 text-[12px] leading-relaxed text-[var(--p-text)]">
                     <b>The days already spent keep their old rate.</b> The new ward&apos;s rate applies from
-                    today onward, and the discharge bill shows both legs separately — which is what
+                    today onward, and the discharge bill shows both legs separately - which is what
                     actually happened, and what they should pay.
                   </p>
                 </>
@@ -590,7 +667,7 @@ export default function AdmissionSheetPage() {
 
               <p className="rounded-lg bg-[var(--p-bg)] px-3 py-2.5 text-[11px] leading-relaxed text-[var(--p-muted)]">
                 If the advance ends up larger than the final bill, the difference is
-                <b className="text-[var(--p-ink)]"> refunded</b> — not kept.
+                <b className="text-[var(--p-ink)]"> refunded</b> - not kept.
               </p>
             </div>
 

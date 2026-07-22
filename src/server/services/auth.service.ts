@@ -21,7 +21,7 @@ import { sendOtpSms } from "@/lib/sms";
 import { sendOtpEmail, maskEmail } from "@/lib/email";
 import type { AuthUser, Role } from "@/lib/auth/types";
 
-/** Refresh tokens are opaque to the DB — we store only their SHA-256. */
+/** Refresh tokens are opaque to the DB - we store only their SHA-256. */
 const hashToken = (t: string) => createHash("sha256").update(t).digest("hex");
 
 export interface AuthResult {
@@ -36,7 +36,7 @@ export interface AuthResult {
 /**
  * Step 1 of patient login. Rate-limited per patient. To avoid leaking which
  * IDs exist, the response shape is identical whether or not the patient is
- * found — the caller always sees a masked-phone acknowledgement.
+ * found - the caller always sees a masked-phone acknowledgement.
  */
 export async function requestOtp(patientId: string): Promise<{ sentTo: string }> {
   const patient = await prisma.patient.findUnique({
@@ -107,7 +107,7 @@ export async function verifyOtpAndLogin(patientId: string, code: string): Promis
     throw new ApiError(400, "Incorrect code. Please try again.");
   }
 
-  // Correct — consume this OTP and burn any other outstanding ones.
+  // Correct - consume this OTP and burn any other outstanding ones.
   await prisma.otp.updateMany({
     where: { patientId: patient.id, consumedAt: null },
     data: { consumedAt: new Date() },
@@ -172,7 +172,7 @@ async function issueSession(user: AuthUser): Promise<{ access: string; refresh: 
 /**
  * Rotation with reuse detection. The presented refresh token must exist and
  * be unrevoked. On success we revoke it and mint a new pair. If a *revoked*
- * token is presented, that's a replay of a stolen token — we nuke every
+ * token is presented, that's a replay of a stolen token - we nuke every
  * session for that subject and force re-login.
  */
 export async function rotateRefresh(presented: string): Promise<{ access: string; refresh: string }> {
@@ -203,7 +203,7 @@ export async function rotateRefresh(presented: string): Promise<{ access: string
 
   const user: AuthUser = { id: payload.sub, role: payload.role };
 
-  // Rotate: revoke old, issue new — inside one transaction.
+  // Rotate: revoke old, issue new - inside one transaction.
   const access = await signAccessToken(user);
   const refresh = await signRefreshToken(user);
   await prisma.$transaction([
@@ -233,7 +233,7 @@ export async function revokeRefresh(presented: string | null): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Staff sign-in sessions — "who was on the desk, and for how long".
+// Staff sign-in sessions - "who was on the desk, and for how long".
 // ---------------------------------------------------------------------------
 
 /** Open a session row when a staff member signs in. */
@@ -257,7 +257,7 @@ export async function recordStaffLogout(userId: string): Promise<void> {
   if (open) await prisma.staffSession.update({ where: { id: open.id }, data: { logoutAt: new Date() } });
 }
 
-/** Logout carries only the refresh cookie — resolve the user from it (valid even
+/** Logout carries only the refresh cookie - resolve the user from it (valid even
  *  after the access token has expired) and close their open session. */
 export async function recordStaffLogoutByRefresh(presented: string | null): Promise<void> {
   if (!presented) return;
@@ -266,7 +266,7 @@ export async function recordStaffLogoutByRefresh(presented: string | null): Prom
     if (payload.typ === "refresh" && typeof payload.sub === "string" && payload.role !== "PATIENT") {
       await recordStaffLogout(payload.sub);
     }
-  } catch { /* invalid/expired refresh — nothing to close */ }
+  } catch { /* invalid/expired refresh - nothing to close */ }
 }
 
 export interface StaffSessionDTO {

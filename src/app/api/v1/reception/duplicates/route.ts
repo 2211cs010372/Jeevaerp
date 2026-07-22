@@ -7,7 +7,7 @@ import { mergePatientsSchema } from "@/server/validators/reception";
 
 export const dynamic = "force-dynamic";
 
-/** Patients sharing a phone number — almost always one person, registered twice. */
+/** Patients sharing a phone number - almost always one person, registered twice. */
 export const GET = handler(async (req) => {
   await requireRole(req, "RECEPTIONIST", "ADMIN");
   return NextResponse.json(await findDuplicates());

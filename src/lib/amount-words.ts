@@ -1,5 +1,5 @@
 /**
- * Rupees in words, Indian numbering (lakh / crore) — every printed GST bill
+ * Rupees in words, Indian numbering (lakh / crore) - every printed GST bill
  * in India carries this line. "₹1,234.50" -> "One Thousand Two Hundred and
  * Thirty Four Rupees and Fifty Paise Only".
  */

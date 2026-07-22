@@ -1,5 +1,5 @@
 /**
- * Print-registration marks — the "digital paper" signature.
+ * Print-registration marks - the "digital paper" signature.
  * Parent must be `relative`.
  */
 export function Corners({ className = "text-teal/50" }: { className?: string }) {

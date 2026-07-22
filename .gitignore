@@ -1,9 +1,9 @@
-# --- Secrets — never commit real env files ---
+# --- Secrets - never commit real env files ---
 .env
 .env.*
 !.env.example
 
-# --- Patient data — never commit, never serve statically ---
+# --- Patient data - never commit, never serve statically ---
 /storage/
 /public/uploads/
 

@@ -10,7 +10,7 @@ export interface StoredFile {
 
 /**
  * Prescription scans are patient health records. They are NOT served from
- * /public — anything in /public is static and public, and the middleware
+ * /public - anything in /public is static and public, and the middleware
  * matcher skips paths containing a dot, so a .pdf there is world-readable.
  * They live here instead, outside the web root, and are streamed only by
  * /api/v1/files/prescriptions/[key] after an auth + ownership check.
@@ -23,7 +23,7 @@ const PLACEHOLDER = /^(jeeva|your[-_ ]?cloud([-_ ]?name)?|cloud[-_ ]?name|change
 
 /**
  * True only when Cloudinary is *actually* usable. The old check tested that the
- * vars existed, not that they meant anything — so CLOUDINARY_CLOUD_NAME=jeeva
+ * vars existed, not that they meant anything - so CLOUDINARY_CLOUD_NAME=jeeva
  * passed, took the Cloudinary branch, and 401'd on every upload.
  */
 function cloudinaryConfigured(): boolean {
@@ -52,7 +52,7 @@ export async function storeFile(
       return await uploadToCloudinary(buffer, opts);
     } catch (err) {
       // A CDN being down must not lose a prescription. Degrade to local disk
-      // and keep going — the upload is the thing that matters.
+      // and keep going - the upload is the thing that matters.
       console.error("[storage] Cloudinary upload failed, falling back to local disk:", err);
       return saveLocally(buffer, opts);
     }

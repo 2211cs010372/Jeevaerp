@@ -26,7 +26,7 @@ export interface PortalMeta {
   key: string;
   brand: string;
   roleLabel: string;
-  nav: NavItem[];        // flat — kept for active-route matching + mobile
+  nav: NavItem[];        // flat - kept for active-route matching + mobile
   groups?: NavGroup[];   // the teaching structure
 }
 

@@ -8,7 +8,7 @@ import { bulkAddBatchesSchema } from "@/server/validators/pharmacy";
 export const dynamic = "force-dynamic";
 
 /**
- * Receive many stock batches in one go — from an uploaded spreadsheet or the
+ * Receive many stock batches in one go - from an uploaded spreadsheet or the
  * rows keyed in beside a scanned supplier invoice. Returns a per-row report.
  * Pharmacist / admin only.
  */

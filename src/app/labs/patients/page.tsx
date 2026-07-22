@@ -34,7 +34,7 @@ export default function LabPatientsPage() {
     <PortalScroll>
       <div data-rise className="surface dotgrid mb-6 px-6 py-5">
         <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Patient history</h1>
-        <p className="mt-1 text-[13px] text-[var(--p-muted)]">Last visit, all lab tests, reports and invoices — by Jeeva ID.</p>
+        <p className="mt-1 text-[13px] text-[var(--p-muted)]">Last visit, all lab tests, reports and invoices - by Jeeva ID.</p>
         <div className="mt-4 flex max-w-md gap-2">
           <input value={uhid} onChange={(e) => setUhid(e.target.value.toUpperCase())} onKeyDown={(e) => e.key === "Enter" && lookup()} placeholder="JMH2026OP00001" className={fld} />
           <PrimaryButton onClick={lookup} disabled={loading}>{loading ? <Spinner /> : <Icon name="search" size={15} />} Find</PrimaryButton>
@@ -52,8 +52,8 @@ export default function LabPatientsPage() {
                 <Cell k="Name" v={data.patient.fullName} />
                 <Cell k="Jeeva ID" v={data.patient.displayId} mono />
                 <Cell k="Phone" v={data.patient.phone} mono />
-                <Cell k="Age / Sex" v={`${data.patient.age ?? "—"} / ${data.patient.gender?.[0] ?? "—"}`} />
-                <Cell k="Blood group" v={data.patient.bloodGroup ?? "—"} />
+                <Cell k="Age / Sex" v={`${data.patient.age ?? "-"} / ${data.patient.gender?.[0] ?? "-"}`} />
+                <Cell k="Blood group" v={data.patient.bloodGroup ?? "-"} />
                 <Cell k="Tests done" v={String(data.tests.length)} />
               </div>
             </section>

@@ -8,7 +8,7 @@ import { Icon, type IconName } from "@/components/portal/ui/icons";
  * THE FLOW RAIL
  *
  * The single hardest thing about handing an ERP to a front desk isn't the
- * buttons — it's that the software never says what happens NEXT. Staff learn the
+ * buttons - it's that the software never says what happens NEXT. Staff learn the
  * order by being told once, forget it, and then avoid the parts they're unsure
  * of. (That's how you end up with a hospital that bought an ERP and still keeps
  * a paper register.)
@@ -22,8 +22,8 @@ import { Icon, type IconName } from "@/components/portal/ui/icons";
  */
 
 export interface FlowCounts {
-  expected: number;   // BOOKED — not here yet
-  waiting: number;    // CHECKED_IN — sitting outside the doctor's room
+  expected: number;   // BOOKED - not here yet
+  waiting: number;    // CHECKED_IN - sitting outside the doctor's room
   completed: number;  // doctor's done with them
   unpaid: number;     // bills with a balance
 }
@@ -65,10 +65,10 @@ export function FlowRail({ counts }: { counts: FlowCounts }) {
           </span>
           <span className="text-[13px] font-semibold text-[var(--p-ink)]">How a patient moves through the day</span>
           <span className="hidden text-[12px] text-[var(--p-muted)] sm:inline">
-            — every step is a page. Tap one to go there.
+            - every step is a page. Tap one to go there.
           </span>
         </span>
-        {/* the icon set's chevron points RIGHT — 90deg makes it point down when open */}
+        {/* the icon set's chevron points RIGHT - 90deg makes it point down when open */}
         <span className={`text-[12px] font-medium text-[var(--p-muted)] transition-transform duration-200 ${open ? "rotate-90" : ""}`}>
           <Icon name="chevron" size={14} />
         </span>
@@ -101,7 +101,7 @@ export function FlowRail({ counts }: { counts: FlowCounts }) {
                   )}
                 </span>
 
-                {/* the arrow that says "and then…" — hidden on the last one */}
+                {/* the arrow that says "and then…" - hidden on the last one */}
                 {i < steps.length - 1 && <span className="flow-step__arrow" aria-hidden>→</span>}
               </Link>
             ))}

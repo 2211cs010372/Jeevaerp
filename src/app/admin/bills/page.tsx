@@ -88,7 +88,7 @@ export default function AdminBillsPage() {
       <div data-rise className="surface dotgrid mb-6 px-6 py-5">
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--p-teal)]">Admin console</p>
         <h1 className="mt-1 font-serif-p text-[24px] font-semibold text-[var(--p-ink)]">All bills</h1>
-        <p className="mt-1 text-[13px] text-[var(--p-muted)]">Every invoice across reception, lab, pharmacy and inpatient — with how each was paid.</p>
+        <p className="mt-1 text-[13px] text-[var(--p-muted)]">Every invoice across reception, lab, pharmacy and inpatient - with how each was paid.</p>
         <div className="mt-4 flex items-center gap-2 rounded-lg border border-[var(--p-border)] bg-white px-3 py-2">
           <Icon name="search" size={15} />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search receipt no, patient or UHID" className="w-full bg-transparent text-[13px] text-[var(--p-ink)] outline-none" />

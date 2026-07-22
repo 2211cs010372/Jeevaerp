@@ -19,7 +19,7 @@ const paymentLegSchema = z.object({
   reference: z.string().trim().max(80).optional(),
 });
 
-/** Up to four tenders on one bill — plenty for cash + UPI (+ card) at a desk. */
+/** Up to four tenders on one bill - plenty for cash + UPI (+ card) at a desk. */
 export const paymentsSchema = z.array(paymentLegSchema).min(1).max(4);
 
 export const billLabTestsSchema = z.object({

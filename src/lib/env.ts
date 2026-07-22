@@ -8,11 +8,11 @@ const schema = z.object({
   ACCESS_TOKEN_TTL: z.string().default("12h"),
   REFRESH_TOKEN_TTL: z.string().default("30d"),
   COOKIE_DOMAIN: z.string().optional(),
-  // Cloud file storage (Cloudinary). All optional — absence => local disk fallback.
+  // Cloud file storage (Cloudinary). All optional - absence => local disk fallback.
   CLOUDINARY_CLOUD_NAME: z.string().optional(),
   CLOUDINARY_API_KEY: z.string().optional(),
   CLOUDINARY_API_SECRET: z.string().optional(),
-  // SMS OTP delivery (2Factor.in). Optional — absence => dev console log,
+  // SMS OTP delivery (2Factor.in). Optional - absence => dev console log,
   // or a hard failure in production. See lib/sms.ts. Same key works for
   // both the free-trial wallet and a recharged/paid one.
   TWO_FACTOR_API_KEY: z.string().optional(),

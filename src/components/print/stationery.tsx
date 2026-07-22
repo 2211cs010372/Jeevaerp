@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 /**
- * Jeeva print stationery — one visual family for every paper the desk hands out.
+ * Jeeva print stationery - one visual family for every paper the desk hands out.
  *
  * The geometry mirrors the referral sheet the client's world already uses
  * (doctor block left · hospital block right · patient strip · vitals strip ·
@@ -58,14 +58,14 @@ export function PrintToolbar({ title }: { title: string }) {
 }
 
 /**
- * Letterhead — the actual photographed hospital stationery (logo, wordmark,
+ * Letterhead - the actual photographed hospital stationery (logo, wordmark,
  * phone, address, closing rule all baked into one image at
  * /public/images/jeeva-header.jpg), bled edge-to-edge like the FooterBand.
- * This is real ink from the real letterhead, not a redrawn approximation —
+ * This is real ink from the real letterhead, not a redrawn approximation -
  * so it prints correctly even if Hospital settings are ever out of sync.
  *
  * The consulting doctor, when given, prints as a slim line under the image
- * — the photo itself is one generic header used for every doctor, so their
+ * - the photo itself is one generic header used for every doctor, so their
  * name is the one thing added per-sheet, not per-press-run.
  *
  * If the image is ever missing (fresh checkout, asset not deployed yet) this
@@ -140,10 +140,10 @@ export function PatientStrip({ cells }: {
         <div key={i} className="flex min-w-0 items-baseline gap-1.5">
           <span className="shrink-0 whitespace-nowrap font-semibold uppercase tracking-wide text-[9px] text-[#57655f]">{c.k}</span>
           {c.pen ? (
-            /* an intentional writing line — a blank pad cell, not missing data */
+            /* an intentional writing line - a blank pad cell, not missing data */
             <span className="inline-block w-full border-b border-[var(--pr-line)]">&nbsp;</span>
           ) : (
-            <span className={`truncate font-medium text-[var(--pr-ink)] ${c.mono ? "font-mono" : ""}`}>{c.v || "—"}</span>
+            <span className={`truncate font-medium text-[var(--pr-ink)] ${c.mono ? "font-mono" : ""}`}>{c.v || "-"}</span>
           )}
         </div>
       ))}
@@ -152,7 +152,7 @@ export function PatientStrip({ cells }: {
 }
 
 /**
- * A labelled line with the typed value printed over the rule — the
+ * A labelled line with the typed value printed over the rule - the
  * computerized twin of RuledLine. Falls back to a blank pen line when
  * nothing was typed, so the sheet reads the same either way.
  */
@@ -172,7 +172,7 @@ export function FilledLine({ label, value, trailing }: { label: string; value?: 
 }
 
 /**
- * Prescribed lab investigations — a numbered list in the sheet's own ink,
+ * Prescribed lab investigations - a numbered list in the sheet's own ink,
  * two columns when the list is long. Advisory text for the patient and the
  * lab counter; actual lab ORDERS are LabTest rows on the visit.
  */
@@ -210,11 +210,11 @@ export function RuledLine({ label, lines = 1, trailing }: { label: string; lines
 }
 
 /**
- * The ℞ table — medicines as reception typed them while sending to pharmacy.
+ * The ℞ table - medicines as reception typed them while sending to pharmacy.
  * This is the same data, read straight back out: no separate "prescription
- * document" exists anywhere else. Dosage is split on the fly — "1-0-1 after
+ * document" exists anywhere else. Dosage is split on the fly - "1-0-1 after
  * food" becomes the 1-0-1 pattern in its own column and "after food" in
- * Timing & duration — because that's the one typing convention reception
+ * Timing & duration - because that's the one typing convention reception
  * already uses in the /prescriptions form.
  *
  * blankRows pads the table out to a fixed row count so a light Rx doesn't
@@ -247,7 +247,7 @@ export function RxTable({ items, blankRows = 0, note }: {
               <tr key={i} className="align-top" style={{ color: "var(--pr-primary)" }} >
                 <td className=" py-[7px] pr-1 font-mono text-[11px] text-[#57655f]">{i + 1}.</td>
                 <td className=" py-[7px] pr-2 font-bold">{it.medicineName}{it.qty > 1 ? <span className="ml-1 font-normal text-[#57655f]">× {it.qty}</span> : null}</td>
-                <td className=" py-[7px] pr-2 font-mono">{pattern || "—"}</td>
+                <td className=" py-[7px] pr-2 font-mono">{pattern || "-"}</td>
                 <td className=" py-[7px]">{timing || ""}</td>
               </tr>
             );
@@ -265,14 +265,14 @@ export function RxTable({ items, blankRows = 0, note }: {
   );
 }
 
-/** Solid footer band — appointments · address · timings. Pinned to sheet bottom. */
+/** Solid footer band - appointments · address · timings. Pinned to sheet bottom. */
 export function FooterBand({ hospital }: { hospital: HospitalInfo | null }) {
   return (
     <div className="mt-auto">
       <div style={{ background: "var(--pr-accent)", height: 3 }} />
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-0.5 px-4 py-2 text-[10px] font-medium text-white"
         style={{ background: "var(--pr-primary)", margin: "0 -11mm" }}>
-        <span>For Appointments: <span className="font-bold">{hospital?.phone ?? "—"}</span></span>
+        <span>For Appointments: <span className="font-bold">{hospital?.phone ?? "-"}</span></span>
         <span>{hospital ? `${hospital.addressLine}, ${hospital.city} – ${hospital.pincode}` : ""}</span>
         <span>OPD 8:00 AM – 8:00 PM · Emergency 24×7</span>
       </div>

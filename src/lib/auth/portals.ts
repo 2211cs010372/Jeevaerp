@@ -48,7 +48,7 @@ export function isPortalSubdomain(sub: string): sub is PortalSubdomain {
  * Absolute post-login destination for a role.
  *
  * In production every portal is a real subdomain (admin.jeeva…com).
- * In local dev we use `admin.localhost:PORT` — which modern browsers resolve
+ * In local dev we use `admin.localhost:PORT` - which modern browsers resolve
  * with no hosts-file editing. When no root domain is configured we fall back
  * to a path prefix (/admin) so the app still works on a single host.
  */

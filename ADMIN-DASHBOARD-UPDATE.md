@@ -7,7 +7,7 @@ The admin overview now surfaces the payment-type / collections work end to end.
 Top KPI row (unchanged): **Appointments today · New patients · Revenue today
 (all sources) · Outstanding**.
 
-**New — "Collected today" headline strip:** Cash collected · UPI collected · Card
+**New - "Collected today" headline strip:** Cash collected · UPI collected · Card
 collected · Total collected, across every counter (consultation, lab, pharmacy,
 IPD), at a glance. This is money actually taken (payments), which is distinct from
 "Revenue today" above (that's billed accrual).
@@ -25,11 +25,11 @@ billing list.
 The dashboard needs three supporting files, all included so it works regardless of
 which earlier zips you've applied:
 
-- `src/app/admin/page.tsx` — the dashboard (the update).
-- `src/server/services/admin.service.ts` — `adminOverview` returns `collectionsByMode`.
-- `src/server/services/reports.service.ts` — the `collectionByMode` helper (also
+- `src/app/admin/page.tsx` - the dashboard (the update).
+- `src/server/services/admin.service.ts` - `adminOverview` returns `collectionsByMode`.
+- `src/server/services/reports.service.ts` - the `collectionByMode` helper (also
   carries the Day-close `fullName` → `name` fix).
-- `src/components/portal/ui/collections-card.tsx` — the by-type card.
+- `src/components/portal/ui/collections-card.tsx` - the by-type card.
 
 ## To apply
 
@@ -42,5 +42,5 @@ can leave a stale build):
     npm run dev
 
 No `npm install`, no Prisma migration. Numbers only appear once payments are
-actually recorded for the day shown — an all-zero strip means no collections yet,
+actually recorded for the day shown - an all-zero strip means no collections yet,
 not an error.

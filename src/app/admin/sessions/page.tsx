@@ -43,7 +43,7 @@ export default function SessionsPage() {
         <p className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-[#7fcab8]">Access log</p>
         <h1 className="mt-2 font-serif-p text-[clamp(24px,3vw,32px)] font-semibold">Login activity</h1>
         <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-white/60">
-          Who signed in, from where, and for how long. Sessions open at sign-in and close at sign-out —
+          Who signed in, from where, and for how long. Sessions open at sign-in and close at sign-out -
           anything without a sign-out time is still on the desk right now.
         </p>
         <div className="mt-5 flex flex-wrap gap-2">
@@ -102,9 +102,9 @@ export default function SessionsPage() {
                         ? <span className="text-[var(--p-ink)]">{dt(s.logoutAt)}</span>
                         : <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--p-cyan-soft)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--p-cyan-deep)]"><span className="h-1.5 w-1.5 rounded-full bg-[var(--p-cyan-deep)]" /> On now</span>}
                     </td>
-                    <td className="px-4 py-3 font-mono text-[12px] text-[var(--p-text)]">{dur(s.durationMin) ?? "—"}</td>
+                    <td className="px-4 py-3 font-mono text-[12px] text-[var(--p-text)]">{dur(s.durationMin) ?? "-"}</td>
                     <td className="px-4 py-3 text-[12px] text-[var(--p-muted)]">{s.method === "OTP" ? "Email code" : "Password"}</td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-[var(--p-muted)]">{s.ipAddress ?? "—"}</td>
+                    <td className="px-4 py-3 font-mono text-[11px] text-[var(--p-muted)]">{s.ipAddress ?? "-"}</td>
                   </tr>
                 ))}
               </tbody>

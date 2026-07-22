@@ -25,7 +25,7 @@ export interface PrescriptionUploadDTO {
 /**
  * Reception uploads a scanned prescription. Validates type/size, stores the
  * file (Cloudinary or local), and records a row linked to BOTH the patient and
- * (optionally) the appointment — so the patient sees it in their profile by UHID.
+ * (optionally) the appointment - so the patient sees it in their profile by UHID.
  */
 export async function uploadPrescription(
   actor: AuthUser,
@@ -35,7 +35,7 @@ export async function uploadPrescription(
   admissionId?: string;   // an INPATIENT Rx belongs to the stay, not a visit
     title?: string;
     file: { buffer: Buffer; fileName: string; mimeType: string; size: number };
-    /** Medicines transcribed by reception from the handwriting — this is what
+    /** Medicines transcribed by reception from the handwriting - this is what
      *  lets the pharmacy pre-pick before the patient reaches the counter. */
     items?: { medicineName: string; medicineId?: string; qty?: number; dosage?: string }[];
     /** Upload and dispatch to the pharmacy queue in one motion. */
@@ -60,7 +60,7 @@ export async function uploadPrescription(
   }
 
   // If an appointment is given, it must belong to this patient. We also
-  // snapshot the doctor's name — that's whose handwriting this is.
+  // snapshot the doctor's name - that's whose handwriting this is.
   let doctorName: string | null = null;
   if (input.appointmentId) {
     const appt = await prisma.appointment.findUnique({
@@ -74,7 +74,7 @@ export async function uploadPrescription(
   }
 
   // An inpatient Rx hangs off the STAY. Same ownership check, same doctor
-  // snapshot — this time the attending doctor whose round produced the chit.
+  // snapshot - this time the attending doctor whose round produced the chit.
   if (input.admissionId) {
     const adm = await prisma.admission.findUnique({
       where: { id: input.admissionId },
@@ -153,12 +153,12 @@ function toDTO(row: {
 }
 
 /**
- * Send the OPD prescription *sheet itself* — no scan needed.
+ * Send the OPD prescription *sheet itself* - no scan needed.
  *
  * Instead of asking reception to photograph the doctor's paper, this renders
  * the same OPD stationery they'd print (letterhead, patient block, vitals and
  * the typed medicines) into a proper PDF, files it against the patient + visit,
- * and — when sendNow — drops it straight into the pharmacy queue. Because the
+ * and - when sendNow - drops it straight into the pharmacy queue. Because the
  * record is linked to the patient by UHID, it's on the patient's own record too
  * (their copy). The old scan-upload path still exists; this just doesn't need it.
  */
@@ -206,7 +206,7 @@ export async function sendOpdSheetToPharmacy(
     labs,
   };
 
-  // A typed prescription is DATA-ONLY — no generated PDF. The OPD sheet is
+  // A typed prescription is DATA-ONLY - no generated PDF. The OPD sheet is
   // rendered live from these ℞ items + clinical fields by /print/opd/{id}
   // (opdPrintData reads this row back), so there's nothing to store as a file.
   const row = await prisma.prescriptionUpload.create({
@@ -336,7 +336,7 @@ export async function recallFromPharmacy(
 ): Promise<void> {
   const rx = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { id: true, status: true } });
   if (!rx) throw new ApiError(404, "Prescription not found");
-  if (rx.status === "DISPENSED") throw new ApiError(400, "Already dispensed — it can't be recalled");
+  if (rx.status === "DISPENSED") throw new ApiError(400, "Already dispensed - it can't be recalled");
 
   await prisma.prescriptionUpload.update({
     where: { id },
@@ -347,7 +347,7 @@ export async function recallFromPharmacy(
 
 
 /**
- * The patient's recent COMPLETED consultations — reception links the scan to
+ * The patient's recent COMPLETED consultations - reception links the scan to
  * one of these so the record shows whose handwriting it is and which visit
  * it belongs to.
  */

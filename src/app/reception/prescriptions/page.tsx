@@ -40,7 +40,7 @@ export default function UploadPrescriptionPage() {
   const [results, setResults] = useState<Patient[]>([]);
   const [recent, setRecent] = useState<Patient[]>([]);
   const [patient, setPatient] = useState<Patient | null>(null);
-  // the bed board decides IP vs OP — reception never has to.
+  // the bed board decides IP vs OP - reception never has to.
   const { admission, checking: checkingAdm } = useAdmission(patient?.id);
 
   // ---- which consultation this scan belongs to ----
@@ -65,7 +65,7 @@ export default function UploadPrescriptionPage() {
   const [dosage, setDosage] = useState("");
   const medBox = useRef<HTMLInputElement>(null);
 
-  // ---- clinical details typed from the sheet — labs, diagnosis, advice ----
+  // ---- clinical details typed from the sheet - labs, diagnosis, advice ----
   const [labs, setLabs] = useState<string[]>([]);
   const [labInput, setLabInput] = useState("");
   const [diagnosis, setDiagnosis] = useState("");
@@ -109,14 +109,14 @@ export default function UploadPrescriptionPage() {
     api.get<{ visits: Visit[] }>(`/reception/patients/${patient.displayId}/completed-visits`)
       .then((r) => {
         setVisits(r.visits);
-        // preselect the most recent completed consult — the usual case
+        // preselect the most recent completed consult - the usual case
         setVisitId(r.visits[0]?.id ?? "");
       })
       .catch(() => setVisits([]));
     loadExisting(patient.displayId);
   }, [patient, loadExisting]);
 
-  // vitals belong to the OP visit, not the stay — reload whatever's typed
+  // vitals belong to the OP visit, not the stay - reload whatever's typed
   // in already whenever the picked consultation changes.
   useEffect(() => {
     setVitalsSavedAt(null); setVitalsError(null);
@@ -214,7 +214,7 @@ export default function UploadPrescriptionPage() {
 
   /**
    * The new default path: send the OPD sheet *itself*, built from the typed
-   * vitals + medicines — no scan required. It's filed to the patient's record
+   * vitals + medicines - no scan required. It's filed to the patient's record
    * (their copy, by UHID) and, when sendNow, dropped into the pharmacy queue.
    * The scan-upload path below still works; this just doesn't need it.
    */
@@ -295,7 +295,7 @@ export default function UploadPrescriptionPage() {
       <div data-rise className="surface dotgrid mb-6 px-6 py-5">
         <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Prescriptions</h1>
         <p className="mt-1 text-[14px] text-[var(--p-muted)]">
-          The doctor wrote it by hand. Type the vitals and medicines in, scan the sheet — and it&apos;s all computerized and at the pharmacy before the patient is.
+          The doctor wrote it by hand. Type the vitals and medicines in, scan the sheet - and it&apos;s all computerized and at the pharmacy before the patient is.
         </p>
       </div>
 
@@ -305,10 +305,10 @@ export default function UploadPrescriptionPage() {
             {done.generated
               ? (done.sent
                 ? "OPD sheet sent to the pharmacy queue and saved to the patient's record. ✓"
-                : "OPD sheet saved to the patient's record — send it to pharmacy when ready.")
+                : "OPD sheet saved to the patient's record - send it to pharmacy when ready.")
               : (done.sent
-                ? "Uploaded and sent — the pharmacy can already see it in their queue. ✓"
-                : "Uploaded. It's on the patient's record — send it to pharmacy when ready.")}
+                ? "Uploaded and sent - the pharmacy can already see it in their queue. ✓"
+                : "Uploaded. It's on the patient's record - send it to pharmacy when ready.")}
           </p>
           <span className="flex items-center gap-3">
             {done.fileUrl && (
@@ -332,7 +332,7 @@ export default function UploadPrescriptionPage() {
 
       <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
         <div className="space-y-6">
-          {/* Inpatient work starts at a BED, not a name. The ward says "ICU 3" —
+          {/* Inpatient work starts at a BED, not a name. The ward says "ICU 3" -
               so that's what reception should be able to tap. */}
           <InpatientPicker
             pickedPatientId={patient?.id}
@@ -342,7 +342,7 @@ export default function UploadPrescriptionPage() {
                 fullName: ip.patient.fullName, phone: ip.patient.phone,
               });
               setQuery("");
-              setVisitId("");   // an IP Rx files to the STAY — never to an old visit
+              setVisitId("");   // an IP Rx files to the STAY - never to an old visit
             }}
           />
 
@@ -380,7 +380,7 @@ export default function UploadPrescriptionPage() {
           {/* The bed board answers IP vs OP. Reception reads it; they don't decide it. */}
           {patient && <AdmissionBanner admission={admission} checking={checkingAdm} what="This prescription" />}
 
-          {/* ---- 2 · which consultation (OP) — or which stay (IP) ---- */}
+          {/* ---- 2 · which consultation (OP) - or which stay (IP) ---- */}
           <section data-rise className={`surface overflow-hidden ${patient ? "" : "pointer-events-none opacity-55"}`}>
             <div className="border-b border-[var(--p-border)] px-6 py-4">
               <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">
@@ -388,14 +388,14 @@ export default function UploadPrescriptionPage() {
               </h3>
               <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">
                 {admission
-                  ? "They're in a bed — so this pins to the admission, not to an old outpatient visit."
-                  : "Link the scan to the visit — the record shows whose handwriting it is."}
+                  ? "They're in a bed - so this pins to the admission, not to an old outpatient visit."
+                  : "Link the scan to the visit - the record shows whose handwriting it is."}
               </p>
             </div>
             <div className="p-6">
               {admission ? (
                 /* An inpatient Rx does not attach to a consultation. Choosing one
-                   would strand the document outside the discharge bill — so the
+                   would strand the document outside the discharge bill - so the
                    picker is replaced, not merely disabled. */
                 <div className="flex items-center gap-3 rounded-lg border border-[var(--p-blue)]/30 bg-[var(--p-blue-soft)] p-4">
                   <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--p-blue)] text-white">
@@ -403,7 +403,7 @@ export default function UploadPrescriptionPage() {
                   </span>
                   <div className="min-w-0">
                     <p className="text-[14px] font-semibold text-[var(--p-ink)]">
-                      <span className="font-mono">{admission.ipNumber}</span> — {admission.wardName} · {admission.bedNo}
+                      <span className="font-mono">{admission.ipNumber}</span> - {admission.wardName} · {admission.bedNo}
                     </p>
                     <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">
                       Under Dr. {admission.doctorName}. The pharmacy will charge these medicines to the room.
@@ -413,7 +413,7 @@ export default function UploadPrescriptionPage() {
                 </div>
               ) : visits.length === 0 ? (
                 <p className="rounded-lg bg-[var(--p-bg)] px-4 py-3 text-[13px] text-[var(--p-muted)]">
-                  No completed consultations yet. You can still upload — it just won&apos;t be pinned to a visit.
+                  No completed consultations yet. You can still upload - it just won&apos;t be pinned to a visit.
                 </p>
               ) : (
                 <div className="space-y-2">
@@ -432,13 +432,13 @@ export default function UploadPrescriptionPage() {
             </div>
           </section>
 
-          {/* ---- 3 · vitals (OP visits only — a stay's vitals are a ward-round concern) ---- */}
+          {/* ---- 3 · vitals (OP visits only - a stay's vitals are a ward-round concern) ---- */}
           {!admission && (
             <section data-rise className={`surface overflow-hidden ${patient && visitId ? "" : "pointer-events-none opacity-55"}`}>
               <div className="border-b border-[var(--p-border)] px-6 py-4">
                 <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">3 · Vitals</h3>
                 <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">
-                  BP, height, weight — whatever the doctor or nurse wrote by hand at triage. Once saved, it prints on the OPD sheet instead of a blank box.
+                  BP, height, weight - whatever the doctor or nurse wrote by hand at triage. Once saved, it prints on the OPD sheet instead of a blank box.
                 </p>
               </div>
               <div className="p-6">
@@ -475,7 +475,7 @@ export default function UploadPrescriptionPage() {
                 {vitalsError && <p className="mt-3 text-[13px] text-[var(--p-rose)]">{vitalsError}</p>}
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--p-border)] pt-4">
                   <p className="text-[12px] text-[var(--p-muted)]">
-                    {vitalsSavedAt ? "Saved ✓ — visible on the printed OPD sheet." : "Leave a box blank if it wasn't written down — nothing here is required."}
+                    {vitalsSavedAt ? "Saved ✓ - visible on the printed OPD sheet." : "Leave a box blank if it wasn't written down - nothing here is required."}
                   </p>
                   <button onClick={saveVitals} disabled={!visitId || vitalsBusy}
                     className="btn-primary rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
@@ -490,7 +490,7 @@ export default function UploadPrescriptionPage() {
           <section data-rise className={`surface overflow-hidden ${patient ? "" : "pointer-events-none opacity-55"}`}>
             <div className="border-b border-[var(--p-border)] px-6 py-4">
               <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">4 · Medicines, labs &amp; sheet</h3>
-              <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">Type the medicines, prescribed labs and clinical notes — the OPD sheet PDF carries all of it. Attaching the original scan is optional.</p>
+              <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">Type the medicines, prescribed labs and clinical notes - the OPD sheet PDF carries all of it. Attaching the original scan is optional.</p>
             </div>
             <div className="space-y-5 p-6">
               {/* file */}
@@ -504,19 +504,19 @@ export default function UploadPrescriptionPage() {
                   </>
                 ) : (
                   <>
-                    <p className="mt-2 text-[14px] font-medium text-[var(--p-ink)]">Optional — drop a scan of the original here</p>
-                    <p className="text-[12px] text-[var(--p-muted)]">PDF · JPG · PNG · WebP — up to 10 MB. Not needed to send the sheet.</p>
+                    <p className="mt-2 text-[14px] font-medium text-[var(--p-ink)]">Optional - drop a scan of the original here</p>
+                    <p className="text-[12px] text-[var(--p-muted)]">PDF · JPG · PNG · WebP - up to 10 MB. Not needed to send the sheet.</p>
                   </>
                 )}
               </label>
 
               <Field label="Title (optional)">
-                <input className={fld} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={selectedVisit ? `${selectedVisit.department} consult — ${selectedVisit.visitDate}` : "e.g. Cardiology consult"} />
+                <input className={fld} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={selectedVisit ? `${selectedVisit.department} consult - ${selectedVisit.visitDate}` : "e.g. Cardiology consult"} />
               </Field>
 
               {/* typed medicines */}
               <div>
-                <p className="mb-1.5 text-[13px] font-medium text-[var(--p-text)]">Prescribed medicines <span className="text-[var(--p-muted)]">(typed from the handwriting — this is what makes pharmacy fast)</span></p>
+                <p className="mb-1.5 text-[13px] font-medium text-[var(--p-text)]">Prescribed medicines <span className="text-[var(--p-muted)]">(typed from the handwriting - this is what makes pharmacy fast)</span></p>
                 <div className="grid gap-2 sm:grid-cols-[1fr_72px_1fr_auto]">
                   <div className="relative">
                     <input ref={medBox} className={fld} value={medQuery} onChange={(e) => setMedQuery(e.target.value)}
@@ -587,7 +587,7 @@ export default function UploadPrescriptionPage() {
                   <div className="mt-3 space-y-1.5">
                     {items.map((it, i) => (
                       <div key={i} className="flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-3 py-2">
-                        <span className={`h-1.5 w-1.5 rounded-full ${it.medicineId ? "bg-[var(--p-cyan)]" : "bg-[var(--p-amber, #d9a514)]"}`} title={it.medicineId ? "Matched to pharmacy catalog" : "Free text — pharmacist will match"} />
+                        <span className={`h-1.5 w-1.5 rounded-full ${it.medicineId ? "bg-[var(--p-cyan)]" : "bg-[var(--p-amber, #d9a514)]"}`} title={it.medicineId ? "Matched to pharmacy catalog" : "Free text - pharmacist will match"} />
                         <div className="flex-1 text-[14px] text-[var(--p-ink)]">
                           {it.medicineName} <span className="text-[var(--p-muted)]">× {it.qty}{it.dosage && ` · ${it.dosage}`}</span>
                         </div>
@@ -595,12 +595,12 @@ export default function UploadPrescriptionPage() {
                       </div>
                     ))}
 
-                    {/* Live preview — the same RxTable component the OPD sheet
+                    {/* Live preview - the same RxTable component the OPD sheet
                         prints with, fed straight from this draft. Nothing is
                         saved yet; this is just what it'll look like once it is. */}
                     <div className="mt-4 overflow-hidden rounded-lg border border-[var(--p-border)]">
                       <p className="border-b border-[var(--p-border)] bg-[var(--p-bg)] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
-                        Live preview — how this prints on the OPD sheet
+                        Live preview - how this prints on the OPD sheet
                       </p>
                       <div className="print-stage" style={{ background: "transparent", minHeight: 0, padding: "10px 14px" }}>
                         <div id="print-sheet" style={{ width: "100%", minHeight: 0, boxShadow: "none", padding: 0, background: "transparent" }}>
@@ -612,18 +612,18 @@ export default function UploadPrescriptionPage() {
                 )}
               </div>
 
-              {/* ---- prescribed labs & clinical details — print on the sheet ---- */}
+              {/* ---- prescribed labs & clinical details - print on the sheet ---- */}
               <div className="border-t border-dashed border-[var(--p-border)] pt-4">
                 <p className="mb-1.5 text-[13px] font-medium text-[var(--p-text)]">
                   Prescribed labs &amp; clinical details{" "}
-                  <span className="text-[var(--p-muted)]">(optional — whatever is typed prints on the sheet instead of a blank pen line)</span>
+                  <span className="text-[var(--p-muted)]">(optional - whatever is typed prints on the sheet instead of a blank pen line)</span>
                 </p>
 
-                {/* labs — chip list, Enter to add */}
+                {/* labs - chip list, Enter to add */}
                 <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
                   <input className={fld} value={labInput} onChange={(e) => setLabInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addLab(labInput); } }}
-                    placeholder="Prescribed lab test — e.g. CBP, RBS, Lipid profile… (Enter to add)" />
+                    placeholder="Prescribed lab test - e.g. CBP, RBS, Lipid profile… (Enter to add)" />
                   <button onClick={() => addLab(labInput)} disabled={!labInput.trim()}
                     className="rounded-lg border border-[var(--p-border)] px-3.5 py-2 text-[14px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)] disabled:opacity-40">
                     Add lab
@@ -644,7 +644,7 @@ export default function UploadPrescriptionPage() {
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <Field label="Diagnosis">
                     <input className={fld} value={diagnosis} onChange={(e) => setDiagnosis(e.target.value)}
-                      placeholder="As written on the sheet — e.g. Viral fever" />
+                      placeholder="As written on the sheet - e.g. Viral fever" />
                   </Field>
                   <Field label="Next visit">
                     <input className={fld} value={nextVisit} onChange={(e) => setNextVisit(e.target.value)}
@@ -652,13 +652,13 @@ export default function UploadPrescriptionPage() {
                   </Field>
                   <Field label="Advice" span>
                     <textarea className={`${fld} min-h-[64px] resize-y`} value={advice} onChange={(e) => setAdvice(e.target.value)}
-                      placeholder="Diet, rest, follow-up instructions — prints under the ℞ table" />
+                      placeholder="Diet, rest, follow-up instructions - prints under the ℞ table" />
                   </Field>
                 </div>
               </div>
 
               <div className="space-y-3 border-t border-[var(--p-border)] pt-4">
-                {/* Default: send the generated OPD sheet itself — no scan needed. */}
+                {/* Default: send the generated OPD sheet itself - no scan needed. */}
                 {!admission && (
                   <div className="flex flex-wrap items-center justify-end gap-3">
                     <span className="mr-auto text-[12px] text-[var(--p-muted)]">
@@ -678,7 +678,7 @@ export default function UploadPrescriptionPage() {
                 {(file || admission) && (
                   <div className="flex flex-wrap items-center justify-end gap-3 border-t border-dashed border-[var(--p-border)] pt-3">
                     <span className="mr-auto text-[12px] text-[var(--p-muted)]">
-                      {admission ? "Inpatient Rx — attach the ward chit and send." : "Attached the original scan? Send that instead:"}
+                      {admission ? "Inpatient Rx - attach the ward chit and send." : "Attached the original scan? Send that instead:"}
                     </span>
                     <button onClick={() => upload(false)} disabled={!patient || !file || busy}
                       className="rounded-md border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)] disabled:opacity-40">

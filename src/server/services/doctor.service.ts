@@ -36,7 +36,7 @@ export interface DoctorQueueItem {
   patient: { id: string; displayId: string; fullName: string; age: number | null; gender: string | null; phone: string; bloodGroup: string | null };
 }
 
-/** Today's clinic list for this doctor — the queue they work through. */
+/** Today's clinic list for this doctor - the queue they work through. */
 export async function doctorToday(actor: AuthUser): Promise<{
   doctor: { name: string; department: string };
   stats: { booked: number; checkedIn: number; completed: number };
@@ -59,7 +59,7 @@ export async function doctorToday(actor: AuthUser): Promise<{
 
   type Row = {
     id: string; opNumber: string; status: string;
-    timeAtBooking: string; // "HH:MM" — a string, not a Date
+    timeAtBooking: string; // "HH:MM" - a string, not a Date
     patient: { id: string; displayId: string; fullName: string; age: number | null; gender: string | null; phone: string; bloodGroup: string | null };
   };
 
@@ -82,7 +82,7 @@ export async function doctorToday(actor: AuthUser): Promise<{
   };
 }
 
-/** Mark a consultation finished — the one write a doctor makes here. */
+/** Mark a consultation finished - the one write a doctor makes here. */
 export async function completeConsultation(actor: AuthUser, appointmentId: string): Promise<void> {
   const doc = await doctorForUser(actor);
   const appt = await prisma.appointment.findUnique({
@@ -161,7 +161,7 @@ export async function doctorPatientChart(actor: AuthUser, displayId: string) {
       createdAt: l.createdAt.toISOString().slice(0, 10),
       completedAt: l.completedAt ? l.completedAt.toISOString().slice(0, 10) : null,
     })),
-    /** The scanned handwritten prescriptions — the doctor's own record. */
+    /** The scanned handwritten prescriptions - the doctor's own record. */
     prescriptions: (scans as {
       id: string; appointmentId: string | null; fileUrl: string | null; fileName: string | null; title: string | null; doctorName: string | null;
       status: string; createdAt: Date;

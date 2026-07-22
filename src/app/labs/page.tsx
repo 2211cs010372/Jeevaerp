@@ -78,7 +78,7 @@ export default function LabsDashboard() {
                   <div>
                     <div className="text-[14px] font-medium text-[var(--p-ink)]">{t.testName}</div>
                     <div className="text-[12px] text-[var(--p-muted)]">
-                      {t.patient?.fullName ?? "—"} · <span className="tabular">{t.patient?.displayId}</span>
+                      {t.patient?.fullName ?? "-"} · <span className="tabular">{t.patient?.displayId}</span>
                       {t.appointment && ` · ${t.appointment.doctorName}`}
                     </div>
                   </div>

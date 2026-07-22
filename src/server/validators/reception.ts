@@ -3,7 +3,7 @@ import { z } from "zod";
 const phone10 = z.string().trim().regex(/^\d{10}$/, "Enter a valid 10-digit mobile number");
 const optStr = (max: number) => z.string().trim().max(max).optional().or(z.literal(""));
 
-/** Full patient registration — rich production fields. Only first name + phone required. */
+/** Full patient registration - rich production fields. Only first name + phone required. */
 export const registerPatientSchema = z.object({
   // name
   firstName: z.string().trim().min(1, "First name is required").max(80),
@@ -60,7 +60,7 @@ export const sendOpdSheetSchema = z.object({
     )
     .max(30)
     .default([]),
-  /// clinical details typed from the handwritten sheet — all optional
+  /// clinical details typed from the handwritten sheet - all optional
   diagnosis: optStr(300),
   advice: optStr(600),
   nextVisit: optStr(80),
@@ -164,7 +164,7 @@ export const mergePatientsSchema = z.object({
 
 /**
  * Vitals typed in by reception from the doctor's handwritten OPD sheet.
- * Every field optional — the desk types whatever was actually written down,
+ * Every field optional - the desk types whatever was actually written down,
  * not a full set. Sane clinical ranges catch fat-finger entry.
  */
 export const recordVitalsSchema = z.object({

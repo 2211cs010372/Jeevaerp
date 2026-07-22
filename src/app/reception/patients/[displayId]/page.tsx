@@ -174,21 +174,21 @@ export default function PatientDetailPage() {
           {!editing ? (
             <div className="grid grid-cols-2 gap-px bg-[var(--p-border)]">
               <D k="First name" v={patient.firstName} />
-              <D k="Last name" v={patient.lastName ?? "—"} />
-              <D k="Date of birth" v={patient.dob ?? "—"} />
-              <D k="Age" v={patient.age != null ? `${patient.age}` : "—"} />
+              <D k="Last name" v={patient.lastName ?? "-"} />
+              <D k="Date of birth" v={patient.dob ?? "-"} />
+              <D k="Age" v={patient.age != null ? `${patient.age}` : "-"} />
               <D k="Gender" v={cap(patient.gender)} />
-              <D k="Blood group" v={patient.bloodGroup ?? "—"} />
+              <D k="Blood group" v={patient.bloodGroup ?? "-"} />
               <D k="Marital status" v={cap(patient.maritalStatus ?? null)} />
               <D k="Phone" v={patient.phone} mono />
-              <D k="Alternate" v={patient.alternatePhone ?? "—"} mono />
-              <D k="Email" v={patient.email ?? "—"} />
-              <D k="Address" v={patient.address ?? "—"} />
-              <D k="City" v={patient.city ?? "—"} />
-              <D k="State" v={patient.state ?? "—"} />
-              <D k="PIN" v={patient.postalCode ?? "—"} />
-              <D k="Occupation" v={patient.occupation ?? "—"} />
-              <D k="Language" v={patient.preferredLanguage ?? "—"} />
+              <D k="Alternate" v={patient.alternatePhone ?? "-"} mono />
+              <D k="Email" v={patient.email ?? "-"} />
+              <D k="Address" v={patient.address ?? "-"} />
+              <D k="City" v={patient.city ?? "-"} />
+              <D k="State" v={patient.state ?? "-"} />
+              <D k="PIN" v={patient.postalCode ?? "-"} />
+              <D k="Occupation" v={patient.occupation ?? "-"} />
+              <D k="Language" v={patient.preferredLanguage ?? "-"} />
             </div>
           ) : (
             <div className="grid gap-4 p-6 sm:grid-cols-2">
@@ -198,17 +198,17 @@ export default function PatientDetailPage() {
               <Field label="Age"><input className={fld} value={f.age as string} onChange={(e) => set("age")(e.target.value.replace(/\D/g, "").slice(0, 3))} /></Field>
               <Field label="Gender">
                 <select className={fld} value={f.gender as string} onChange={(e) => set("gender")(e.target.value)}>
-                  <option value="">—</option><option value="MALE">Male</option><option value="FEMALE">Female</option><option value="OTHER">Other</option>
+                  <option value="">-</option><option value="MALE">Male</option><option value="FEMALE">Female</option><option value="OTHER">Other</option>
                 </select>
               </Field>
               <Field label="Blood group">
                 <select className={fld} value={f.bloodGroup as string} onChange={(e) => set("bloodGroup")(e.target.value)}>
-                  <option value="">—</option>{BLOODS.map((b) => <option key={b} value={b}>{b}</option>)}
+                  <option value="">-</option>{BLOODS.map((b) => <option key={b} value={b}>{b}</option>)}
                 </select>
               </Field>
               <Field label="Marital status">
                 <select className={fld} value={f.maritalStatus as string} onChange={(e) => set("maritalStatus")(e.target.value)}>
-                  <option value="">—</option><option value="SINGLE">Single</option><option value="MARRIED">Married</option><option value="DIVORCED">Divorced</option><option value="WIDOWED">Widowed</option><option value="OTHER">Other</option>
+                  <option value="">-</option><option value="SINGLE">Single</option><option value="MARRIED">Married</option><option value="DIVORCED">Divorced</option><option value="WIDOWED">Widowed</option><option value="OTHER">Other</option>
                 </select>
               </Field>
               <Field label="Phone"><input className={fld} value={f.phone as string} onChange={(e) => set("phone")(e.target.value.replace(/\D/g, "").slice(0, 10))} /></Field>
@@ -336,7 +336,7 @@ export default function PatientDetailPage() {
   );
 }
 
-function cap(v: string | null) { return v ? v.charAt(0) + v.slice(1).toLowerCase() : "—"; }
+function cap(v: string | null) { return v ? v.charAt(0) + v.slice(1).toLowerCase() : "-"; }
 function D({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   return (
     <div className="bg-white px-6 py-3">

@@ -1,7 +1,7 @@
 import { Reveal } from "@/components/ui/reveal";
 import { WARDS } from "@/lib/data";
 
-/** Rooms and prices, published. ICU carries the dark card — it's the serious one. */
+/** Rooms and prices, published. ICU carries the dark card - it's the serious one. */
 export function Wards() {
   return (
     <section id="wards" className="px-3 py-16 sm:px-5 lg:py-24">
@@ -15,7 +15,7 @@ export function Wards() {
           </Reveal>
           <Reveal delay={120}>
             <p className="max-w-sm text-[14px] leading-[1.7] text-[var(--muted)]">
-              These are the rates our billing system charges — locked when you&apos;re admitted,
+              These are the rates our billing system charges - locked when you&apos;re admitted,
               so this page and your bill can&apos;t disagree.
             </p>
           </Reveal>

@@ -21,14 +21,28 @@ interface Booked {
   invoice?: { id: string; receiptNo: string; totalAmount: string; status: string };
 }
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
+// LOCAL calendar date (not UTC) - `toISOString()` would roll to yesterday during
+// the early hours in a +offset timezone (e.g. IST 00:00-05:30), defaulting the
+// booking grid to the wrong day.
+const todayISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 const inits = (n: string) => n.split(" ").map((x) => x[0]).slice(0, 2).join("");
 const prettyDate = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
+
+/** A slot is "past" once its own start instant (date + time, local) is at or
+ *  before now. Robust across timezones: past dates read fully past, future dates
+ *  never do, and today's slots flip exactly as the clock reaches them. */
+const slotPast = (startTime: string, date: string) => new Date(`${date}T${startTime}:00`).getTime() <= Date.now();
+
+const BLOODS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
+const emptyNp = { firstName: "", lastName: "", phone: "", age: "", gender: "FEMALE", blood: "O+", city: "" };
 
 /**
  * Reads ?patient=JMH... and hands the resolved patient up. Lets Register,
  * the patient file, and the Today queue drop straight into this form with the
- * patient already chosen — reception never searches the same person twice.
+ * patient already chosen - reception never searches the same person twice.
  * (Own component so useSearchParams sits under <Suspense>; Next 15 requires it.)
  */
 function PatientFromUrl({ onFound }: { onFound: (p: Patient) => void }) {
@@ -44,11 +58,19 @@ function PatientFromUrl({ onFound }: { onFound: (p: Patient) => void }) {
 }
 
 export default function BookAppointmentPage() {
+  const [patientMode, setPatientMode] = useState<"existing" | "new">("existing");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Patient[]>([]);
   const [recent, setRecent] = useState<Patient[]>([]);
   const [searching, setSearching] = useState(false);
   const [patient, setPatient] = useState<Patient | null>(null);
+
+  // Inline "register a new patient" - the essentials only (firstName + phone are
+  // all the API requires); fuller details can be added later from the file.
+  const [np, setNp] = useState({ ...emptyNp });
+  const [creating, setCreating] = useState(false);
+  const [npError, setNpError] = useState<string | null>(null);
+  const [npFieldErr, setNpFieldErr] = useState<{ firstName?: string; phone?: string; age?: string }>({});
 
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [doctorId, setDoctorId] = useState("");
@@ -122,8 +144,31 @@ export default function BookAppointmentPage() {
     } finally { setBooking(false); }
   }
 
+  /** Register a brand-new patient inline, then carry them straight into step 2. */
+  async function createPatient() {
+    const e: typeof npFieldErr = {};
+    if (np.firstName.trim().length < 1) e.firstName = "First name is required";
+    if (!/^\d{10}$/.test(np.phone)) e.phone = "Must be a 10-digit mobile number";
+    if (np.age && (Number(np.age) < 0 || Number(np.age) > 120)) e.age = "Enter a valid age";
+    setNpFieldErr(e);
+    if (Object.keys(e).length) return;
+    setNpError(null); setCreating(true);
+    try {
+      const { patient: created } = await api.post<{ patient: Patient }>("/reception/patients", {
+        firstName: np.firstName.trim(), lastName: np.lastName.trim() || undefined,
+        phone: np.phone, age: np.age ? Number(np.age) : undefined,
+        gender: np.gender, bloodGroup: np.blood, city: np.city.trim() || undefined,
+      });
+      setPatient(created);
+      setNp({ ...emptyNp }); setNpFieldErr({}); setPatientMode("existing");
+    } catch (err) {
+      setNpError(err instanceof ApiClientError ? err.message : "Could not register. Please try again.");
+    } finally { setCreating(false); }
+  }
+
   function reset() {
-    setBooked(null); setPatient(null); setQuery(""); setResults([]); setDoctorId(""); setSlotId(""); setSlots([]); setError(null); setReferredBy(""); setReferralSource(""); setBookDisc(0); setPayments([]); setPayValid(true);
+    setBooked(null); setPatient(null); setPatientMode("existing"); setQuery(""); setResults([]); setDoctorId(""); setSlotId(""); setSlots([]); setError(null); setReferredBy(""); setReferralSource(""); setBookDisc(0); setPayments([]); setPayValid(true);
+    setNp({ ...emptyNp }); setNpError(null); setNpFieldErr({});
   }
 
   const doctor = doctors.find((d) => d.id === doctorId);
@@ -131,6 +176,8 @@ export default function BookAppointmentPage() {
   const bookFee = Number(doctor?.fee ?? 0);
   const bookTotal = Math.max(0, bookFee - bookDisc);
   const fld = "w-full rounded-lg border border-[var(--p-border)] bg-white px-3.5 py-2.5 text-sm text-[var(--p-ink)] ring";
+  const npCls = (e?: string) => `w-full rounded-lg border bg-white px-3 py-2 text-sm text-[var(--p-ink)] outline-none transition-all duration-200 focus:ring-2 focus:ring-[var(--p-teal)]/15 ${e ? "border-[var(--p-rose)] focus:border-[var(--p-rose)]" : "border-[var(--p-border)] focus:border-[var(--p-teal)]"}`;
+  const seg = (on: boolean) => `inline-flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${on ? "bg-[var(--p-teal)] text-white shadow-sm" : "text-[var(--p-muted)] hover:text-[var(--p-ink)]"}`;
 
   const step1Done = !!patient;
   const step2Done = !!patient && !!doctor && !!slotId;
@@ -156,7 +203,7 @@ export default function BookAppointmentPage() {
           </div>
           {booked.invoice && (
             <p className="border-t border-[var(--p-border)] bg-[var(--p-cyan-soft)] px-5 py-2.5 text-[13px] font-medium text-[var(--p-cyan-deep)]">
-              Booked and billed in one go — the patient walks straight to the doctor. ✓
+              Booked and billed in one go - the patient walks straight to the doctor. ✓
             </p>
           )}
           <div className="border-t border-[var(--p-border)] bg-[var(--p-bg)] px-5 py-3 text-[13px] leading-relaxed text-[var(--p-muted)]">
@@ -208,7 +255,7 @@ export default function BookAppointmentPage() {
       {prefilled && patient && !booked && (
         <div data-rise className="mb-4 flex items-center gap-2 rounded-lg border border-[var(--p-teal)]/25 bg-[var(--p-teal-soft)] px-4 py-2.5 text-[14px] text-[var(--p-teal-deep)]">
           <Icon name="check" size={14} />
-          <span><span className="font-semibold">{patient.fullName}</span> carried over — go straight to choosing the doctor.</span>
+          <span><span className="font-semibold">{patient.fullName}</span> carried over - go straight to choosing the doctor.</span>
         </div>
       )}
 
@@ -216,22 +263,81 @@ export default function BookAppointmentPage() {
         <div className="space-y-6">
           {/* STEP 1 */}
           <section data-rise className="surface surface-hover overflow-hidden">
-            <Head n={1} done={step1Done} title="Patient" hint="Search by name or Jeeva ID, or pick a recent registration." />
+            <Head n={1} done={step1Done} title="Patient" hint="Search for an existing patient, or register a new one on the spot." />
             <div className="p-6 pt-5">
               {!patient ? (
                 <>
-                  <div className="flex items-center gap-2 rounded-md border border-[var(--p-border)] px-3 py-2 ">
-                    <span className="text-[var(--p-muted)]"><Icon name="search" size={16} /></span>
-                    <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name or JMH2026OP00123…" className="w-full bg-transparent text-sm text-[var(--p-ink)] outline-none" autoFocus />
-                    {searching && <Spinner size={14} />}
+                  {/* choose: existing (search) or new (register inline) */}
+                  <div className="mb-4 inline-flex rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] p-1">
+                    <button type="button" onClick={() => { setPatientMode("existing"); setNpError(null); setNpFieldErr({}); }} aria-pressed={patientMode === "existing"} className={seg(patientMode === "existing")}>
+                      <Icon name="search" size={14} /> Existing patient
+                    </button>
+                    <button type="button" onClick={() => { setPatientMode("new"); setQuery(""); setResults([]); }} aria-pressed={patientMode === "new"} className={seg(patientMode === "new")}>
+                      <Icon name="plus" size={14} /> New patient
+                    </button>
                   </div>
-                  {query && results.length > 0 && <div className="mt-3 space-y-2">{results.map((p) => <PRow key={p.id} p={p} onPick={() => { setPatient(p); setQuery(""); }} />)}</div>}
-                  {query && !searching && results.length === 0 && <p className="mt-3 text-[13px] text-[var(--p-muted)]">No patient found. Register them first.</p>}
-                  {!query && recent.length > 0 && (
-                    <div className="mt-4">
-                      <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.06em] text-[var(--p-muted)]">Recently registered</p>
-                      <div className="space-y-2">{recent.map((p) => <PRow key={p.id} p={p} onPick={() => setPatient(p)} />)}</div>
-                    </div>
+
+                  {patientMode === "existing" ? (
+                    <>
+                      <div className="flex items-center gap-2 rounded-md border border-[var(--p-border)] px-3 py-2 ">
+                        <span className="text-[var(--p-muted)]"><Icon name="search" size={16} /></span>
+                        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name or JMH2026OP00123…" className="w-full bg-transparent text-sm text-[var(--p-ink)] outline-none" autoFocus />
+                        {searching && <Spinner size={14} />}
+                      </div>
+                      {query && results.length > 0 && <div className="mt-3 space-y-2">{results.map((p) => <PRow key={p.id} p={p} onPick={() => { setPatient(p); setQuery(""); }} />)}</div>}
+                      {query && !searching && results.length === 0 && (
+                        <p className="mt-3 flex flex-wrap items-center gap-1.5 text-[13px] text-[var(--p-muted)]">
+                          No patient found.
+                          <button type="button" onClick={() => { setPatientMode("new"); setNp((s) => ({ ...s, firstName: /^\d/.test(query) ? s.firstName : query })); setQuery(""); setResults([]); }} className="font-semibold text-[var(--p-teal)] hover:underline">Register them as a new patient →</button>
+                        </p>
+                      )}
+                      {!query && recent.length > 0 && (
+                        <div className="mt-4">
+                          <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.06em] text-[var(--p-muted)]">Recently registered</p>
+                          <div className="space-y-2">{recent.map((p) => <PRow key={p.id} p={p} onPick={() => setPatient(p)} />)}</div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <Field label="First name" icon="users" error={npFieldErr.firstName}>
+                          <input className={npCls(npFieldErr.firstName)} value={np.firstName} onChange={(e) => { setNp({ ...np, firstName: e.target.value }); setNpFieldErr((p) => ({ ...p, firstName: undefined })); }} placeholder="Divya" autoFocus />
+                        </Field>
+                        <Field label="Last name">
+                          <input className={npCls()} value={np.lastName} onChange={(e) => setNp({ ...np, lastName: e.target.value })} placeholder="Prasad" />
+                        </Field>
+                        <Field label="Phone" error={npFieldErr.phone}>
+                          <input className={npCls(npFieldErr.phone)} value={np.phone} onChange={(e) => { setNp({ ...np, phone: e.target.value.replace(/\D/g, "").slice(0, 10) }); setNpFieldErr((p) => ({ ...p, phone: undefined })); }} inputMode="numeric" placeholder="9000012345" />
+                        </Field>
+                        <Field label="Age" error={npFieldErr.age}>
+                          <input className={npCls(npFieldErr.age)} value={np.age} onChange={(e) => { setNp({ ...np, age: e.target.value.replace(/\D/g, "").slice(0, 3) }); setNpFieldErr((p) => ({ ...p, age: undefined })); }} inputMode="numeric" placeholder="29" />
+                        </Field>
+                        <Field label="Gender">
+                          <select className={npCls()} value={np.gender} onChange={(e) => setNp({ ...np, gender: e.target.value })}>
+                            <option value="FEMALE">Female</option><option value="MALE">Male</option><option value="OTHER">Other</option>
+                          </select>
+                        </Field>
+                        <Field label="Blood group">
+                          <select className={npCls()} value={np.blood} onChange={(e) => setNp({ ...np, blood: e.target.value })}>
+                            {BLOODS.map((b) => <option key={b} value={b}>{b}</option>)}
+                          </select>
+                        </Field>
+                      </div>
+
+                      {npError && (
+                        <div className="mt-4 flex items-start gap-2 rounded-lg border border-[var(--p-rose)]/25 bg-[var(--p-rose-soft)] px-4 py-3 text-[14px] text-[var(--p-rose)]">
+                          <Icon name="alert" size={15} /> <span>{npError}</span>
+                        </div>
+                      )}
+
+                      <div className="mt-4 flex flex-wrap items-center gap-3">
+                        <PrimaryButton onClick={createPatient} disabled={creating}>
+                          {creating ? <><Spinner /> Registering…</> : <><Icon name="plus" size={15} /> Register &amp; continue</>}
+                        </PrimaryButton>
+                        <p className="text-[12px] text-[var(--p-muted)]">Only first name &amp; phone are required - add fuller details later from the patient file.</p>
+                      </div>
+                    </>
                   )}
                 </>
               ) : (
@@ -314,7 +420,7 @@ export default function BookAppointmentPage() {
                   <div className="mb-2 flex items-center justify-between">
                     <p className="text-[12px] font-semibold uppercase tracking-[0.05em] text-[var(--p-muted)]">Available slots · {prettyDate(date)}</p>
                     <div className="flex items-center gap-3">
-                      {!loadingSlots && <span className="text-[12px] text-[var(--p-muted)]">{slots.length} open</span>}
+                      {!loadingSlots && <span className="text-[12px] text-[var(--p-muted)]">{slots.filter((s) => !slotPast(s.startTime, date)).length} bookable</span>}
                       <button type="button" onClick={regenerateSlots} disabled={regenerating} title="Rebuild the booking grid at 10-minute gaps" className="text-[11px] font-semibold text-[var(--p-teal)] hover:underline disabled:opacity-50">{regenerating ? "Regenerating…" : "Regenerate 10-min"}</button>
                     </div>
                   </div>
@@ -323,14 +429,28 @@ export default function BookAppointmentPage() {
                   ) : slots.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-[var(--p-border)] py-6 text-center text-[13px] text-[var(--p-muted)]">No free slots for this day. Try another date.</div>
                   ) : (
-                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
-                      {slots.map((s) => (
-                        <button key={s.id} onClick={() => setSlotId(s.id)}
-                          className={`rounded-lg border px-2 py-2.5 font-mono text-[13px] transition-all ${slotId === s.id ? "border-[var(--p-teal)] bg-[var(--p-teal)] text-white shadow-[0_4px_12px_-4px_rgba(13,125,130,.5)]" : "border-[var(--p-border)] text-[var(--p-ink)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]"}`}>
-                          {s.startTime}
-                        </button>
-                      ))}
-                    </div>
+                    <>
+                      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
+                        {slots.map((s) => {
+                          const past = slotPast(s.startTime, date);
+                          return (
+                            <button key={s.id} type="button" onClick={() => !past && setSlotId(s.id)} disabled={past}
+                              title={past ? "This time has already passed" : undefined}
+                              className={`rounded-lg border px-2 py-2.5 font-mono text-[13px] transition-all ${
+                                past ? "cursor-not-allowed border-[var(--p-border)] bg-[var(--p-bg)] text-[var(--p-muted)] line-through opacity-60"
+                                : slotId === s.id ? "border-[var(--p-teal)] bg-[var(--p-teal)] text-white shadow-[0_4px_12px_-4px_rgba(13,125,130,.5)]"
+                                : "border-[var(--p-border)] text-[var(--p-ink)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]"}`}>
+                              {s.startTime}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {slots.every((s) => slotPast(s.startTime, date)) && (
+                        <p className="mt-3 rounded-lg border border-dashed border-[var(--p-border)] py-3 text-center text-[13px] text-[var(--p-muted)]">
+                          All of today&apos;s slots have passed. Pick a later date to book.
+                        </p>
+                      )}
+                    </>
                   )}
                 </div>
               )}
@@ -369,7 +489,7 @@ export default function BookAppointmentPage() {
               <SumRow k="Time" v={slot?.startTime} mono />
               <div className="flex items-center justify-between px-5 py-3.5">
                 <span className="text-[14px] font-semibold text-[var(--p-ink)]">Fee</span>
-                <span className="font-mono text-[15px] font-semibold text-[var(--p-teal)]">{doctor ? `₹${doctor.fee}` : "—"}</span>
+                <span className="font-mono text-[15px] font-semibold text-[var(--p-teal)]">{doctor ? `₹${doctor.fee}` : "-"}</span>
               </div>
             </div>
             <div className="space-y-3 border-t border-[var(--p-border)] px-5 pt-4">
@@ -388,7 +508,7 @@ export default function BookAppointmentPage() {
                 </div>
               )}
               <p className="text-[12px] leading-relaxed text-[var(--p-muted)]">
-                {billNow ? "One motion: OP number + GST receipt together. No second queue at billing." : "Booking only — bill later from the patient's page."}
+                {billNow ? "One motion: OP number + GST receipt together. No second queue at billing." : "Booking only - bill later from the patient's page."}
               </p>
             </div>
             <div className="p-5 pt-3">
@@ -396,7 +516,7 @@ export default function BookAppointmentPage() {
                 {booking ? <><Spinner /> Booking…</> : <><Icon name="calendar" size={15} /> {billNow ? "Confirm & bill" : "Confirm booking"}</>}
               </PrimaryButton>
               <p className="mt-3 text-center text-[12px] leading-relaxed text-[var(--p-muted)]">
-                {step2Done ? "Ready — this books instantly into the doctor's queue." : "Complete both steps to confirm."}
+                {step2Done ? "Ready - this books instantly into the doctor's queue." : "Complete both steps to confirm."}
               </p>
             </div>
           </div>
@@ -434,7 +554,7 @@ function SumRow({ k, v, mono }: { k: string; v?: string; mono?: boolean }) {
   return (
     <div className="flex items-center justify-between px-5 py-3">
       <span className="text-[13px] text-[var(--p-muted)]">{k}</span>
-      <span className={`text-right text-[14px] ${v ? "text-[var(--p-ink)]" : "text-[var(--p-muted)]"} ${mono ? "font-mono text-[13px]" : ""}`}>{v ?? "—"}</span>
+      <span className={`text-right text-[14px] ${v ? "text-[var(--p-ink)]" : "text-[var(--p-muted)]"} ${mono ? "font-mono text-[13px]" : ""}`}>{v ?? "-"}</span>
     </div>
   );
 }

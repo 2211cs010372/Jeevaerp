@@ -1,4 +1,4 @@
-# Jeeva ERP — new design system
+# Jeeva ERP - new design system
 
 ## ✅ Pure UI. No migration.
 ```powershell
@@ -13,12 +13,12 @@ No schema change, so **no `prisma migrate` needed this time.**
 
 | Token | Value | Used for |
 |---|---|---|
-| `--p-bg` | `#F5F8FD` | canvas — cool near-white, blue cast (never warm grey) |
+| `--p-bg` | `#F5F8FD` | canvas - cool near-white, blue cast (never warm grey) |
 | `--p-surface` | `#FFFFFF` | cards |
-| `--p-ink` | `#091A34` | headings — near-black with a blue cast |
+| `--p-ink` | `#091A34` | headings - near-black with a blue cast |
 | `--p-border` | `#E4EAF4` | hairline |
-| **`--p-blue`** | **`#0B5CFF`** | **electric blue — primary actions, active nav, focus** |
-| **`--p-cyan`** | **`#00BCC7`** | **teal — health signals, KPIs, positive states** |
+| **`--p-blue`** | **`#0B5CFF`** | **electric blue - primary actions, active nav, focus** |
+| **`--p-cyan`** | **`#00BCC7`** | **teal - health signals, KPIs, positive states** |
 
 **Blue = what you click. Teal = what's healthy.** That split is the whole logic
 of the palette, and it holds everywhere.
@@ -42,31 +42,31 @@ ERP again by editing ~10 lines.
 
 ## What changed visually
 
-**Sidebar** — was dark navy, now **frosted glass, light**. Active item gets a
+**Sidebar** - was dark navy, now **frosted glass, light**. Active item gets a
 blue tint, blue text, and a 3px accent bar that slides in. Sticky, full height.
 A user card sits at the bottom with a blue→teal gradient avatar.
 
-**Topbar** — **sticky glass**. Content blurs underneath as you scroll
+**Topbar** - **sticky glass**. Content blurs underneath as you scroll
 (`backdrop-filter: blur(18px) saturate(1.5)`), with a light-catching inner top
-edge — the detail that makes glass read as real glass rather than grey.
+edge - the detail that makes glass read as real glass rather than grey.
 
 **Signature: the aurora.** A fixed radial bloom of blue and teal light behind
 the canvas. It gives flat white depth without adding noise, and never scrolls
 away. This is the one place the design spends its boldness.
 
-**Cards** — hairline border + a whisper of elevation. Interactive cards lift 1px
+**Cards** - hairline border + a whisper of elevation. Interactive cards lift 1px
 on hover and pick up a blue edge with a soft glow ring.
 
-**KPI tiles** — teal icon chip, count-up number in tabular figures, and a teal
+**KPI tiles** - teal icon chip, count-up number in tabular figures, and a teal
 corner bloom that fades in on hover.
 
-**Buttons** — electric blue with a top sheen and a glow that intensifies on
+**Buttons** - electric blue with a top sheen and a glow that intensifies on
 hover; presses down 1px.
 
-**Pills** — now ring-bordered (`ring-1 ring-inset`) instead of flat fills, so
+**Pills** - now ring-bordered (`ring-1 ring-inset`) instead of flat fills, so
 status reads at a glance without shouting.
 
-**Login screens** (all 5 portals) — glass card floating on the aurora.
+**Login screens** (all 5 portals) - glass card floating on the aurora.
 
 ## Accessibility kept
 - Visible keyboard focus everywhere (`outline: 2px solid var(--p-blue)`)

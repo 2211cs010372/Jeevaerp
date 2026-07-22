@@ -4,16 +4,16 @@ import { computeInvoiceTotals, InvoiceMathError, r2 } from "@/server/billing/cal
 /**
  * These are the tests worth having.
  *
- * Not "does the button render" — does the hospital charge the right amount and
+ * Not "does the button render" - does the hospital charge the right amount and
  * hand the right GST to the government. Every one of these takes microseconds and
  * needs no database. There is no excuse not to run them on every save.
  */
 
-describe("invoice totals — the basics", () => {
+describe("invoice totals - the basics", () => {
   it("a GST-exempt consultation is just the fee", () => {
     // Doctor's consultation: exempt in India. No tax line at all.
     const t = computeInvoiceTotals([
-      { description: "Consultation — Dr. Rao", unitPrice: 500, gstRatePct: 0 },
+      { description: "Consultation - Dr. Rao", unitPrice: 500, gstRatePct: 0 },
     ]);
     expect(t.subtotal).toBe(500);
     expect(t.cgst).toBe(0);
@@ -39,7 +39,7 @@ describe("invoice totals — the basics", () => {
   });
 });
 
-describe("a real mixed bill — the one that catches bugs", () => {
+describe("a real mixed bill - the one that catches bugs", () => {
   // A single patient: consultation (exempt) + lab test (exempt) + two medicines
   // at DIFFERENT tax rates. If GST were applied as one blended rate, this breaks.
   const bill = [
@@ -64,10 +64,10 @@ describe("a real mixed bill — the one that catches bugs", () => {
   });
 });
 
-describe("discounts — where money quietly goes missing", () => {
+describe("discounts - where money quietly goes missing", () => {
   it("spreads the discount proportionally BEFORE tax", () => {
     // ₹1000 exempt + ₹1000 @5%, minus ₹200 discount.
-    // The discount must NOT all land on one line — it's 10% off each.
+    // The discount must NOT all land on one line - it's 10% off each.
     const t = computeInvoiceTotals([
       { description: "Room (exempt)", unitPrice: 1000, gstRatePct: 0 },
       { description: "Medicines", unitPrice: 1000, gstRatePct: 5 },
@@ -100,7 +100,7 @@ describe("discounts — where money quietly goes missing", () => {
   });
 });
 
-describe("rounding — the bug you find six months in", () => {
+describe("rounding - the bug you find six months in", () => {
   it("never leaks floating-point tails into the total", () => {
     // 0.1 + 0.2 === 0.30000000000000004 in JS. A bill must never print that.
     const t = computeInvoiceTotals([
@@ -118,14 +118,14 @@ describe("rounding — the bug you find six months in", () => {
     expect(t.cgst).toBe(59.94);
     expect(t.sgst).toBe(59.94);
     expect(t.total).toBe(1118.88);
-    // NOTE: `Number.isInteger(total * 100)` is the WRONG assertion — 1118.88 * 100
+    // NOTE: `Number.isInteger(total * 100)` is the WRONG assertion - 1118.88 * 100
     // is 111887.99999999999 in JS, so it fails on a correct total. The float bug
     // crept into the test written to catch float bugs. The right invariant is:
     // rounding an already-rounded number changes nothing.
     expect(r2(t.total)).toBe(t.total);
   });
 
-  it("CGST always equals SGST — intra-state invariant", () => {
+  it("CGST always equals SGST - intra-state invariant", () => {
     // If these ever diverge, the GST return is wrong. Property-style check.
     for (const rate of [0, 5, 12, 18, 28]) {
       for (const price of [1, 7.77, 99.99, 1234.56]) {

@@ -25,7 +25,7 @@
 }
 
 @theme inline {
-    /* Jeeva theme v2 — from the user's Figma frame */
+    /* Jeeva theme v2 - from the user's Figma frame */
     --color-ink: #0b1220;
     --color-ink-soft: #303a4f;
     --color-blue: #2e6be6;
@@ -43,7 +43,7 @@
 @layer base {
     html {
         scroll-behavior: smooth;
-        /* native — no JS hijacking */
+        /* native - no JS hijacking */
     }
     body {
         @apply bg-white font-sans text-ink antialiased;
@@ -73,7 +73,7 @@
     .container-x {
         @apply mx-auto w-full max-w-6xl px-5;
     }
-    /* Eyebrow — small caps label above every heading */
+    /* Eyebrow - small caps label above every heading */
     .eyebrow {
         @apply text-[11px] font-semibold uppercase tracking-[0.22em] text-blue;
     }

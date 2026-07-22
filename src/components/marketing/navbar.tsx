@@ -10,8 +10,8 @@ import { HOSPITAL, DEPARTMENTS, DOCTORS } from "@/lib/data";
 
 /**
  * Informative two-row navbar (Rainbow-hospital style, in pine/porcelain):
- *   Row 1 — wordmark + tagline · search · appointment + emergency lines · login.
- *   Row 2 — Departments ▾ / Doctors ▾ / plain links, with full-width mega-menus.
+ *   Row 1 - wordmark + tagline · search · appointment + emergency lines · login.
+ *   Row 2 - Departments ▾ / Doctors ▾ / plain links, with full-width mega-menus.
  * The Departments mega-menu shows the RELATED doctors for the hovered
  * department; every item is a real link into /book (by dept or by doctor).
  */
@@ -53,10 +53,10 @@ export function Navbar() {
 
   return (
     <header className="fixed inset-x-0 top-0 z-50 bg-[var(--paper)] shadow-[var(--shadow-sm)]">
-      {/* ── Row 1 — brand · search · actions ─────────────────────── */}
+      {/* ── Row 1 - brand · search · actions ─────────────────────── */}
       <div className="border-b border-[var(--line)]">
         <div className="mx-auto flex max-w-[1280px] items-center gap-3 px-4 py-2.5 sm:gap-4 sm:px-5">
-          <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="Jeeva — home" onClick={close}>
+          <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="Jeeva - home" onClick={close}>
             <span className="grid h-9 w-9 place-items-center rounded-lg bg-[var(--teal)] text-white" aria-hidden>
               <svg width="13" height="13" viewBox="0 0 14 14"><path d="M5 0h4v5h5v4H9v5H5V9H0V5h5z" fill="currentColor" /></svg>
             </span>
@@ -101,7 +101,7 @@ export function Navbar() {
         </div>
       </div>
 
-      {/* ── Row 2 — nav + mega-menus (desktop) ───────────────────── */}
+      {/* ── Row 2 - nav + mega-menus (desktop) ───────────────────── */}
       <div className="relative hidden lg:block" onMouseLeave={() => setMenu(null)}>
         <div className="mx-auto flex max-w-[1280px] items-center gap-1 px-5">
           {NAV.map((item) => item.menu ? (
@@ -150,7 +150,7 @@ export function Navbar() {
                     </div>
                     <div className="space-y-2">
                       {doctorsFor(activeDept).length === 0 ? (
-                        <p className="rounded-xl bg-white p-4 text-center text-[12.5px] text-[var(--muted)]">Consultant details are available at the front desk — or book and we&apos;ll assign the right specialist.</p>
+                        <p className="rounded-xl bg-white p-4 text-center text-[12.5px] text-[var(--muted)]">Consultant details are available at the front desk - or book and we&apos;ll assign the right specialist.</p>
                       ) : doctorsFor(activeDept).map((doc) => (
                         <Link key={doc.id} href={`/book?doctor=${doc.id}`} onClick={close}
                           className="group flex items-center gap-3 rounded-xl bg-white p-2.5 shadow-[var(--shadow-sm)] transition-shadow hover:shadow-[var(--shadow)]">

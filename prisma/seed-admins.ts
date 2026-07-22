@@ -2,14 +2,14 @@ import { PrismaClient, type Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 /**
- * Named admin seed — Mallesh, Suresh, Arjun.
+ * Named admin seed - Mallesh, Suresh, Arjun.
  *
  * Idempotent: safe to run repeatedly (upsert by username). Run it against
  * whatever DATABASE_URL is set, e.g. the production Supabase Postgres:
  *
  *   npx tsx prisma/seed-admins.ts
  *
- * Login handle is the gmail address (stored lowercase — the login form
+ * Login handle is the gmail address (stored lowercase - the login form
  * lowercases what's typed). Password is @Name2026.
  */
 const prisma = new PrismaClient();

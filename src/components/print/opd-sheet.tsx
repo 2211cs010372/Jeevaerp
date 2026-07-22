@@ -9,7 +9,7 @@ import {
 } from "@/components/print/stationery";
 
 /**
- * The ONE OPD case sheet — shared by every portal (like InvoiceSheet is for
+ * The ONE OPD case sheet - shared by every portal (like InvoiceSheet is for
  * bills). It renders the same Jeeva stationery in three modes:
  *
  *   <OpdSheet appointmentId="{id}" />        computer-filled from the visit record
@@ -19,7 +19,7 @@ import {
  *
  * There is NO generated PDF anywhere: the sheet is the live view of the visit's
  * ℞ items + clinical fields, so it's identical across reception, doctor, labs,
- * pharmacy and admin — and always current.
+ * pharmacy and admin - and always current.
  */
 
 interface Data {
@@ -43,8 +43,8 @@ const to12h = (hhmm: string) => {
 const pretty = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 
 /**
- * The vitals boxes — blank for the triage pen until reception types the
- * handwritten numbers in. BMI / BSA are computed here from height + weight —
+ * The vitals boxes - blank for the triage pen until reception types the
+ * handwritten numbers in. BMI / BSA are computed here from height + weight -
  * never stored, so they can't go stale if either number is corrected later.
  */
 function vitalsBoxes(v: Data["vitals"]): { label: string; value: string | null }[] {
@@ -63,15 +63,16 @@ function vitalsBoxes(v: Data["vitals"]): { label: string; value: string | null }
   ];
 }
 
-export function OpdSheet() {
+/** "staff" reads the staff endpoint; "portal" reads the patient-scoped one. */
+export function OpdSheet({ source = "staff" }: { source?: "staff" | "portal" } = {}) {
   return (
     <Suspense fallback={<div className="p-10 text-center text-[14px] text-[#5a6a66]">Preparing the OPD sheet…</div>}>
-      <OpdSheetInner />
+      <OpdSheetInner source={source} />
     </Suspense>
   );
 }
 
-function OpdSheetInner() {
+function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
   const { appointmentId } = useParams<{ appointmentId: string }>();
   const params = useSearchParams();
   const isBlank = appointmentId === "blank";
@@ -80,11 +81,14 @@ function OpdSheetInner() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isBlank) return; // nothing to fetch — the emptiness is the point
-    api.get<Data>(`/reception/appointments/${appointmentId}/print`)
+    if (isBlank) return; // nothing to fetch - the emptiness is the point
+    const path = source === "portal"
+      ? `/portal/appointments/${appointmentId}/print`
+      : `/reception/appointments/${appointmentId}/print`;
+    api.get<Data>(path)
       .then(setData)
       .catch((e) => setError(e instanceof ApiClientError ? e.message : "Couldn't load the sheet."));
-  }, [appointmentId, isBlank]);
+  }, [appointmentId, isBlank, source]);
 
   if (error) return <div className="p-10 text-center text-[14px] text-[#8a3b2e]">{error}</div>;
   if (!isBlank && !data) return <div className="p-10 text-center text-[14px] text-[#5a6a66]">Preparing the OPD sheet…</div>;
@@ -140,13 +144,13 @@ function OpdSheetInner() {
             ]} />
             <PatientStrip cells={[
               { k: "Address", v: [p!.address, p!.city].filter(Boolean).join(", "), grow: true },
-              { k: "Blood", v: p!.bloodGroup ?? "—" },
+              { k: "Blood", v: p!.bloodGroup ?? "-" },
               { k: "#Visit", v: String(a!.visitNumber), mono: true },
             ]} />
           </>
         )}
 
-        {/* vitals — computerized once reception has typed them in; still a blank
+        {/* vitals - computerized once reception has typed them in; still a blank
             ruled box for the triage pen for anything not typed yet */}
         <div className=" flex flex-wrap gap-x-4 gap-y-2.5 py-4.5">
           {vitalsBoxes(isBlank ? null : v).map((b) => (
@@ -175,7 +179,7 @@ function OpdSheetInner() {
         <RxTable
           items={rxItems}
           blankRows={blankRows}
-          note="As transcribed at the front desk from the doctor's handwritten prescription — the scanned original stays on the patient's record."
+          note="As transcribed at the front desk from the doctor's handwritten prescription - the scanned original stays on the patient's record."
         />
 
         <div className="mt-2">

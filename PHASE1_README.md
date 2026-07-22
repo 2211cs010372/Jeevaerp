@@ -1,4 +1,4 @@
-# Jeeva ERP — Phase 1: Auth + Foundation
+# Jeeva ERP - Phase 1: Auth + Foundation
 
 Complete, verified authentication across the whole ERP, plus the shared
 foundation (schema v2, lib, seed) every later phase builds on.
@@ -32,7 +32,7 @@ Patient login UI: http://localhost:3000/portal/login
 
 - Staff: `admin@jeeva.local` / `Password123!`
   (also `reception@`, `lab@`, `pharmacy@`, `rao@jeeva.local` …)
-- Patient: ID `JMH-2026-000001` — the 6-digit OTP prints to the **server
+- Patient: ID `JMH-2026-000001` - the 6-digit OTP prints to the **server
   console** in dev (no SMS provider needed until production).
 
 ## Security properties (built in, not bolted on)
@@ -63,8 +63,8 @@ Patient login UI: http://localhost:3000/portal/login
 ## Verification done
 
 - Strict `tsc` against a schema-accurate Prisma shim (21 models, 9 enums
-  parsed from `schema.prisma`) — every model/field/enum reference typechecks.
-- Production `next build` — all routes compile, CSS + client bundles fine.
+  parsed from `schema.prisma`) - every model/field/enum reference typechecks.
+- Production `next build` - all routes compile, CSS + client bundles fine.
 - Import graph: all 47 source files' `@/…` imports resolve.
 - `prisma validate`/`generate` must be run once on your machine (Prisma's
-  engine CDN is blocked in the build sandbox) — it's instant.
+  engine CDN is blocked in the build sandbox) - it's instant.

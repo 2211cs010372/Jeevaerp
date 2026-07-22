@@ -107,7 +107,7 @@ export default function RegisterPage() {
           <div className="mt-5 rounded-xl bg-[var(--p-teal-soft)] px-6 py-3">
             <span className="font-mono text-lg tracking-wider text-[var(--p-teal-deep)]">{issued.displayId}</span>
           </div>
-          <p className="mt-6 text-[13px] text-[var(--p-muted)]">Most patients book a consultation right away —</p>
+          <p className="mt-6 text-[13px] text-[var(--p-muted)]">Most patients book a consultation right away -</p>
           <div className="mt-3 flex flex-col gap-2.5 self-stretch">
             <a href={`/book?patient=${issued.displayId}`}
                className="inline-flex items-center justify-center gap-2 rounded-lg bg-[var(--p-teal)] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[var(--p-teal-deep)]">
@@ -146,7 +146,7 @@ export default function RegisterPage() {
         <Sec>Name</Sec>
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="First name" icon="users" error={errors.firstName}><input className={cls(errors.firstName)} value={f.firstName} onChange={(e) => set("firstName")(e.target.value)} placeholder="Divya" autoFocus /></Field>
-          <Field label="Middle name"><input className={cls(false)} value={f.middleName} onChange={(e) => set("middleName")(e.target.value)} placeholder="—" /></Field>
+          <Field label="Middle name"><input className={cls(false)} value={f.middleName} onChange={(e) => set("middleName")(e.target.value)} placeholder="-" /></Field>
           <Field label="Last name"><input className={cls(false)} value={f.lastName} onChange={(e) => set("lastName")(e.target.value)} placeholder="Prasad" /></Field>
         </div>
 
@@ -156,13 +156,13 @@ export default function RegisterPage() {
           <Field label="Age" error={errors.age}><input className={cls(errors.age)} value={f.age} onChange={(e) => onAgeChange(e.target.value)} inputMode="numeric" placeholder="29" /></Field>
           <Field label="Gender"><select className={cls(false)} value={f.gender} onChange={(e) => set("gender")(e.target.value)}><option value="FEMALE">Female</option><option value="MALE">Male</option><option value="OTHER">Other</option></select></Field>
           <Field label="Blood group"><select className={cls(false)} value={f.blood} onChange={(e) => set("blood")(e.target.value)}>{BLOODS.map((b) => <option key={b} value={b}>{b}</option>)}</select></Field>
-          <Field label="Marital status"><select className={cls(false)} value={f.maritalStatus} onChange={(e) => set("maritalStatus")(e.target.value)}><option value="">—</option><option value="SINGLE">Single</option><option value="MARRIED">Married</option><option value="DIVORCED">Divorced</option><option value="WIDOWED">Widowed</option><option value="OTHER">Other</option></select></Field>
+          <Field label="Marital status"><select className={cls(false)} value={f.maritalStatus} onChange={(e) => set("maritalStatus")(e.target.value)}><option value="">-</option><option value="SINGLE">Single</option><option value="MARRIED">Married</option><option value="DIVORCED">Divorced</option><option value="WIDOWED">Widowed</option><option value="OTHER">Other</option></select></Field>
         </div>
 
         <Sec>Contact</Sec>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Phone" icon="clock" error={errors.phone}><input className={cls(errors.phone)} value={f.phone} onChange={(e) => set("phone")(e.target.value.replace(/\D/g, "").slice(0, 10))} inputMode="numeric" placeholder="9000012345" /></Field>
-          <Field label="Alternate phone"><input className={cls(false)} value={f.altPhone} onChange={(e) => set("altPhone")(e.target.value.replace(/\D/g, "").slice(0, 10))} inputMode="numeric" placeholder="—" /></Field>
+          <Field label="Alternate phone"><input className={cls(false)} value={f.altPhone} onChange={(e) => set("altPhone")(e.target.value.replace(/\D/g, "").slice(0, 10))} inputMode="numeric" placeholder="-" /></Field>
           <Field label="Email" error={errors.email} span><input className={cls(errors.email)} value={f.email} onChange={(e) => set("email")(e.target.value)} placeholder="name@example.com" /></Field>
           <Field label="Address" span><input className={cls(false)} value={f.address} onChange={(e) => set("address")(e.target.value)} placeholder="House no, area" /></Field>
           <Field label="City"><input className={cls(false)} value={f.city} onChange={(e) => set("city")(e.target.value)} placeholder="Hanamkonda" /></Field>
@@ -173,7 +173,7 @@ export default function RegisterPage() {
 
         <Sec>Personal <span className="font-normal normal-case text-[var(--p-muted)]">· optional</span></Sec>
         <div className="grid gap-4 sm:grid-cols-3">
-          <Field label="Occupation"><input className={cls(false)} value={f.occupation} onChange={(e) => set("occupation")(e.target.value)} placeholder="—" /></Field>
+          <Field label="Occupation"><input className={cls(false)} value={f.occupation} onChange={(e) => set("occupation")(e.target.value)} placeholder="-" /></Field>
           <Field label="Nationality"><input className={cls(false)} value={f.nationality} onChange={(e) => set("nationality")(e.target.value)} placeholder="Indian" /></Field>
           <Field label="Preferred language"><input className={cls(false)} value={f.preferredLanguage} onChange={(e) => set("preferredLanguage")(e.target.value)} placeholder="Telugu" /></Field>
         </div>
@@ -183,7 +183,7 @@ export default function RegisterPage() {
           <Field label="Emergency contact name"><input className={cls(false)} value={f.emergencyName} onChange={(e) => set("emergencyName")(e.target.value)} placeholder="Ravi" /></Field>
           <Field label="Relationship"><input className={cls(false)} value={f.emergencyRelation} onChange={(e) => set("emergencyRelation")(e.target.value)} placeholder="Brother / spouse" /></Field>
           <Field label="Emergency phone"><input className={cls(false)} value={f.emergencyPhone} onChange={(e) => set("emergencyPhone")(e.target.value.replace(/\D/g, "").slice(0, 10))} inputMode="numeric" placeholder="9000012345" /></Field>
-          <Field label="Known allergies" span><input className={cls(false)} value={f.allergies} onChange={(e) => set("allergies")(e.target.value)} placeholder="Penicillin, sulfa — or none" /></Field>
+          <Field label="Known allergies" span><input className={cls(false)} value={f.allergies} onChange={(e) => set("allergies")(e.target.value)} placeholder="Penicillin, sulfa - or none" /></Field>
           <Field label="Govt ID (Aadhaar / ABHA)"><input className={cls(false)} value={f.govtId} onChange={(e) => set("govtId")(e.target.value)} placeholder="XXXX XXXX XXXX" /></Field>
         </div>
 

@@ -4,7 +4,7 @@ import Image from "next/image";
 import { DEPARTMENTS } from "@/lib/data";
 
 /**
- * North Star Health — Department Ticker / Marquee Component
+ * North Star Health - Department Ticker / Marquee Component
  * ------------------------------------------------------------------
  * Photo-enhanced ticker bar with continuous infinite scroll, 
  * glassmorphic department pills, and hover-to-pause interactions.

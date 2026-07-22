@@ -1,5 +1,5 @@
 /**
- * Course arithmetic for the dispense scratchpad — pure, no React, no DOM.
+ * Course arithmetic for the dispense scratchpad - pure, no React, no DOM.
  *
  * Everything the pad can DO to an order lives here, so it can be tested without
  * standing up a browser. The pad is only the hands.
@@ -17,13 +17,13 @@ export interface PadLine {
   prescribedQty: number;
   /** Units per day, derived from the dosage pattern. 0 = not day-scalable. */
   perDay: number;
-  /** Antibiotic / TB / antimalarial — a partial course is actively harmful. */
+  /** Antibiotic / TB / antimalarial - a partial course is actively harmful. */
   courseCritical: boolean;
   /**
    * LOCKED = "this line does not get trimmed."
    *
    * The old pad warned you not to short an antibiotic and then gave you no way
-   * to protect it — the days control moved every line together, so the only way
+   * to protect it - the days control moved every line together, so the only way
    * to hit a budget was to short everything, antibiotic included. The advice was
    * un-actionable, which is worse than no advice.
    *
@@ -49,7 +49,7 @@ export function perDayFromDosage(dosage: string | null | undefined): number {
 
 /**
  * Exactly the invoice's arithmetic. If this drifts from `computeInvoiceTotals`,
- * the pad quotes one number and the bill prints another — and the patient finds
+ * the pad quotes one number and the bill prints another - and the patient finds
  * out at the counter. A test pins the two together.
  */
 export function billTotal(lines: PadLine[], discount: number): number {
@@ -93,7 +93,7 @@ export function givingDays(lines: PadLine[]): number {
 }
 
 /**
- * Set the course to N days — but ONLY on unlocked, day-scalable lines.
+ * Set the course to N days - but ONLY on unlocked, day-scalable lines.
  * Locked lines (antibiotics by default) keep whatever they were given.
  * Everything is clamped to what's physically on the shelf.
  */
@@ -107,14 +107,14 @@ export function applyDays(lines: PadLine[], days: number): PadLine[] {
 }
 
 export interface FitResult {
-  /** Unchanged when `impossible` — we don't quietly destroy the pharmacist's work. */
+  /** Unchanged when `impossible` - we don't quietly destroy the pharmacist's work. */
   lines: PadLine[];
   /** Days landed on, when the trim was day-based. */
   days: number | null;
   /** Total of `lines`. */
   total: number;
   /**
-   * The cheapest order we can build while respecting every lock — i.e. the
+   * The cheapest order we can build while respecting every lock - i.e. the
    * shortest course with the antibiotics still whole. When `impossible`, this is
    * the number the pharmacist needs: "even the smallest course is ₹1,533."
    */
@@ -126,7 +126,7 @@ export interface FitResult {
 /**
  * Work backwards from money: what's the longest course that fits?
  *
- * Locked lines are paid for FIRST and never trimmed — so budget-fit with a locked
+ * Locked lines are paid for FIRST and never trimmed - so budget-fit with a locked
  * antibiotic means "the antibiotic is whole; spend what's left on everything else."
  * That is exactly the outcome the antibiotic warning asks for, and it is now one
  * button instead of a paragraph of advice.

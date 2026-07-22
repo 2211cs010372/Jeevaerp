@@ -161,7 +161,7 @@ export default function InpatientsPage() {
                       <span className="font-semibold text-[var(--p-ink)]">To bill now</span>
                       <span className="font-mono text-[15px] font-semibold text-[var(--p-blue)] tabular">₹{est.toFixed(2)}</span>
                     </div>
-                    <p className="mt-2 text-[12px] leading-relaxed text-[var(--p-muted)]">Lab and pharmacy bills were already raised during the stay — this invoice is bed charges only.</p>
+                    <p className="mt-2 text-[12px] leading-relaxed text-[var(--p-muted)]">Lab and pharmacy bills were already raised during the stay - this invoice is bed charges only.</p>
                   </div>
 
                   <DiscountInput subtotal={bedSubtotal} accent="blue" onChange={(d) => setDisc(d.amount)} />

@@ -18,7 +18,7 @@ function toHHMM(mins: number): string {
  * DoctorSchedule template. Idempotent: the [doctorId, date, startTime] unique
  * constraint means re-running never creates duplicates (skipDuplicates).
  *
- * Returns how many new slots were created — call this from a daily cron, or
+ * Returns how many new slots were created - call this from a daily cron, or
  * on-demand before showing a booking screen.
  */
 export async function generateSlots(days = 7): Promise<{ created: number }> {

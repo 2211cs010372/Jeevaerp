@@ -6,7 +6,7 @@ import { HOSPITAL } from "@/lib/data";
 import { Search, CalendarCheck, Bed, PhoneCall, ArrowUpRight } from "lucide-react";
 
 /**
- * North Star Health — Quick Action Bar Redesign
+ * North Star Health - Quick Action Bar Redesign
  * ------------------------------------------------------------------
  * Interactive high-priority quick action tiles for key healthcare workflows.
  */

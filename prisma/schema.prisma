@@ -1,5 +1,5 @@
 // =============================================================================
-// Jeeva Multispeciality Hospital ERP — schema v2.0 (production)
+// Jeeva Multispeciality Hospital ERP - schema v2.0 (production)
 // =============================================================================
 // Policies:
 //   * Money is always Decimal(10,2); GST rates Decimal(4,2). Never Float.
@@ -17,7 +17,7 @@ generator client {
 datasource db {
   provider  = "postgresql"
   // Runtime: pooled (pgbouncer, port 6543). Migrations/DDL: direct session
-  // connection (port 5432) — pgbouncer can't run migrations.
+  // connection (port 5432) - pgbouncer can't run migrations.
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
@@ -72,7 +72,7 @@ enum ClaimStage {
 /// the timeline is a real audit trail, not a single mutable status field.
 enum ClaimStatus {
   DRAFT
-  SUBMITTED          // sent to the insurer/TPA — "applied"
+  SUBMITTED          // sent to the insurer/TPA - "applied"
   QUERIED            // insurer wants more documents/info
   APPROVED
   PARTIALLY_APPROVED
@@ -108,7 +108,7 @@ enum StockTxType {
   RETURN
 }
 
-/// Which desk raised the invoice — powers category-wise revenue in admin.
+/// Which desk raised the invoice - powers category-wise revenue in admin.
 enum InvoiceSource {
   CONSULTATION
   LAB
@@ -160,7 +160,7 @@ enum PaymentMode {
 // Identity & access
 // ---------------------------------------------------------------------------
 
-/// Staff identity only. Patients are NOT users — they authenticate against
+/// Staff identity only. Patients are NOT users - they authenticate against
 /// the Patient table via OTP (families share phone numbers; User.phone is
 /// unique, Patient.phone is not).
 model User {
@@ -168,7 +168,7 @@ model User {
   /// Portal login handle, e.g. "reception.ravi" (role.name). Unique.
   username     String    @unique
   phone        String    @unique
-  /// OTP backup channel — used to send a staff login code if they exist in DB.
+  /// OTP backup channel - used to send a staff login code if they exist in DB.
   email        String?   @unique
   name         String
   passwordHash String?
@@ -217,7 +217,7 @@ model Patient {
   /// Captured when DOB is unknown (common for walk-ins).
   age           Int?
   gender        Gender?
-  /// Kept as a validated string ("A+", "O-", …) — blood-group symbols aren't
+  /// Kept as a validated string ("A+", "O-", …) - blood-group symbols aren't
   /// valid Prisma enum identifiers, so a checked string is the clean choice.
   bloodGroup    String?
   maritalStatus MaritalStatus?
@@ -251,7 +251,7 @@ model Patient {
 
   // ---- Referral (ADMIN-ONLY, snapshot at registration) ----
   /// Who referred this patient to the hospital. Snapshot string, not a live
-  /// FK — the value recorded at registration never drifts. Strip from every
+  /// FK - the value recorded at registration never drifts. Strip from every
   /// non-admin serializer.
   referredByName String?
   referralSource String?
@@ -327,7 +327,7 @@ model Doctor {
 }
 
 /// Weekly recurring OPD template. Concrete DoctorSlot rows are generated
-/// from this (cron or on-demand) — reception never hand-creates slots.
+/// from this (cron or on-demand) - reception never hand-creates slots.
 model DoctorSchedule {
   id              String  @id @default(cuid())
   doctorId        String
@@ -347,11 +347,11 @@ model DoctorSlot {
   doctorId  String
   doctor    Doctor   @relation(fields: [doctorId], references: [id])
   date      DateTime @db.Date
-  /// "HH:MM" 24h — display + equality only.
+  /// "HH:MM" 24h - display + equality only.
   startTime String
   endTime   String
   isBooked  Boolean  @default(false)
-  /// Doctor unavailable for this slot — leave, surgery, emergency. Distinct from
+  /// Doctor unavailable for this slot - leave, surgery, emergency. Distinct from
   /// isBooked: a blocked slot has no patient, it simply can't be sold.
   isBlocked   Boolean @default(false)
   blockReason String?
@@ -374,9 +374,9 @@ model Appointment {
   /// Without this, every cancellation would burn a slot permanently.
   slotId    String?     @unique
   slot      DoctorSlot? @relation(fields: [slotId], references: [id])
-  /// Denormalized from slot.date — makes "today's queue" a single-table query.
+  /// Denormalized from slot.date - makes "today's queue" a single-table query.
   visitDate DateTime   @db.Date
-  /// Denormalized from slot.startTime ("HH:MM"), same reason as visitDate — and it
+  /// Denormalized from slot.startTime ("HH:MM"), same reason as visitDate - and it
   /// survives the slot being released on cancellation.
   timeAtBooking String @default("00:00")
 
@@ -411,7 +411,7 @@ model Appointment {
   @@index([doctorId, visitDate, status])
   @@index([patientId, createdAt])
   // Reception counts/lists filter by date+status WITHOUT a doctor, so the
-  // doctor-led index above can't serve them — this one does.
+  // doctor-led index above can't serve them - this one does.
   @@index([visitDate, status])
 }
 
@@ -419,7 +419,7 @@ model Appointment {
 // Clinical
 // ---------------------------------------------------------------------------
 
-/// Vitals for one OP visit — BP, pulse, height, weight, temp, SpO2. The paper
+/// Vitals for one OP visit - BP, pulse, height, weight, temp, SpO2. The paper
 /// OPD sheet prints these as blank ruled boxes at booking (triage pen fills
 /// them by hand); reception then types the handwritten numbers in here,
 /// exactly like PrescriptionUpload does for the ℞ table. One row per visit.
@@ -435,7 +435,7 @@ model Vitals {
   spo2        Int? // %
   heightCm    Decimal? @db.Decimal(5, 1)
   weightKg    Decimal? @db.Decimal(5, 1)
-  // BMI / BSA are derived from height + weight at read time, not stored —
+  // BMI / BSA are derived from height + weight at read time, not stored -
   // they'd go stale the moment either input is corrected.
 
   recordedById String
@@ -457,7 +457,7 @@ model Prescription {
 
   items PrescriptionItem[]
   // Advised tests are NOT stored as JSON: saving a prescription creates
-  // LabTest rows on the appointment — those rows are the source of truth.
+  // LabTest rows on the appointment - those rows are the source of truth.
 }
 
 /// A scanned/uploaded prescription document (PDF or image). Reception scans the
@@ -471,7 +471,7 @@ model PrescriptionUpload {
   appointment   Appointment? @relation(fields: [appointmentId], references: [id])
 
   /// Public URL (Cloudinary) OR local path (/uploads/...) depending on storage.
-  /// Null for a TYPED prescription — that has no file; its OPD sheet is rendered
+  /// Null for a TYPED prescription - that has no file; its OPD sheet is rendered
   /// live from the ℞ items + clinical fields below. Only a genuine SCANNED upload
   /// (photo/PDF of a handwritten Rx) carries a file.
   fileUrl      String?
@@ -480,7 +480,7 @@ model PrescriptionUpload {
   fileName     String?
   mimeType     String?
   fileSize     Int?
-  /// Free-text title, e.g. "Rheumatology consult — 27 May".
+  /// Free-text title, e.g. "Rheumatology consult - 27 May".
   title        String?
   uploadedById String
   createdAt    DateTime @default(now())
@@ -495,7 +495,7 @@ model PrescriptionUpload {
   doctorName        String?
 
   /// Clinical details typed from the handwritten sheet, printed onto the
-  /// generated OPD PDF. labsAdvised is newline-separated test names —
+  /// generated OPD PDF. labsAdvised is newline-separated test names -
   /// advisory text on the sheet, not lab orders (those are LabTest rows).
   diagnosis   String?
   advice      String?
@@ -518,14 +518,14 @@ model PrescriptionUpload {
 
 /// A medicine line typed by reception while uploading the scan. Free text by
 /// design (they're transcribing handwriting) with an optional link into the
-/// pharmacy master when the name matches — that link is what lets the
+/// pharmacy master when the name matches - that link is what lets the
 /// pharmacist dispense in two clicks instead of re-reading the scan.
 model PrescriptionUploadItem {
   id       String             @id @default(cuid())
   uploadId String
   upload   PrescriptionUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
 
-  /// As typed by reception — survives catalog renames.
+  /// As typed by reception - survives catalog renames.
   medicineName String
   medicineId   String?
   medicine     Medicine? @relation(fields: [medicineId], references: [id])
@@ -543,7 +543,7 @@ model PrescriptionItem {
   /// Optional link into the pharmacy master (doctor may prescribe unstocked items).
   medicineId   String?
   medicine     Medicine? @relation(fields: [medicineId], references: [id])
-  /// Snapshot of the name as written — survives master renames.
+  /// Snapshot of the name as written - survives master renames.
   medicineName String
   dosage       String
   frequency    String
@@ -574,7 +574,7 @@ model LabTest {
   patient       Patient?     @relation(fields: [patientId], references: [id])
   catalogId     String?
   catalog       LabTestCatalog? @relation(fields: [catalogId], references: [id])
-  /// Snapshot of name + price at order time — survives catalog price changes.
+  /// Snapshot of name + price at order time - survives catalog price changes.
   testName     String
   priceAtOrder Decimal? @db.Decimal(10, 2)
 
@@ -599,7 +599,7 @@ model LabTest {
 }
 
 // ---------------------------------------------------------------------------
-// Pharmacy — master + batches + ledger
+// Pharmacy - master + batches + ledger
 // ---------------------------------------------------------------------------
 
 /// One row per medicine. Reorder threshold lives HERE (compared against the
@@ -611,10 +611,10 @@ model Medicine {
   manufacturer     String?
   /// HSN code for GST filing.
   hsnCode          String?
-  /// Medicines are commonly 5% or 12% GST in India — set per item.
+  /// Medicines are commonly 5% or 12% GST in India - set per item.
   gstRatePct       Decimal @default(5.00) @db.Decimal(4, 2)
   unit             String  @default("tablet")
-  /// TRUE for antibiotics, TB drugs, antimalarials — anything where stopping the
+  /// TRUE for antibiotics, TB drugs, antimalarials - anything where stopping the
   /// course early is actively harmful (it breeds resistance rather than just
   /// leaving the patient undertreated). The dispense scratchpad refuses to
   /// quietly short-supply these: it warns, and it records why.
@@ -631,7 +631,7 @@ model Medicine {
 }
 
 /// One row per physical batch on the shelf. Dispensing is FEFO:
-/// first-expiry, first-out — the [medicineId, expiryDate] index serves it.
+/// first-expiry, first-out - the [medicineId, expiryDate] index serves it.
 model StockBatch {
   id            String   @id @default(cuid())
   medicineId    String
@@ -640,7 +640,7 @@ model StockBatch {
   expiryDate    DateTime @db.Date
   quantity      Int      @default(0)
   purchasePrice Decimal? @db.Decimal(10, 2)
-  /// Selling price — Indian pharmacies bill at printed MRP.
+  /// Selling price - Indian pharmacies bill at printed MRP.
   mrp           Decimal  @db.Decimal(10, 2)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -672,7 +672,7 @@ model StockTransaction {
 }
 
 // ---------------------------------------------------------------------------
-// Billing — one invoice model for every desk
+// Billing - one invoice model for every desk
 // ---------------------------------------------------------------------------
 
 /// Consultation, lab and pharmacy all bill through here. One receipt
@@ -789,10 +789,10 @@ model Otp {
   patient   Patient? @relation(fields: [patientId], references: [id])
   userId    String?
   user      User?    @relation(fields: [userId], references: [id])
-  /// Destination the code was sent to (masked phone or email) — for display.
+  /// Destination the code was sent to (masked phone or email) - for display.
   destination String?
   phone       String?
-  /// Never store the raw 6-digit code — SHA-256 hash only.
+  /// Never store the raw 6-digit code - SHA-256 hash only.
   codeHash   String
   expiresAt  DateTime
   attempts   Int       @default(0)
@@ -832,11 +832,11 @@ model Counter {
 /// Seeded once; editable by admin later.
 /// A ward groups beds and carries the daily bed charge.
 /// GST note: hospital room rent above ₹5,000/day (non-ICU) attracts 5% GST
-/// without ITC; at or below that, and ICU, it's exempt. Default 0 — the
+/// without ITC; at or below that, and ICU, it's exempt. Default 0 - the
 /// admin sets the rate per ward with the CA.
-/// A single line on an inpatient's running tab. Everything done during the stay —
+/// A single line on an inpatient's running tab. Everything done during the stay -
 /// a dressing, an oxygen hour, a doctor's round, medicines sent up from the
-/// pharmacy — lands here, and the whole ledger is billed once at discharge.
+/// pharmacy - lands here, and the whole ledger is billed once at discharge.
 /// Money is snapshotted (unitPrice/gstRatePct), so later price changes never
 /// rewrite a stay that already happened.
 model AdmissionCharge {
@@ -864,7 +864,7 @@ model AdmissionCharge {
 model Ward {
   id          String  @id @default(cuid())
   name        String  @unique
-  /// GENERAL / SEMI_PRIVATE / PRIVATE / ICU — kept as text so the hospital
+  /// GENERAL / SEMI_PRIVATE / PRIVATE / ICU - kept as text so the hospital
   /// can name their own categories.
   category    String
   floor       String?
@@ -906,7 +906,7 @@ model Admission {
   doctorId String
   doctor   Doctor @relation(fields: [doctorId], references: [id])
 
-  /// Why they were admitted — provisional diagnosis or reason, free text.
+  /// Why they were admitted - provisional diagnosis or reason, free text.
   reason String?
 
   /// The caring person staying with the patient.
@@ -978,7 +978,7 @@ model Refund {
 /// One row per BED a patient occupies during a stay.
 ///
 /// An admission used to carry a single `dailyChargeAtAdmit`, which silently
-/// assumed nobody ever moves bed. They do — General to ICU is the most common
+/// assumed nobody ever moves bed. They do - General to ICU is the most common
 /// event in a hospital. Billing a whole stay at one rate would either rob the
 /// patient or rob the hospital, so each leg of the stay is priced on its own.
 model BedStay {
@@ -988,7 +988,7 @@ model BedStay {
   bedId       String
   bed         Bed       @relation(fields: [bedId], references: [id])
 
-  /// Snapshots — a ward price revision must never re-price a stay already in progress.
+  /// Snapshots - a ward price revision must never re-price a stay already in progress.
   wardName    String
   dailyCharge Decimal   @db.Decimal(10, 2)
   gstRatePct  Decimal   @default(0) @db.Decimal(5, 2)
@@ -1007,7 +1007,7 @@ model BedStay {
 }
 
 /// The deposit taken at admission. Every hospital takes one; without it a family
-/// can walk out owing lakhs. Adjusted against the discharge bill — and if the
+/// can walk out owing lakhs. Adjusted against the discharge bill - and if the
 /// advance exceeds the final bill, the difference is REFUNDED, not kept.
 model AdmissionAdvance {
   id           String      @id @default(cuid())
@@ -1023,7 +1023,7 @@ model AdmissionAdvance {
   @@index([admissionId])
 }
 
-/// An insurance claim raised against a patient's treatment — cashless or
+/// An insurance claim raised against a patient's treatment - cashless or
 /// reimbursement. Policy details are snapshotted onto the claim so the record
 /// stays true even if the patient's cover changes later. Optionally linked to
 /// the admission (IPD) and the hospital invoice it's claiming against.
@@ -1069,7 +1069,7 @@ model InsuranceClaim {
   @@index([patientId])
 }
 
-/// One entry on a claim's timeline — every submission, query, decision and
+/// One entry on a claim's timeline - every submission, query, decision and
 /// settlement. This is the audit trail; the claim's status is derived from it.
 model ClaimEvent {
   id      String @id @default(cuid())
@@ -1086,7 +1086,7 @@ model ClaimEvent {
   @@index([claimId, createdAt])
 }
 
-/// One staff sign-in session — when they logged in and out. Powers the admin
+/// One staff sign-in session - when they logged in and out. Powers the admin
 /// "who was on shift, and for how long" view. Patients are not tracked here.
 model StaffSession {
   id        String    @id @default(cuid())

@@ -39,7 +39,7 @@ export interface PatientAppointmentDTO {
 
 /**
  * The patient's own full profile. NOTE: referral fields are intentionally
- * NOT included — those are admin-only and a patient never sees who referred them.
+ * NOT included - those are admin-only and a patient never sees who referred them.
  */
 export async function getPatientProfile(patientId: string): Promise<PatientProfileDTO> {
   const p = await prisma.patient.findUnique({
@@ -93,10 +93,10 @@ export async function getPatientAppointments(patientId: string): Promise<Patient
 }
 
 export interface PatientLabTestDTO {
-  id: string; testName: string; status: string; reportReady: boolean; date: string; doctorName: string | null;
+  id: string; testName: string; status: string; reportReady: boolean; reportUrl: string | null; date: string; doctorName: string | null;
 }
 export interface PatientBillDTO {
-  receiptNo: string; source: string; status: string; total: string; paid: string; balance: string; date: string;
+  id: string; receiptNo: string; source: string; status: string; total: string; paid: string; balance: string; date: string;
 }
 
 /** The patient's own lab tests (newest first) with report-ready state. */
@@ -116,6 +116,7 @@ export async function getPatientLabTests(patientId: string): Promise<PatientLabT
   }) => ({
     id: t.id, testName: t.testName, status: t.status,
     reportReady: Boolean(t.reportFileUrl),
+    reportUrl: t.reportFileUrl,
     date: (t.completedAt ?? t.createdAt).toISOString().slice(0, 10),
     doctorName: t.appointment?.doctor.name ?? null,
   }));
@@ -128,18 +129,18 @@ export async function getPatientBills(patientId: string): Promise<PatientBillDTO
     orderBy: { createdAt: "desc" },
     take: 50,
     select: {
-      receiptNo: true, source: true, status: true, totalAmount: true, createdAt: true,
+      id: true, receiptNo: true, source: true, status: true, totalAmount: true, createdAt: true,
       payments: { select: { amount: true } },
     },
   });
   return rows.map((i: {
-    receiptNo: string; source: string; status: string; totalAmount: { toString(): string }; createdAt: Date;
+    id: string; receiptNo: string; source: string; status: string; totalAmount: { toString(): string }; createdAt: Date;
     payments: { amount: { toString(): string } }[];
   }) => {
     const total = Number(i.totalAmount.toString());
     const paid = i.payments.reduce((s, p) => s + Number(p.amount.toString()), 0);
     return {
-      receiptNo: i.receiptNo, source: i.source, status: i.status,
+      id: i.id, receiptNo: i.receiptNo, source: i.source, status: i.status,
       total: total.toFixed(2), paid: paid.toFixed(2), balance: Math.max(0, total - paid).toFixed(2),
       date: i.createdAt.toISOString().slice(0, 10),
     };

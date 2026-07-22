@@ -24,7 +24,7 @@ interface FreeWard {
 interface Doctor { id: string; name: string; department: string; }
 interface Patient { id: string; displayId: string; fullName: string; phone: string; age?: number | null; gender?: string | null; }
 
-/** The occupant panel is the admission sheet — no new endpoint needed. */
+/** The occupant panel is the admission sheet - no new endpoint needed. */
 interface Sheet {
   admission: {
     id: string; ipNumber: string; status: string; admittedAt: string; reason: string | null;
@@ -56,7 +56,7 @@ function PatientFromUrl({ onFound }: { onFound: (p: Patient) => void }) {
  * A bed, drawn as a bed.
  *
  * A coloured square tells you nothing at a glance; a made bed vs. a bed with
- * someone in it does. Occupied beds get a blanket, a pillow dent and a head —
+ * someone in it does. Occupied beds get a blanket, a pillow dent and a head -
  * so the board reads as a ward from across the room, which is how a receptionist
  * actually uses it.
  */
@@ -202,7 +202,7 @@ export default function BedBoardPage() {
 
       <div data-rise className="surface dotgrid mb-5 flex flex-wrap items-center justify-between gap-4 px-6 py-5">
         <div>
-          <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">IP desk — inpatients &amp; beds</h1>
+          <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">IP desk - inpatients &amp; beds</h1>
           <p className="mt-1 text-[14px] text-[var(--p-muted)]">
             Every bed in the hospital. Tap an <b className="text-[var(--p-ink)]">empty</b> bed to pick it, or an
             <b className="text-[var(--p-ink)]"> occupied</b> one to see who&apos;s in it.
@@ -245,7 +245,7 @@ export default function BedBoardPage() {
               <span className="grid h-12 w-12 place-items-center rounded-full border border-[var(--p-border)] text-[var(--p-muted)]"><Icon name="bed" size={20} /></span>
               <p className="mt-3 text-[14px] font-semibold text-[var(--p-ink)]">No wards yet.</p>
               <p className="mt-1 max-w-sm text-[13px] leading-relaxed text-[var(--p-muted)]">
-                An admin creates them under <b>Wards &amp; beds</b> — there&apos;s a one-click standard layout there.
+                An admin creates them under <b>Wards &amp; beds</b> - there&apos;s a one-click standard layout there.
                 (Or run <span className="font-mono">npx prisma db seed</span>.)
               </p>
             </div>
@@ -373,7 +373,7 @@ export default function BedBoardPage() {
             <div className="border-b border-[var(--p-border)] px-5 py-3.5">
               <h2 className="text-[14px] font-semibold text-[var(--p-ink)]">Admit a patient</h2>
               <p className="mt-0.5 text-[13px] leading-relaxed text-[var(--p-muted)]">
-                Move an outpatient into a bed. Only <b>empty</b> beds are offered — you can&apos;t double-book one.
+                Move an outpatient into a bed. Only <b>empty</b> beds are offered - you can&apos;t double-book one.
               </p>
             </div>
 
@@ -439,14 +439,14 @@ export default function BedBoardPage() {
                   <div>
                     <label className={lbl}>Bed <span className="text-[var(--p-rose)]">*</span></label>
                     <select className={fld} value={bedId} onChange={(e) => setBedId(e.target.value)} disabled={!selectedWard}>
-                      {!selectedWard && <option value="">—</option>}
+                      {!selectedWard && <option value="">-</option>}
                       {selectedWard?.beds.map((b) => <option key={b.id} value={b.id}>{b.bedNo}</option>)}
                     </select>
                   </div>
                 </div>
                 {selectedWard && (
                   <p className="-mt-2 text-[12px] text-[var(--p-muted)]">
-                    ₹{money(selectedWard.dailyCharge)}/day{Number(selectedWard.gstRatePct) > 0 && ` + ${selectedWard.gstRatePct}% GST`} — locked at admission.
+                    ₹{money(selectedWard.dailyCharge)}/day{Number(selectedWard.gstRatePct) > 0 && ` + ${selectedWard.gstRatePct}% GST`} - locked at admission.
                   </p>
                 )}
 
@@ -454,7 +454,7 @@ export default function BedBoardPage() {
                   <label className={lbl}>Attending doctor <span className="text-[var(--p-rose)]">*</span></label>
                   <select className={fld} value={doctorId} onChange={(e) => setDoctorId(e.target.value)}>
                     <option value="">Choose a doctor…</option>
-                    {doctors.map((d) => <option key={d.id} value={d.id}>{d.name} — {d.department}</option>)}
+                    {doctors.map((d) => <option key={d.id} value={d.id}>{d.name} - {d.department}</option>)}
                   </select>
                 </div>
 
@@ -528,21 +528,21 @@ const CSS = `
 .bd-head     { fill: var(--p-ink); }
 .bd-slash    { stroke: var(--p-muted); stroke-width: 3; stroke-linecap: round; opacity: .5; }
 
-/* EMPTY — quiet, clickable, inviting */
+/* EMPTY - quiet, clickable, inviting */
 .bed-available { border-color: rgba(0,188,199,.35); background: rgba(0,188,199,.05); cursor: pointer; }
 .bed-available:hover { border-color: var(--p-cyan); }
 .bed-available .bd-frame    { fill: var(--p-cyan-deep); opacity: .55; }
 .bed-available .bd-mattress { stroke: var(--p-cyan-deep); stroke-opacity: .45; }
 .bed-available .bd-pillow   { fill: rgba(0,188,199,.12); stroke: var(--p-cyan-deep); stroke-opacity: .4; }
 
-/* OCCUPIED — there is a person in it, and you can see that */
+/* OCCUPIED - there is a person in it, and you can see that */
 .bed-occupied { border-color: rgba(11,92,255,.3); background: rgba(11,92,255,.05); cursor: pointer; }
 .bed-occupied:hover { border-color: var(--p-blue); }
 .bed-occupied .bd-frame    { fill: var(--p-blue-deep); opacity: .5; }
 .bed-occupied .bd-mattress { fill: #fff; stroke: var(--p-blue-deep); stroke-opacity: .35; }
 .bed-occupied .bd-pillow   { fill: rgba(11,92,255,.1); stroke: var(--p-blue-deep); stroke-opacity: .35; }
 
-/* OUT OF SERVICE — visibly not a choice */
+/* OUT OF SERVICE - visibly not a choice */
 .bed-maintenance { border-style: dashed; background: var(--p-bg); cursor: not-allowed; opacity: .7; }
 .bed-maintenance .bd-frame    { fill: var(--p-border-strong); }
 .bed-maintenance .bd-mattress { stroke: var(--p-border-strong); }

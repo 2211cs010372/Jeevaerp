@@ -5,7 +5,7 @@ import { listInvoices, type InvoiceSourceT } from "@/server/services/billing.ser
 
 export const dynamic = "force-dynamic";
 
-/** Every bill across all counters, with how it was paid — ADMIN ONLY. */
+/** Every bill across all counters, with how it was paid - ADMIN ONLY. */
 export const GET = handler(async (req) => {
   await requireRole(req, "ADMIN");
   const s = new URL(req.url).searchParams.get("source");

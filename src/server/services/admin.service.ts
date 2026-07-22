@@ -74,9 +74,9 @@ export async function adminOverview(): Promise<{
   const bySource = new Map<string, number>();
   for (const i of allInv) bySource.set(i.source, r2((bySource.get(i.source) ?? 0) + num(i.totalAmount)));
 
-  // 14-day daily series (sparklines + week-over-week) — from allInv + appts
+  // 14-day daily series (sparklines + week-over-week) - from allInv + appts
   // Split any invoice set into per-source revenue (OPD / pharmacy / labs /
-  // inpatient / other) — powers the multi-line revenue trend.
+  // inpatient / other) - powers the multi-line revenue trend.
   const SRC_KEYS = ["CONSULTATION", "PHARMACY", "LAB", "IPD", "OTHER"] as const;
   const bucketSources = (invs: typeof allInv): Record<string, number> => {
     const o: Record<string, number> = { CONSULTATION: 0, PHARMACY: 0, LAB: 0, IPD: 0, OTHER: 0 };
@@ -98,12 +98,12 @@ export async function adminOverview(): Promise<{
     series.push({ date: key, appointments: appts, revenue: rev, sources: bucketSources(dayInv) });
   }
 
-  // last month, same day-of-month range — for a fair month-to-date comparison
+  // last month, same day-of-month range - for a fair month-to-date comparison
   const revLastMonthToDate = allInv
     .filter((i) => i.createdAt >= lastMonthStart && i.createdAt < lastMonthCutoff)
     .reduce((s, i) => r2(s + num(i.totalAmount)), 0);
 
-  // last 6 months (monthly) — derived from allInv
+  // last 6 months (monthly) - derived from allInv
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const sixMoInv = allInv.filter((i) => i.createdAt >= sixMonthsAgo);
   const months: { label: string; revenue: number; sources: Record<string, number> }[] = [];
@@ -140,7 +140,7 @@ export async function adminOverview(): Promise<{
       };
     });
 
-  // revenue by doctor — consultation (via appointment.doctor) + IPD (via admission.doctor)
+  // revenue by doctor - consultation (via appointment.doctor) + IPD (via admission.doctor)
   type DocInv = { totalAmount: { toString(): string }; appointment: { doctor: { name: string; department: string } } | null; admission: { doctor: { name: string; department: string } } | null };
   const docMap = new Map<string, { doctor: string; department: string; revenue: number; visits: number }>();
   for (const i of docInvoices as DocInv[]) {

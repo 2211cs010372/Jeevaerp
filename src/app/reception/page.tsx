@@ -12,6 +12,7 @@ import { api, ApiClientError } from "@/lib/api-client";
 
 interface Appt {
   id: string; opNumber: string; time: string; status: string; type: string; price: string;
+  hasRx: boolean;
   checkedInAt?: string | null;
   patient: { id: string; displayId: string; name: string };
   doctor: { id: string; name: string; department: string };
@@ -19,12 +20,15 @@ interface Appt {
 interface Stats { total: number; expected: number; waiting: number; checkedIn: number; completed: number; newPatients: number; }
 interface Slot { id: string; startTime: string; endTime: string; }
 
-// BOOKED used to be labelled "Waiting" — but a booked patient hasn't walked in yet.
+// BOOKED used to be labelled "Waiting" - but a booked patient hasn't walked in yet.
 // Waiting means they're sitting in the lobby. That's the whole point of check-in.
 const LABEL: Record<string, string> = { BOOKED: "Expected", CHECKED_IN: "Waiting", COMPLETED: "Completed", CANCELLED: "Cancelled" };
 const hhmm = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
 
 const today = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" });
+/** A slot is "past" once its own start instant (date + time, local) is at or
+ *  before now - robust across timezones, and works for any date. */
+const slotPast = (startTime: string, date: string) => new Date(`${date}T${startTime}:00`).getTime() <= Date.now();
 
 export default function ReceptionTodayPage() {
   const router = useRouter();
@@ -47,7 +51,7 @@ export default function ReceptionTodayPage() {
     Promise.all([
       api.get<{ stats: Stats }>("/reception/stats"),
       api.get<{ appointments: Appt[] }>("/reception/appointments"),
-      // how much money is still owed — step 6 of the rail needs to be honest
+      // how much money is still owed - step 6 of the rail needs to be honest
       api.get<{ invoices: { totalAmount: string; amountPaid: string; status: string }[] }>("/reception/billing")
         .catch(() => ({ invoices: [] })),
     ]).then(([s, a, b]) => {
@@ -124,7 +128,7 @@ export default function ReceptionTodayPage() {
         <p className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-[#252525]">Front desk · {today}</p>
         <h1 className="mt-2 font-serif-p text-[clamp(24px,3vw,32px)] font-semibold">Today at Jeeva</h1>
         <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-black/60">
-          Everyone who walks in today passes this desk — check them in as they arrive,
+          Everyone who walks in today passes this desk - check them in as they arrive,
           and the doctor&apos;s queue, the billing counter and the pharmacy all stay in step.
         </p>
 
@@ -144,7 +148,7 @@ export default function ReceptionTodayPage() {
           <Link href="/prescriptions" className="rounded-full border border-black/15 px-3.5 py-1.5 text-[12px] font-medium text-black/80 transition-colors hover:bg-black/10 hover:text-black/90">Prescriptions</Link>
           <Link href="/ipd" className="rounded-full border border-black/15 px-3.5 py-1.5 text-[12px] font-medium text-black/80 transition-colors hover:bg-black/10 hover:text-black/90">Bed board</Link>
           <Link href="/billing" className="rounded-full border border-black/15 px-3.5 py-1.5 text-[12px] font-medium text-black/80 transition-colors hover:bg-black/10 hover:text-black/90">Billing</Link>
-          <a href="/print/opd/blank" target="_blank" rel="noopener noreferrer" title="Print a pad of empty case sheets — the power-cut fallback"
+          <a href="/print/opd/blank" target="_blank" rel="noopener noreferrer" title="Print a pad of empty case sheets - the power-cut fallback"
             className="rounded-full border border-black/15 px-3.5 py-1.5 text-[12px] font-medium text-black/80 transition-colors hover:bg-black/10 hover:text-black/90">Blank sheet</a>
         </div>
 
@@ -157,7 +161,7 @@ export default function ReceptionTodayPage() {
 
       {/* The flow, drawn. New staff read it; old staff fold it away. */}
       <SectionHead index="01 · How the desk flows" title="A visit, start to finish"
-        desc="The six steps every patient moves through — the counts update live as the day runs." />
+        desc="The six steps every patient moves through - the counts update live as the day runs." />
       <FlowRail counts={{
         expected: stats?.expected ?? 0,
         waiting: stats?.waiting ?? 0,
@@ -176,7 +180,7 @@ export default function ReceptionTodayPage() {
       </div>
 
       <SectionHead index="03 · The queue" title="Everyone on today's list"
-        desc="Check patients in as they walk through the door — that one tap is what keeps every other counter honest." />
+        desc="Check patients in as they walk through the door - that one tap is what keeps every other counter honest." />
       <div className="grid items-start gap-6 lg:grid-cols-[1.9fr_1fr]">
         {/* queue */}
         <section data-rise className="surface overflow-hidden">
@@ -224,7 +228,7 @@ export default function ReceptionTodayPage() {
                     )}
                     {(a.status === "BOOKED" || a.status === "CHECKED_IN") && (
                       <a href={`/print/opd/${a.id}`} target="_blank" rel="noopener noreferrer"
-                        title="Print the OPD case sheet — the doctor writes on this"
+                        title="Print the OPD case sheet - the doctor writes on this"
                         className="hidden items-center gap-1 rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--p-teal)] transition-colors hover:border-[var(--p-teal)] sm:inline-flex">
                         <Icon name="file" size={12} /> Sheet
                       </a>
@@ -238,10 +242,18 @@ export default function ReceptionTodayPage() {
                       </span>
                     )}
                     {a.status === "COMPLETED" && (
-                      <Link href={`/prescriptions?patient=${a.patient.displayId}`}
-                        className="hidden items-center gap-1.5 rounded-lg border border-[var(--p-teal)]/35 bg-[var(--p-teal-soft)] px-2.5 py-1 text-[12px] font-semibold text-[var(--p-teal-deep)] transition-colors hover:bg-[var(--p-teal)] hover:text-white sm:inline-flex">
-                        <Icon name="file" size={12} /> Upload Rx →
-                      </Link>
+                      a.hasRx ? (
+                        <a href={`/print/opd/${a.id}`} target="_blank" rel="noopener noreferrer"
+                          title="The OPD sheet has been filed - open it"
+                          className="hidden items-center gap-1.5 rounded-lg border border-[var(--p-teal)]/35 bg-[var(--p-teal-soft)] px-2.5 py-1 text-[12px] font-semibold text-[var(--p-teal-deep)] transition-colors hover:bg-[var(--p-teal)] hover:text-white sm:inline-flex">
+                          <Icon name="file" size={12} /> View sheet
+                        </a>
+                      ) : (
+                        <Link href={`/prescriptions?patient=${a.patient.displayId}`}
+                          className="hidden items-center gap-1.5 rounded-lg border border-[var(--p-teal)]/35 bg-[var(--p-teal-soft)] px-2.5 py-1 text-[12px] font-semibold text-[var(--p-teal-deep)] transition-colors hover:bg-[var(--p-teal)] hover:text-white sm:inline-flex">
+                          <Icon name="file" size={12} /> Upload Rx →
+                        </Link>
+                      )
                     )}
 
                     {/* a visit that hasn't happened yet can still be moved or called off */}
@@ -297,11 +309,11 @@ export default function ReceptionTodayPage() {
             <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">Everything the desk does, one tap away.</p>
           </div>
           <div className="divide-y divide-[var(--p-border)]">
-            <ActionRow href="/register" icon="users" title="Register patient" sub="New walk-in — issues their permanent Jeeva ID in two minutes" />
+            <ActionRow href="/register" icon="users" title="Register patient" sub="New walk-in - issues their permanent Jeeva ID in two minutes" />
             <ActionRow href="/book" icon="calendar" title="Book appointment" sub="Picks the doctor and slot, books and bills in one step" />
-            <ActionRow href="/prescriptions" icon="file" title="Prescriptions & OPD sheet" sub="Type medicines, labs and vitals — the PDF goes to pharmacy" />
+            <ActionRow href="/prescriptions" icon="file" title="Prescriptions & OPD sheet" sub="Type medicines, labs and vitals - the PDF goes to pharmacy" />
             <ActionRow href="/ipd" icon="bed" title="Admit a patient" sub="Bed board, wards, transfers and discharge" />
-            <ActionRow href="/patients" icon="search" title="Find a patient" sub="The full register — history, reports and bills by Jeeva ID" />
+            <ActionRow href="/patients" icon="search" title="Find a patient" sub="The full register - history, reports and bills by Jeeva ID" />
           </div>
         </section>
         </div>
@@ -313,7 +325,7 @@ export default function ReceptionTodayPage() {
         </div>
       )}
 
-      {/* CANCEL — releases the slot so someone else can take it */}
+      {/* CANCEL - releases the slot so someone else can take it */}
       {cancelling && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="surface w-full max-w-sm bg-white">
@@ -329,7 +341,7 @@ export default function ReceptionTodayPage() {
                 placeholder="Patient couldn't come / doctor unavailable…"
                 className="w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm outline-none focus:border-[var(--p-teal)]" />
               <p className="rounded-lg bg-[var(--p-teal-soft)] px-3 py-2 text-[12px] leading-relaxed text-[var(--p-teal-deep)]">
-                The <b>{cancelling.time} slot goes back on sale</b> immediately — another patient can book it. The visit record is kept, not deleted.
+                The <b>{cancelling.time} slot goes back on sale</b> immediately - another patient can book it. The visit record is kept, not deleted.
               </p>
             </div>
             <div className="flex justify-end gap-3 border-t border-[var(--p-border)] p-5">
@@ -343,7 +355,7 @@ export default function ReceptionTodayPage() {
         </div>
       )}
 
-      {/* cancelled, but money had already changed hands — say so, don't silently refund */}
+      {/* cancelled, but money had already changed hands - say so, don't silently refund */}
       {cancelDone && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="surface w-full max-w-sm bg-white p-6 text-center">
@@ -353,7 +365,7 @@ export default function ReceptionTodayPage() {
             {cancelDone.paidInvoice && (
               <p className="mt-4 rounded-lg bg-[var(--p-amber-soft)] px-3 py-2.5 text-left text-[13px] leading-relaxed text-[#8a6414]">
                 <b>This visit was already paid.</b> Receipt <span className="font-mono">{cancelDone.paidInvoice.receiptNo}</span> holds ₹{cancelDone.paidInvoice.amountPaid}.
-                I have <b>not</b> refunded it — refunds are a deliberate act. Void the bill from <b>Billing</b> if you&apos;re returning the money.
+                I have <b>not</b> refunded it - refunds are a deliberate act. Void the bill from <b>Billing</b> if you&apos;re returning the money.
               </p>
             )}
             <button onClick={() => setCancelDone(null)} className="mt-5 w-full rounded-lg bg-[var(--p-teal)] px-4 py-2.5 text-sm font-semibold text-white">Done</button>
@@ -361,7 +373,7 @@ export default function ReceptionTodayPage() {
         </div>
       )}
 
-      {/* RESCHEDULE — same doctor, different slot */}
+      {/* RESCHEDULE - same doctor, different slot */}
       {resched && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="surface w-full max-w-md bg-white">
@@ -386,19 +398,25 @@ export default function ReceptionTodayPage() {
                     </p>
                   ) : (
                     <div className="grid max-h-40 grid-cols-3 gap-2 overflow-y-auto">
-                      {rsSlots.map((sl) => (
-                        <button key={sl.id} onClick={() => setRsSlotId(sl.id)}
-                          className={`rounded-lg border px-2 py-2 font-mono text-[13px] transition-colors ${rsSlotId === sl.id ? "border-[var(--p-teal)] bg-[var(--p-teal)] text-white"
-                            : "border-[var(--p-border)] text-[var(--p-text)] hover:border-[var(--p-teal)]"}`}>
-                          {sl.startTime}
-                        </button>
-                      ))}
+                      {rsSlots.map((sl) => {
+                        const past = slotPast(sl.startTime, rsDate);
+                        return (
+                          <button key={sl.id} onClick={() => !past && setRsSlotId(sl.id)} disabled={past}
+                            title={past ? "This time has already passed" : undefined}
+                            className={`rounded-lg border px-2 py-2 font-mono text-[13px] transition-colors ${
+                              past ? "cursor-not-allowed border-[var(--p-border)] bg-[var(--p-bg)] text-[var(--p-muted)] line-through opacity-60"
+                              : rsSlotId === sl.id ? "border-[var(--p-teal)] bg-[var(--p-teal)] text-white"
+                              : "border-[var(--p-border)] text-[var(--p-text)] hover:border-[var(--p-teal)]"}`}>
+                            {sl.startTime}
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
               )}
               <p className="rounded-lg bg-[var(--p-bg)] px-3 py-2 text-[12px] leading-relaxed text-[var(--p-muted)]">
-                Same doctor only — the fee was locked when this was booked, and may already be billed.
+                Same doctor only - the fee was locked when this was booked, and may already be billed.
                 To change doctor, cancel and book fresh so the money decision is explicit.
               </p>
             </div>
@@ -416,7 +434,7 @@ export default function ReceptionTodayPage() {
   );
 }
 
-/** Numbered section header with a one-line explanation — the dashboard teaches. */
+/** Numbered section header with a one-line explanation - the dashboard teaches. */
 function SectionHead({ index, title, desc }: { index: string; title: string; desc?: string }) {
   return (
     <div className="mb-4 mt-8 first:mt-0">

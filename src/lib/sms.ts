@@ -5,20 +5,20 @@ import { env } from "@/lib/env";
  * SMS provider: 2Factor.in (https://2factor.in).
  *
  * Setup:
- *   1. Sign up at https://2factor.in/v3/signup — free trial credits land
+ *   1. Sign up at https://2factor.in/v3/signup - free trial credits land
  *      on your account immediately, no card required.
  *   2. Copy the API key from the dashboard and set TWO_FACTOR_API_KEY
  *      in .env.
  *   3. That's it. When the trial balance runs out, recharge the same
- *      account (dashboard → Recharge) — same API key, same endpoint,
+ *      account (dashboard → Recharge) - same API key, same endpoint,
  *      zero code changes to go from trial to paid.
  *
- * We generate and verify the OTP ourselves (see lib/auth/otp.ts — hashed,
+ * We generate and verify the OTP ourselves (see lib/auth/otp.ts - hashed,
  * rate-limited, attempt-capped). 2Factor is used purely as an SMS
  * transport via its "send my own code" endpoint, so none of that logic
  * changes here; this function only has to get the code onto the phone.
  *
- * Docs: https://2factor.in/API/DOCS/SMS_OTP.html — worth a quick check
+ * Docs: https://2factor.in/API/DOCS/SMS_OTP.html - worth a quick check
  * against your dashboard if a call ever comes back malformed, since
  * providers do tweak response shapes over time.
  */
@@ -39,7 +39,7 @@ export async function sendOtpSms(phone: string, code: string): Promise<void> {
       // Fail loud, never silently swallow a login path.
       throw new ApiError(503, "SMS provider is not configured");
     }
-    // Development: the code appears in the server terminal only — never in an API response.
+    // Development: the code appears in the server terminal only - never in an API response.
     console.log(`[sms:dev] OTP for ${phone}: ${code}`);
     return;
   }

@@ -24,8 +24,8 @@ interface Stats {
 }
 interface PatientHit { id: string; displayId: string; fullName: string; phone: string; age: number | null }
 
-const inr = (s: string | number | null) => (s == null ? "—" : "₹" + Number(s).toLocaleString("en-IN", { maximumFractionDigits: 0 }));
-const inr2 = (s: string | number | null) => (s == null ? "—" : "₹" + Number(s).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+const inr = (s: string | number | null) => (s == null ? "-" : "₹" + Number(s).toLocaleString("en-IN", { maximumFractionDigits: 0 }));
+const inr2 = (s: string | number | null) => (s == null ? "-" : "₹" + Number(s).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const when = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 const STATUS: Record<string, { label: string; cls: string }> = {
@@ -92,7 +92,7 @@ export default function InsurancePage() {
         <h1 className="mt-2 font-serif-p text-[clamp(24px,3vw,32px)] font-semibold">Cashless &amp; reimbursement claims</h1>
         <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-white/60">
           Raise a claim against a patient&apos;s treatment, submit it to the insurer or TPA, and track it
-          through approval and settlement — every step on one timeline, without leaving the ERP.
+          through approval and settlement - every step on one timeline, without leaving the ERP.
         </p>
         {stats && (
           <div className="mt-5 flex flex-wrap gap-2">
@@ -273,14 +273,14 @@ function NewClaim({ insurers, onClose, onCreated }: { insurers: string[]; onClos
               <label className={lbl}>Stage</label>
               <select className={inp} value={f.stage} onChange={(e) => set("stage")(e.target.value)}><option value="PRE_AUTH">Pre-authorization</option><option value="FINAL">Final claim</option></select>
             </div>
-            <div className="sm:col-span-2"><label className={lbl}>Diagnosis</label><input className={inp} value={f.diagnosis} onChange={(e) => set("diagnosis")(e.target.value)} placeholder="e.g. Acute appendicitis — laparoscopic appendectomy" /></div>
+            <div className="sm:col-span-2"><label className={lbl}>Diagnosis</label><input className={inp} value={f.diagnosis} onChange={(e) => set("diagnosis")(e.target.value)} placeholder="e.g. Acute appendicitis - laparoscopic appendectomy" /></div>
             <div><label className={lbl}>Amount claimed (₹)</label><input className={inp} inputMode="numeric" value={f.claimedAmount} onChange={(e) => set("claimedAmount")(e.target.value.replace(/[^\d]/g, ""))} placeholder="45000" /></div>
             <div className="sm:col-span-2"><label className={lbl}>Remarks</label><input className={inp} value={f.remarks} onChange={(e) => set("remarks")(e.target.value)} placeholder="Optional" /></div>
           </div>
           {err && <p className="rounded-lg border border-[var(--p-rose)]/25 bg-[var(--p-rose-soft)] px-4 py-2.5 text-[12.5px] text-[var(--p-rose)]">{err}</p>}
         </div>
         <div className="flex items-center justify-between gap-3 border-t border-[var(--p-border)] px-6 py-4">
-          <p className="text-[12px] text-[var(--p-muted)]">The claim starts as a draft — submit it to the insurer from its page.</p>
+          <p className="text-[12px] text-[var(--p-muted)]">The claim starts as a draft - submit it to the insurer from its page.</p>
           <div className="flex gap-2">
             <button onClick={onClose} className="rounded-md border border-[var(--p-border)] px-4 py-2.5 text-[13px] font-medium text-[var(--p-text)]">Cancel</button>
             <button onClick={submit} disabled={!ready || busy} className="btn-primary inline-flex items-center gap-2 rounded-md px-5 py-2.5 text-[13px] font-semibold text-white disabled:opacity-40">
@@ -364,10 +364,10 @@ function ClaimModal({ claim, onClose, onChanged }: { claim: Claim; onClose: () =
               {/* policy */}
               <div className="grid grid-cols-2 gap-x-6 gap-y-2.5 rounded-xl border border-[var(--p-border)] p-4 text-[12.5px]">
                 <Row k="Policy no" v={c.policyNo} mono />
-                <Row k="Member ID" v={c.memberId ?? "—"} mono />
+                <Row k="Member ID" v={c.memberId ?? "-"} mono />
                 <Row k="Sum insured" v={inr2(c.sumInsured)} mono />
-                <Row k="Insurer ref" v={c.insurerRef ?? "—"} mono />
-                <Row k="Diagnosis" v={c.diagnosis ?? "—"} span />
+                <Row k="Insurer ref" v={c.insurerRef ?? "-"} mono />
+                <Row k="Diagnosis" v={c.diagnosis ?? "-"} span />
                 {c.remarks && <Row k="Remarks" v={c.remarks} span />}
               </div>
               {/* timeline */}

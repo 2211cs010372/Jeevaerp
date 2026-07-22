@@ -6,6 +6,7 @@ import { api } from "@/lib/api-client";
 import {
   Calendar, FileText, FlaskConical, Receipt, User, LogOut, Plus, Download,
   ArrowRight, Activity, Stethoscope, MapPin, Phone, Clock, CheckCircle2,
+  FolderOpen, Eye,
 } from "lucide-react";
 
 /* ── types ─────────────────────────────────────────────────────────────── */
@@ -19,25 +20,37 @@ interface Profile {
 }
 interface Appt { opNumber: string; visitDate: string; time: string; status: string; doctorName: string; department: string; price: string; }
 interface Rx { id: string; appointmentId: string | null; fileUrl: string | null; fileName: string | null; mimeType: string | null; title: string | null; createdAt: string; appointment: { opNumber: string; visitDate: string; doctorName: string } | null; }
-interface Lab { id: string; testName: string; status: string; reportReady: boolean; date: string; doctorName: string | null; }
-interface Bill { receiptNo: string; source: string; status: string; total: string; paid: string; balance: string; date: string; }
+interface Lab { id: string; testName: string; status: string; reportReady: boolean; reportUrl: string | null; date: string; doctorName: string | null; }
+interface Bill { id: string; receiptNo: string; source: string; status: string; total: string; paid: string; balance: string; date: string; }
 type Bundle = { profile: Profile; appointments: Appt[]; prescriptions: Rx[]; labTests: Lab[]; bills: Bill[] };
+type DocKind = "prescription" | "lab" | "opd" | "invoice";
+// `file` docs are stored files (open the PDF, offer Save); the rest are live
+// print views (open the sheet, which has its own Print / Save PDF button).
+type Doc = { key: string; kind: DocKind; title: string; sub: string; date: string; url: string; file: boolean };
 
-type Tab = "overview" | "appointments" | "prescriptions" | "labs" | "bills" | "profile";
+type Tab = "overview" | "appointments" | "prescriptions" | "labs" | "documents" | "bills" | "profile";
 const TABS: { id: Tab; label: string; icon: typeof Calendar }[] = [
   { id: "overview", label: "Overview", icon: Activity },
   { id: "appointments", label: "Appointments", icon: Calendar },
   { id: "prescriptions", label: "Prescriptions", icon: FileText },
   { id: "labs", label: "Lab reports", icon: FlaskConical },
+  { id: "documents", label: "Documents", icon: FolderOpen },
   { id: "bills", label: "Bills", icon: Receipt },
   { id: "profile", label: "Profile", icon: User },
 ];
+
+const DOC_META: Record<DocKind, { label: string; icon: typeof Calendar; soft: string; deep: string }> = {
+  prescription: { label: "Prescription", icon: FileText, soft: "--p-teal-soft", deep: "--p-teal-deep" },
+  opd: { label: "OPD sheet", icon: Stethoscope, soft: "--p-teal-soft", deep: "--p-teal-deep" },
+  lab: { label: "Lab report", icon: FlaskConical, soft: "--p-cyan-soft", deep: "--p-cyan-deep" },
+  invoice: { label: "Invoice", icon: Receipt, soft: "--p-amber-soft", deep: "--p-amber" },
+};
 
 const STATUS_LABEL: Record<string, string> = { BOOKED: "Booked", CHECKED_IN: "Checked-in", COMPLETED: "Completed", CANCELLED: "Cancelled", PENDING: "Pending", IN_PROGRESS: "In progress", REPORTED: "Reported", PAID: "Paid", PARTIALLY_PAID: "Part-paid" };
 const SRC_LABEL: Record<string, string> = { CONSULTATION: "Consultation", LAB: "Laboratory", PHARMACY: "Pharmacy", IPD: "Inpatient", OTHER: "Other" };
 const inr = (v: string | number) => "₹" + Number(v).toLocaleString("en-IN");
 const prettyDate = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-const cap = (v: string | null) => (v ? v.charAt(0) + v.slice(1).toLowerCase() : "—");
+const cap = (v: string | null) => (v ? v.charAt(0) + v.slice(1).toLowerCase() : "-");
 
 export default function PatientPortalPage() {
   const [data, setData] = useState<Bundle | null>(null);
@@ -68,6 +81,30 @@ export default function PatientPortalPage() {
   const upcoming = useMemo(() => (data?.appointments ?? []).filter((a) => a.visitDate >= today && (a.status === "BOOKED" || a.status === "CHECKED_IN")).sort((a, b) => a.visitDate.localeCompare(b.visitDate)), [data, today]);
   const pendingBalance = useMemo(() => (data?.bills ?? []).reduce((s, b) => s + Number(b.balance), 0), [data]);
   const reportsReady = (data?.labTests ?? []).filter((l) => l.reportReady).length;
+
+  // Every document the patient has, in one list: scanned prescriptions and lab
+  // reports (stored files), plus the live OPD case sheets (typed prescriptions)
+  // and bills - each of those opens the same printable sheet the desk uses.
+  const documents = useMemo<Doc[]>(() => {
+    if (!data) return [];
+    const docs: Doc[] = [];
+    for (const r of data.prescriptions) {
+      const sub = r.appointment ? `${r.appointment.doctorName} · ${prettyDate(r.appointment.visitDate)}` : new Date(r.createdAt).toLocaleDateString("en-IN");
+      const date = r.appointment?.visitDate ?? r.createdAt.slice(0, 10);
+      if (r.fileUrl) {
+        docs.push({ key: `rx-${r.id}`, kind: "prescription", title: r.title || r.fileName || "Prescription", sub, date, url: r.fileUrl, file: true });
+      } else if (r.appointmentId) {
+        docs.push({ key: `opd-${r.id}`, kind: "opd", title: r.title || "OPD prescription sheet", sub, date, url: `/print/opd/${r.appointmentId}`, file: false });
+      }
+    }
+    for (const l of data.labTests) {
+      if (l.reportUrl) docs.push({ key: `lab-${l.id}`, kind: "lab", title: `${l.testName} - report`, sub: `${l.doctorName ? `${l.doctorName} · ` : ""}${prettyDate(l.date)}`, date: l.date, url: l.reportUrl, file: true });
+    }
+    for (const b of data.bills) {
+      docs.push({ key: `inv-${b.id}`, kind: "invoice", title: `Bill ${b.receiptNo}`, sub: `${SRC_LABEL[b.source] ?? b.source} · ${prettyDate(b.date)}`, date: b.date, url: `/print/invoice/${b.id}`, file: false });
+    }
+    return docs.sort((a, b) => b.date.localeCompare(a.date));
+  }, [data]);
 
   if (loading) return <Screen>Loading your portal…</Screen>;
   if (error || !data) return (
@@ -111,7 +148,7 @@ export default function PatientPortalPage() {
         {/* ── tabs ── */}
         <div className="mt-5 flex gap-1 overflow-x-auto rounded-xl border border-[var(--p-border)] bg-[var(--p-surface)] p-1 shadow-[var(--p-shadow-sm)]">
           {TABS.map((t) => {
-            const badge = t.id === "appointments" ? data.appointments.length : t.id === "prescriptions" ? data.prescriptions.length : t.id === "labs" ? data.labTests.length : t.id === "bills" ? data.bills.length : null;
+            const badge = t.id === "appointments" ? data.appointments.length : t.id === "prescriptions" ? data.prescriptions.length : t.id === "labs" ? data.labTests.length : t.id === "documents" ? documents.length : t.id === "bills" ? data.bills.length : null;
             return (
               <button key={t.id} onClick={() => setTab(t.id)}
                 className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3.5 py-2 text-[13px] font-semibold transition-colors ${tab === t.id ? "bg-[var(--p-teal)] text-white" : "text-[var(--p-muted)] hover:bg-[var(--p-bg)] hover:text-[var(--p-ink)]"}`}>
@@ -151,7 +188,7 @@ export default function PatientPortalPage() {
 
               <div className="grid gap-3 sm:grid-cols-3">
                 <QuickAction href="/book" icon={Plus} title="Book a visit" desc="Pick a doctor and time" />
-                <button onClick={() => setTab("labs")} className="text-left"><QuickInner icon={FlaskConical} title="View lab reports" desc={`${reportsReady} ready to view`} /></button>
+                <button onClick={() => setTab("documents")} className="text-left"><QuickInner icon={FolderOpen} title="View documents" desc={documents.length > 0 ? `${documents.length} document${documents.length === 1 ? "" : "s"} on record` : "No documents yet"} /></button>
                 <button onClick={() => setTab("bills")} className="text-left"><QuickInner icon={Receipt} title="View bills" desc={pendingBalance > 0 ? `${inr(pendingBalance)} due` : "All settled"} /></button>
               </div>
             </div>
@@ -178,6 +215,8 @@ export default function PatientPortalPage() {
                   sub={r.appointment ? <>{r.appointment.doctorName} · <span className="font-mono">{prettyDate(r.appointment.visitDate)}</span></> : new Date(r.createdAt).toLocaleDateString("en-IN")}
                   right={r.fileUrl ? (
                     <a href={r.fileUrl} target="_blank" rel="noopener noreferrer" download className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--p-teal)] px-3.5 py-2 text-[12px] font-semibold text-white hover:opacity-90"><Download size={13} /> Download</a>
+                  ) : r.appointmentId ? (
+                    <a href={`/print/opd/${r.appointmentId}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--p-teal)] px-3.5 py-2 text-[12px] font-semibold text-white hover:opacity-90"><Eye size={13} /> View OPD sheet</a>
                   ) : (
                     <span className="rounded-lg bg-[var(--p-teal-soft)] px-3.5 py-2 text-[12px] font-semibold text-[var(--p-teal-deep)]">On your visit record</span>
                   )} />
@@ -194,9 +233,31 @@ export default function PatientPortalPage() {
                   sub={<>{l.doctorName ? `${l.doctorName} · ` : ""}<span className="font-mono">{prettyDate(l.date)}</span></>}
                   right={<div className="flex items-center gap-2">
                     <Chip status={l.status} />
-                    {l.reportReady && <span className="inline-flex items-center gap-1 rounded-lg bg-[var(--p-cyan-soft)] px-2.5 py-1.5 text-[11.5px] font-semibold text-[var(--p-cyan-deep)]"><CheckCircle2 size={13} /> Report ready</span>}
+                    {l.reportUrl ? (
+                      <a href={l.reportUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--p-cyan)] px-3.5 py-2 text-[12px] font-semibold text-white hover:opacity-90"><Eye size={13} /> View report</a>
+                    ) : l.reportReady && (
+                      <span className="inline-flex items-center gap-1 rounded-lg bg-[var(--p-cyan-soft)] px-2.5 py-1.5 text-[11.5px] font-semibold text-[var(--p-cyan-deep)]"><CheckCircle2 size={13} /> Report ready</span>
+                    )}
                   </div>} />
               ))}
+            </SectionCard>
+          )}
+
+          {tab === "documents" && (
+            <SectionCard title="Documents" count={documents.length} empty={documents.length === 0} emptyText="No documents yet. Prescriptions, lab reports, OPD sheets and bills appear here as they're added to your record.">
+              {documents.map((d) => {
+                const m = DOC_META[d.kind];
+                return (
+                  <Row key={d.key}
+                    lead={<span className="grid h-10 w-10 place-items-center rounded-lg" style={{ background: `var(${m.soft})`, color: `var(${m.deep})` }}><m.icon size={18} /></span>}
+                    title={d.title}
+                    sub={<><span className="rounded px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide" style={{ background: `var(${m.soft})`, color: `var(${m.deep})` }}>{m.label}</span> <span className="text-[var(--p-muted)]">{d.sub}</span></>}
+                    right={<div className="flex items-center gap-2">
+                      <a href={d.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border-strong)] px-3.5 py-2 text-[12px] font-semibold text-[var(--p-teal)] transition-colors hover:border-[var(--p-teal)]"><Eye size={13} /> {d.file ? "View" : "Open"}</a>
+                      {d.file && <a href={d.url} download className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--p-teal)] px-3.5 py-2 text-[12px] font-semibold text-white hover:opacity-90"><Download size={13} /> Save</a>}
+                    </div>} />
+                );
+              })}
             </SectionCard>
           )}
 
@@ -208,9 +269,12 @@ export default function PatientPortalPage() {
                   lead={<span className="grid h-10 w-10 place-items-center rounded-lg bg-[var(--p-teal-soft)] text-[var(--p-teal-deep)]"><Receipt size={18} /></span>}
                   title={<><span className="font-mono">{b.receiptNo}</span> · {SRC_LABEL[b.source] ?? b.source}</>}
                   sub={<><span className="font-mono">{prettyDate(b.date)}</span> · Paid {inr(b.paid)} of {inr(b.total)}</>}
-                  right={<div className="text-right">
-                    <p className="font-mono text-[15px] font-bold text-[var(--p-ink)]">{inr(b.total)}</p>
-                    {Number(b.balance) > 0 ? <p className="font-mono text-[12px] font-semibold text-[var(--p-rose)]">{inr(b.balance)} due</p> : <Chip status="PAID" />}
+                  right={<div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <p className="font-mono text-[15px] font-bold text-[var(--p-ink)]">{inr(b.total)}</p>
+                      {Number(b.balance) > 0 ? <p className="font-mono text-[12px] font-semibold text-[var(--p-rose)]">{inr(b.balance)} due</p> : <Chip status="PAID" />}
+                    </div>
+                    <a href={`/print/invoice/${b.id}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border-strong)] px-3.5 py-2 text-[12px] font-semibold text-[var(--p-teal)] transition-colors hover:border-[var(--p-teal)]"><Eye size={13} /> View bill</a>
                   </div>} />
               ))}
             </SectionCard>
@@ -222,13 +286,13 @@ export default function PatientPortalPage() {
                 <h2 className="mb-4 font-serif-p text-[16px] font-semibold text-[var(--p-ink)]">Personal details</h2>
                 <Grid>
                   <Field k="Full name" v={p.fullName} />
-                  <Field k="Date of birth" v={p.dob ? prettyDate(p.dob) : "—"} />
-                  <Field k="Age" v={p.age != null ? `${p.age} years` : "—"} />
+                  <Field k="Date of birth" v={p.dob ? prettyDate(p.dob) : "-"} />
+                  <Field k="Age" v={p.age != null ? `${p.age} years` : "-"} />
                   <Field k="Gender" v={cap(p.gender)} />
-                  <Field k="Blood group" v={p.bloodGroup ?? "—"} />
+                  <Field k="Blood group" v={p.bloodGroup ?? "-"} />
                   <Field k="Marital status" v={cap(p.maritalStatus)} />
-                  <Field k="Occupation" v={p.occupation ?? "—"} />
-                  <Field k="Language" v={p.preferredLanguage ?? "—"} />
+                  <Field k="Occupation" v={p.occupation ?? "-"} />
+                  <Field k="Language" v={p.preferredLanguage ?? "-"} />
                 </Grid>
               </div>
 
@@ -247,13 +311,13 @@ export default function PatientPortalPage() {
                 {!editing ? (
                   <Grid>
                     <Field k="Phone" v={p.phone} icon={Phone} />
-                    <Field k="Alternate" v={p.alternatePhone ?? "—"} />
-                    <Field k="Email" v={p.email ?? "—"} span />
-                    <Field k="Address" v={p.address ?? "—"} span icon={MapPin} />
-                    <Field k="City" v={p.city ?? "—"} />
-                    <Field k="State" v={p.state ?? "—"} />
-                    <Field k="PIN" v={p.postalCode ?? "—"} />
-                    <Field k="Country" v={p.country ?? "—"} />
+                    <Field k="Alternate" v={p.alternatePhone ?? "-"} />
+                    <Field k="Email" v={p.email ?? "-"} span />
+                    <Field k="Address" v={p.address ?? "-"} span icon={MapPin} />
+                    <Field k="City" v={p.city ?? "-"} />
+                    <Field k="State" v={p.state ?? "-"} />
+                    <Field k="PIN" v={p.postalCode ?? "-"} />
+                    <Field k="Country" v={p.country ?? "-"} />
                   </Grid>
                 ) : (
                   <div className="grid grid-cols-2 gap-4">

@@ -15,7 +15,7 @@ export function Faq() {
           </Reveal>
           <Reveal delay={120}>
             <p className="mt-4 max-w-xs text-[14px] leading-[1.7] text-[var(--muted)]">
-              Can&apos;t find your answer? Call us — a person picks up.
+              Can&apos;t find your answer? Call us - a person picks up.
             </p>
           </Reveal>
         </div>
