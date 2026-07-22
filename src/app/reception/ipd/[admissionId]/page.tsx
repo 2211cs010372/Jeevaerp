@@ -213,7 +213,7 @@ export default function AdmissionSheetPage() {
   return (
     <PortalScroll>
       {/* header */}
-      <div data-rise className="surface dotgrid mb-5 flex flex-wrap items-start justify-between gap-4 px-6 py-5">
+      <div  className="surface dotgrid mb-5 flex flex-wrap items-start justify-between gap-4 px-6 py-5">
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">{a.patient.fullName}</h1>
