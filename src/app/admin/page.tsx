@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import Link from "next/link";
 import { Icon, type IconName } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
@@ -18,9 +18,9 @@ interface Overview {
   revenueByDoctor: { doctor: string; department: string; revenue: string; visits: number }[];
   pharmacyProfit: { profitToday: string; marginPct: number; stockValueCost: string; stockValueMrp: string; potentialProfit: string };
   collectionsByMode: CollectionMode[];
-  last7Days: { date: string; appointments: number; revenue: number }[];
-  last14Days: { date: string; appointments: number; revenue: number }[];
-  last6Months: { label: string; revenue: number }[];
+  last7Days: { date: string; appointments: number; revenue: number; sources: Record<string, number> }[];
+  last14Days: { date: string; appointments: number; revenue: number; sources: Record<string, number> }[];
+  last6Months: { label: string; revenue: number; sources: Record<string, number> }[];
   todayAppointments: { time: string; patient: string; doctor: string; dept: string; status: string }[];
   recentBills: { receiptNo: string; date: string; total: string; status: string; discountPct: number }[];
   outstanding: string;
@@ -151,64 +151,129 @@ function statusChip(status: string) {
 }
 
 /** Big gridded revenue chart — area for daily, bars for monthly, with a max reference line. */
+/** Revenue sources as curved lines. Colours are the dataviz validated
+ *  categorical order (blue/green/magenta/yellow) — all-pairs CVD-safe — with a
+ *  neutral grey for the folded "Other". Identity is carried by the legend +
+ *  tooltip, never colour alone. */
+const REV_SERIES = [
+  { key: "CONSULTATION", label: "OPD", color: "#2a78d6" },
+  { key: "PHARMACY", label: "Pharmacy", color: "#eda100" },
+  { key: "LAB", label: "Labs", color: "#008300" },
+  { key: "IPD", label: "Inpatient", color: "#e87ba4" },
+  { key: "OTHER", label: "Other", color: "#8a8f98" },
+] as const;
+
+/** Catmull-Rom → cubic-bezier: one smooth curve through the points. */
+function smoothPath(pts: readonly [number, number][]): string {
+  if (pts.length === 0) return "";
+  if (pts.length < 3) return "M" + pts.map((p) => `${p[0]},${p[1]}`).join(" L");
+  const t = 0.16;
+  const d: string[] = [`M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}`];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] ?? pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] ?? p2;
+    const c1x = p1[0] + (p2[0] - p0[0]) * t, c1y = p1[1] + (p2[1] - p0[1]) * t;
+    const c2x = p2[0] - (p3[0] - p1[0]) * t, c2y = p2[1] - (p3[1] - p1[1]) * t;
+    d.push(`C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`);
+  }
+  return d.join(" ");
+}
+
 function RevenueChart({ mode, daily, monthly }: {
   mode: "daily" | "monthly";
-  daily: { date: string; revenue: number }[];
-  monthly: { label: string; revenue: number }[];
+  daily: { date: string; revenue: number; sources: Record<string, number> }[];
+  monthly: { label: string; revenue: number; sources: Record<string, number> }[];
 }) {
-  const W = 720, H = 240, L = 52, R = 12, T = 16, B = 26;
+  const [hover, setHover] = useState<number | null>(null);
+  const W = 760, H = 264, L = 54, R = 14, T = 16, B = 30;
   const plotW = W - L - R, plotH = H - T - B;
-  const data = mode === "daily" ? daily.map((d) => ({ label: `${d.date.slice(8)}/${d.date.slice(5, 7)}`, v: d.revenue })) : monthly.map((d) => ({ label: d.label, v: d.revenue }));
-  const max = Math.max(1, ...data.map((d) => d.v));
-  const ticks = 4;
-  const gridY = Array.from({ length: ticks + 1 }, (_, i) => (max * i) / ticks);
+  const rows = mode === "daily"
+    ? daily.map((d) => ({ label: `${d.date.slice(8)}/${d.date.slice(5, 7)}`, sources: d.sources, total: d.revenue }))
+    : monthly.map((d) => ({ label: d.label, sources: d.sources, total: d.revenue }));
+  const n = rows.length;
+  const max = Math.max(1, ...rows.flatMap((r) => REV_SERIES.map((s) => r.sources[s.key] ?? 0)));
+  const gridY = Array.from({ length: 5 }, (_, i) => (max * i) / 4);
+  const x = (i: number) => L + (i * plotW) / Math.max(1, n - 1);
   const yPix = (v: number) => T + plotH - (v / max) * plotH;
+  const lines = REV_SERIES.map((s) => ({ ...s, pts: rows.map((r, i) => [x(i), yPix(r.sources[s.key] ?? 0)] as [number, number]) }));
+
+  function onMove(e: ReactMouseEvent<HTMLDivElement>) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const px = ((e.clientX - rect.left) / rect.width) * W;
+    setHover(Math.max(0, Math.min(n - 1, Math.round(((px - L) / plotW) * (n - 1)))));
+  }
+
+  const hoverRow = hover != null ? rows[hover] : null;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full">
-      <defs>
-        <linearGradient id="revfill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#0b5f55" stopOpacity="0.22" />
-          <stop offset="100%" stopColor="#0b5f55" stopOpacity="0.02" />
-        </linearGradient>
-      </defs>
-      {/* gridlines + y labels */}
-      {gridY.map((g, i) => (
-        <g key={i}>
-          <line x1={L} y1={yPix(g)} x2={W - R} y2={yPix(g)} stroke="var(--p-border)" strokeWidth="1" opacity="0.6" />
-          <text x={L - 8} y={yPix(g) + 3} textAnchor="end" fontSize="9.5" fill="var(--p-muted)">{compact(g)}</text>
-        </g>
-      ))}
-      {mode === "daily" ? (
-        (() => {
-          const x = (i: number) => L + (i * plotW) / Math.max(1, data.length - 1);
-          const pts = data.map((d, i) => `${x(i)},${yPix(d.v)}`).join(" ");
-          const area = `${x(0)},${T + plotH} ${pts} ${x(data.length - 1)},${T + plotH}`;
-          return (
-            <>
-              <polygon points={area} fill="url(#revfill)" />
-              <polyline points={pts} fill="none" stroke="#0b5f55" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-              {data.map((d, i) => <circle key={i} cx={x(i)} cy={yPix(d.v)} r="2.4" fill="#0b5f55" />)}
-              {data.map((d, i) => (i % 2 === 0 || i === data.length - 1) && <text key={`l${i}`} x={x(i)} y={H - 8} textAnchor="middle" fontSize="9" fill="var(--p-muted)">{d.label}</text>)}
-            </>
-          );
-        })()
-      ) : (
-        (() => {
-          const gap = plotW / data.length, bw = gap * 0.5;
-          return data.map((d, i) => {
-            const bx = L + i * gap + (gap - bw) / 2, by = yPix(d.v);
+    <div>
+      <div className="relative" onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full">
+          <defs>
+            {REV_SERIES.map((s) => (
+              <linearGradient key={s.key} id={`rg-${s.key}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={s.color} stopOpacity="0.13" />
+                <stop offset="100%" stopColor={s.color} stopOpacity="0" />
+              </linearGradient>
+            ))}
+          </defs>
+          {gridY.map((g, i) => (
+            <g key={i}>
+              <line x1={L} y1={yPix(g)} x2={W - R} y2={yPix(g)} stroke="var(--p-border)" strokeWidth="1" opacity="0.55" />
+              <text x={L - 8} y={yPix(g) + 3} textAnchor="end" fontSize="9.5" fill="var(--p-muted)">{compact(g)}</text>
+            </g>
+          ))}
+          {rows.map((r, i) => (mode === "monthly" || i % 2 === 0 || i === n - 1) && (
+            <text key={`x${i}`} x={x(i)} y={H - 9} textAnchor="middle" fontSize="9" fill="var(--p-muted)">{r.label}</text>
+          ))}
+          {hover != null && (
+            <line x1={x(hover)} y1={T} x2={x(hover)} y2={T + plotH} stroke="var(--p-ink)" strokeWidth="1" strokeDasharray="3 3" opacity="0.28" />
+          )}
+          {lines.map((s) => {
+            const path = smoothPath(s.pts);
             return (
-              <g key={i}>
-                <rect x={bx} y={by} width={bw} height={Math.max(1, T + plotH - by)} rx="4" fill="#0b5f55" opacity="0.85" />
-                <text x={bx + bw / 2} y={by - 5} textAnchor="middle" fontSize="9" fill="var(--p-muted)">{d.v > 0 ? compact(d.v) : ""}</text>
-                <text x={bx + bw / 2} y={H - 8} textAnchor="middle" fontSize="9.5" fill="var(--p-muted)">{d.label}</text>
+              <g key={s.key}>
+                <path d={`${path} L${x(n - 1).toFixed(1)},${T + plotH} L${x(0).toFixed(1)},${T + plotH} Z`} fill={`url(#rg-${s.key})`} />
+                <path d={path} fill="none" stroke={s.color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ filter: "drop-shadow(0 2px 3px rgba(11,26,28,0.10))" }} />
               </g>
             );
-          });
-        })()
-      )}
-    </svg>
+          })}
+          {hover != null && lines.map((s) => (
+            <circle key={s.key} cx={s.pts[hover][0]} cy={s.pts[hover][1]} r="4" fill={s.color} stroke="#fff" strokeWidth="1.6" />
+          ))}
+        </svg>
+
+        {/* mouse-tracking tooltip card */}
+        {hoverRow && hover != null && (
+          <div className="pointer-events-none absolute top-2 z-10 w-[190px] -translate-x-1/2 rounded-xl border border-[var(--p-border)] bg-white/95 p-3 shadow-lg backdrop-blur"
+            style={{ left: `clamp(100px, ${(x(hover) / W) * 100}%, calc(100% - 100px))` }}>
+            <div className="mb-1.5 flex items-center justify-between border-b border-[var(--p-border)] pb-1.5">
+              <span className="text-[11.5px] font-semibold text-[var(--p-ink)]">{hoverRow.label}</span>
+              <span className="font-mono text-[11.5px] font-bold text-[var(--p-ink)]">{compact(hoverRow.total)}</span>
+            </div>
+            <div className="space-y-1">
+              {[...REV_SERIES].sort((a, b) => (hoverRow.sources[b.key] ?? 0) - (hoverRow.sources[a.key] ?? 0)).map((s) => (
+                <div key={s.key} className="flex items-center justify-between text-[11px]">
+                  <span className="flex items-center gap-1.5 text-[var(--p-muted)]">
+                    <span className="inline-block h-2 w-2 rounded-full" style={{ background: s.color }} /> {s.label}
+                  </span>
+                  <span className="font-mono text-[var(--p-ink)]">{compact(hoverRow.sources[s.key] ?? 0)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* legend — identity is never colour-alone */}
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 px-1">
+        {REV_SERIES.map((s) => (
+          <span key={s.key} className="flex items-center gap-1.5 text-[11.5px] text-[var(--p-muted)]">
+            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: s.color }} /> {s.label}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 

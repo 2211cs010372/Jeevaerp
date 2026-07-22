@@ -20,10 +20,10 @@ export async function adminOverview(): Promise<{
   revenueByDoctor: { doctor: string; department: string; revenue: string; visits: number }[];
   pharmacyProfit: { profitToday: string; marginPct: number; stockValueCost: string; stockValueMrp: string; potentialProfit: string };
   collectionsByMode: ModeTotal[];
-  last7Days: { date: string; appointments: number; revenue: number }[];
-  last14Days: { date: string; appointments: number; revenue: number }[];
+  last7Days: { date: string; appointments: number; revenue: number; sources: Record<string, number> }[];
+  last14Days: { date: string; appointments: number; revenue: number; sources: Record<string, number> }[];
   revenueLastMonthToDate: string;
-  last6Months: { label: string; revenue: number }[];
+  last6Months: { label: string; revenue: number; sources: Record<string, number> }[];
   todayAppointments: { time: string; patient: string; doctor: string; dept: string; status: string }[];
   recentBills: { receiptNo: string; date: string; total: string; status: string; discountPct: number }[];
   outstanding: string;
@@ -75,14 +75,27 @@ export async function adminOverview(): Promise<{
   for (const i of allInv) bySource.set(i.source, r2((bySource.get(i.source) ?? 0) + num(i.totalAmount)));
 
   // 14-day daily series (sparklines + week-over-week) — from allInv + appts
+  // Split any invoice set into per-source revenue (OPD / pharmacy / labs /
+  // inpatient / other) — powers the multi-line revenue trend.
+  const SRC_KEYS = ["CONSULTATION", "PHARMACY", "LAB", "IPD", "OTHER"] as const;
+  const bucketSources = (invs: typeof allInv): Record<string, number> => {
+    const o: Record<string, number> = { CONSULTATION: 0, PHARMACY: 0, LAB: 0, IPD: 0, OTHER: 0 };
+    for (const i of invs) {
+      const k = (SRC_KEYS as readonly string[]).includes(i.source) ? i.source : "OTHER";
+      o[k] = r2(o[k] + num(i.totalAmount));
+    }
+    return o;
+  };
+
   const fortInv = allInv.filter((i) => i.createdAt >= fortnightAgo);
-  const series: { date: string; appointments: number; revenue: number }[] = [];
+  const series: { date: string; appointments: number; revenue: number; sources: Record<string, number> }[] = [];
   for (let d = 13; d >= 0; d--) {
     const day = new Date(today); day.setDate(today.getDate() - d);
     const key = day.toISOString().slice(0, 10);
     const appts = (weekAppts as { visitDate: Date }[]).filter((a) => a.visitDate.toISOString().slice(0, 10) === key).length;
-    const rev = fortInv.filter((i) => i.createdAt.toISOString().slice(0, 10) === key).reduce((s, i) => r2(s + num(i.totalAmount)), 0);
-    series.push({ date: key, appointments: appts, revenue: rev });
+    const dayInv = fortInv.filter((i) => i.createdAt.toISOString().slice(0, 10) === key);
+    const rev = dayInv.reduce((s, i) => r2(s + num(i.totalAmount)), 0);
+    series.push({ date: key, appointments: appts, revenue: rev, sources: bucketSources(dayInv) });
   }
 
   // last month, same day-of-month range — for a fair month-to-date comparison
@@ -93,13 +106,12 @@ export async function adminOverview(): Promise<{
   // last 6 months (monthly) — derived from allInv
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const sixMoInv = allInv.filter((i) => i.createdAt >= sixMonthsAgo);
-  const months: { label: string; revenue: number }[] = [];
+  const months: { label: string; revenue: number; sources: Record<string, number> }[] = [];
   for (let m = 5; m >= 0; m--) {
     const dt = new Date(today.getFullYear(), today.getMonth() - m, 1);
-    const rev = sixMoInv
-      .filter((i) => i.createdAt.getFullYear() === dt.getFullYear() && i.createdAt.getMonth() === dt.getMonth())
-      .reduce((s, i) => r2(s + num(i.totalAmount)), 0);
-    months.push({ label: MONTHS[dt.getMonth()], revenue: rev });
+    const mInv = sixMoInv.filter((i) => i.createdAt.getFullYear() === dt.getFullYear() && i.createdAt.getMonth() === dt.getMonth());
+    const rev = mInv.reduce((s, i) => r2(s + num(i.totalAmount)), 0);
+    months.push({ label: MONTHS[dt.getMonth()], revenue: rev, sources: bucketSources(mInv) });
   }
 
   // outstanding = billed but not fully paid
