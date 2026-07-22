@@ -63,12 +63,13 @@ function Spark({ data, color }: { data: number[]; color: string }) {
   const max = Math.max(...data), min = Math.min(...data), range = max - min || 1;
   const x = (i: number) => (i * W) / (data.length - 1);
   const y = (v: number) => H - 3 - ((v - min) / range) * (H - 6);
-  const pts = data.map((v, i) => `${x(i)},${y(v)}`).join(" ");
-  const area = `${x(0)},${H} ${pts} ${x(data.length - 1)},${H}`;
+  const pts = data.map((v, i) => [x(i), y(v)] as [number, number]);
+  const line = smoothPath(pts);
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="h-9 w-full" preserveAspectRatio="none" aria-hidden>
-      <polygon points={area} fill={color} opacity="0.1" />
-      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d={`${line} L${W},${H} L0,${H} Z`} fill={color} opacity="0.1" />
+      <path d={line} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke" />
       <circle cx={x(data.length - 1)} cy={y(data[data.length - 1])} r="2" fill={color} />
     </svg>
   );
