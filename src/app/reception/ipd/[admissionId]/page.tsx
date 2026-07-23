@@ -29,6 +29,13 @@ interface Sheet {
   balance: string;
 }
 interface Med { id: string; name: string; unit: string; inStock: number; }
+interface History {
+  bills: { id: string; receiptNo: string; source: string; status: string; total: string; paid: string; balance: string; date: string }[];
+  labs: { id: string; testName: string; status: string; reportReady: boolean; reportUrl: string | null; date: string; forThisStay: boolean }[];
+  prescriptions: { id: string; title: string | null; fileUrl: string | null; status: string; forThisStay: boolean; date: string; items: { medicineName: string; qty: number; dosage: string | null }[] }[];
+}
+const SRC_LABEL: Record<string, string> = { CONSULTATION: "Consultation", LAB: "Laboratory", PHARMACY: "Pharmacy", IPD: "Inpatient", OTHER: "Other" };
+const prettyDate = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 
 const CATEGORIES = [
   { k: "PROCEDURE", label: "Procedure" },
@@ -122,6 +129,20 @@ export default function AdmissionSheetPage() {
   ]);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // ── LABS ── order tests straight onto the room tab.
+  const [labCatalog, setLabCatalog] = useState<{ id: string; name: string; code: string | null; price: string }[]>([]);
+  const [labsOpen, setLabsOpen] = useState(false);
+  const [labPick, setLabPick] = useState<Set<string>>(new Set());
+  const [labQuery, setLabQuery] = useState("");
+
+  // ── HISTORY ── the patient's billings, lab reports and pharmacy record.
+  const [history, setHistory] = useState<History | null>(null);
+  const [historyTab, setHistoryTab] = useState<"bills" | "labs" | "rx">("bills");
+  const loadHistory = useCallback(() => {
+    api.get<History>(`/ipd/admissions/${admissionId}/history`).then(setHistory).catch(() => {});
+  }, [admissionId]);
+  useEffect(() => { loadHistory(); }, [loadHistory]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try { setSheet(await api.get<Sheet>(`/ipd/admissions/${admissionId}/sheet`)); }
@@ -137,7 +158,22 @@ export default function AdmissionSheetPage() {
 
   useEffect(() => {
     api.get<{ medicines: Med[] }>("/pharmacy/medicines").then((r) => setMeds(r.medicines)).catch(() => {});
+    api.get<{ catalog: { id: string; name: string; code: string | null; price: string }[] }>("/labs/catalog").then((r) => setLabCatalog(r.catalog)).catch(() => {});
   }, []);
+
+  const labPickTotal = useMemo(() => labCatalog.filter((c) => labPick.has(c.id)).reduce((s, c) => s + Number(c.price), 0), [labCatalog, labPick]);
+
+  async function orderLabs() {
+    if (!sheet || labPick.size === 0) return;
+    setBusy(true); setErr(null);
+    try {
+      await api.post("/labs/tests/order", { patientId: sheet.admission.patient.id, catalogIds: [...labPick] });
+      setFlash(`${labPick.size} test${labPick.size === 1 ? "" : "s"} ordered - charged to the room and queued for the lab.`);
+      setLabsOpen(false); setLabPick(new Set()); setLabQuery("");
+      await load(); loadHistory();
+    } catch (e) { setErr(e instanceof ApiClientError ? e.message : "Could not order the tests."); }
+    finally { setBusy(false); }
+  }
 
   async function saveNotes() {
     setSavingNotes(true); setErr(null);
@@ -174,17 +210,18 @@ export default function AdmissionSheetPage() {
     finally { setBusy(false); }
   }
 
-  /** IP prescription: the doctor's round produced a chit. Same flow as OPD, tied to the stay. */
+  /** IP prescription: the doctor's round produced a chit. The scan is optional -
+   *  typing the medicines and sending to pharmacy is enough on its own. */
   async function uploadRx(send: boolean) {
-    if (!file || !sheet) return;
+    if (!sheet) return;
+    const items = rxItems
+      .filter((r) => r.name.trim())
+      .map((r) => ({ medicineName: r.name.trim(), medicineId: r.medicineId ?? undefined, qty: Number(r.qty || 1), dosage: r.dosage.trim() || undefined }));
+    if (!file && items.length === 0) { setErr("Attach a scan, or type at least one medicine."); return; }
     setBusy(true); setErr(null);
     try {
-      const items = rxItems
-        .filter((r) => r.name.trim())
-        .map((r) => ({ medicineName: r.name.trim(), medicineId: r.medicineId ?? undefined, qty: Number(r.qty || 1), dosage: r.dosage.trim() || undefined }));
-
       const fd = new FormData();
-      fd.append("file", file);
+      if (file) fd.append("file", file);
       fd.append("patientId", sheet.admission.patient.id);
       fd.append("admissionId", sheet.admission.id);
       fd.append("items", JSON.stringify(items));
@@ -194,11 +231,11 @@ export default function AdmissionSheetPage() {
       if (!res.ok) throw new ApiClientError(res.status, (await res.json().catch(() => ({}))).error ?? "Upload failed");
 
       setFlash(send
-        ? "Prescription sent to the pharmacy - the medicines will be charged to this room, not to the patient at the counter."
+        ? "Sent to the pharmacy - the medicines will be charged to this room, not to the patient at the counter."
         : "Prescription saved to the stay.");
       setRxOpen(false); setFile(null); setRxItems([{ name: "", medicineId: null, qty: "1", dosage: "" }]);
-      await load();
-    } catch (e) { setErr(e instanceof ApiClientError ? e.message : "Could not upload."); }
+      await load(); loadHistory();
+    } catch (e) { setErr(e instanceof ApiClientError ? e.message : "Could not save."); }
     finally { setBusy(false); }
   }
 
@@ -252,6 +289,12 @@ export default function AdmissionSheetPage() {
             <button onClick={() => setRxOpen(true)}
               className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
               <Icon name="file" size={15} /> Add prescription
+            </button>
+          )}
+          {!discharged && (
+            <button onClick={() => setLabsOpen(true)}
+              className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+              <Icon name="flask" size={15} /> Order labs
             </button>
           )}
           <a href={`/print/discharge/${a.id}`} target="_blank" rel="noopener noreferrer"
@@ -404,6 +447,57 @@ export default function AdmissionSheetPage() {
             )}
           </div>
         </section>
+
+        {/* PATIENT HISTORY - billings, lab reports, prescriptions (like the profile) */}
+        <section data-rise className="surface overflow-hidden">
+          <div className="border-b border-[var(--p-border)] px-5 py-3.5">
+            <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Patient history</h3>
+            <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">Billings, lab reports and pharmacy across every visit. Rows from this stay are marked.</p>
+          </div>
+          <div className="flex gap-1 border-b border-[var(--p-border)] px-3 py-2">
+            {([["bills", "Billings", history?.bills.length], ["labs", "Lab reports", history?.labs.length], ["rx", "Prescriptions", history?.prescriptions.length]] as const).map(([k, label, n]) => (
+              <button key={k} onClick={() => setHistoryTab(k)}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-semibold transition-colors ${historyTab === k ? "bg-[var(--p-blue)] text-white" : "text-[var(--p-muted)] hover:bg-[var(--p-bg)]"}`}>
+                {label}{n != null && n > 0 && <span className={`rounded-full px-1.5 text-[10.5px] font-bold ${historyTab === k ? "bg-white/25" : "bg-[var(--p-blue-soft)] text-[var(--p-blue-deep)]"}`}>{n}</span>}
+              </button>
+            ))}
+          </div>
+          <div className="divide-y divide-[var(--p-border)]">
+            {!history ? (
+              <div className="flex items-center justify-center gap-2 py-8 text-[13px] text-[var(--p-muted)]"><Spinner size={14} /> Loading history…</div>
+            ) : historyTab === "bills" ? (
+              history.bills.length === 0 ? <p className="px-5 py-8 text-center text-[13px] text-[var(--p-muted)]">No bills yet.</p> : history.bills.map((b) => (
+                <div key={b.id} className="flex items-center justify-between gap-3 px-5 py-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-[13.5px] font-medium text-[var(--p-ink)]"><span className="font-mono">{b.receiptNo}</span> · {SRC_LABEL[b.source] ?? b.source}</div>
+                    <div className="text-[12px] text-[var(--p-muted)]">{prettyDate(b.date)} · Paid ₹{money(b.paid)} of ₹{money(b.total)}{Number(b.balance) > 0 && <span className="text-[var(--p-rose)]"> · ₹{money(b.balance)} due</span>}</div>
+                  </div>
+                  <a href={`/print/invoice/${b.id}`} target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--p-blue)] hover:border-[var(--p-blue)]"><Icon name="receipt" size={13} /> View</a>
+                </div>
+              ))
+            ) : historyTab === "labs" ? (
+              history.labs.length === 0 ? <p className="px-5 py-8 text-center text-[13px] text-[var(--p-muted)]">No lab tests yet.</p> : history.labs.map((l) => (
+                <div key={l.id} className="flex items-center justify-between gap-3 px-5 py-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2"><span className="truncate text-[13.5px] font-medium text-[var(--p-ink)]">{l.testName}</span>{l.forThisStay && <span className="shrink-0 rounded bg-[var(--p-blue-soft)] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[var(--p-blue-deep)]">This stay</span>}</div>
+                    <div className="text-[12px] text-[var(--p-muted)]">{prettyDate(l.date)} · {l.status === "COMPLETED" ? "Completed" : "Pending"}</div>
+                  </div>
+                  {l.reportUrl ? <a href={l.reportUrl} target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--p-cyan)] px-3 py-1.5 text-[12px] font-semibold text-white hover:opacity-90"><Icon name="file" size={13} /> Report</a> : <span className="shrink-0 text-[11.5px] text-[var(--p-muted)]">No report yet</span>}
+                </div>
+              ))
+            ) : (
+              history.prescriptions.length === 0 ? <p className="px-5 py-8 text-center text-[13px] text-[var(--p-muted)]">No prescriptions yet.</p> : history.prescriptions.map((r) => (
+                <div key={r.id} className="flex items-center justify-between gap-3 px-5 py-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2"><span className="truncate text-[13.5px] font-medium text-[var(--p-ink)]">{r.title || (r.items.length ? r.items.map((i) => i.medicineName).slice(0, 2).join(", ") + (r.items.length > 2 ? "…" : "") : "Prescription")}</span>{r.forThisStay && <span className="shrink-0 rounded bg-[var(--p-blue-soft)] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[var(--p-blue-deep)]">This stay</span>}</div>
+                    <div className="text-[12px] text-[var(--p-muted)]">{prettyDate(r.date)} · {r.items.length} item{r.items.length === 1 ? "" : "s"} · {r.status.toLowerCase().replace(/_/g, " ")}</div>
+                  </div>
+                  {r.fileUrl && <a href={r.fileUrl} target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--p-blue)] hover:border-[var(--p-blue)]"><Icon name="file" size={13} /> Scan</a>}
+                </div>
+              ))
+            )}
+          </div>
+        </section>
         </div>
 
         {/* TOTAL */}
@@ -488,7 +582,7 @@ export default function AdmissionSheetPage() {
       {/* IP PRESCRIPTION */}
       {rxOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="surface flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden bg-white">
+          <div className="surface flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden bg-white">
             <div className="flex items-center justify-between border-b border-[var(--p-border)] px-6 py-4">
               <div>
                 <h3 className="text-[15px] font-semibold text-[var(--p-ink)]">Prescription for {a.patient.fullName}</h3>
@@ -497,16 +591,19 @@ export default function AdmissionSheetPage() {
               <button onClick={() => setRxOpen(false)} className="text-[var(--p-muted)] hover:text-[var(--p-ink)]">✕</button>
             </div>
 
-            <div className="flex-1 space-y-4 overflow-y-auto p-6">
-              <div>
-                <p className="mb-1.5 text-[13px] font-medium text-[var(--p-text)]">Scan of the chit <span className="text-[var(--p-rose)]">*</span></p>
+            <div className="flex-1 w-full space-y-4 overflow-y-auto p-6">
+              <div className="w-full" >
+                <p className="mb-1.5  text-[13px] font-medium text-[var(--p-text)]">Scan of the chit <span className="text-[var(--p-muted)]">(optional)</span></p>
                 <input ref={fileRef} type="file" accept={ACCEPT} className="hidden"
                   onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-                <button onClick={() => fileRef.current?.click()}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--p-border-strong)] px-4 py-6 text-[14px] text-[var(--p-muted)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
-                  <Icon name="file" size={16} />
-                  {file ? <span className="font-medium text-[var(--p-ink)]">{file.name}</span> : "PDF, JPG or PNG - up to 10MB"}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => fileRef.current?.click()}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--p-border-strong)] px-4 py-6 text-[14px] text-[var(--p-muted)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+                    <Icon name="file" size={16} />
+                    {file ? <span className="font-medium text-[var(--p-ink)]">{file.name}</span> : "PDF, JPG or PNG - up to 10MB, or skip and just type the medicines"}
+                  </button>
+                  {file && <button onClick={() => setFile(null)} className="shrink-0 rounded-lg border border-[var(--p-border)] px-2.5 py-2 text-[12px] text-[var(--p-muted)] hover:border-[var(--p-rose)] hover:text-[var(--p-rose)]">Clear</button>}
+                </div>
               </div>
 
               <div>
@@ -557,14 +654,64 @@ export default function AdmissionSheetPage() {
 
             <div className="flex flex-wrap justify-end gap-3 border-t border-[var(--p-border)] p-5">
               <button onClick={() => setRxOpen(false)} className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm text-[var(--p-text)]">Cancel</button>
-              <button onClick={() => uploadRx(false)} disabled={busy || !file}
+              <button onClick={() => uploadRx(false)} disabled={busy || (!file && !rxItems.some((r) => r.name.trim()))}
                 className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] disabled:opacity-40">
                 Save only
               </button>
-              <button onClick={() => uploadRx(true)} disabled={busy || !file}
+              <button onClick={() => uploadRx(true)} disabled={busy || (!file && !rxItems.some((r) => r.name.trim()))}
                 className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">
                 {busy ? <><Spinner /> Sending…</> : <><Icon name="check" size={15} /> Send to pharmacy</>}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─────────── ORDER LABS ─────────── */}
+      {labsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setLabsOpen(false)}>
+          <div onClick={(e) => e.stopPropagation()} className="surface flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden bg-white">
+            <div className="flex items-center justify-between border-b border-[var(--p-border)] px-6 py-4">
+              <div>
+                <h3 className="text-[15px] font-semibold text-[var(--p-ink)]">Order lab tests</h3>
+                <p className="text-[13px] text-[var(--p-muted)]">{a.ipNumber} · {a.patient.fullName}</p>
+              </div>
+              <button onClick={() => setLabsOpen(false)} className="text-[var(--p-muted)] hover:text-[var(--p-ink)]">✕</button>
+            </div>
+            <div className="border-b border-[var(--p-border)] px-6 py-3">
+              <div className="flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-3 py-2">
+                <span className="text-[var(--p-muted)]"><Icon name="search" size={15} /></span>
+                <input value={labQuery} onChange={(e) => setLabQuery(e.target.value)} placeholder="Search tests…" className="w-full bg-transparent text-sm text-[var(--p-ink)] outline-none" autoFocus />
+              </div>
+            </div>
+            <div className="flex-1 divide-y divide-[var(--p-border)] overflow-y-auto">
+              {labCatalog.filter((c) => c.name.toLowerCase().includes(labQuery.trim().toLowerCase())).map((c) => {
+                const on = labPick.has(c.id);
+                return (
+                  <button key={c.id} type="button" onClick={() => setLabPick((s) => { const n = new Set(s); if (n.has(c.id)) n.delete(c.id); else n.add(c.id); return n; })}
+                    className="flex w-full items-center justify-between gap-3 px-6 py-3 text-left hover:bg-[var(--p-bg)]">
+                    <span className="flex items-center gap-3">
+                      <span className={`grid h-5 w-5 place-items-center rounded border ${on ? "border-[var(--p-blue)] bg-[var(--p-blue)] text-white" : "border-[var(--p-border-strong)]"}`}>{on && <Icon name="check" size={12} />}</span>
+                      <span><span className="block text-[14px] font-medium text-[var(--p-ink)]">{c.name}</span>{c.code && <span className="block font-mono text-[11px] text-[var(--p-muted)]">{c.code}</span>}</span>
+                    </span>
+                    <span className="font-mono text-[13px] text-[var(--p-ink)]">₹{money(c.price)}</span>
+                  </button>
+                );
+              })}
+              {labCatalog.length === 0 && <p className="px-6 py-8 text-center text-[13px] text-[var(--p-muted)]">No tests in the catalog.</p>}
+            </div>
+            <p className="mx-6 my-3 rounded-lg bg-[var(--p-cyan-soft)] px-3 py-2 text-[12px] leading-relaxed text-[var(--p-cyan-deep)]">
+              Charged to the room - no money at the lab counter. The test is queued for the lab; its report uploads from the Labs portal and shows on the discharge summary.
+            </p>
+            <div className="flex items-center justify-between gap-3 border-t border-[var(--p-border)] p-5">
+              <span className="text-[13px] text-[var(--p-muted)]">{labPick.size} selected · <span className="font-mono font-semibold text-[var(--p-ink)]">₹{money(labPickTotal)}</span></span>
+              <div className="flex gap-2">
+                <button onClick={() => setLabsOpen(false)} className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm text-[var(--p-text)]">Cancel</button>
+                <button onClick={orderLabs} disabled={busy || labPick.size === 0}
+                  className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">
+                  {busy ? <><Spinner /> Ordering…</> : <><Icon name="flask" size={15} /> Order &amp; charge room</>}
+                </button>
+              </div>
             </div>
           </div>
         </div>

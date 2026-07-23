@@ -34,7 +34,9 @@ export async function uploadPrescription(
     appointmentId?: string;
   admissionId?: string;   // an INPATIENT Rx belongs to the stay, not a visit
     title?: string;
-    file: { buffer: Buffer; fileName: string; mimeType: string; size: number };
+    /** Optional: a genuine scan. Omit it to file a TYPED prescription (medicines
+     *  only, no image) - the pharmacy still gets the item list to dispense from. */
+    file?: { buffer: Buffer; fileName: string; mimeType: string; size: number };
     /** Medicines transcribed by reception from the handwriting - this is what
      *  lets the pharmacy pre-pick before the patient reaches the counter. */
     items?: { medicineName: string; medicineId?: string; qty?: number; dosage?: string }[];
@@ -43,11 +45,13 @@ export async function uploadPrescription(
   },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<PrescriptionUploadDTO> {
-  if (!ALLOWED.has(input.file.mimeType)) {
-    throw new ApiError(400, "Only PDF, JPG, PNG or WebP files are allowed");
-  }
-  if (input.file.size > MAX_BYTES) {
-    throw new ApiError(400, "File too large (max 10 MB)");
+  if (input.file) {
+    if (!ALLOWED.has(input.file.mimeType)) {
+      throw new ApiError(400, "Only PDF, JPG, PNG or WebP files are allowed");
+    }
+    if (input.file.size > MAX_BYTES) {
+      throw new ApiError(400, "File too large (max 10 MB)");
+    }
   }
 
   // Patient must exist.
@@ -87,11 +91,6 @@ export async function uploadPrescription(
     doctorName = adm.doctor.name;
   }
 
-  const stored = await storeFile(input.file.buffer, {
-    fileName: input.file.fileName,
-    mimeType: input.file.mimeType,
-  });
-
   const cleanItems = (input.items ?? [])
     .map((it) => ({
       medicineName: it.medicineName.trim(),
@@ -101,16 +100,25 @@ export async function uploadPrescription(
     }))
     .filter((it) => it.medicineName.length > 0);
 
+  // A prescription with neither a scan nor a single medicine is nothing at all.
+  if (!input.file && cleanItems.length === 0) {
+    throw new ApiError(400, "Add a scan, or at least one medicine.");
+  }
+
+  const stored = input.file
+    ? await storeFile(input.file.buffer, { fileName: input.file.fileName, mimeType: input.file.mimeType })
+    : null;
+
   const row = await prisma.prescriptionUpload.create({
     data: {
       patientId: input.patientId,
       appointmentId: input.appointmentId ?? null,
       admissionId: input.admissionId ?? null,
-      fileUrl: stored.fileUrl,
-      storage: stored.storage,
-      fileName: input.file.fileName,
-      mimeType: input.file.mimeType,
-      fileSize: input.file.size,
+      fileUrl: stored?.fileUrl ?? null,
+      storage: stored?.storage ?? "local",
+      fileName: input.file?.fileName ?? null,
+      mimeType: input.file?.mimeType ?? null,
+      fileSize: input.file?.size ?? null,
       title: input.title?.trim() || null,
       uploadedById: actor.id,
       doctorName,

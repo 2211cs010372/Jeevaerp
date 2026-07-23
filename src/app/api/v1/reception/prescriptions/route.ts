@@ -40,10 +40,15 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (!(file instanceof File)) throw new ApiError(400, "No file uploaded");
     if (typeof patientId !== "string" || !patientId) throw new ApiError(400, "patientId is required");
+    // The scan is optional now: a typed prescription (medicines only, no image)
+    // is valid too, so long as there's at least one medicine line.
+    const hasFile = file instanceof File && file.size > 0;
+    if (!hasFile && items.length === 0) throw new ApiError(400, "Attach a scan, or type at least one medicine.");
 
-    const buffer = Buffer.from(await file.arrayBuffer());
+    const filePayload = hasFile
+      ? { buffer: Buffer.from(await file.arrayBuffer()), fileName: file.name, mimeType: file.type, size: file.size }
+      : undefined;
     const result = await uploadPrescription(
       actor,
       {
@@ -53,7 +58,7 @@ export async function POST(req: NextRequest) {
         title: typeof title === "string" ? title : undefined,
         items,
         sendNow,
-        file: { buffer, fileName: file.name, mimeType: file.type, size: file.size },
+        file: filePayload,
       },
       auditContext(req)
     );

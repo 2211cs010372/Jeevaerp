@@ -283,6 +283,48 @@ export async function currentInpatients(): Promise<{
   });
 }
 
+/** Recently discharged stays, each with its final IPD invoice - so the desk can
+ *  re-print a bill after the patient has left and dropped off the live list. */
+export async function recentDischarges(limit = 25): Promise<{
+  id: string; ipNumber: string; admittedAt: string; dischargedAt: string; days: number;
+  ward: string; bedNo: string;
+  patient: { id: string; displayId: string; fullName: string };
+  doctor: { name: string; department: string };
+  invoice: { id: string; receiptNo: string; totalAmount: string; status: string } | null;
+}[]> {
+  const rows = await prisma.admission.findMany({
+    where: { status: "DISCHARGED" },
+    orderBy: { dischargedAt: "desc" },
+    take: limit,
+    select: {
+      id: true, ipNumber: true, admittedAt: true, dischargedAt: true, wardNameAtAdmit: true,
+      bed: { select: { bedNo: true } },
+      patient: { select: { id: true, displayId: true, fullName: true } },
+      doctor: { select: { name: true, department: true } },
+      invoices: { where: { source: "IPD" }, orderBy: { createdAt: "desc" }, take: 1, select: { id: true, receiptNo: true, totalAmount: true, status: true } },
+    },
+  });
+  type Row = {
+    id: string; ipNumber: string; admittedAt: Date; dischargedAt: Date | null; wardNameAtAdmit: string;
+    bed: { bedNo: string } | null;
+    patient: { id: string; displayId: string; fullName: string };
+    doctor: { name: string; department: string };
+    invoices: { id: string; receiptNo: string; totalAmount: { toString(): string }; status: string }[];
+  };
+  return (rows as Row[]).map((r) => {
+    const end = r.dischargedAt ?? new Date();
+    const inv = r.invoices[0];
+    return {
+      id: r.id, ipNumber: r.ipNumber,
+      admittedAt: r.admittedAt.toISOString(), dischargedAt: end.toISOString(),
+      days: stayDays(r.admittedAt, end),
+      ward: r.wardNameAtAdmit, bedNo: r.bed?.bedNo ?? "-",
+      patient: r.patient, doctor: r.doctor,
+      invoice: inv ? { id: inv.id, receiptNo: inv.receiptNo, totalAmount: inv.totalAmount.toString(), status: inv.status } : null,
+    };
+  });
+}
+
 /**
  * Discharge: close the case, free the bed, and raise the IPD invoice for the
  * bed charges (days × rate-at-admission). Lab and pharmacy bills have already
@@ -611,6 +653,50 @@ export async function updateAdmissionNotes(
     meta: { ipNumber: adm.ipNumber }, ...ctx,
   });
   return { notes: clean };
+}
+
+/**
+ * The patient's full record surfaced on the IPD sheet, the way the patient
+ * profile shows it: billings, lab reports and prescriptions / pharmacy history.
+ * Scoped by the admission's patient; the current stay's rows are flagged.
+ */
+export async function admissionHistory(admissionId: string): Promise<{
+  bills: { id: string; receiptNo: string; source: string; status: string; total: string; paid: string; balance: string; date: string }[];
+  labs: { id: string; testName: string; status: string; reportReady: boolean; reportUrl: string | null; date: string; forThisStay: boolean }[];
+  prescriptions: { id: string; title: string | null; fileUrl: string | null; status: string; forThisStay: boolean; date: string; items: { medicineName: string; qty: number; dosage: string | null }[] }[];
+}> {
+  const adm = await prisma.admission.findUnique({ where: { id: admissionId }, select: { patientId: true } });
+  if (!adm) throw new ApiError(404, "Admission not found");
+  const patientId = adm.patientId;
+
+  const [invoices, labs, rxs] = await Promise.all([
+    prisma.invoice.findMany({
+      where: { patientId, status: { not: "CANCELLED" } }, orderBy: { createdAt: "desc" }, take: 50,
+      select: { id: true, receiptNo: true, source: true, status: true, totalAmount: true, createdAt: true, payments: { select: { amount: true } } },
+    }),
+    prisma.labTest.findMany({
+      where: { patientId }, orderBy: { createdAt: "desc" }, take: 50,
+      select: { id: true, testName: true, status: true, reportFileUrl: true, createdAt: true, completedAt: true, admissionId: true },
+    }),
+    prisma.prescriptionUpload.findMany({
+      where: { patientId }, orderBy: { createdAt: "desc" }, take: 50,
+      select: { id: true, title: true, fileUrl: true, status: true, admissionId: true, createdAt: true, items: { select: { medicineName: true, qty: true, dosage: true }, orderBy: { id: "asc" } } },
+    }),
+  ]);
+
+  type Inv = { id: string; receiptNo: string; source: string; status: string; totalAmount: { toString(): string }; createdAt: Date; payments: { amount: { toString(): string } }[] };
+  type Lab = { id: string; testName: string; status: string; reportFileUrl: string | null; createdAt: Date; completedAt: Date | null; admissionId: string | null };
+  type Rx = { id: string; title: string | null; fileUrl: string | null; status: string; admissionId: string | null; createdAt: Date; items: { medicineName: string; qty: number; dosage: string | null }[] };
+
+  return {
+    bills: (invoices as Inv[]).map((i) => {
+      const total = Number(i.totalAmount.toString());
+      const paid = i.payments.reduce((s, p) => s + Number(p.amount.toString()), 0);
+      return { id: i.id, receiptNo: i.receiptNo, source: i.source, status: i.status, total: total.toFixed(2), paid: paid.toFixed(2), balance: Math.max(0, total - paid).toFixed(2), date: i.createdAt.toISOString().slice(0, 10) };
+    }),
+    labs: (labs as Lab[]).map((t) => ({ id: t.id, testName: t.testName, status: t.status, reportReady: Boolean(t.reportFileUrl), reportUrl: t.reportFileUrl, date: (t.completedAt ?? t.createdAt).toISOString().slice(0, 10), forThisStay: t.admissionId === admissionId })),
+    prescriptions: (rxs as Rx[]).map((r) => ({ id: r.id, title: r.title, fileUrl: r.fileUrl, status: r.status, forThisStay: r.admissionId === admissionId, date: r.createdAt.toISOString().slice(0, 10), items: r.items })),
+  };
 }
 
 /**
