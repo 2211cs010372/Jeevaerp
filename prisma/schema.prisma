@@ -562,6 +562,62 @@ model LabTestCatalog {
   active     Boolean @default(true)
 
   labTests LabTest[]
+  analytes LabAnalyte[]
+}
+
+/// How a numeric result compares with its reference range. A report that only
+/// says "5.2" makes the doctor do the arithmetic; this is what lets the screen
+/// shout when something is out of range.
+enum LabResultFlag {
+  NORMAL
+  HIGH
+  LOW
+  /// Non-numeric result the lab marked as not-normal ("Positive", "Growth seen").
+  ABNORMAL
+}
+
+/// TEMPLATE: which analytes a catalogued test reports, and their normal range.
+/// A CBP reports haemoglobin, WBC, platelets - the technician shouldn't retype
+/// those names or ranges for every patient.
+model LabAnalyte {
+  id        String         @id @default(cuid())
+  catalogId String
+  catalog   LabTestCatalog @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+  name      String
+  unit      String?
+  refLow    Decimal?       @db.Decimal(12, 4)
+  refHigh   Decimal?       @db.Decimal(12, 4)
+  /// For results that aren't numbers: "Negative", "Nil", "Clear".
+  refText   String?
+  sortOrder Int            @default(0)
+
+  @@unique([catalogId, name])
+  @@index([catalogId, sortOrder])
+}
+
+/// One measured line on a finished test.
+///
+/// Name, unit and range are SNAPSHOT here rather than read through the catalog:
+/// a report already handed to a patient must never change because someone later
+/// edited a reference range. Same reasoning as priceAtOrder.
+model LabResultItem {
+  id        String        @id @default(cuid())
+  labTestId String
+  labTest   LabTest       @relation(fields: [labTestId], references: [id], onDelete: Cascade)
+  name      String
+  unit      String?
+  /// As reported - a number ("13.4") or text ("Negative").
+  value     String
+  /// The parsed numeric form, when there is one. Drives flagging and trends.
+  valueNum  Decimal?      @db.Decimal(12, 4)
+  refLow    Decimal?      @db.Decimal(12, 4)
+  refHigh   Decimal?      @db.Decimal(12, 4)
+  refText   String?
+  flag      LabResultFlag @default(NORMAL)
+  sortOrder Int           @default(0)
+  createdAt DateTime      @default(now())
+
+  @@index([labTestId, sortOrder])
 }
 
 model LabTest {
@@ -587,6 +643,7 @@ model LabTest {
   completedAt      DateTime?
 
   invoiceItems InvoiceItem[]
+  results      LabResultItem[]
 
   @@index([status])
   @@index([appointmentId])

@@ -5,6 +5,7 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { localDateISO } from "@/lib/date";
 
 interface Doctor { id: string; name: string; department: string; }
 interface Slot {
@@ -20,7 +21,7 @@ const to12h = (t: string) => {
   if (isNaN(h)) return t;
   return `${h % 12 === 0 ? 12 : h % 12}:${String(m ?? 0).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
 };
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => localDateISO();
 
 export default function SchedulePage() {
   const [doctors, setDoctors] = useState<Doctor[]>([]);

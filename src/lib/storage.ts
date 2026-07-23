@@ -9,53 +9,43 @@ export interface StoredFile {
 }
 
 /**
- * Prescription scans are patient health records. They are NOT served from
- * /public - anything in /public is static and public, and the middleware
- * matcher skips paths containing a dot, so a .pdf there is world-readable.
- * They live here instead, outside the web root, and are streamed only by
+ * Storage for PATIENT RECORDS - prescription scans and lab reports. Every caller
+ * of storeFile() is health data, so this module treats everything it holds as PHI.
+ *
+ * Files are NOT served from /public: anything there is static and world-readable,
+ * and the middleware matcher skips paths containing a dot, so a .pdf would be
+ * public. They live outside the web root and are streamed only by
  * /api/v1/files/prescriptions/[key] after an auth + ownership check.
+ *
+ * There is deliberately NO object-storage upload path here. The previous
+ * implementation fell back to Cloudinary, whose `secure_url` is PUBLIC and
+ * guessable - anyone with the link could read a patient's scan without signing
+ * in. Re-introducing a CDN for PHI needs private delivery (Cloudinary
+ * `type=authenticated` + expiring signed URLs) AND a matching change to the file
+ * route so it mints those signatures. Until that exists, keeping the bytes on
+ * the hospital's own disk behind the auth gate is the correct default.
  */
 const PRIVATE_DIR = path.join(process.cwd(), "storage", "prescriptions");
 const URL_PREFIX = "/api/v1/files/prescriptions";
 
-/** Values people leave in .env that are present but meaningless. */
-const PLACEHOLDER = /^(jeeva|your[-_ ]?cloud([-_ ]?name)?|cloud[-_ ]?name|changeme|placeholder|example|test|todo|xxx+|<.*>)$/i;
+let warnedAboutCloudinary = false;
 
 /**
- * True only when Cloudinary is *actually* usable. The old check tested that the
- * vars existed, not that they meant anything - so CLOUDINARY_CLOUD_NAME=jeeva
- * passed, took the Cloudinary branch, and 401'd on every upload.
- */
-function cloudinaryConfigured(): boolean {
-  const e = env();
-  const cloud = e.CLOUDINARY_CLOUD_NAME?.trim();
-  const apiKey = e.CLOUDINARY_API_KEY?.trim();
-  const apiSecret = e.CLOUDINARY_API_SECRET?.trim();
-  if (!cloud || !apiKey || !apiSecret) return false;
-  if (PLACEHOLDER.test(cloud) || PLACEHOLDER.test(apiKey) || PLACEHOLDER.test(apiSecret)) return false;
-  return true;
-}
-
-/**
- * Store a file and return the URL to reach it.
- *
- * Local (default) is the right choice for patient records: the file stays on the
- * hospital's own server and is only readable through an authenticated route.
- * Cloudinary is kept as an option, but see the warning in storeFile below.
+ * Store a patient-record file and return the gated URL to reach it.
+ * Always local, always behind /api/v1/files/... - never a public link.
  */
 export async function storeFile(
   buffer: Buffer,
   opts: { fileName: string; mimeType: string; folder?: string }
 ): Promise<StoredFile> {
-  if (cloudinaryConfigured()) {
-    try {
-      return await uploadToCloudinary(buffer, opts);
-    } catch (err) {
-      // A CDN being down must not lose a prescription. Degrade to local disk
-      // and keep going - the upload is the thing that matters.
-      console.error("[storage] Cloudinary upload failed, falling back to local disk:", err);
-      return saveLocally(buffer, opts);
-    }
+  const e = env();
+  if (!warnedAboutCloudinary && (e.CLOUDINARY_CLOUD_NAME || e.CLOUDINARY_API_KEY || e.CLOUDINARY_API_SECRET)) {
+    warnedAboutCloudinary = true;
+    console.warn(
+      "[storage] Cloudinary credentials are set but will NOT be used. Patient " +
+      "records are stored on local disk behind the authenticated file route, " +
+      "because Cloudinary's default delivery URL is public. See src/lib/storage.ts."
+    );
   }
   return saveLocally(buffer, opts);
 }
@@ -69,47 +59,18 @@ export async function readStoredFile(key: string): Promise<Buffer> {
   return readFile(path.join(PRIVATE_DIR, key));
 }
 
-/** Rebuilds the public-facing URL for a stored key. */
+/** Rebuilds the gated URL for a stored key. */
 export function fileUrlForKey(key: string): string {
   return `${URL_PREFIX}/${key}`;
 }
 
-// ---- Cloudinary (signed upload via REST, no SDK dependency) ----
-async function uploadToCloudinary(
-  buffer: Buffer,
-  opts: { fileName: string; mimeType: string; folder?: string }
-): Promise<StoredFile> {
-  const e = env();
-  const cloud = e.CLOUDINARY_CLOUD_NAME!;
-  const apiKey = e.CLOUDINARY_API_KEY!;
-  const apiSecret = e.CLOUDINARY_API_SECRET!;
-  const folder = opts.folder ?? "jeeva/prescriptions";
-  const timestamp = Math.floor(Date.now() / 1000);
-
-  // NOTE: this produces a *public* secure_url. For patient records you must
-  // switch to type=authenticated + signed delivery URLs, or don't use
-  // Cloudinary at all. See MIGRATE-FIRST.md.
-  const toSign = `folder=${folder}&timestamp=${timestamp}${apiSecret}`;
-  const signature = crypto.createHash("sha1").update(toSign).digest("hex");
-
-  const dataUri = `data:${opts.mimeType};base64,${buffer.toString("base64")}`;
-  const form = new FormData();
-  form.append("file", dataUri);
-  form.append("api_key", apiKey);
-  form.append("timestamp", String(timestamp));
-  form.append("folder", folder);
-  form.append("signature", signature);
-
-  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloud}/auto/upload`, {
-    method: "POST",
-    body: form,
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Cloudinary upload failed: ${res.status} ${text}`);
-  }
-  const json = (await res.json()) as { secure_url: string };
-  return { fileUrl: json.secure_url, storage: "cloudinary" };
+/**
+ * True when a stored URL is one this app can actually gate. A legacy row that
+ * points at an external CDN is NOT gated - treat those as exposed and re-file
+ * them rather than serving them as though they were safe.
+ */
+export function isGatedFileUrl(url: string | null | undefined): boolean {
+  return typeof url === "string" && url.startsWith(`${URL_PREFIX}/`);
 }
 
 // ---- Local disk, OUTSIDE the web root ----

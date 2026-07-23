@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
+import { localDateISO, dateOnlyISO } from "@/lib/date";
 import { logAudit } from "./audit.service";
 import { collectionByMode, type ModeTotal } from "./reports.service";
 import { pharmacyProfitSummary } from "./pharmacy.service";
@@ -91,9 +92,12 @@ export async function adminOverview(): Promise<{
   const series: { date: string; appointments: number; revenue: number; sources: Record<string, number> }[] = [];
   for (let d = 13; d >= 0; d--) {
     const day = new Date(today); day.setDate(today.getDate() - d);
-    const key = day.toISOString().slice(0, 10);
-    const appts = (weekAppts as { visitDate: Date }[]).filter((a) => a.visitDate.toISOString().slice(0, 10) === key).length;
-    const dayInv = fortInv.filter((i) => i.createdAt.toISOString().slice(0, 10) === key);
+    // The bucket label is a LOCAL calendar day. visitDate is a date-only column
+    // (UTC midnight of its day); createdAt is a real instant, so it has to be
+    // read in clinic-local time or a 10 PM bill lands in yesterday's bar.
+    const key = localDateISO(day);
+    const appts = (weekAppts as { visitDate: Date }[]).filter((a) => dateOnlyISO(a.visitDate) === key).length;
+    const dayInv = fortInv.filter((i) => localDateISO(i.createdAt) === key);
     const rev = dayInv.reduce((s, i) => r2(s + num(i.totalAmount)), 0);
     series.push({ date: key, appointments: appts, revenue: rev, sources: bucketSources(dayInv) });
   }

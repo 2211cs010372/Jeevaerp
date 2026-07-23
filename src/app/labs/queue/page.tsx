@@ -14,6 +14,44 @@ interface Test {
   appointment: { opNumber: string; doctorName: string; visitDate: string } | null;
 }
 
+type Flag = "NORMAL" | "HIGH" | "LOW" | "ABNORMAL";
+interface ResultRow {
+  name: string; unit: string | null; value: string;
+  refLow: string | null; refHigh: string | null; refText: string | null;
+  flag: Flag; sortOrder: number;
+}
+interface Sheet {
+  test: { id: string; testName: string; status: string; completedAt: string | null; patient: { displayId: string; fullName: string; age: number | null; gender: string | null } | null };
+  results: ResultRow[];
+  fromTemplate: boolean;
+}
+
+/** Mirrors flagFor() on the server so the bench sees H/L as it types. */
+function liveFlag(value: string, refLow: string | null, refHigh: string | null): Flag | "" {
+  const t = value.trim();
+  if (!t) return "";
+  const n = Number(t);
+  if (!Number.isFinite(n)) return "";
+  if (refHigh != null && n > Number(refHigh)) return "HIGH";
+  if (refLow != null && n < Number(refLow)) return "LOW";
+  return "NORMAL";
+}
+
+/** "12 - 17", "< 200", "> 40", or the text range. */
+function rangeLabel(r: ResultRow): string {
+  if (r.refLow != null && r.refHigh != null) return `${Number(r.refLow)} - ${Number(r.refHigh)}`;
+  if (r.refHigh != null) return `< ${Number(r.refHigh)}`;
+  if (r.refLow != null) return `> ${Number(r.refLow)}`;
+  return r.refText ?? "-";
+}
+
+const FLAG_STYLE: Record<Flag, string> = {
+  NORMAL: "bg-[var(--p-teal-soft)] text-[var(--p-teal-deep)]",
+  HIGH: "bg-[var(--p-rose-soft)] text-[var(--p-rose)]",
+  LOW: "bg-[var(--p-amber-soft)] text-[#8a6414]",
+  ABNORMAL: "bg-[var(--p-rose-soft)] text-[var(--p-rose)]",
+};
+
 export default function LabQueuePage() {
   const [filter, setFilter] = useState<"PENDING" | "COMPLETED" | "ALL">("PENDING");
   const [tests, setTests] = useState<Test[]>([]);
@@ -21,6 +59,44 @@ export default function LabQueuePage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  // ── structured results ──
+  const [sheetFor, setSheetFor] = useState<Test | null>(null);
+  const [sheet, setSheet] = useState<Sheet | null>(null);
+  const [rows, setRows] = useState<ResultRow[]>([]);
+  const [savingSheet, setSavingSheet] = useState(false);
+
+  async function openSheet(t: Test) {
+    setSheetFor(t); setSheet(null); setRows([]); setError(null);
+    try {
+      const s = await api.get<Sheet>(`/labs/tests/${t.id}/results`);
+      setSheet(s); setRows(s.results);
+    } catch (e) { setError(e instanceof ApiClientError ? e.message : "Couldn't open the result sheet."); }
+  }
+
+  function setRow(i: number, patch: Partial<ResultRow>) {
+    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  }
+
+  async function saveSheet() {
+    if (!sheetFor) return;
+    const items = rows
+      .filter((r) => r.name.trim() && r.value.trim())
+      .map((r) => ({
+        name: r.name.trim(), unit: r.unit, value: r.value.trim(),
+        refLow: r.refLow != null ? Number(r.refLow) : null,
+        refHigh: r.refHigh != null ? Number(r.refHigh) : null,
+        refText: r.refText,
+      }));
+    if (items.length === 0) { setError("Enter a value for at least one analyte."); return; }
+    setSavingSheet(true); setError(null);
+    try {
+      await api.put(`/labs/tests/${sheetFor.id}/results`, { items });
+      setSheetFor(null); setSheet(null); setRows([]);
+      await load();
+    } catch (e) { setError(e instanceof ApiClientError ? e.message : "Could not save the results."); }
+    finally { setSavingSheet(false); }
+  }
 
   async function load() {
     setLoading(true);
@@ -119,6 +195,12 @@ export default function LabQueuePage() {
                     </a>
                   )}
 
+                  {/* The numbers themselves - what makes a result readable by a screen. */}
+                  <button onClick={() => openSheet(t)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-teal)]/40 bg-[var(--p-teal-soft)] px-3 py-1.5 text-[12px] font-semibold text-[var(--p-teal-deep)] transition-colors hover:bg-[var(--p-teal)] hover:text-white">
+                    <Icon name="flask" size={13} /> {t.status === "PENDING" ? "Enter results" : "Results"}
+                  </button>
+
                   {t.status === "COMPLETED" && (
                     <>
                       <input
@@ -162,6 +244,93 @@ export default function LabQueuePage() {
           </div>
         )}
       </section>
+
+      {/* ─────────── RESULT SHEET ─────────── */}
+      {sheetFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setSheetFor(null)}>
+          <div onClick={(e) => e.stopPropagation()} className="surface flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden bg-white">
+            <div className="flex items-start justify-between gap-4 border-b border-[var(--p-border)] px-6 py-4">
+              <div>
+                <h3 className="text-[15px] font-semibold text-[var(--p-ink)]">{sheetFor.testName}</h3>
+                <p className="text-[13px] text-[var(--p-muted)]">
+                  {sheetFor.patient?.fullName ?? "-"} · <span className="tabular">{sheetFor.patient?.displayId ?? "-"}</span>
+                  {sheet?.fromTemplate && <span className="ml-2 rounded bg-[var(--p-teal-soft)] px-1.5 py-0.5 text-[10px] font-bold uppercase text-[var(--p-teal-deep)]">from template</span>}
+                </p>
+              </div>
+              <button onClick={() => setSheetFor(null)} className="text-[var(--p-muted)] hover:text-[var(--p-ink)]">✕</button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 py-4">
+              {!sheet ? (
+                <div className="flex items-center justify-center gap-2 py-12 text-[13px] text-[var(--p-muted)]"><Spinner size={14} /> Opening the sheet…</div>
+              ) : rows.length === 0 ? (
+                <p className="py-10 text-center text-[13px] text-[var(--p-muted)]">
+                  No analyte template for this test yet. Add a line below to record the reading.
+                </p>
+              ) : (
+                <table className="w-full border-collapse text-[13px]">
+                  <thead>
+                    <tr className="text-left text-[10px] uppercase tracking-wide text-[var(--p-muted)]">
+                      <th className="pb-2 pr-2 font-semibold">Analyte</th>
+                      <th className="w-[120px] pb-2 pr-2 font-semibold">Value</th>
+                      <th className="w-[80px] pb-2 pr-2 font-semibold">Unit</th>
+                      <th className="w-[110px] pb-2 pr-2 font-semibold">Reference</th>
+                      <th className="w-[70px] pb-2 font-semibold">Flag</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => {
+                      const f = liveFlag(r.value, r.refLow, r.refHigh);
+                      return (
+                        <tr key={i} className="border-t border-[var(--p-border)]">
+                          <td className="py-2 pr-2">
+                            <input value={r.name} onChange={(e) => setRow(i, { name: e.target.value })}
+                              className="w-full bg-transparent text-[13px] font-medium text-[var(--p-ink)] outline-none" />
+                          </td>
+                          <td className="py-2 pr-2">
+                            <input value={r.value} onChange={(e) => setRow(i, { value: e.target.value })}
+                              placeholder="-" autoFocus={i === 0}
+                              className="w-full rounded-lg border border-[var(--p-border)] bg-white px-2.5 py-1.5 font-mono text-[13px] text-[var(--p-ink)] outline-none focus:border-[var(--p-teal)]" />
+                          </td>
+                          <td className="py-2 pr-2 font-mono text-[12px] text-[var(--p-muted)]">{r.unit ?? "-"}</td>
+                          <td className="py-2 pr-2 font-mono text-[12px] text-[var(--p-muted)]">{rangeLabel(r)}</td>
+                          <td className="py-2">
+                            {f && f !== "NORMAL" ? (
+                              <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${FLAG_STYLE[f]}`}>{f}</span>
+                            ) : f === "NORMAL" ? (
+                              <span className="text-[11px] text-[var(--p-muted)]">normal</span>
+                            ) : null}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+
+              {sheet && (
+                <button
+                  onClick={() => setRows((rs) => [...rs, { name: "", unit: null, value: "", refLow: null, refHigh: null, refText: null, flag: "NORMAL", sortOrder: rs.length }])}
+                  className="mt-3 inline-flex items-center gap-1.5 text-[13px] font-medium text-[var(--p-teal)]">
+                  <Icon name="plus" size={12} /> Add a line
+                </button>
+              )}
+            </div>
+
+            <p className="mx-6 mb-3 rounded-lg bg-[var(--p-teal-soft)] px-3 py-2 text-[12px] leading-relaxed text-[var(--p-teal-deep)]">
+              Saving marks the test completed and stamps your name on it. The reference range is stored
+              alongside each value, so a later change to the catalogue can&apos;t re-grade a report already given out.
+            </p>
+
+            <div className="flex items-center justify-end gap-3 border-t border-[var(--p-border)] p-5">
+              <button onClick={() => setSheetFor(null)} className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm text-[var(--p-text)]">Cancel</button>
+              <PrimaryButton onClick={saveSheet} disabled={savingSheet || !sheet}>
+                {savingSheet ? <><Spinner /> Saving…</> : <><Icon name="check" size={15} /> Save results</>}
+              </PrimaryButton>
+            </div>
+          </div>
+        </div>
+      )}
     </PortalScroll>
   );
 }

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api-client";
+import { localDateISO } from "@/lib/date";
 import {
   Calendar, FileText, FlaskConical, Receipt, User, LogOut, Plus, Download,
   ArrowRight, Activity, Stethoscope, MapPin, Phone, Clock, CheckCircle2,
@@ -77,7 +78,7 @@ export default function PatientPortalPage() {
   }
   async function logout() { try { await api.post("/auth/logout"); } catch { /* ignore */ } window.location.assign("/portal/login"); }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateISO();
   const upcoming = useMemo(() => (data?.appointments ?? []).filter((a) => a.visitDate >= today && (a.status === "BOOKED" || a.status === "CHECKED_IN")).sort((a, b) => a.visitDate.localeCompare(b.visitDate)), [data, today]);
   const pendingBalance = useMemo(() => (data?.bills ?? []).reduce((s, b) => s + Number(b.balance), 0), [data]);
   const reportsReady = (data?.labTests ?? []).filter((l) => l.reportReady).length;

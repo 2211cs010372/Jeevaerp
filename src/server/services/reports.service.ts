@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { r2 } from "@/server/billing/calc";
+import { localDateISO } from "@/lib/date";
 
 /**
  * DAY CLOSE - what should physically be in the drawer right now.
@@ -122,7 +123,7 @@ export async function dayClose(dateISO?: string): Promise<DayClose> {
   const refunded = r2(modes.reduce((s, m) => r2(s + m.refunded), 0));
 
   return {
-    date: from.toISOString().slice(0, 10),
+    date: localDateISO(from),
     modes,
     totals: { collected, refunded, net: r2(collected - refunded) },
     // The drawer only ever sees cash. A ₹5,000 UPI refund does not empty it.
@@ -220,7 +221,7 @@ export async function collectionByMode(opts?: {
   const collected = r2(modes.reduce((s, m) => r2(s + m.collected), 0));
   const refunded = r2(modes.reduce((s, m) => r2(s + m.refunded), 0));
   return {
-    date: from.toISOString().slice(0, 10),
+    date: localDateISO(from),
     modes,
     totals: { collected, refunded, net: r2(collected - refunded), count: modes.reduce((s, m) => s + m.count, 0) },
   };

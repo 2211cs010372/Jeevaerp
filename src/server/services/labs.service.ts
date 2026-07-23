@@ -217,6 +217,172 @@ export async function completeTest(actor: AuthUser, labTestId: string, ctx: { ip
   return toTestDTO(row);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// STRUCTURED RESULTS
+//
+// A PDF is a picture of a result; it can't be flagged, trended or read by the
+// doctor's screen. These are the actual numbers, each carried next to the
+// reference range it was judged against.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type LabResultFlagT = "NORMAL" | "HIGH" | "LOW" | "ABNORMAL";
+
+export interface LabResultDTO {
+  name: string; unit: string | null; value: string;
+  refLow: string | null; refHigh: string | null; refText: string | null;
+  flag: LabResultFlagT; sortOrder: number;
+}
+
+export interface LabResultInput {
+  name: string; unit?: string | null; value: string;
+  refLow?: number | null; refHigh?: number | null; refText?: string | null;
+  /** For results that aren't numbers ("Positive"), the lab says if it's abnormal. */
+  abnormal?: boolean;
+}
+
+/** A value is only numeric if the whole string is a number - "<0.5" is text. */
+function toNumeric(value: string): number | null {
+  const t = value.trim();
+  if (!t) return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Where a value sits against its range. Numbers are judged against the range;
+ * anything non-numeric is whatever the lab marked it, because only they can say
+ * whether "Growth seen" is abnormal.
+ */
+export function flagFor(
+  valueNum: number | null,
+  refLow: number | null,
+  refHigh: number | null,
+  abnormal = false
+): LabResultFlagT {
+  if (valueNum === null) return abnormal ? "ABNORMAL" : "NORMAL";
+  if (refHigh !== null && valueNum > refHigh) return "HIGH";
+  if (refLow !== null && valueNum < refLow) return "LOW";
+  return "NORMAL";
+}
+
+const dec = (v: { toString(): string } | null | undefined) => (v == null ? null : v.toString());
+
+/**
+ * The result sheet a technician works on: the saved values if there are any,
+ * otherwise blank rows pre-filled from the test's analyte template so nobody
+ * retypes "Haemoglobin  g/dL  13-17" for every patient.
+ */
+export async function labResultSheet(labTestId: string): Promise<{
+  test: {
+    id: string; testName: string; status: string; completedAt: string | null;
+    patient: { displayId: string; fullName: string; age: number | null; gender: string | null } | null;
+  };
+  results: LabResultDTO[];
+  fromTemplate: boolean;
+}> {
+  const t = await prisma.labTest.findUnique({
+    where: { id: labTestId },
+    select: {
+      id: true, testName: true, status: true, completedAt: true, catalogId: true,
+      patient: { select: { displayId: true, fullName: true, age: true, gender: true } },
+      results: { orderBy: { sortOrder: "asc" } },
+    },
+  });
+  if (!t) throw new ApiError(404, "Test not found");
+
+  type Row = { name: string; unit: string | null; value: string; refLow: unknown; refHigh: unknown; refText: string | null; flag: string; sortOrder: number };
+  const saved = (t.results as Row[]).map((r) => ({
+    name: r.name, unit: r.unit, value: r.value,
+    refLow: dec(r.refLow as { toString(): string } | null), refHigh: dec(r.refHigh as { toString(): string } | null),
+    refText: r.refText, flag: r.flag as LabResultFlagT, sortOrder: r.sortOrder,
+  }));
+
+  let results = saved;
+  let fromTemplate = false;
+  if (saved.length === 0 && t.catalogId) {
+    const tpl = await prisma.labAnalyte.findMany({ where: { catalogId: t.catalogId }, orderBy: { sortOrder: "asc" } });
+    type Tpl = { name: string; unit: string | null; refLow: unknown; refHigh: unknown; refText: string | null; sortOrder: number };
+    results = (tpl as Tpl[]).map((a) => ({
+      name: a.name, unit: a.unit, value: "",
+      refLow: dec(a.refLow as { toString(): string } | null), refHigh: dec(a.refHigh as { toString(): string } | null),
+      refText: a.refText, flag: "NORMAL" as LabResultFlagT, sortOrder: a.sortOrder,
+    }));
+    fromTemplate = results.length > 0;
+  }
+
+  return {
+    test: {
+      id: t.id, testName: t.testName, status: t.status,
+      completedAt: t.completedAt ? t.completedAt.toISOString() : null,
+      patient: t.patient,
+    },
+    results,
+    fromTemplate,
+  };
+}
+
+/**
+ * Save the measured values. Replaces the whole sheet - editing a result is
+ * re-entering the sheet, and a half-updated report is worse than none. The
+ * range is snapshot onto each line so a later catalog edit can't silently
+ * re-grade a report the patient already has.
+ */
+export async function saveLabResults(
+  actor: AuthUser,
+  input: { labTestId: string; items: LabResultInput[]; complete?: boolean },
+  ctx: { ipAddress?: string; userAgent?: string }
+): Promise<{ results: LabResultDTO[]; abnormal: number }> {
+  const test = await prisma.labTest.findUnique({
+    where: { id: input.labTestId },
+    select: { id: true, testName: true, patientId: true },
+  });
+  if (!test) throw new ApiError(404, "Test not found");
+
+  const rows = input.items
+    .map((it, i) => ({ ...it, name: it.name.trim(), value: it.value.trim(), sortOrder: i }))
+    .filter((it) => it.name.length > 0 && it.value.length > 0);
+  if (rows.length === 0) throw new ApiError(400, "Enter a value for at least one analyte");
+
+  const prepared = rows.map((it) => {
+    const valueNum = toNumeric(it.value);
+    const refLow = it.refLow ?? null;
+    const refHigh = it.refHigh ?? null;
+    return {
+      labTestId: input.labTestId,
+      name: it.name,
+      unit: it.unit?.trim() || null,
+      value: it.value,
+      valueNum: valueNum === null ? null : valueNum.toFixed(4),
+      refLow: refLow === null ? null : refLow.toFixed(4),
+      refHigh: refHigh === null ? null : refHigh.toFixed(4),
+      refText: it.refText?.trim() || null,
+      flag: flagFor(valueNum, refLow, refHigh, it.abnormal) as never,
+      sortOrder: it.sortOrder,
+    };
+  });
+
+  await prisma.$transaction(async (tx) => {
+    await tx.labResultItem.deleteMany({ where: { labTestId: input.labTestId } });
+    await tx.labResultItem.createMany({ data: prepared });
+    if (input.complete !== false) {
+      await tx.labTest.update({
+        where: { id: input.labTestId },
+        data: { status: "COMPLETED", completedAt: new Date(), technicianId: actor.id },
+      });
+    }
+  });
+
+  const abnormal = prepared.filter((p) => (p.flag as unknown as string) !== "NORMAL").length;
+  await logAudit(actor, {
+    action: "LAB_RESULTS_SAVED", targetTable: "LabTest", targetId: input.labTestId,
+    meta: { testName: test.testName, lines: prepared.length, abnormal },
+    ...ctx,
+  });
+
+  const sheet = await labResultSheet(input.labTestId);
+  return { results: sheet.results, abnormal };
+}
+
 /**
  * Generate a GST bill for one or more lab tests. GST rate comes from each
  * test's catalog entry (0% = exempt, the correct default for diagnostics -
@@ -274,12 +440,16 @@ export async function billLabTests(
 /** Lab dashboard counters. */
 export async function labStats(): Promise<{
   pending: number; completedToday: number; totalToday: number; revenueToday: string; unbilled: number;
+  /** Finished tests whose report file was never uploaded - the loose ends. */
+  reportsPending: number;
+  /** Tests riding on an inpatient's room tab rather than a counter bill. */
+  ipdTests: number;
   collections: ModeTotal[];
 }> {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
 
-  const [pending, completedToday, totalToday, invoices, unbilled] = await Promise.all([
+  const [pending, completedToday, totalToday, invoices, unbilled, reportsPending, ipdTests] = await Promise.all([
     prisma.labTest.count({ where: { status: "PENDING" } }),
     prisma.labTest.count({ where: { status: "COMPLETED", completedAt: { gte: today, lt: tomorrow } } }),
     prisma.labTest.count({ where: { createdAt: { gte: today, lt: tomorrow } } }),
@@ -287,13 +457,15 @@ export async function labStats(): Promise<{
       where: { source: "LAB", createdAt: { gte: today, lt: tomorrow }, status: { not: "CANCELLED" } },
       select: { totalAmount: true },
     }),
-    prisma.labTest.count({ where: { invoiceItems: { none: {} } } }),
+    prisma.labTest.count({ where: { invoiceItems: { none: {} }, admissionId: null } }),
+    prisma.labTest.count({ where: { status: "COMPLETED", reportFileUrl: null } }),
+    prisma.labTest.count({ where: { admissionId: { not: null }, status: "PENDING" } }),
   ]);
 
   const revenue = invoices.reduce((s: number, i: { totalAmount: { toString(): string } }) => s + Number(i.totalAmount.toString()), 0);
   // What the lab till took today, split by payment type.
   const collections = await collectionByMode({ sources: ["LAB"] });
-  return { pending, completedToday, totalToday, revenueToday: revenue.toFixed(2), unbilled, collections: collections.modes };
+  return { pending, completedToday, totalToday, revenueToday: revenue.toFixed(2), unbilled, reportsPending, ipdTests, collections: collections.modes };
 }
 
 /** A patient's lab history + last visit - what the lab needs at the counter. */

@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
 import { Scoop } from "@/components/ui/scoop";
 import { DEPARTMENTS, DOCTORS, type Doctor } from "@/lib/data";
+import { localDateISO } from "@/lib/date";
 
 /* ---- timings, derived from the doctor's real OPD window ------------------- */
 
@@ -138,7 +139,7 @@ export function BookingForm() {
   const slots = doctor ? slotsFor(doctor.opd) : [];
   const dayOk = !doctor || !date || allowedDays(doctor.days).has(new Date(`${date}T00:00:00`).getDay());
   const ready = doctor && date && dayOk && slot && name.trim() && phone.trim();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateISO();
 
   function submit() {
     if (!ready) return;

@@ -1,5 +1,20 @@
 import { z } from "zod";
 
+/** One measured line. `value` stays a string so "Negative" and "<0.5" survive. */
+export const saveLabResultsSchema = z.object({
+  items: z.array(z.object({
+    name: z.string().trim().min(1).max(120),
+    unit: z.string().trim().max(30).nullish(),
+    value: z.string().trim().min(1).max(120),
+    refLow: z.coerce.number().nullish(),
+    refHigh: z.coerce.number().nullish(),
+    refText: z.string().trim().max(120).nullish(),
+    abnormal: z.boolean().optional(),
+  })).min(1, "Enter at least one result").max(80),
+  /** Default true - entering results finishes the test. */
+  complete: z.boolean().optional(),
+});
+
 export const orderTestsSchema = z.object({
   patientId: z.string().trim().min(1, "Select a patient"),
   catalogIds: z.array(z.string().trim().min(1)).min(1, "Select at least one test"),

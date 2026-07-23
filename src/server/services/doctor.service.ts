@@ -36,11 +36,27 @@ export interface DoctorQueueItem {
   patient: { id: string; displayId: string; fullName: string; age: number | null; gender: string | null; phone: string; bloodGroup: string | null };
 }
 
-/** Today's clinic list for this doctor - the queue they work through. */
+/** A finished investigation on one of this doctor's patients, waiting to be read. */
+export interface DoctorLabResult {
+  id: string; testName: string; reportReady: boolean; reportUrl: string | null;
+  completedAt: string; source: "OPD" | "IPD";
+  patient: { displayId: string; fullName: string };
+}
+/** One of this doctor's patients currently lying in a bed. */
+export interface DoctorInpatient {
+  admissionId: string; ipNumber: string; wardName: string; bedNo: string; days: number; admittedAt: string;
+  patient: { displayId: string; fullName: string; age: number | null; gender: string | null };
+}
+
+/** Today's clinic list for this doctor - the queue they work through, plus the
+ *  two things a doctor otherwise has to go hunting for: results that have come
+ *  back, and their own patients currently admitted upstairs. */
 export async function doctorToday(actor: AuthUser): Promise<{
   doctor: { name: string; department: string };
-  stats: { booked: number; checkedIn: number; completed: number };
+  stats: { booked: number; checkedIn: number; completed: number; total: number };
   queue: DoctorQueueItem[];
+  labResults: DoctorLabResult[];
+  inpatients: DoctorInpatient[];
 }> {
   const doc = await doctorForUser(actor);
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -71,14 +87,72 @@ export async function doctorToday(actor: AuthUser): Promise<{
     patient: a.patient,
   }));
 
+  // ── Results back in the last fortnight, on this doctor's patients ──
+  // A test belongs to this doctor through the visit that ordered it, or through
+  // the stay they're admitted under.
+  const since = new Date(Date.now() - 14 * 86400000);
+  const labRows = await prisma.labTest.findMany({
+    where: {
+      status: "COMPLETED",
+      completedAt: { gte: since },
+      OR: [{ appointment: { doctorId: doc.id } }, { admission: { doctorId: doc.id } }],
+    },
+    orderBy: { completedAt: "desc" },
+    take: 10,
+    select: {
+      id: true, testName: true, reportFileUrl: true, completedAt: true, admissionId: true,
+      patient: { select: { displayId: true, fullName: true } },
+    },
+  });
+  type LabRow = {
+    id: string; testName: string; reportFileUrl: string | null; completedAt: Date | null; admissionId: string | null;
+    patient: { displayId: string; fullName: string } | null;
+  };
+  const labResults: DoctorLabResult[] = (labRows as LabRow[])
+    .filter((t) => t.patient)
+    .map((t) => ({
+      id: t.id, testName: t.testName,
+      reportReady: Boolean(t.reportFileUrl), reportUrl: t.reportFileUrl,
+      completedAt: (t.completedAt ?? new Date()).toISOString(),
+      source: t.admissionId ? "IPD" : "OPD",
+      patient: t.patient!,
+    }));
+
+  // ── This doctor's patients currently in a bed ──
+  const admRows = await prisma.admission.findMany({
+    where: { doctorId: doc.id, status: "ADMITTED" },
+    orderBy: { admittedAt: "asc" },
+    select: {
+      id: true, ipNumber: true, admittedAt: true, wardNameAtAdmit: true,
+      bed: { select: { bedNo: true } },
+      patient: { select: { displayId: true, fullName: true, age: true, gender: true } },
+    },
+  });
+  type AdmRow = {
+    id: string; ipNumber: string; admittedAt: Date; wardNameAtAdmit: string;
+    bed: { bedNo: string } | null;
+    patient: { displayId: string; fullName: string; age: number | null; gender: string | null };
+  };
+  const now = Date.now();
+  const inpatients: DoctorInpatient[] = (admRows as AdmRow[]).map((a) => ({
+    admissionId: a.id, ipNumber: a.ipNumber,
+    wardName: a.wardNameAtAdmit, bedNo: a.bed?.bedNo ?? "-",
+    days: Math.max(1, Math.ceil((now - a.admittedAt.getTime()) / 86400000)),
+    admittedAt: a.admittedAt.toISOString(),
+    patient: a.patient,
+  }));
+
   return {
     doctor: { name: doc.name, department: doc.department },
     stats: {
       booked: queue.filter((q) => q.status === "BOOKED").length,
       checkedIn: queue.filter((q) => q.status === "CHECKED_IN").length,
       completed: queue.filter((q) => q.status === "COMPLETED").length,
+      total: queue.length,
     },
     queue,
+    labResults,
+    inpatients,
   };
 }
 
