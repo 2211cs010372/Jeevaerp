@@ -100,6 +100,11 @@ export const PORTALS: Record<string, PortalMeta> = {
       { label: "Dispense", href: "/dispense", icon: "pill" },
       { label: "Stock", href: "/stock", icon: "grid" },
       { label: "Alerts", href: "/alerts", icon: "alert" },
+      { label: "Reorder", href: "/reorder", icon: "trend" },
+      { label: "Purchase orders", href: "/purchase-orders", icon: "file" },
+      { label: "Receive goods", href: "/receive", icon: "inbox" },
+      { label: "Returns", href: "/returns", icon: "undo" },
+      { label: "Suppliers", href: "/suppliers", icon: "truck" },
     ],
     groups: [
       {
@@ -115,6 +120,18 @@ export const PORTALS: Record<string, PortalMeta> = {
         items: [
           { label: "Stock", href: "/stock", icon: "grid", hint: "What's on the rack. Add, edit, write off." },
           { label: "Alerts", href: "/alerts", icon: "alert", hint: "Running low, expiring, or expired." },
+        ],
+      },
+      {
+        // Stock used to only ever go DOWN. This group is how it comes back in -
+        // in the order you actually do it: decide, order, receive, send back.
+        title: "Buying it in",
+        items: [
+          { label: "Reorder", href: "/reorder", icon: "trend", hint: "What to buy, priced and grouped by supplier." },
+          { label: "Purchase orders", href: "/purchase-orders", icon: "file", hint: "What's on order and what's overdue." },
+          { label: "Receive goods", href: "/receive", icon: "inbox", hint: "Book in a delivery against its invoice." },
+          { label: "Returns", href: "/returns", icon: "undo", hint: "Expiry credit owed by distributors." },
+          { label: "Suppliers", href: "/suppliers", icon: "truck", hint: "Distributors, licences and terms." },
         ],
       },
     ],

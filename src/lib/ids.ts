@@ -18,6 +18,12 @@ const FORMATS = {
   IP: (y: number, n: number) => `JMH${y}IP${String(n).padStart(5, "0")}`,
   /** Insurance claim - CLM-2026-000045. */
   CLAIM: (y: number, n: number) => `CLM-${y}-${pad(n)}`,
+  /// Pharmacy purchase order - PO-2026-000012. Printed and sent to the distributor.
+  PO: (y: number, n: number) => `PO-${y}-${pad(n)}`,
+  /// Goods receipt note - GRN-2026-000034. The document a batch traces back to.
+  GRN: (y: number, n: number) => `GRN-${y}-${pad(n)}`,
+  /// Purchase return / debit note to a distributor - PR-2026-000008.
+  PRETURN: (y: number, n: number) => `PR-${y}-${pad(n)}`,
 } as const;
 
 export type IdKind = keyof typeof FORMATS;

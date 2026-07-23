@@ -38,6 +38,72 @@ export const PRINT_CSS = `
   }
 `;
 
+/**
+ * A5 invoice stationery.
+ *
+ * The bill is printed on A5 (148 × 210 mm) - half a sheet, the size a pharmacy
+ * or hospital counter actually runs its bill printer at. Two things follow from
+ * that and from the client's ask:
+ *
+ *  1. NO letterhead image. The masthead is set in TEXT (name · GSTIN · address ·
+ *     phone), so it prints crisp on a thermal/laser A5 and needs no asset.
+ *  2. It PAGINATES. A long inpatient bill won't fit on one A5, so the sheet
+ *     flows in normal document order (not pinned with position:absolute, which
+ *     clips to a single page) and the table header repeats on each sheet. Rows
+ *     never split across the fold (break-inside:avoid).
+ *
+ * Because the /print routes render bare (no portal shell), normal flow starts at
+ * the top of the page with no offset.
+ */
+export const INVOICE_PRINT_CSS = `
+  .print-stage { --pr-primary: #0b5f55; --pr-accent: #c77d33; --pr-ink: #17211e; --pr-line: #b9c4c0; }
+  .print-stage { background: #e8e6e1; min-height: 100vh; padding: 24px 12px 64px; }
+  #print-sheet { width: 148mm; margin: 0 auto; background: #fff; color: var(--pr-ink);
+    box-shadow: 0 8px 40px rgba(0,0,0,.18); padding: 8mm 9mm;
+    font-family: var(--font-sans, "Instrument Sans"), "Noto Sans Telugu", "Nirmala UI", Arial, sans-serif;
+    font-size: 9.7px; line-height: 1.42; }
+  #print-sheet .rule { border-bottom: 1px solid var(--pr-line); }
+  #print-sheet .rule-strong { border-bottom: 2px solid var(--pr-primary); }
+  @media print {
+    html, body { background: #fff !important; }
+    body * { visibility: hidden !important; }
+    #print-sheet, #print-sheet * { visibility: visible !important; }
+    /* static flow (NOT absolute) is what lets a long bill run onto a second A5 */
+    #print-sheet { position: static !important; width: auto; margin: 0; box-shadow: none; padding: 0; }
+    .print-stage { background: #fff !important; padding: 0 !important; margin: 0 !important; min-height: 0 !important; }
+    @page { size: A5 portrait; margin: 8mm; }
+    thead { display: table-header-group; }   /* repeat the column header on every page */
+    tr { break-inside: avoid; }
+    .keep-together { break-inside: avoid; }
+  }
+`;
+
+/**
+ * Text masthead for the bill - the replacement for the photographed letterhead.
+ * Name large, then GSTIN, address and phone as plain lines. Falls back to the
+ * hospital's real details when Hospital settings aren't loaded, so a bill never
+ * prints anonymous.
+ */
+export function BillHead({ hospital }: { hospital: HospitalInfo | null }) {
+  const name = hospital?.legalName ?? "Jeeva Multispeciality Hospital";
+  const address = hospital
+    ? `${hospital.addressLine}, ${hospital.city}, ${hospital.state} – ${hospital.pincode}`
+    : "# 1-8-81, Sai Nagar, Beside Swimming Pool, Balasamudram, Hanamkonda, Telangana – 506 001";
+  const phone = hospital?.phone ?? "9704691308";
+  return (
+    <div className="keep-together rule-strong pb-2 text-center">
+      <div className="text-[17px] font-extrabold uppercase leading-tight tracking-tight" style={{ color: "var(--pr-primary)" }}>
+        {name}
+      </div>
+      <div className="mt-1 text-[9px] font-medium leading-snug text-[#2b3a35]">{address}</div>
+      <div className="mt-0.5 flex items-center justify-center gap-x-3 gap-y-0.5 text-[9px] font-semibold text-[#2b3a35]">
+        {hospital?.gstin && <span>GSTIN: <span className="font-mono">{hospital.gstin}</span></span>}
+        <span>Phone: <span className="font-mono">{phone}</span></span>
+      </div>
+    </div>
+  );
+}
+
 /** Screen-only toolbar; vanishes in print. */
 export function PrintToolbar({ title }: { title: string }) {
   return (
@@ -108,11 +174,7 @@ export function LetterHead({ hospital, doctor }: {
 
   return (
     <div className="rule-strong w-full  flex items-end justify-between  h-full  pb-2">
-      {doctor && (
-        <div className="mt-1 text-start text-[10px] font-semibold" style={{ color: "var(--pr-primary)" }}>
-          <span className="font-bold tracking-tighter text-[25px] flex flex-col leading-[0.8] justify-start text-start "> {doctor.name}</span> <br /> · <span className="font-medium text-[21px] tracking-tighter leading-[0.8]">{doctor.specialization}</span> <br /> · Department of {doctor.department}
-        </div>
-      )}
+
       <div className="w-[800px]" style={{ margin: "0 -11mm" }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
@@ -128,8 +190,9 @@ export function LetterHead({ hospital, doctor }: {
 }
 
 /** The two-row patient strip every document opens with. */
-export function PatientStrip({ cells }: {
+export function PatientStrip({ cells, doctor }: {
   cells: { k: string; v: string; grow?: boolean; mono?: boolean; pen?: boolean }[];
+  doctor?: { name: string; specialization: string; department: string } | null;
 }) {
   return (
     <div
@@ -147,6 +210,11 @@ export function PatientStrip({ cells }: {
           )}
         </div>
       ))}
+      {doctor && (
+        <div className="mt-1 text-start text-[10px] font-semibold" style={{ color: "var(--pr-primary)" }}>
+          <span className="font-bold tracking-tighter text-[25px] flex flex-col leading-[0.8] justify-start text-start "> {doctor.name}</span> <br /> · <span className="font-medium text-[21px] tracking-tighter leading-[0.8]">{doctor.specialization}</span> <br /> · Department of {doctor.department}
+        </div>
+      )}
     </div>
   );
 }

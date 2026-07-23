@@ -17,6 +17,16 @@ const s2 = (n: number) => r2(n).toFixed(2);
 export type InvoiceSourceT = "CONSULTATION" | "LAB" | "PHARMACY" | "IPD" | "OTHER";
 export type PaymentModeT = "CASH" | "UPI" | "CARD" | "NETBANKING" | "OTHER";
 
+/**
+ * The IPD discharge applies the admission deposit as a payment against the final
+ * bill. It stamps that payment with this reference so the printed invoice can
+ * tell the deposit apart from money taken at the counter and show it as an
+ * explicit deduction. One prefix, written and matched in one place, so the two
+ * halves can never drift.
+ */
+export const ADVANCE_REF_PREFIX = "Advance taken at admission";
+export const advancePaymentRef = (ipNumber: string) => `${ADVANCE_REF_PREFIX} (${ipNumber})`;
+
 /** One tender against a bill. A split (part cash, part UPI) is just several. */
 export interface PaymentInput { mode: PaymentModeT; amount: number; reference?: string }
 
@@ -47,6 +57,10 @@ export interface InvoiceDTO {
   sgstAmount: string;
   totalAmount: string;
   amountPaid: string;
+  /** Of `amountPaid`, the part that was an IPD advance held from admission. Lets
+   *  the printed bill show "less advance → balance to be paid" explicitly rather
+   *  than folding the deposit invisibly into one "Paid" figure. 0 for non-IPD. */
+  advanceAdjusted: string;
   balanceDue: string;
   payments: { mode: string; amount: string; reference: string | null; createdAt: string }[];
   hospital: {
@@ -280,6 +294,13 @@ export async function getInvoice(invoiceId: string): Promise<InvoiceDTO> {
   );
   const total = Number(inv.totalAmount.toString());
 
+  // How much of what's been paid is the admission deposit carried over from the
+  // ward, vs. money taken at this counter. Matched on the reference the discharge
+  // stamps - see advancePaymentRef.
+  const advanceAdjusted = inv.payments
+    .filter((p: { reference: string | null }) => p.reference?.startsWith(ADVANCE_REF_PREFIX))
+    .reduce((s: number, p: { amount: { toString(): string } }) => r2(s + Number(p.amount.toString())), 0);
+
   return {
     id: inv.id,
     receiptNo: inv.receiptNo,
@@ -298,6 +319,7 @@ export async function getInvoice(invoiceId: string): Promise<InvoiceDTO> {
     sgstAmount: inv.sgstAmount.toString(),
     totalAmount: inv.totalAmount.toString(),
     amountPaid: s2(paid),
+    advanceAdjusted: s2(advanceAdjusted),
     balanceDue: s2(Math.max(0, r2(total - paid))),
     payments: inv.payments.map((p: { mode: string; amount: { toString(): string }; reference: string | null; createdAt: Date }) => ({
       mode: p.mode, amount: p.amount.toString(), reference: p.reference, createdAt: p.createdAt.toISOString(),

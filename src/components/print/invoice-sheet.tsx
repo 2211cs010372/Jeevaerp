@@ -3,19 +3,17 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import JsBarcode from "jsbarcode";
-import QRCode from "qrcode";
 import { api, ApiClientError } from "@/lib/api-client";
 import { amountInWords } from "@/lib/amount-words";
-import {
-  PRINT_CSS, PrintToolbar, LetterHead, FooterBand, type HospitalInfo,
-} from "@/components/print/stationery";
+import { INVOICE_PRINT_CSS, PrintToolbar, BillHead, type HospitalInfo } from "@/components/print/stationery";
 
 interface Invoice {
   id: string; receiptNo: string; source: string; status: string; createdAt: string;
   patient: { displayId: string; fullName: string; phone: string; address: string | null; age: number | null; gender: string | null };
   items: { description: string; hsnSac: string | null; qty: number; unitPrice: string; amount: string; gstRatePct: string }[];
   subtotal: string; discountAmount: string; taxableAmount: string;
-  cgstAmount: string; sgstAmount: string; totalAmount: string; amountPaid: string; balanceDue: string;
+  cgstAmount: string; sgstAmount: string; totalAmount: string;
+  amountPaid: string; advanceAdjusted: string; balanceDue: string;
   payments: { mode: string; amount: string; reference: string | null; createdAt: string }[];
   hospital: HospitalInfo | null;
 }
@@ -26,14 +24,17 @@ const SOURCE_LABEL: Record<string, string> = {
 const money = (v: string | number) => `₹${Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const GENDER: Record<string, string> = { MALE: "M", FEMALE: "F", OTHER: "O" };
 
-/** The Jeeva bill - one Bill-of-Supply layout used by every portal, with a
- *  QR code (scan to verify) and a Code128 barcode of the receipt number. */
-/** "staff" reads the staff endpoint; "portal" reads the patient-scoped one. */
+/**
+ * The Jeeva bill - one Bill-of-Supply layout used by every portal.
+ *
+ * A5, text masthead (no letterhead image), and it paginates onto a second sheet
+ * when a stay has more lines than fit. "staff" reads the staff endpoint;
+ * "portal" reads the patient-scoped one.
+ */
 export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal" } = {}) {
   const { invoiceId } = useParams<{ invoiceId: string }>();
   const [inv, setInv] = useState<Invoice | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [qr, setQr] = useState<string>("");
   const barcodeRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {
@@ -44,14 +45,10 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
   }, [invoiceId, source]);
 
   useEffect(() => {
-    if (!inv) return;
-    QRCode.toDataURL(`https://www.jeevamultispecialityhospital.com/verify/${inv.receiptNo}`, { margin: 0, width: 200, errorCorrectionLevel: "M" })
-      .then(setQr).catch(() => setQr(""));
-    if (barcodeRef.current) {
-      try {
-        JsBarcode(barcodeRef.current, inv.receiptNo, { format: "CODE128", displayValue: false, height: 30, width: 1.35, margin: 0, background: "transparent", lineColor: "#17211e" });
-      } catch { /* non-encodable receipt - barcode simply omitted */ }
-    }
+    if (!inv || !barcodeRef.current) return;
+    try {
+      JsBarcode(barcodeRef.current, inv.receiptNo, { format: "CODE128", displayValue: false, height: 26, width: 1.1, margin: 0, background: "transparent", lineColor: "#17211e" });
+    } catch { /* non-encodable receipt - barcode simply omitted */ }
   }, [inv]);
 
   if (error) return <div className="p-10 text-center text-[14px] text-[#8a3b2e]">{error}</div>;
@@ -62,161 +59,172 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
   const discPctNum = Number(inv.subtotal) > 0 ? (Number(inv.discountAmount) / Number(inv.subtotal)) * 100 : 0;
   const discPct = discPctNum % 1 === 0 ? discPctNum.toFixed(0) : discPctNum.toFixed(1);
   const ageSex = [inv.patient.age != null ? `${inv.patient.age}y` : null, inv.patient.gender ? GENDER[inv.patient.gender] ?? inv.patient.gender : null].filter(Boolean).join(" / ") || "-";
-  const payMode = inv.payments.length ? inv.payments.map((p) => p.mode).join(", ") : "-";
+  const payMode = inv.payments.length ? [...new Set(inv.payments.map((p) => p.mode))].join(", ") : "-";
+
+  // The final chargeable amount = subtotal + GST, then (for inpatients only) less
+  // the admission deposit. Every other desk's bill is a straight subtotal + GST;
+  // the advance credit belongs to the IP section alone.
+  const total = Number(inv.totalAmount);            // taxable + CGST + SGST
+  const isIpd = inv.source === "IPD";
+  const advance = isIpd ? Number(inv.advanceAdjusted) : 0;
+  const netPayable = Math.max(0, Math.round((total - advance) * 100) / 100);
 
   const Meta = ({ k, v }: { k: string; v: string }) => (
     <div className="flex items-baseline gap-1.5">
-      <span className="shrink-0 whitespace-nowrap text-[8.5px] font-bold uppercase tracking-wide text-[#57655f]">{k}</span>
-      <span className="truncate font-mono text-[11px] font-medium text-[var(--pr-ink)]">{v}</span>
+      <span className="shrink-0 whitespace-nowrap text-[8px] font-bold uppercase tracking-wide text-[#57655f]">{k}</span>
+      <span className="truncate font-mono text-[10px] font-medium text-[var(--pr-ink)]">{v}</span>
     </div>
   );
 
   return (
     <div className="print-stage">
-      <style dangerouslySetInnerHTML={{ __html: PRINT_CSS }} />
+      <style dangerouslySetInnerHTML={{ __html: INVOICE_PRINT_CSS }} />
       <PrintToolbar title={`Bill · ${inv.receiptNo} · ${inv.patient.fullName}`} />
 
       <div id="print-sheet">
-        <LetterHead hospital={inv.hospital} />
+        {/* text masthead - name · GSTIN · address · phone (no letterhead image) */}
+        <BillHead hospital={inv.hospital} />
 
-        {/* title + QR row */}
-        <div className="rule-strong mt-1 flex items-start justify-between gap-4 pb-2">
+        {/* title + barcode row */}
+        <div className="keep-together rule mt-2 flex items-start justify-between gap-4 pb-2">
           <div>
-            <p className="text-[15px] font-extrabold uppercase tracking-[0.06em]" style={{ color: "var(--pr-primary)" }}>
+            <p className="text-[12.5px] font-extrabold uppercase tracking-[0.05em]" style={{ color: "var(--pr-primary)" }}>
               {gstApplies ? "Tax Invoice" : "Bill of Supply"}
-              <span className="ml-1 text-[11px] font-semibold text-[#57655f]">(Original)</span>
+              <span className="ml-1 text-[9px] font-semibold text-[#57655f]">(Original)</span>
             </p>
-            <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#57655f]">
+            <p className="mt-0.5 text-[9px] font-semibold uppercase tracking-wide text-[#57655f]">
               {SOURCE_LABEL[inv.source] ?? inv.source}
-              {inv.hospital?.gstin && <> · GSTIN {inv.hospital.gstin}</>}
             </p>
-          </div>
-          {qr && (
-            <div className="flex flex-col items-center">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={qr} alt="Scan to verify" className="h-[64px] w-[64px]" />
-              <span className="mt-0.5 text-[7px] uppercase tracking-wide text-[#8b9691]">Scan to verify</span>
-            </div>
-          )}
-        </div>
-
-        {/* bill meta + barcode */}
-        <div className="mt-2 grid grid-cols-[1fr_auto] items-start gap-4">
-          <div className="grid grid-cols-2 gap-x-6 gap-y-1">
-            <Meta k="Bill No" v={inv.receiptNo} />
-            <Meta k="UHID" v={inv.patient.displayId} />
-            <Meta k="Bill Date" v={created.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })} />
-            <Meta k="Time" v={created.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })} />
           </div>
           <div className="flex flex-col items-end">
-            <svg ref={barcodeRef} className="h-[30px] w-[150px]" aria-label={`Barcode ${inv.receiptNo}`} />
-            <span className="font-mono text-[8px] tracking-[0.14em] text-[#57655f]">{inv.receiptNo}</span>
+            <svg ref={barcodeRef} className="h-[26px] w-[120px]" aria-label={`Barcode ${inv.receiptNo}`} />
+            <span className="font-mono text-[7.5px] tracking-[0.14em] text-[#57655f]">{inv.receiptNo}</span>
           </div>
+        </div>
+
+        {/* bill meta */}
+        <div className="keep-together mt-2 grid grid-cols-2 gap-x-6 gap-y-1">
+          <Meta k="Bill No" v={inv.receiptNo} />
+          <Meta k="UHID" v={inv.patient.displayId} />
+          <Meta k="Bill Date" v={created.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })} />
+          <Meta k="Time" v={created.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })} />
         </div>
 
         {/* patient / payor block */}
-        <div className="rule mt-2 grid grid-cols-[2fr_1fr] gap-x-6 py-4 mb-10">
+        <div className="keep-together rule mt-2 grid grid-cols-[2fr_1fr] gap-x-6 py-2.5">
           <div className="space-y-1">
             <Meta k="Patient" v={inv.patient.fullName} />
             <Meta k="Address" v={inv.patient.address || "-"} />
           </div>
-          <div className="space-y-1 ">
+          <div className="space-y-1">
             <Meta k="Age/Sex" v={ageSex} />
             <Meta k="Phone" v={inv.patient.phone} />
-            <Meta k="Payor" v={inv.payments.length ? "Self" : "-"} />
           </div>
         </div>
 
-        {/* line items */}
-        <table className="mt-3 w-full border-collapse text-[12px]">
+        {/* line items - repeats its header and paginates onto a second A5 if long */}
+        <table className="mt-2 w-full border-collapse text-[10px]">
           <thead>
-            <tr className="text-left text-[9px] uppercase tracking-wide" style={{ color: "var(--pr-primary)" }}>
-              <th className="w-[26px] border-y-2 py-1.5 pr-1 font-bold" style={{ borderColor: "var(--pr-primary)" }}>S.No</th>
-              <th className="border-y-2 py-1.5 pr-2 font-bold" style={{ borderColor: "var(--pr-primary)" }}>Service / Item</th>
-              <th className="w-[64px] border-y-2 py-1.5 pr-2 font-bold" style={{ borderColor: "var(--pr-primary)" }}>HSN/SAC</th>
-              <th className="w-[36px] border-y-2 py-1.5 pr-2 text-right font-bold" style={{ borderColor: "var(--pr-primary)" }}>Qty</th>
-              <th className="w-[76px] border-y-2 py-1.5 pr-2 text-right font-bold" style={{ borderColor: "var(--pr-primary)" }}>Price</th>
-              <th className="w-[46px] border-y-2 py-1.5 pr-2 text-right font-bold" style={{ borderColor: "var(--pr-primary)" }}>GST%</th>
-              <th className="w-[92px] border-y-2 py-1.5 text-right font-bold" style={{ borderColor: "var(--pr-primary)" }}>Amount (₹)</th>
+            <tr className="text-left text-[8px] uppercase tracking-wide" style={{ color: "var(--pr-primary)" }}>
+              <th className="w-[22px] border-y-2 py-1 pr-1 font-bold" style={{ borderColor: "var(--pr-primary)" }}>#</th>
+              <th className="border-y-2 py-1 pr-2 font-bold" style={{ borderColor: "var(--pr-primary)" }}>Service / Item</th>
+              <th className="w-[54px] border-y-2 py-1 pr-1 font-bold" style={{ borderColor: "var(--pr-primary)" }}>HSN/SAC</th>
+              <th className="w-[30px] border-y-2 py-1 pr-1 text-right font-bold" style={{ borderColor: "var(--pr-primary)" }}>Qty</th>
+              <th className="w-[64px] border-y-2 py-1 pr-1 text-right font-bold" style={{ borderColor: "var(--pr-primary)" }}>Price</th>
+              <th className="w-[38px] border-y-2 py-1 pr-1 text-right font-bold" style={{ borderColor: "var(--pr-primary)" }}>GST%</th>
+              <th className="w-[74px] border-y-2 py-1 text-right font-bold" style={{ borderColor: "var(--pr-primary)" }}>Amount</th>
             </tr>
           </thead>
           <tbody>
             {inv.items.map((it, i) => (
               <tr key={i} className="align-top">
-                <td className="rule py-[6px] pr-1 font-mono text-[11px] text-[#57655f]">{i + 1}</td>
-                <td className="rule py-[6px] pr-2">{it.description}</td>
-                <td className="rule py-[6px] pr-2 font-mono text-[11px]">{it.hsnSac ?? "-"}</td>
-                <td className="rule py-[6px] pr-2 text-right font-mono">{it.qty}</td>
-                <td className="rule py-[6px] pr-2 text-right font-mono">{money(it.unitPrice)}</td>
-                <td className="rule py-[6px] pr-2 text-right font-mono">{Number(it.gstRatePct) ? `${it.gstRatePct}%` : "Exempt"}</td>
-                <td className="rule py-[6px] text-right font-mono">{money(it.amount)}</td>
+                <td className="rule py-[4px] pr-1 font-mono text-[9px] text-[#57655f]">{i + 1}</td>
+                <td className="rule py-[4px] pr-2">{it.description}</td>
+                <td className="rule py-[4px] pr-1 font-mono text-[9px]">{it.hsnSac ?? "-"}</td>
+                <td className="rule py-[4px] pr-1 text-right font-mono">{it.qty}</td>
+                <td className="rule py-[4px] pr-1 text-right font-mono">{money(it.unitPrice)}</td>
+                <td className="rule py-[4px] pr-1 text-right font-mono">{Number(it.gstRatePct) ? `${it.gstRatePct}%` : "Exempt"}</td>
+                <td className="rule py-[4px] text-right font-mono">{money(it.amount)}</td>
               </tr>
             ))}
           </tbody>
         </table>
 
-        {/* totals + words */}
-        <div className="mt-3 flex items-start justify-between gap-6">
+        {/* totals + words - kept whole so the money summary never splits across the fold */}
+        <div className="keep-together mt-2.5 flex items-start justify-between gap-5">
           <div className="min-w-0 flex-1">
-            <p className="text-[9px] font-bold uppercase tracking-wide text-[#3c4a45]">Received with thanks the sum of</p>
-            <p className="mt-0.5 text-[13px] font-black italic" style={{ color: "var(--pr-primary)" }}>{amountInWords(inv.amountPaid)}</p>
-            <p className="mt-2 text-[11px] text-[#4a5652]">
-              <span className="font-semibold">Paid by:</span> {payMode}
-              {inv.payments.some((p) => p.reference) && ` · Ref ${inv.payments.filter((p) => p.reference).map((p) => p.reference).join(", ")}`}
-            </p>
-            <p className="mt-2 text-[8.5px] leading-relaxed text-[#6b7772]">
+            <p className="text-[8px] font-bold uppercase tracking-wide text-[#3c4a45]">Amount payable (in words)</p>
+            <p className="mt-0.5 text-[11px] font-black italic" style={{ color: "var(--pr-primary)" }}>{amountInWords(netPayable)}</p>
+            {inv.payments.length > 0 && <p className="mt-1.5 text-[9.5px] text-[#4a5652]"><span className="font-semibold">Paid by:</span> {payMode}</p>}
+            <p className="mt-1.5 text-[7.5px] leading-relaxed text-[#6b7772]">
               Healthcare services (consultation &amp; diagnostics) are GST-exempt; lines marked Exempt carry 0%.
               Medicines and taxable services show CGST + SGST split equally (intra-state, Telangana – 36).
-              This is a computer-generated bill and needs no signature.
+              Computer-generated bill; no signature required.
             </p>
           </div>
-          <table className="w-[248px] text-[12px]">
+          <table className="w-[210px] text-[10px]">
             <tbody>
-              <Trow k="Total Amount" v={money(inv.subtotal)} />
+              <Trow k="Sub-total" v={money(inv.subtotal)} />
               {Number(inv.discountAmount) > 0 && <Trow k={`Discount (${discPct}%)`} v={`− ${money(inv.discountAmount)}`} />}
-              {gstApplies && <Trow k="Taxable value" v={money(inv.taxableAmount)} />}
+              {/* Only worth a line when a discount makes it differ from the sub-total;
+                  otherwise GST is plainly charged on the sub-total above. */}
+              {gstApplies && Number(inv.discountAmount) > 0 && <Trow k="Taxable value" v={money(inv.taxableAmount)} />}
               {gstApplies && <Trow k="CGST" v={money(inv.cgstAmount)} />}
               {gstApplies && <Trow k="SGST" v={money(inv.sgstAmount)} />}
-              <tr>
-                <td className="border-y-2 py-1.5 text-[11px] font-extrabold uppercase tracking-wide" style={{ borderColor: "var(--pr-primary)", color: "var(--pr-primary)" }}>Net Payable</td>
-                <td className="border-y-2 py-1.5 text-right font-mono text-[14px] font-bold" style={{ borderColor: "var(--pr-primary)" }}>{money(inv.totalAmount)}</td>
-              </tr>
-              <Trow k="Paid Amount" v={money(inv.amountPaid)} />
-              {Number(inv.balanceDue) > 0 && <Trow k="Balance Due" v={money(inv.balanceDue)} strong />}
+              {isIpd && advance > 0 ? (
+                <>
+                  {/* IP bill: total including GST, then the deposit credited off it */}
+                  <Trow k="Total (incl. GST)" v={money(total)} />
+                  <Trow k="Less: Advance paid at admission" v={`− ${money(advance)}`} accent />
+                  <TotalRow k="Net Payable" v={money(netPayable)} />
+                </>
+              ) : (
+                /* Every other desk: subtotal + GST is the whole story */
+                <TotalRow k="Net Payable" v={money(total)} />
+              )}
             </tbody>
           </table>
         </div>
 
         {/* signature */}
-        <div className="mb-3 mt-8 flex items-end justify-between">
+        <div className="keep-together mt-6 flex items-end justify-between">
           <div>
-            <div className="w-[150px] border-b border-[var(--pr-ink)]" />
-            <div className="mt-1 text-[10px] font-semibold">{inv.patient.fullName}</div>
-            <div className="text-[8px] text-[#57655f]">Patient / Attendant</div>
+            <div className="w-[130px] border-b border-[var(--pr-ink)]" />
+            <div className="mt-1 text-[9px] font-semibold">{inv.patient.fullName}</div>
+            <div className="text-[7.5px] text-[#57655f]">Patient / Attendant</div>
           </div>
           <div className="text-center">
-            <div className="mx-auto w-[170px] border-b border-[var(--pr-ink)]" />
-            <div className="mt-1 text-[10px] font-semibold">For {inv.hospital?.legalName ?? "Jeeva Multispeciality Hospital"}</div>
-            <div className="text-[8px] text-[#57655f]">Authorised Signatory</div>
+            <div className="mx-auto w-[150px] border-b border-[var(--pr-ink)]" />
+            <div className="mt-1 text-[9px] font-semibold">For {inv.hospital?.legalName ?? "Jeeva Multispeciality Hospital"}</div>
+            <div className="text-[7.5px] text-[#57655f]">Authorised Signatory</div>
           </div>
         </div>
 
-        <p className="text-[8px] text-[#6b7772]">
-          Printed on {new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}.
-          You can access your reports &amp; bills at the patient portal with your UHID.
+        {/* footer - printed timestamp only, no website / URL */}
+        <p className="mt-4 border-t border-[var(--pr-line)] pt-1.5 text-center text-[7.5px] text-[#6b7772]">
+          {(inv.hospital?.legalName ?? "Jeeva Multispeciality Hospital")} · Printed{" "}
+          {new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
         </p>
-
-        <FooterBand hospital={inv.hospital} />
       </div>
     </div>
   );
 }
 
-function Trow({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
+function Trow({ k, v, accent }: { k: string; v: string; accent?: boolean }) {
   return (
     <tr>
-      <td className={`py-1 text-[11px] ${strong ? "font-bold text-[var(--pr-primary)]" : "text-[#4a5652]"}`}>{k}</td>
-      <td className={`py-1 text-right font-mono ${strong ? "font-bold" : ""}`}>{v}</td>
+      <td className={`py-0.5 text-[9.5px] ${accent ? "font-semibold text-[#0b6f5f]" : "text-[#4a5652]"}`}>{k}</td>
+      <td className={`py-0.5 text-right font-mono ${accent ? "font-semibold text-[#0b6f5f]" : ""}`}>{v}</td>
+    </tr>
+  );
+}
+
+/** The bold, ruled grand-total row - the one figure the patient pays. */
+function TotalRow({ k, v }: { k: string; v: string }) {
+  return (
+    <tr>
+      <td className="border-y-2 py-1 text-[9.5px] font-extrabold uppercase tracking-wide" style={{ borderColor: "var(--pr-primary)", color: "var(--pr-primary)" }}>{k}</td>
+      <td className="border-y-2 py-1 text-right font-mono text-[12px] font-bold" style={{ borderColor: "var(--pr-primary)" }}>{v}</td>
     </tr>
   );
 }

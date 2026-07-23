@@ -26,6 +26,8 @@ export const POST = handler(async (req) => {
     manufacturer: i.manufacturer || undefined,
     hsnCode: i.hsnCode || undefined,
     rackLocation: i.rackLocation || undefined,
+    preferredSupplierId: i.preferredSupplierId || null,
+    reorderQty: i.reorderQty ?? null,
   }, auditContext(req));
   return NextResponse.json({ ok: true }, { status: 201 });
 });

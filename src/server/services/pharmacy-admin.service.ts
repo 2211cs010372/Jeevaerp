@@ -13,6 +13,9 @@ export async function upsertMedicine(
     id?: string; name: string; genericName?: string; manufacturer?: string;
     hsnCode?: string; gstRatePct: number; unit: string;
     reorderThreshold: number; rackLocation?: string; active: boolean; courseCritical?: boolean;
+    /// Procurement defaults: who we buy this from, and how much to bring the
+    /// shelf up to when it drops. Both feed the reorder screen.
+    preferredSupplierId?: string | null; reorderQty?: number | null;
   },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<void> {
@@ -27,6 +30,8 @@ export async function upsertMedicine(
     rackLocation: input.rackLocation || null,
     active: input.active,
     courseCritical: input.courseCritical ?? false,
+    preferredSupplierId: input.preferredSupplierId || null,
+    reorderQty: input.reorderQty && input.reorderQty > 0 ? input.reorderQty : null,
   };
 
   if (input.id) {

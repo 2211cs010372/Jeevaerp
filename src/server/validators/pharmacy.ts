@@ -71,4 +71,8 @@ export const medicineSchema = z.object({
   rackLocation: z.string().trim().max(30).optional().or(z.literal("")),
   active: z.boolean().optional().default(true),
   courseCritical: z.boolean().optional().default(false),
+  /// Procurement defaults. Empty string clears them - the stock form sends ""
+  /// for "no preferred supplier" rather than omitting the key.
+  preferredSupplierId: z.string().trim().optional().or(z.literal("")),
+  reorderQty: z.coerce.number().int().min(0).optional(),
 });

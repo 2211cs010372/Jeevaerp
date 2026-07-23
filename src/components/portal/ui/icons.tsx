@@ -1,7 +1,8 @@
 export type IconName =
   | "grid" | "users" | "calendar" | "stethoscope" | "building" | "pill"
   | "flask" | "receipt" | "rupee" | "trend" | "bed" | "search" | "plus"
-  | "check" | "logout" | "chevron" | "activity" | "clock" | "alert" | "file" | "printer" | "shield";
+  | "check" | "logout" | "chevron" | "activity" | "clock" | "alert" | "file" | "printer" | "shield"
+  | "truck" | "box" | "inbox" | "undo" | "x";
 
 const paths: Record<IconName, React.ReactNode> = {
   grid: <><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></>,
@@ -26,6 +27,14 @@ const paths: Record<IconName, React.ReactNode> = {
   file: <><path d="M14 2.5H6a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8.5z"/><path d="M14 2.5v6h6"/></>,
   printer: <><path d="M6 9V3.5h12V9"/><path d="M6 18H4.5A1.5 1.5 0 0 1 3 16.5v-5A1.5 1.5 0 0 1 4.5 10h15a1.5 1.5 0 0 1 1.5 1.5v5A1.5 1.5 0 0 1 19.5 18H18"/><rect x="6" y="14" width="12" height="7" rx="1"/></>,
   shield: <><path d="M12 3 5 6v5.5c0 4.3 3 7.4 7 8.5 4-1.1 7-4.2 7-8.5V6z"/><path d="m9 12 2 2 4-4"/></>,
+  /* the distributor's van - procurement's one recognisable object */
+  truck: <><path d="M2 6.5h11v11H2z"/><path d="M13 10h4l4 4v3.5h-8"/><circle cx="7" cy="18.5" r="2"/><circle cx="17.5" cy="18.5" r="2"/></>,
+  /* a carton: what a goods receipt is counting */
+  box: <><path d="M21 8.5v7a2 2 0 0 1-1 1.7l-7 4a2 2 0 0 1-2 0l-7-4a2 2 0 0 1-1-1.7v-7a2 2 0 0 1 1-1.7l7-4a2 2 0 0 1 2 0l7 4a2 2 0 0 1 1 1.7z"/><path d="m3.3 7.5 8.7 5 8.7-5M12 22v-9.5"/></>,
+  inbox: <><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.7 4H7.3a2 2 0 0 0-1.8 1.1z"/></>,
+  /* stock going back the way it came */
+  undo: <><path d="M3 7v6h6"/><path d="M3.5 13a9 9 0 1 0 2.1-9.4L3 7"/></>,
+  x: <><path d="M18 6 6 18M6 6l12 12"/></>,
 };
 
 export function Icon({ name, size = 18, className = "" }: { name: IconName; size?: number; className?: string }) {

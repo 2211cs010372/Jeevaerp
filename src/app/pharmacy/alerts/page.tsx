@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Pill } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
@@ -22,9 +23,22 @@ export default function AlertsPage() {
 
   return (
     <PortalScroll>
-      <div data-rise className="surface dotgrid mb-6 px-6 py-5">
-        <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Stock alerts</h1>
-        <p className="mt-1 text-[13px] text-[var(--p-muted)]">What to reorder, and what&apos;s about to die on the shelf.</p>
+      <div data-rise className="surface dotgrid mb-6 flex flex-wrap items-end justify-between gap-4 px-6 py-5">
+        <div>
+          <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Stock alerts</h1>
+          <p className="mt-1 text-[13px] text-[var(--p-muted)]">What to reorder, and what&apos;s about to die on the shelf.</p>
+        </div>
+        {/* This screen names the problem. These two are where you fix it. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href="/returns"
+            className="inline-flex items-center gap-2 rounded-md border border-[var(--p-border-strong)] bg-white px-4 py-2.5 text-[13px] font-semibold text-[var(--p-ink)] transition-colors hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+            <Icon name="undo" size={15} /> Return for credit
+          </Link>
+          <Link href="/reorder"
+            className="btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-[13px] font-semibold text-white">
+            <Icon name="trend" size={15} /> Turn this into an order
+          </Link>
+        </div>
       </div>
 
       {loading ? (

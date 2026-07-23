@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
 import { nextId } from "@/lib/ids";
 import { logAudit } from "./audit.service";
-import { createInvoice, recordPayment, type PaymentModeT } from "./billing.service";
+import { createInvoice, recordPayment, advancePaymentRef, type PaymentModeT } from "./billing.service";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, PaymentMode, ChargeCategory } from "@prisma/client";
 
@@ -459,8 +459,14 @@ export async function dischargePatient(
   // ── ADVANCE ──
   // The deposit taken at admission is money the hospital ALREADY holds. Record it
   // against this invoice as a payment, so the family is asked only for the
-  // balance - and if the advance exceeds the bill, the difference shows up as
-  // refundable rather than quietly disappearing.
+  // balance.
+  //
+  // It is applied only up to what's still outstanding on the bill. A deposit
+  // larger than the final bill must NOT be recorded in full: recordPayments
+  // rejects any tender beyond the balance, so the whole call would throw and the
+  // advance would silently fail to apply - leaving the bill showing the full
+  // amount due against money the hospital was already holding. The excess stays
+  // in AdmissionAdvance and surfaces as refundable on the discharge sheet.
   const advances = await prisma.admissionAdvance.findMany({
     where: { admissionId: adm.id },
     select: { amount: true, mode: true },
@@ -468,14 +474,16 @@ export async function dischargePatient(
   if (advances.length > 0) {
     const advTotal = (advances as { amount: { toString(): string }; mode: string }[])
       .reduce((sum, a) => sum + Number(a.amount.toString()), 0);
-    if (advTotal > 0) {
+    const outstanding = Number(invoice.balanceDue);
+    const toApply = Math.min(advTotal, outstanding);
+    if (toApply > 0) {
       await recordPayment(
         actor,
         {
           invoiceId: invoice.id,
           mode: (advances as { mode: PaymentModeT }[])[0].mode,
-          amount: advTotal,
-          reference: `Advance taken at admission (${adm.ipNumber})`,
+          amount: toApply,
+          reference: advancePaymentRef(adm.ipNumber),
         },
         ctx
       );

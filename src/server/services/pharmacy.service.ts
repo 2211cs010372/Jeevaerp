@@ -26,6 +26,12 @@ export interface MedicineDTO {
   mrp: string | null;           // MRP of the batch we'd dispense next (FEFO)
   nearestExpiry: string | null; // that batch's expiry
   lowStock: boolean;
+  // ── Procurement ──────────────────────────────────────────────────────────
+  preferredSupplierId: string | null;
+  preferredSupplierName: string | null;
+  reorderQty: number | null;
+  /** Units on a sent-but-undelivered PO. "It's low, but it's already coming." */
+  onOrder: number;
 }
 
 /** Catalog with live stock. Stock excludes expired batches - they can't be sold. */
@@ -47,13 +53,20 @@ export async function listMedicines(query?: string): Promise<MedicineDTO[]> {
     select: {
       id: true, name: true, genericName: true, manufacturer: true, hsnCode: true,
       gstRatePct: true, unit: true, rackLocation: true, reorderThreshold: true, active: true,
-      courseCritical: true,
+      courseCritical: true, reorderQty: true,
+      preferredSupplier: { select: { id: true, name: true } },
       batches: {
         // ALL batches with stock - expired ones are split out below so the
         // pharmacist is told what to physically pull off the shelf.
         where: { quantity: { gt: 0 } },
         orderBy: { expiryDate: "asc" }, // FEFO
         select: { quantity: true, mrp: true, expiryDate: true },
+      },
+      // Stock the distributor already owes us. Without this the shelf reads
+      // "low" and the pharmacist orders a second time.
+      poItems: {
+        where: { purchaseOrder: { status: { in: ["SENT", "PARTIALLY_RECEIVED"] } } },
+        select: { qtyOrdered: true, qtyReceived: true },
       },
     },
   });
@@ -62,7 +75,10 @@ export async function listMedicines(query?: string): Promise<MedicineDTO[]> {
     id: string; name: string; genericName: string | null; manufacturer: string | null;
     hsnCode: string | null; gstRatePct: { toString(): string }; unit: string;
     rackLocation: string | null; reorderThreshold: number; active: boolean; courseCritical: boolean;
+    reorderQty: number | null;
+    preferredSupplier: { id: string; name: string } | null;
     batches: { quantity: number; mrp: { toString(): string }; expiryDate: Date }[];
+    poItems: { qtyOrdered: number; qtyReceived: number }[];
   };
 
   return (meds as Row[]).map((m) => {
@@ -80,6 +96,10 @@ export async function listMedicines(query?: string): Promise<MedicineDTO[]> {
       mrp: first ? first.mrp.toString() : null,
       nearestExpiry: first ? first.expiryDate.toISOString().slice(0, 10) : null,
       lowStock: inStock <= m.reorderThreshold,
+      preferredSupplierId: m.preferredSupplier?.id ?? null,
+      preferredSupplierName: m.preferredSupplier?.name ?? null,
+      reorderQty: m.reorderQty,
+      onOrder: m.poItems.reduce((s, p) => s + Math.max(0, p.qtyOrdered - p.qtyReceived), 0),
     };
   });
 }
@@ -465,13 +485,30 @@ export async function medicineBatches(medicineId: string) {
   const rows = await prisma.stockBatch.findMany({
     where: { medicineId },
     orderBy: { expiryDate: "asc" },
-    select: { id: true, batchNo: true, expiryDate: true, quantity: true, mrp: true, purchasePrice: true },
+    select: {
+      id: true, batchNo: true, expiryDate: true, quantity: true, mrp: true, purchasePrice: true,
+      supplier: { select: { id: true, name: true } },
+      // The receipt this batch arrived on - the answer to "where did this come
+      // from?" when a recall notice names a batch number.
+      grnItems: {
+        orderBy: { goodsReceipt: { createdAt: "desc" } },
+        take: 1,
+        select: { goodsReceipt: { select: { id: true, grnNumber: true, invoiceNo: true, createdAt: true } } },
+      },
+    },
   });
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  return rows.map((b: { id: string; batchNo: string; expiryDate: Date; quantity: number; mrp: { toString(): string }; purchasePrice: { toString(): string } | null }) => {
+  type BatchRow = {
+    id: string; batchNo: string; expiryDate: Date; quantity: number;
+    mrp: { toString(): string }; purchasePrice: { toString(): string } | null;
+    supplier: { id: string; name: string } | null;
+    grnItems: { goodsReceipt: { id: string; grnNumber: string; invoiceNo: string | null; createdAt: Date } }[];
+  };
+  return (rows as BatchRow[]).map((b) => {
     const mrp = Number(b.mrp.toString());
     const rate = b.purchasePrice != null ? Number(b.purchasePrice.toString()) : null;
     const margin = rate != null ? mrp - rate : null;
+    const grn = b.grnItems[0]?.goodsReceipt ?? null;
     return {
       id: b.id, batchNo: b.batchNo,
       expiryDate: b.expiryDate.toISOString().slice(0, 10),
@@ -481,6 +518,12 @@ export async function medicineBatches(medicineId: string) {
       margin: margin != null ? margin.toFixed(2) : null,
       marginPct: rate != null && mrp > 0 ? Math.round(((mrp - rate) / mrp) * 1000) / 10 : null,
       expired: b.expiryDate < today,
+      supplierId: b.supplier?.id ?? null,
+      supplierName: b.supplier?.name ?? null,
+      grnId: grn?.id ?? null,
+      grnNumber: grn?.grnNumber ?? null,
+      supplierInvoiceNo: grn?.invoiceNo ?? null,
+      receivedAt: grn ? grn.createdAt.toISOString() : null,
     };
   });
 }

@@ -13,10 +13,22 @@ interface Med {
   unit: string; gstRatePct: string; inStock: number; expiredQty: number; mrp: string | null;
   nearestExpiry: string | null; lowStock: boolean; reorderThreshold: number;
   rackLocation: string | null; hsnCode: string | null; active: boolean; courseCritical: boolean;
+  preferredSupplierId: string | null; preferredSupplierName: string | null;
+  reorderQty: number | null; onOrder: number;
 }
-interface Batch { id: string; batchNo: string; expiryDate: string; quantity: number; mrp: string; rate: string | null; margin: string | null; marginPct: number | null; expired: boolean; }
+interface Batch {
+  id: string; batchNo: string; expiryDate: string; quantity: number; mrp: string;
+  rate: string | null; margin: string | null; marginPct: number | null; expired: boolean;
+  supplierId: string | null; supplierName: string | null;
+  grnId: string | null; grnNumber: string | null; supplierInvoiceNo: string | null; receivedAt: string | null;
+}
+interface Supplier { id: string; name: string }
 
-const blankMed = { id: "", name: "", genericName: "", manufacturer: "", hsnCode: "", gstRatePct: "5", unit: "tablet", reorderThreshold: "10", rackLocation: "", active: true, courseCritical: false };
+const blankMed = {
+  id: "", name: "", genericName: "", manufacturer: "", hsnCode: "", gstRatePct: "5", unit: "tablet",
+  reorderThreshold: "10", rackLocation: "", active: true, courseCritical: false,
+  preferredSupplierId: "", reorderQty: "",
+};
 const blankBatch = { batchNo: "", expiryDate: "", quantity: "", mrp: "", purchasePrice: "", supplierRef: "" };
 
 /** Fixed reasons keep the stock ledger auditable. Free text invites "adj" and "fix". */
@@ -65,6 +77,14 @@ export default function StockPage() {
   const [rmQty, setRmQty] = useState("");
   const [rmReason, setRmReason] = useState(REMOVE_REASONS[0]);
   const [busy, setBusy] = useState(false);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+
+  // The catalog's distributor list - needed the moment the edit modal opens, so
+  // "who do we buy this from?" is a dropdown rather than a second screen.
+  useEffect(() => {
+    api.get<{ suppliers: Supplier[] }>("/pharmacy/suppliers")
+      .then((r) => setSuppliers(r.suppliers)).catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -180,6 +200,8 @@ export default function StockPage() {
         unit: editMed.unit, reorderThreshold: Number(editMed.reorderThreshold),
         rackLocation: editMed.rackLocation || undefined, active: editMed.active,
         courseCritical: editMed.courseCritical,
+        preferredSupplierId: editMed.preferredSupplierId || "",
+        reorderQty: editMed.reorderQty ? Number(editMed.reorderQty) : 0,
       });
       setFlash(`${editMed.name} saved.`);
       setEditMed(null); await load();
@@ -194,6 +216,8 @@ export default function StockPage() {
     reorderThreshold: String(m.reorderThreshold), rackLocation: m.rackLocation ?? "",
     active: m.active,                    // was hardcoded true - a discontinued medicine silently came back
     courseCritical: m.courseCritical,
+    preferredSupplierId: m.preferredSupplierId ?? "",
+    reorderQty: m.reorderQty != null ? String(m.reorderQty) : "",
   });
 
   const fld = "w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm text-[var(--p-ink)] outline-none transition-colors focus:border-[var(--p-blue)]";
@@ -243,7 +267,10 @@ export default function StockPage() {
               <i style={{ width: `${pct}%`, background: out ? "var(--p-rose)" : m.lowStock ? "var(--p-amber)" : "var(--p-cyan)" }} />
             </div>
             <div className="mt-1 text-[10px] font-semibold text-[var(--p-muted)]">
-              {out ? <span className="text-[var(--p-rose)]">Out of stock</span>
+              {/* "It's low" and "it's already coming" are different problems.
+                  Without the second one, a pharmacist orders it a second time. */}
+              {m.onOrder > 0 ? <span className="text-[var(--p-blue)]">{m.onOrder} on order</span>
+                : out ? <span className="text-[var(--p-rose)]">Out of stock</span>
                 : m.lowStock ? <span className="text-[var(--p-amber)]">Below {m.reorderThreshold} - reorder</span>
                 : <>Reorder at {m.reorderThreshold}</>}
             </div>
@@ -306,6 +333,21 @@ export default function StockPage() {
                       className="ml-auto rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[11px] font-medium text-[var(--p-rose)] transition-colors hover:border-[var(--p-rose)] hover:bg-[var(--p-rose-soft)]">
                       Remove
                     </button>
+
+                    {/* Where this physical stock came from. The question a recall
+                        notice asks, and the one the shelf could never answer. */}
+                    <span className="lineage">
+                      {b.supplierName ? (
+                        <>
+                          <Icon name="truck" size={11} />
+                          <span>{b.supplierName}</span>
+                          {b.grnNumber && <span className="num">· {b.grnNumber}</span>}
+                          {b.supplierInvoiceNo && <span className="num">· inv {b.supplierInvoiceNo}</span>}
+                        </>
+                      ) : (
+                        <span className="lineage-none">Opening stock - no supplier on record</span>
+                      )}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -523,7 +565,26 @@ export default function StockPage() {
               <Field label="Unit (tablet, bottle…)"><input className={fld} value={editMed.unit} onChange={(e) => setEditMed({ ...editMed, unit: e.target.value })} /></Field>
               <Field label="Warn me below"><input className={fld} value={editMed.reorderThreshold} onChange={(e) => setEditMed({ ...editMed, reorderThreshold: e.target.value.replace(/\D/g, "") })} inputMode="numeric" /></Field>
               <Field label="Rack / box"><input className={fld} value={editMed.rackLocation} onChange={(e) => setEditMed({ ...editMed, rackLocation: e.target.value.toUpperCase() })} placeholder="A1" /></Field>
+
+              {/* Procurement defaults. These two are what let the reorder screen
+                  produce a real order instead of a to-do list. */}
+              <Field label="Buy from" span>
+                <select className={fld} value={editMed.preferredSupplierId}
+                  onChange={(e) => setEditMed({ ...editMed, preferredSupplierId: e.target.value })}>
+                  <option value="">No preferred supplier</option>
+                  {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </Field>
+              <Field label="Top up to" span>
+                <input className={fld} value={editMed.reorderQty} inputMode="numeric"
+                  onChange={(e) => setEditMed({ ...editMed, reorderQty: e.target.value.replace(/\D/g, "") })}
+                  placeholder={`Blank = ${Math.max(1, Number(editMed.reorderThreshold || 10) * 3)} (3× the warn level)`} />
+              </Field>
             </div>
+            <p className="mx-6 -mt-1 mb-4 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+              Ordering back up to the warn level just puts you on the reorder list again next week.
+              <b> Top up to</b> is the month&apos;s cover the reorder screen aims for.
+            </p>
             {editMed.id && (
               <label className="mx-6 mb-4 flex items-start gap-2.5 rounded-lg border border-[var(--p-border)] px-3 py-2.5 text-[12px] leading-relaxed text-[var(--p-text)]">
                 <input type="checkbox" checked={editMed.active} onChange={(e) => setEditMed({ ...editMed, active: e.target.checked })} className="mt-0.5 h-4 w-4 accent-[var(--p-blue)]" />
@@ -615,6 +676,13 @@ const CSS = `
   padding:1px 6px; font-size:9px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:#fff; }
 .dead-tag { border-radius:4px; background:var(--p-rose); padding:2px 7px; font-size:9px; font-weight:800;
   letter-spacing:.06em; text-transform:uppercase; color:#fff; }
+
+/* chain of custody, on its own line so it never crowds the numbers above it */
+.lineage { display:flex; flex-basis:100%; align-items:center; gap:5px; margin-top:2px;
+  padding-top:7px; border-top:1px dashed var(--p-border);
+  font-size:11px; color:var(--p-muted); }
+.lineage .num { font-size:11px; }
+.lineage-none { font-style:italic; }
 
 .kbd { border-radius:5px; border:1px solid var(--p-border); background:var(--p-bg); padding:1px 6px;
   font-family:var(--font-mono); font-size:11px; color:var(--p-muted); }

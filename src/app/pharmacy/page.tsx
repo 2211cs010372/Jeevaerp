@@ -11,6 +11,12 @@ import { PharmacyFlow } from "@/components/portal/pharmacy/pharmacy-flow";
 import { CollectionsCard, type CollectionMode } from "@/components/portal/ui/collections-card";
 
 interface Stats { pendingRx: number; dispensedToday: number; revenueToday: string; lowStock: number; expiringSoon: number; expired: number; profitToday: string; marginPct: number; stockValueCost: string; stockValueMrp: string; potentialProfit: string; collections: CollectionMode[]; }
+interface ProcStats {
+  openOrders: number; overdueOrders: number; onOrderValue: string;
+  reorderLines: number; outOfStockLines: number;
+  receiptsThisMonth: number; purchaseValueThisMonth: string;
+  creditOutstanding: string; suppliers: number; invoiceMismatches: number;
+}
 const inr = (n: number) => "₹" + n.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 interface Rx {
   id: string; fileUrl: string; title: string | null; doctorName: string | null; sentToPharmacyAt: string | null;
@@ -45,6 +51,7 @@ function SectionHead({ index, title, desc, right }: { index: string; title: stri
 
 export default function PharmacyDashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
+  const [proc, setProc] = useState<ProcStats | null>(null);
   const [queue, setQueue] = useState<Rx[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -54,6 +61,11 @@ export default function PharmacyDashboard() {
       api.get<{ queue: Rx[] }>("/pharmacy/queue"),
     ]).then(([s, q]) => { setStats(s.stats); setQueue(q.queue.slice(0, 6)); })
       .catch(() => {}).finally(() => setLoading(false));
+
+    // Procurement loads on its own - it walks the whole catalog to work out the
+    // reorder list, so it must never hold up the counter's own numbers.
+    api.get<{ stats: ProcStats }>("/pharmacy/procurement-stats")
+      .then((r) => setProc(r.stats)).catch(() => {});
   }, []);
 
   const alerts = (stats?.lowStock ?? 0) + (stats?.expiringSoon ?? 0);
@@ -144,8 +156,33 @@ export default function PharmacyDashboard() {
         <CollectionsCard modes={stats?.collections ?? []} accent="blue" subtitle="Collected at the pharmacy today, by payment mode" />
       </div>
 
-      {/* ---- 03 · how the counter works ---- */}
-      <SectionHead index="03 · How this counter works" title="The pharmacist's day, drawn"
+      {/* ---- 03 · buying it back in ---- */}
+      <SectionHead index="03 · Buying it back in" title="What's on order, and what's owed"
+        desc="Dispensing only ever takes stock away. This is the other direction: what you've asked distributors to send, what's late, and the credit they still owe on returned stock."
+        right={<Link href="/reorder" className="text-[12px] font-medium text-[var(--p-blue)] hover:underline">What to reorder →</Link>} />
+      <div data-rise className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <ProcTile href="/purchase-orders" label="Open orders" value={String(proc?.openOrders ?? 0)}
+          sub={proc ? `${inr(Number(proc.onOrderValue))} on order` : "—"} />
+        <ProcTile href="/purchase-orders" label="Overdue" value={String(proc?.overdueOrders ?? 0)}
+          sub="past the promised date" tone={(proc?.overdueOrders ?? 0) > 0 ? "bad" : undefined} />
+        <ProcTile href="/reorder" label="Below reorder line" value={String(proc?.reorderLines ?? 0)}
+          sub={proc ? `${proc.outOfStockLines} out of stock now` : "—"}
+          tone={(proc?.outOfStockLines ?? 0) > 0 ? "bad" : (proc?.reorderLines ?? 0) > 0 ? "warn" : undefined} />
+        <ProcTile href="/returns" label="Credit owed to us" value={inr(Number(proc?.creditOutstanding ?? 0))}
+          sub="returns awaiting a credit note" tone={Number(proc?.creditOutstanding ?? 0) > 0 ? "warn" : undefined} />
+      </div>
+      {(proc?.invoiceMismatches ?? 0) > 0 && (
+        <Link href="/receive" data-rise className="mt-3 flex items-center gap-2 rounded-lg border border-[var(--p-amber)]/30 bg-[var(--p-amber-soft)] px-4 py-3 text-[12.5px] leading-relaxed text-[#8a6414]">
+          <Icon name="alert" size={15} />
+          <span>
+            <b>{proc!.invoiceMismatches} delivery{proc!.invoiceMismatches === 1 ? "" : " notes"} this month</b> where the
+            supplier&apos;s invoice doesn&apos;t match what came out of the carton. Check before those get paid.
+          </span>
+        </Link>
+      )}
+
+      {/* ---- 04 · how the counter works ---- */}
+      <SectionHead index="04 · How this counter works" title="The pharmacist's day, drawn"
         desc="The flow below names the two things that go wrong at pharmacy counters - dispensing from the wrong batch, and billing without checking expiry. The system blocks both." />
       <PharmacyFlow counts={{
         waiting: stats?.pendingRx ?? 0,
@@ -154,8 +191,8 @@ export default function PharmacyDashboard() {
         expired: stats?.expired ?? 0,
       }} />
 
-      {/* ---- 04 · work waiting ---- */}
-      <SectionHead index="04 · Work waiting" title="The prescription queue"
+      {/* ---- 05 · work waiting ---- */}
+      <SectionHead index="05 · Work waiting" title="The prescription queue"
         desc="The same list reception sees - open the scan beside the dispensing form so the doctor's handwriting is never retyped from memory." />
       <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr]">
         <section data-rise className="surface overflow-hidden">
@@ -204,6 +241,9 @@ export default function PharmacyDashboard() {
             <A href="/dispense" icon="pill" title="Dispense medicines" sub="Earliest-expiry batch picked automatically, GST bill printed" />
             <A href="/stock" icon="bed" title="Stock & batches" sub="Receive purchases, adjust counts, track every expiry" />
             <A href="/alerts" icon="alert" title="Alerts" sub="Low stock and expiring batches, before they become a problem" />
+            <A href="/reorder" icon="trend" title="Reorder" sub="What to buy, priced and grouped by distributor" />
+            <A href="/receive" icon="inbox" title="Receive goods" sub="Book a delivery in against the supplier's invoice" />
+            <A href="/suppliers" icon="truck" title="Suppliers" sub="Distributors, drug licences and payment terms" />
           </div>
         </section>
       </div>
@@ -211,7 +251,25 @@ export default function PharmacyDashboard() {
   );
 }
 
-function A({ href, icon, title, sub }: { href: string; icon: "file" | "pill" | "bed" | "alert"; title: string; sub: string }) {
+/** A procurement number that is also the way to act on it. */
+function ProcTile({
+  href, label, value, sub, tone,
+}: { href: string; label: string; value: string; sub: string; tone?: "warn" | "bad" }) {
+  return (
+    <Link href={href} className="surface surface-hover group px-5 py-4">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">{label}</div>
+      <div className={`mt-1 font-mono text-[21px] font-bold ${
+        tone === "bad" ? "text-[var(--p-rose)]" : tone === "warn" ? "text-[var(--p-amber)]" : "text-[var(--p-ink)]"
+      }`}>{value}</div>
+      <div className="mt-0.5 flex items-center gap-1 text-[12px] text-[var(--p-muted)]">
+        {sub}
+        <span className="opacity-0 transition-opacity group-hover:opacity-100"><Icon name="chevron" size={11} /></span>
+      </div>
+    </Link>
+  );
+}
+
+function A({ href, icon, title, sub }: { href: string; icon: "file" | "pill" | "bed" | "alert" | "trend" | "inbox" | "truck"; title: string; sub: string }) {
   return (
     <Link href={href} className="flex items-center gap-3 px-5 py-3.5 transition-colors hover:bg-[var(--p-bg)]">
       <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--p-blue-soft)] text-[var(--p-blue)]"><Icon name={icon} size={17} /></span>

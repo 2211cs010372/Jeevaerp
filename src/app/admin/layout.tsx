@@ -9,7 +9,9 @@ import { PortalShell } from "@/components/portal/shell/portal-shell";
  */
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const path = (await headers()).get("x-portal-path") ?? "";
-  if (path.endsWith("/login")) return <>{children}</>;
+  // Login and print pages render bare - no sidebar/topbar. Print especially:
+  // the sheet must flow in normal document order so a long A5 bill can paginate.
+  if (path.endsWith("/login") || path.includes("/print/")) return <>{children}</>;
   return (
     <PortalShell portalKey="admin" userName="Admin User" title="Admin">
       {children}
