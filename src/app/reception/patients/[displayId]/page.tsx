@@ -142,6 +142,13 @@ export default function PatientDetailPage() {
           <a href={`/prescriptions?patient=${patient.displayId}`} className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2 text-[14px] font-medium text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
             <Icon name="file" size={14} /> Upload Rx
           </a>
+          {/* A pad headed with THIS patient - the parts that get mis-copied by
+              hand are printed, everything clinical is left for the doctor's pen. */}
+          <a href={`/print/opd/blank?patient=${patient.displayId}`} target="_blank" rel="noopener noreferrer"
+            title="Print an empty case sheet already headed with this patient's name, UHID, phone and blood group"
+            className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2 text-[14px] font-medium text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
+            <Icon name="file" size={14} /> Blank OPD sheet
+          </a>
           <a href={`/ipd?patient=${patient.displayId}`} className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2 text-[14px] font-medium text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
             <Icon name="bed" size={14} /> Admit
           </a>

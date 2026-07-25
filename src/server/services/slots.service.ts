@@ -1,16 +1,32 @@
 import { prisma } from "@/lib/prisma";
 import { addDateOnlyDays, localDateISO, parseDateOnly } from "@/lib/date";
 
-/** "HH:MM" -> minutes since midnight. */
+/**
+ * How far ahead the bookable grid runs, in days.
+ *
+ * One constant, because three places used to pick their own number and a grid
+ * that stops before the date picker does reads to a patient as "fully booked"
+ * rather than "not generated yet". The public doctor page already scans 21 days
+ * looking for consulting dates, so anything under that starves it.
+ */
+export const SLOT_HORIZON_DAYS = 30;
+
+/** "HH:MM" -> minutes since midnight. "24:00" is a valid END of day. */
 function toMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(":").map(Number);
   return h * 60 + m;
 }
 
-/** minutes since midnight -> "HH:MM". */
+/**
+ * Minutes since midnight -> "HH:MM".
+ *
+ * 1440 wraps to "00:00", not "24:00": a round-the-clock diary's last slot ends
+ * at midnight, and "24:00" is not a time any parser here would read back.
+ */
 function toHHMM(mins: number): string {
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
+  const wrapped = mins % 1440;
+  const h = Math.floor(wrapped / 60);
+  const m = wrapped % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
@@ -22,7 +38,7 @@ function toHHMM(mins: number): string {
  * Returns how many new slots were created - call this from a daily cron, or
  * on-demand before showing a booking screen.
  */
-export async function generateSlots(days = 7): Promise<{ created: number }> {
+export async function generateSlots(days = SLOT_HORIZON_DAYS): Promise<{ created: number }> {
   const schedules = await prisma.doctorSchedule.findMany({
     where: { isActive: true },
     select: {
@@ -61,12 +77,19 @@ export async function generateSlots(days = 7): Promise<{ created: number }> {
 
   if (rows.length === 0) return { created: 0 };
 
-  const result = await prisma.doctorSlot.createMany({
-    data: rows,
-    skipDuplicates: true, // the unique [doctorId,date,startTime] makes this safe to re-run
-  });
+  // Chunked. A round-the-clock diary across the full horizon is tens of
+  // thousands of rows, and one createMany that size blows past Postgres'
+  // 65535 bind-parameter ceiling.
+  let created = 0;
+  for (let i = 0; i < rows.length; i += 5000) {
+    const result = await prisma.doctorSlot.createMany({
+      data: rows.slice(i, i + 5000),
+      skipDuplicates: true, // the unique [doctorId,date,startTime] makes this safe to re-run
+    });
+    created += result.count;
+  }
 
-  return { created: result.count };
+  return { created };
 }
 
 
@@ -75,7 +98,7 @@ export async function generateSlots(days = 7): Promise<{ created: number }> {
  * length (default 10 min), drop future slots that are still free (keeping booked
  * and blocked ones untouched), then regenerate. Reception/admin action.
  */
-export async function regenerateFutureSlots(minutes = 10, days = 14): Promise<{ created: number; cleared: number }> {
+export async function regenerateFutureSlots(minutes = 10, days = SLOT_HORIZON_DAYS): Promise<{ created: number; cleared: number }> {
   await prisma.doctorSchedule.updateMany({ where: { isActive: true }, data: { slotDurationMin: minutes } });
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const cleared = await prisma.doctorSlot.deleteMany({ where: { date: { gte: today }, isBooked: false, isBlocked: false } });

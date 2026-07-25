@@ -17,7 +17,8 @@ interface Slot { id: string; startTime: string; endTime: string; }
 interface Booked {
   id: string; opNumber: string; time: string; price: string;
   patient: { name: string; displayId: string };
-  doctor: { name: string; department: string };
+  /** NULL on an emergency/casualty visit taken with no consultant named. */
+  doctor: { name: string; department: string } | null;
   invoice?: { id: string; receiptNo: string; totalAmount: string; status: string };
 }
 
@@ -123,24 +124,39 @@ export default function BookAppointmentPage() {
     } catch { /* ignore */ } finally { setRegenerating(false); }
   }
 
+  const [visitType, setVisitType] = useState<"WALKIN" | "EMERGENCY" | "CASUALTY">("WALKIN");
   const [billNow, setBillNow] = useState(true);
   const [bookDisc, setBookDisc] = useState(0);
   const [payments, setPayments] = useState<Tender[]>([]);
   const [payValid, setPayValid] = useState(true);
 
   async function book() {
-    if (!patient || !slotId) return;
+    if (!patient) return;
+    // A scheduled visit without a slot is rejected by the API anyway; stop it here.
+    if (!unscheduled && (!slotId || !doctorId)) return;
     setError(null); setBooking(true);
     try {
-      const fee = Number(doctors.find((d) => d.id === doctorId)?.fee ?? 0);
       const { appointment } = await api.post<{ appointment: Booked }>("/reception/appointments", {
-        patientId: patient.id, slotId, type: "WALKIN", referredByName: referredBy || undefined, referralSource: referralSource || undefined,
-        ...(billNow ? { billNow: { discountAmount: bookDisc || undefined, payments: payments.length ? payments : undefined } } : {}),
+        patientId: patient.id,
+        // An emergency visit takes no slot even if one was left selected from a
+        // previous walk-in attempt - sending it would burn someone's booking.
+        slotId: unscheduled ? undefined : slotId,
+        doctorId: doctorId || undefined,
+        type: visitType,
+        referredByName: referredBy || undefined, referralSource: referralSource || undefined,
+        ...(canBill && billNow ? { billNow: { discountAmount: bookDisc || undefined, payments: payments.length ? payments : undefined } } : {}),
       });
       setBooked(appointment);
     } catch (err) {
       setError(err instanceof ApiClientError ? err.message : "Could not book. Please try again.");
-      if (doctorId) { const { slots } = await api.get<{ slots: Slot[] }>(`/reception/slots?doctorId=${doctorId}&date=${date}`); setSlots(slots); setSlotId(""); }
+      // Someone else may have taken the slot mid-flight - reload the grid so the
+      // desk sees the truth rather than the stale list they just failed against.
+      if (doctorId && !unscheduled) {
+        try {
+          const { slots } = await api.get<{ slots: Slot[] }>(`/reception/slots?doctorId=${doctorId}&date=${date}`);
+          setSlots(slots); setSlotId("");
+        } catch { /* the booking error above is the one that matters */ }
+      }
     } finally { setBooking(false); }
   }
 
@@ -167,7 +183,7 @@ export default function BookAppointmentPage() {
   }
 
   function reset() {
-    setBooked(null); setPatient(null); setPatientMode("existing"); setQuery(""); setResults([]); setDoctorId(""); setSlotId(""); setSlots([]); setError(null); setReferredBy(""); setReferralSource(""); setBookDisc(0); setPayments([]); setPayValid(true);
+    setBooked(null); setPatient(null); setPatientMode("existing"); setVisitType("WALKIN"); setQuery(""); setResults([]); setDoctorId(""); setSlotId(""); setSlots([]); setError(null); setReferredBy(""); setReferralSource(""); setBookDisc(0); setPayments([]); setPayValid(true);
     setNp({ ...emptyNp }); setNpError(null); setNpFieldErr({});
   }
 
@@ -175,12 +191,16 @@ export default function BookAppointmentPage() {
   const slot = slots.find((s) => s.id === slotId);
   const bookFee = Number(doctor?.fee ?? 0);
   const bookTotal = Math.max(0, bookFee - bookDisc);
+  /** No slot, no mandatory doctor - emergency and casualty only. */
+  const unscheduled = visitType !== "WALKIN";
+  /** Nothing is billable until a consultant (and therefore a fee) is named. */
+  const canBill = bookFee > 0;
   const fld = "w-full rounded-lg border border-[var(--p-border)] bg-white px-3.5 py-2.5 text-sm text-[var(--p-ink)] ring";
   const npCls = (e?: string) => `w-full rounded-lg border bg-white px-3 py-2 text-sm text-[var(--p-ink)] outline-none transition-all duration-200 focus:ring-2 focus:ring-[var(--p-teal)]/15 ${e ? "border-[var(--p-rose)] focus:border-[var(--p-rose)]" : "border-[var(--p-border)] focus:border-[var(--p-teal)]"}`;
   const seg = (on: boolean) => `inline-flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${on ? "bg-[var(--p-teal)] text-white shadow-sm" : "text-[var(--p-muted)] hover:text-[var(--p-ink)]"}`;
 
   const step1Done = !!patient;
-  const step2Done = !!patient && !!doctor && !!slotId;
+  const step2Done = !!patient && (unscheduled || (!!doctor && !!slotId));
 
   if (booked) {
     return (
@@ -189,14 +209,16 @@ export default function BookAppointmentPage() {
           <div className="dotgrid flex flex-col items-center border-b border-[var(--p-border)] px-8 py-10 text-center">
             <SuccessCheck size={52} />
             <h3 className="mt-4 font-serif-p text-[24px] font-semibold text-[var(--p-ink)]">Appointment confirmed</h3>
-            <p className="mt-1 text-[14px] text-[var(--p-muted)]">Added to {booked.doctor.name}&apos;s queue.</p>
+            <p className="mt-1 text-[14px] text-[var(--p-muted)]">
+              {booked.doctor ? `Added to ${booked.doctor.name}'s queue.` : "Casualty OP open - the patient is already marked as arrived."}
+            </p>
           </div>
           <div className="grid grid-cols-2 gap-px bg-[var(--p-border)]">
             <Cell k="OP number" v={booked.opNumber} mono />
             <Cell k="Consultation fee" v={`₹${booked.price}`} mono />
             <Cell k="Patient" v={booked.patient.name} />
             <Cell k="Jeeva ID" v={booked.patient.displayId} mono />
-            <Cell k="Doctor" v={booked.doctor.name} />
+            <Cell k="Doctor" v={booked.doctor?.name ?? "Duty doctor — not yet assigned"} />
             <Cell k="Time" v={booked.time} mono />
             {booked.invoice && <Cell k="Receipt" v={booked.invoice.receiptNo} mono />}
             {booked.invoice && <Cell k="Paid" v={`₹${booked.invoice.totalAmount}`} mono />}
@@ -357,10 +379,36 @@ export default function BookAppointmentPage() {
 
           {/* STEP 2 */}
           <section data-rise className={`surface overflow-hidden transition-opacity ${patient ? "surface-hover" : "pointer-events-none opacity-55"}`}>
-            <Head n={2} done={step2Done} title="Doctor & time" hint="Pick a doctor and an available slot for the day." />
+            <Head n={2} done={step2Done}
+              title={unscheduled ? "Emergency / casualty visit" : "Doctor & time"}
+              hint={unscheduled ? "Issued for right now. Name a doctor only if one has already taken the case." : "Pick a doctor and an available slot for the day."} />
             <div className="p-6 pt-5">
+              <div className="mb-5">
+                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.05em] text-[var(--p-muted)]">Visit Type / Category</label>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => { setVisitType("WALKIN"); }} className={`rounded-lg border px-3.5 py-2 text-[13px] font-semibold transition-colors ${visitType === "WALKIN" ? "border-[#0b5f55] bg-[#0b5f55] text-white shadow-sm" : "border-[var(--p-border)] text-[var(--p-ink)] hover:border-[#0b5f55]"}`}>
+                    Regular OP (Walk-in)
+                  </button>
+                  <button type="button" onClick={() => { setVisitType("EMERGENCY"); setSlotId(""); }} className={`rounded-lg  border px-3.5 py-2 text-[13px] font-semibold transition-colors ${visitType === "EMERGENCY" ? "border-[#dc2626] bg-[#dc2626] text-white shadow-sm" : "border-[var(--p-border)] text-[#dc2626] hover:border-[#dc2626]"}`}>
+                    <Icon name="alert" size={13} className="inline mr-1" /> Emergency OP
+                  </button>
+                  <button type="button" onClick={() => { setVisitType("CASUALTY"); setSlotId(""); }} className={`rounded-lg border px-3.5 py-2 text-[13px] font-semibold transition-colors ${visitType === "CASUALTY" ? "border-[#9333ea] bg-[#9333ea] text-white shadow-sm" : "border-[var(--p-border)] text-[#9333ea] hover:border-[#9333ea]"}`}>
+                    Casualty OP
+                  </button>
+                </div>
+                {visitType !== "WALKIN" && (
+                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-[12.5px] leading-relaxed text-red-800">
+                    <span className="font-bold">{visitType === "CASUALTY" ? "Casualty" : "Emergency"} visit:</span> no slot is taken and a doctor is optional.
+                    The patient is recorded as <b>already arrived</b>, and the OPD sheet prints an <b>{visitType} OP</b> band with a
+                    blank &ldquo;attended by&rdquo; line for whoever sees them. Naming a doctor here bills their consultation fee as usual.
+                  </div>
+                )}
+              </div>
+
               <div>
-                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.05em] text-[var(--p-muted)]">Doctor</label>
+                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.05em] text-[var(--p-muted)]">
+                  Doctor {unscheduled && <span className="font-normal normal-case text-[var(--p-muted)]">· optional — leave blank and the sheet prints a duty-doctor block</span>}
+                </label>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {doctors.map((d) => {
                     const active = doctorId === d.id;
@@ -380,10 +428,14 @@ export default function BookAppointmentPage() {
                 </div>
               </div>
 
-              <div className="mt-4 max-w-[240px]">
-                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.05em] text-[var(--p-muted)]">Date</label>
-                <PortalDatePicker value={date} min={todayISO()} onChange={setDate} accent="teal" />
-              </div>
+              {/* An emergency visit is stamped with the wall clock server-side,
+                  so offering a date to pick would be a lie. */}
+              {!unscheduled && (
+                <div className="mt-4 max-w-[240px]">
+                  <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.05em] text-[var(--p-muted)]">Date</label>
+                  <PortalDatePicker value={date} min={todayISO()} onChange={setDate} accent="teal" />
+                </div>
+              )}
 
               {/* selected doctor info card */}
               {doctor && (
@@ -415,7 +467,7 @@ export default function BookAppointmentPage() {
                 </div>
               )}
 
-              {doctorId && (
+              {doctorId && !unscheduled && (
                 <div className="mt-5">
                   <div className="mb-2 flex items-center justify-between">
                     <p className="text-[12px] font-semibold uppercase tracking-[0.05em] text-[var(--p-muted)]">Available slots · {prettyDate(date)}</p>
@@ -481,42 +533,59 @@ export default function BookAppointmentPage() {
               <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--p-ink)]">Booking summary</p>
             </div>
             <div className="divide-y divide-[var(--p-border)]">
+              <SumRow k="Visit type" v={visitType === "EMERGENCY" ? "EMERGENCY OP" : visitType === "CASUALTY" ? "CASUALTY OP" : "Walk-in OP"} />
               <SumRow k="Patient" v={patient?.fullName} />
               <SumRow k="Jeeva ID" v={patient?.displayId} mono />
-              <SumRow k="Doctor" v={doctor?.name} />
-              <SumRow k="Department" v={doctor?.department} />
-              <SumRow k="Date" v={prettyDate(date)} />
-              <SumRow k="Time" v={slot?.startTime} mono />
+              <SumRow k="Doctor" v={doctor?.name ?? (unscheduled ? "Duty doctor — assigned on arrival" : undefined)} />
+              <SumRow k="Department" v={doctor?.department ?? (unscheduled ? "Emergency & Casualty" : undefined)} />
+              <SumRow k="Date" v={prettyDate(unscheduled ? todayISO() : date)} />
+              <SumRow k="Time" v={slot?.startTime ?? (unscheduled ? "Now" : undefined)} mono />
               <div className="flex items-center justify-between px-5 py-3.5">
                 <span className="text-[14px] font-semibold text-[var(--p-ink)]">Fee</span>
-                <span className="font-mono text-[15px] font-semibold text-[var(--p-teal)]">{doctor ? `₹${doctor.fee}` : "-"}</span>
+                <span className="font-mono text-[15px] font-semibold text-[var(--p-teal)]">{doctor ? `₹${doctor.fee}` : "₹0"}</span>
               </div>
             </div>
             <div className="space-y-3 border-t border-[var(--p-border)] px-5 pt-4">
-              <label className="flex items-center gap-2.5 text-[14px] font-medium text-[var(--p-ink)]">
-                <input type="checkbox" checked={billNow} onChange={(e) => setBillNow(e.target.checked)} className="h-4 w-4 accent-[var(--p-blue)]" />
-                Generate bill &amp; collect fee now
-              </label>
-              {billNow && (
-                <div className="space-y-3">
-                  <DiscountInput subtotal={bookFee} accent="blue" onChange={(d) => setBookDisc(d.amount)} />
-                  <div className="flex justify-between text-[13px]">
-                    <span className="text-[var(--p-muted)]">To collect</span>
-                    <span className="font-mono font-semibold text-[var(--p-blue)]">₹{bookTotal.toFixed(2)}</span>
-                  </div>
-                  <PaymentSection total={bookTotal} accent="blue" onChange={(r) => { setPayments(r.payments); setPayValid(r.valid); }} />
-                </div>
+              {/* Nothing to charge until a consultant is named, so there is
+                  nothing to collect either. Offering a ₹0 receipt would just
+                  leave a phantom unpaid bill on the billing screen. */}
+              {canBill ? (
+                <>
+                  <label className="flex items-center gap-2.5 text-[14px] font-medium text-[var(--p-ink)]">
+                    <input type="checkbox" checked={billNow} onChange={(e) => setBillNow(e.target.checked)} className="h-4 w-4 accent-[var(--p-blue)]" />
+                    Generate bill &amp; collect fee now
+                  </label>
+                  {billNow && (
+                    <div className="space-y-3">
+                      <DiscountInput subtotal={bookFee} accent="blue" onChange={(d) => setBookDisc(d.amount)} />
+                      <div className="flex justify-between text-[13px]">
+                        <span className="text-[var(--p-muted)]">To collect</span>
+                        <span className="font-mono font-semibold text-[var(--p-blue)]">₹{bookTotal.toFixed(2)}</span>
+                      </div>
+                      <PaymentSection total={bookTotal} accent="blue" onChange={(r) => { setPayments(r.payments); setPayValid(r.valid); }} />
+                    </div>
+                  )}
+                  <p className="text-[12px] leading-relaxed text-[var(--p-muted)]">
+                    {billNow ? "One motion: OP number + GST receipt together. No second queue at billing." : "Booking only - bill later from the patient's page."}
+                  </p>
+                </>
+              ) : (
+                <p className="text-[12px] leading-relaxed text-[var(--p-muted)]">
+                  No consultation fee to collect yet - casualty charges are raised from <b>Billing</b> once the
+                  patient has been seen and the procedures are known.
+                </p>
               )}
-              <p className="text-[12px] leading-relaxed text-[var(--p-muted)]">
-                {billNow ? "One motion: OP number + GST receipt together. No second queue at billing." : "Booking only - bill later from the patient's page."}
-              </p>
             </div>
             <div className="p-5 pt-3">
-              <PrimaryButton onClick={book} disabled={!step2Done || booking || (billNow && bookTotal > 0 && !payValid)} full>
-                {booking ? <><Spinner /> Booking…</> : <><Icon name="calendar" size={15} /> {billNow ? "Confirm & bill" : "Confirm booking"}</>}
+              <PrimaryButton onClick={book} disabled={!step2Done || booking || (canBill && billNow && bookTotal > 0 && !payValid)} full>
+                {booking
+                  ? <><Spinner /> {unscheduled ? "Issuing OP…" : "Booking…"}</>
+                  : <><Icon name="calendar" size={15} /> {unscheduled ? "Issue emergency OP" : canBill && billNow ? "Confirm & bill" : "Confirm booking"}</>}
               </PrimaryButton>
               <p className="mt-3 text-center text-[12px] leading-relaxed text-[var(--p-muted)]">
-                {step2Done ? "Ready - this books instantly into the doctor's queue." : "Complete both steps to confirm."}
+                {!step2Done ? "Complete both steps to confirm."
+                  : unscheduled ? "Ready - issues an OP number now and marks the patient as arrived."
+                  : "Ready - this books instantly into the doctor's queue."}
               </p>
             </div>
           </div>

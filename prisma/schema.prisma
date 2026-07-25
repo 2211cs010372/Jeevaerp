@@ -52,6 +52,8 @@ enum MaritalStatus {
 enum AppointmentType {
   WALKIN
   ONLINE
+  EMERGENCY
+  CASUALTY
 }
 
 // ---------------------------------------------------------------------------
@@ -395,8 +397,12 @@ model Appointment {
   id        String  @id @default(cuid())
   patientId String
   patient   Patient @relation(fields: [patientId], references: [id])
-  doctorId  String
-  doctor    Doctor  @relation(fields: [doctorId], references: [id])
+  /// NULLABLE on purpose: an EMERGENCY / CASUALTY visit gets its OP number the
+  /// moment the patient is carried in, before anyone knows which consultant
+  /// will see them. Every serializer must therefore treat doctor as optional -
+  /// the printed sheet falls back to the duty-doctor signature block.
+  doctorId  String?
+  doctor    Doctor? @relation(fields: [doctorId], references: [id])
   /// Unique -> one appointment per slot: DB-level double-booking guarantee.
   /// NULLABLE on purpose: a CANCELLED visit releases its slot (Postgres allows
   /// many NULLs under a unique index), so the slot can be booked by someone else.
@@ -442,6 +448,9 @@ model Appointment {
   // Reception counts/lists filter by date+status WITHOUT a doctor, so the
   // doctor-led index above can't serve them - this one does.
   @@index([visitDate, status])
+  // Casualty pulls "today's emergencies" and admin counts monthly emergency
+  // footfall; both filter by type with no doctor and no status.
+  @@index([visitDate, type])
 }
 
 // ---------------------------------------------------------------------------
@@ -1330,6 +1339,11 @@ model AdmissionAdvance {
   id           String      @id @default(cuid())
   admissionId  String
   admission    Admission   @relation(fields: [admissionId], references: [id])
+  /// Human-facing number on the slip handed to the family - ADV-2026-000012.
+  /// NULLABLE only for rows taken before receipts existed; every new advance
+  /// gets one. Its own Counter series, never the tax-invoice series: a deposit
+  /// is money held against a stay, not a supply.
+  receiptNo    String?     @unique
   mode         PaymentMode
   amount       Decimal     @db.Decimal(10, 2)
   reference    String?

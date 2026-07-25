@@ -15,14 +15,18 @@ interface Appt {
   hasRx: boolean;
   checkedInAt?: string | null;
   patient: { id: string; displayId: string; name: string };
-  doctor: { id: string; name: string; department: string };
+  /** NULL on an emergency/casualty visit taken before a consultant was named. */
+  doctor: { id: string; name: string; department: string } | null;
 }
 interface Stats { total: number; expected: number; waiting: number; checkedIn: number; completed: number; newPatients: number; }
 interface Slot { id: string; startTime: string; endTime: string; }
+interface DoctorOption { id: string; name: string; department: string; fee: string; }
 
 // BOOKED used to be labelled "Waiting" - but a booked patient hasn't walked in yet.
 // Waiting means they're sitting in the lobby. That's the whole point of check-in.
 const LABEL: Record<string, string> = { BOOKED: "Expected", CHECKED_IN: "Waiting", COMPLETED: "Completed", CANCELLED: "Cancelled" };
+/** Visit types that take no slot, carry no mandatory doctor, and arrive at once. */
+const EMERGENCY_TYPES = new Set(["EMERGENCY", "CASUALTY"]);
 const hhmm = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
 
 const today = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" });
@@ -45,6 +49,10 @@ export default function ReceptionTodayPage() {
   const [rsSlotId, setRsSlotId] = useState("");
   const [appts, setAppts] = useState<Appt[]>([]);
   const [loading, setLoading] = useState(true);
+  // Naming the doctor who attended an emergency visit, after the fact.
+  const [assigning, setAssigning] = useState<Appt | null>(null);
+  const [assignDocId, setAssignDocId] = useState("");
+  const [doctors, setDoctors] = useState<DoctorOption[]>([]);
 
   useEffect(() => {
     let active = true;
@@ -100,11 +108,32 @@ export default function ReceptionTodayPage() {
 
   async function loadRsSlots(a: Appt, date: string) {
     setRsDate(date); setRsSlotId(""); setRsSlots([]);
-    if (!date) return;
+    if (!date || !a.doctor) return;
     try {
       const r = await api.get<{ slots: Slot[] }>(`/reception/slots?doctorId=${a.doctor.id}&date=${date}`);
       setRsSlots(r.slots);
     } catch { setRsSlots([]); }
+  }
+
+  /** Type back the name written on the sheet's "Attended by" line. */
+  async function openAssign(a: Appt) {
+    setAssigning(a); setAssignDocId(""); setErr(null);
+    if (doctors.length) return;
+    try {
+      const r = await api.get<{ doctors: DoctorOption[] }>("/reception/doctors");
+      setDoctors(r.doctors);
+    } catch { setErr("Could not load the doctor list."); }
+  }
+
+  async function doAssign() {
+    if (!assigning || !assignDocId) return;
+    setActing(assigning.id); setErr(null);
+    try {
+      await api.put(`/reception/appointments/${assigning.id}/doctor`, { doctorId: assignDocId });
+      setAssigning(null); setAssignDocId("");
+      await refresh();
+    } catch (e) { setErr(e instanceof ApiClientError ? e.message : "Could not set the attending doctor."); }
+    finally { setActing(null); }
   }
 
   async function doReschedule() {
@@ -144,6 +173,8 @@ export default function ReceptionTodayPage() {
         )}
 
         <div className="mt-4 flex flex-wrap gap-2">
+          <Link href="/register?emergency=1" title="Register a casualty case and issue an OP number with no doctor and no slot"
+            className="rounded-full border border-red-600/40 bg-red-600/10 px-3.5 py-1.5 text-[12px] font-bold text-red-700 transition-colors hover:bg-red-600 hover:text-white">🚨 Emergency OP</Link>
           <Link href="/register" className="rounded-full border border-black/15 px-3.5 py-1.5 text-[12px] font-medium text-black/80 transition-colors hover:bg-black/10 hover:text-black/90">Register patient</Link>
           <Link href="/prescriptions" className="rounded-full border border-black/15 px-3.5 py-1.5 text-[12px] font-medium text-black/80 transition-colors hover:bg-black/10 hover:text-black/90">Prescriptions</Link>
           <Link href="/ipd" className="rounded-full border border-black/15 px-3.5 py-1.5 text-[12px] font-medium text-black/80 transition-colors hover:bg-black/10 hover:text-black/90">Bed board</Link>
@@ -210,12 +241,17 @@ export default function ReceptionTodayPage() {
                   <div className="flex items-center gap-4">
                     <div className="flex w-14 flex-col items-center">
                       <span className="font-mono text-[14px] font-semibold text-[var(--p-ink)]">{a.time}</span>
-                      <span className="mt-0.5 rounded bg-[var(--p-teal-soft)] px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide text-[var(--p-teal)]">{a.type}</span>
+                      <span className={`mt-0.5 rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-white ${
+                        EMERGENCY_TYPES.has(a.type) ? "bg-[#dc2626]" : "bg-[#0b5f55]"
+                      }`}>{a.type}</span>
                     </div>
                     <div className="h-9 w-px bg-[var(--p-border)]" />
                     <div>
                       <div className="text-[14px] font-medium text-[var(--p-ink)]">{a.patient.name}</div>
-                      <div className="text-[13px] text-[var(--p-muted)]"><span className="tabular">{a.patient.displayId}</span> · {a.doctor.name} · {a.doctor.department}</div>
+                      <div className="text-[13px] text-[var(--p-muted)]">
+                        <span className="tabular">{a.patient.displayId}</span>
+                        {a.doctor ? <> · {a.doctor.name} · {a.doctor.department}</> : <> · <span className="font-semibold text-[#dc2626]">Duty doctor — not yet assigned</span></>}
+                      </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
@@ -226,19 +262,32 @@ export default function ReceptionTodayPage() {
                         {acting === a.id ? <Spinner size={12} /> : <Icon name="check" size={13} />} Check in
                       </button>
                     )}
-                    {(a.status === "BOOKED" || a.status === "CHECKED_IN") && (
+                    {(a.status === "BOOKED" || a.status === "CHECKED_IN" || a.status === "COMPLETED") && (
                       <a href={`/print/opd/${a.id}`} target="_blank" rel="noopener noreferrer"
                         title="Print the OPD case sheet - the doctor writes on this"
-                        className="hidden items-center gap-1 rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--p-teal)] transition-colors hover:border-[var(--p-teal)] sm:inline-flex">
-                        <Icon name="file" size={12} /> Sheet
+                        className="items-center gap-1 rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--p-teal)] transition-colors hover:border-[var(--p-teal)] inline-flex">
+                        <Icon name="file" size={12} /> OPD Sheet
                       </a>
+                    )}
+                    {/* An unattributed visit can never be COMPLETED - only the
+                        assigned doctor may close one. This is how it gets one. */}
+                    {!a.doctor && a.status !== "CANCELLED" && (
+                      <button onClick={() => openAssign(a)}
+                        title="Name the doctor who attended - the visit can't be completed until it has one"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#dc2626]/40 bg-[#dc2626]/10 px-2.5 py-1.5 text-[12px] font-semibold text-[#dc2626] transition-colors hover:bg-[#dc2626] hover:text-white">
+                        <Icon name="stethoscope" size={12} /> Set doctor
+                      </button>
                     )}
                     {a.status === "CHECKED_IN" && (
                       <span className="hidden items-center gap-1.5 text-[12px] text-[var(--p-muted)] sm:inline-flex">
                         <Icon name="clock" size={12} />
                         {a.checkedInAt ? `Arrived ${hhmm(a.checkedInAt)}` : "Arrived"}
-                        <button onClick={() => checkIn(a, true)} disabled={acting === a.id}
-                          className="ml-1 underline underline-offset-2 hover:text-[var(--p-rose)]">undo</button>
+                        {/* An emergency visit is created already arrived - there
+                            is no arrival to undo. Cancel is the way out. */}
+                        {!EMERGENCY_TYPES.has(a.type) && (
+                          <button onClick={() => checkIn(a, true)} disabled={acting === a.id}
+                            className="ml-1 underline underline-offset-2 hover:text-[var(--p-rose)]">undo</button>
+                        )}
                       </span>
                     )}
                     {a.status === "COMPLETED" && (
@@ -259,10 +308,15 @@ export default function ReceptionTodayPage() {
                     {/* a visit that hasn't happened yet can still be moved or called off */}
                     {(a.status === "BOOKED" || a.status === "CHECKED_IN") && (
                       <>
-                        <button onClick={() => { setResched(a); setRsDate(""); setRsSlots([]); setRsSlotId(""); }}
-                          className="hidden rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-teal)] hover:text-[var(--p-teal)] md:inline-flex">
-                          Reschedule
-                        </button>
+                        {/* Reschedule moves a visit to another slot with the SAME
+                            doctor - an emergency visit has neither, so the server
+                            rejects it. Don't offer a button that can only fail. */}
+                        {a.doctor && (
+                          <button onClick={() => { setResched(a); setRsDate(""); setRsSlots([]); setRsSlotId(""); }}
+                            className="hidden rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-teal)] hover:text-[var(--p-teal)] md:inline-flex">
+                            Reschedule
+                          </button>
+                        )}
                         <button onClick={() => { setCancelling(a); setCancelReason(""); }}
                           className="hidden rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--p-muted)] transition-colors hover:border-[var(--p-rose)] hover:text-[var(--p-rose)] md:inline-flex">
                           Cancel
@@ -293,7 +347,7 @@ export default function ReceptionTodayPage() {
                 <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[var(--p-teal-soft)] font-serif-p text-[14px] font-semibold text-[var(--p-teal)]">{nextUp.patient.name.split(" ").map((n) => n[0]).slice(0, 2).join("")}</div>
                 <div>
                   <div className="text-[14px] font-semibold text-[var(--p-ink)]">{nextUp.patient.name}</div>
-                  <div className="text-[13px] text-[var(--p-muted)]">{nextUp.time} · {nextUp.doctor.name}</div>
+                  <div className="text-[13px] text-[var(--p-muted)]">{nextUp.time} · {nextUp.doctor?.name ?? "Duty doctor"}</div>
                 </div>
               </div>
             </div>
@@ -332,7 +386,7 @@ export default function ReceptionTodayPage() {
             <div className="border-b border-[var(--p-border)] px-6 py-4">
               <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Cancel this visit?</h3>
               <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">
-                {cancelling.patient.name} · <span className="font-mono">{cancelling.opNumber}</span> · {cancelling.time} with {cancelling.doctor.name}
+                {cancelling.patient.name} · <span className="font-mono">{cancelling.opNumber}</span> · {cancelling.time} with {cancelling.doctor?.name ?? "the duty doctor"}
               </p>
             </div>
             <div className="space-y-3 p-6">
@@ -341,7 +395,9 @@ export default function ReceptionTodayPage() {
                 placeholder="Patient couldn't come / doctor unavailable…"
                 className="w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm outline-none focus:border-[var(--p-teal)]" />
               <p className="rounded-lg bg-[var(--p-teal-soft)] px-3 py-2 text-[12px] leading-relaxed text-[var(--p-teal-deep)]">
-                The <b>{cancelling.time} slot goes back on sale</b> immediately - another patient can book it. The visit record is kept, not deleted.
+                {cancelling.doctor
+                  ? <>The <b>{cancelling.time} slot goes back on sale</b> immediately - another patient can book it. The visit record is kept, not deleted.</>
+                  : <>An emergency visit holds no slot, so nothing is released. The visit record is kept, not deleted.</>}
               </p>
             </div>
             <div className="flex justify-end gap-3 border-t border-[var(--p-border)] p-5">
@@ -373,6 +429,51 @@ export default function ReceptionTodayPage() {
         </div>
       )}
 
+      {/* SET ATTENDING DOCTOR - closes the emergency loop */}
+      {assigning && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="surface w-full max-w-md bg-white">
+            <div className="border-b border-[var(--p-border)] px-6 py-4">
+              <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Who attended this emergency?</h3>
+              <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">
+                {assigning.patient.name} · <span className="font-mono">{assigning.opNumber}</span> · {assigning.time}
+              </p>
+            </div>
+            <div className="space-y-4 p-6">
+              {doctors.length === 0 ? (
+                <div className="flex items-center gap-2 py-4 text-[13px] text-[var(--p-muted)]"><Spinner size={14} /> Loading doctors…</div>
+              ) : (
+                <div className="grid max-h-56 gap-2 overflow-y-auto">
+                  {doctors.map((d) => (
+                    <button key={d.id} onClick={() => setAssignDocId(assignDocId === d.id ? "" : d.id)}
+                      className={`flex items-center justify-between rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                        assignDocId === d.id ? "border-[var(--p-teal)] bg-[var(--p-teal-soft)]" : "border-[var(--p-border)] hover:border-[var(--p-teal)]"}`}>
+                      <span className="min-w-0">
+                        <span className="block truncate text-[13.5px] font-semibold text-[var(--p-ink)]">{d.name}</span>
+                        <span className="block truncate text-[11.5px] text-[var(--p-muted)]">{d.department}</span>
+                      </span>
+                      <span className="shrink-0 font-mono text-[13px] text-[var(--p-muted)]">₹{d.fee}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <p className="rounded-lg bg-[var(--p-bg)] px-3 py-2 text-[12px] leading-relaxed text-[var(--p-muted)]">
+                This visit appears on that doctor&apos;s list and can then be completed. Their consultation fee is
+                recorded against it - unless a bill has already been raised, in which case the billed amount stands.
+                <b> This can only be set once.</b>
+              </p>
+            </div>
+            <div className="flex justify-end gap-3 border-t border-[var(--p-border)] p-5">
+              <button onClick={() => setAssigning(null)} className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm text-[var(--p-text)]">Not now</button>
+              <button onClick={doAssign} disabled={acting === assigning.id || !assignDocId}
+                className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-teal)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">
+                {acting === assigning.id ? <><Spinner /> Saving…</> : "Set attending doctor"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* RESCHEDULE - same doctor, different slot */}
       {resched && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -380,7 +481,7 @@ export default function ReceptionTodayPage() {
             <div className="border-b border-[var(--p-border)] px-6 py-4">
               <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Move this visit</h3>
               <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">
-                {resched.patient.name} · currently {resched.time} with {resched.doctor.name}
+                {resched.patient.name} · currently {resched.time} with {resched.doctor?.name ?? "the duty doctor"}
               </p>
             </div>
             <div className="space-y-4 p-6">
@@ -394,7 +495,7 @@ export default function ReceptionTodayPage() {
                   <label className="mb-1.5 block text-[13px] font-medium text-[var(--p-text)]">Free slots</label>
                   {rsSlots.length === 0 ? (
                     <p className="rounded-lg bg-[var(--p-bg)] px-3 py-3 text-center text-[13px] text-[var(--p-muted)]">
-                      {resched.doctor.name} has no free slots that day.
+                      {resched.doctor?.name ?? "That doctor"} has no free slots that day.
                     </p>
                   ) : (
                     <div className="grid max-h-40 grid-cols-3 gap-2 overflow-y-auto">

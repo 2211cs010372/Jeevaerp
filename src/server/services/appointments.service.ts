@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { nextId } from "@/lib/ids";
 import { ApiError } from "@/lib/api";
-import { parseDateOnly } from "@/lib/date";
+import { localDateISO, parseDateOnly } from "@/lib/date";
 import { logAudit } from "./audit.service";
 import { createInvoice } from "./billing.service";
 import type { AuthUser } from "@/lib/auth/types";
@@ -21,8 +21,23 @@ export interface AppointmentDTO {
   /** True once a prescription / OPD sheet has been filed against this visit. */
   hasRx: boolean;
   patient: { id: string; displayId: string; name: string };
-  doctor: { id: string; name: string; department: string };
+  /** NULL on an emergency/casualty visit taken before a consultant was assigned.
+   *  Deliberately not a placeholder object: a fake `{ id: "casualty" }` would be
+   *  passed straight into /slots?doctorId=… by the reschedule dialog. */
+  doctor: { id: string; name: string; department: string } | null;
 }
+
+/** Visit types that may be taken with no slot and no named doctor. */
+const UNSCHEDULED_TYPES = ["EMERGENCY", "CASUALTY"] as const;
+export type AppointmentTypeT = "WALKIN" | "ONLINE" | "EMERGENCY" | "CASUALTY";
+const isUnscheduled = (t: AppointmentTypeT) => (UNSCHEDULED_TYPES as readonly string[]).includes(t);
+
+/** What the paper says when nobody was named at the desk. */
+export const DUTY_DOCTOR = {
+  name: "Duty Medical Officer",
+  specialization: "Casualty Medical Officer",
+  department: "Emergency & Casualty",
+} as const;
 
 /** Admin-facing appointment - INCLUDES the referral snapshot. */
 export interface AdminAppointmentDTO extends AppointmentDTO {
@@ -76,11 +91,21 @@ export async function listAvailableSlots(doctorId: string, date: string): Promis
  * count 0 => already taken. Whole op in a transaction (rollback frees the slot);
  * Appointment.slotId UNIQUE is the second guarantee. Consultation fee and the
  * per-visit referral are snapshotted onto the appointment at this moment.
+ *
+ * TWO SHAPES OF VISIT:
+ *
+ *   SCHEDULED (WALKIN / ONLINE) - a slot is mandatory. The slot is the source of
+ *   truth for doctor, date and time; a scheduled visit with no slot would be a
+ *   booking nobody can find on any doctor's list, so it is rejected outright.
+ *
+ *   UNSCHEDULED (EMERGENCY / CASUALTY) - no slot, and the doctor is optional.
+ *   Date and time come from the wall clock, and the visit is created already
+ *   CHECKED_IN because the patient is, by definition, physically in the building.
  */
 export async function bookAppointment(
   actor: AuthUser,
   input: {
-    patientId: string; slotId: string; type: "WALKIN" | "ONLINE";
+    patientId: string; slotId?: string; doctorId?: string; type: AppointmentTypeT;
     referredByName?: string; referralSource?: string;
     /** Reception can bill the consultation in the same motion, so the patient
      *  leaves the desk with an OP number AND a receipt - one queue, not two. */
@@ -93,6 +118,13 @@ export async function bookAppointment(
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<AppointmentDTO & { invoice?: { id: string; receiptNo: string; totalAmount: string; status: string } }> {
   const nn = (v: string | undefined) => (v && v.trim() ? v.trim() : null);
+  const unscheduled = isUnscheduled(input.type);
+  const requestedSlotId = nn(input.slotId);
+  const requestedDoctorId = nn(input.doctorId);
+
+  // A scheduled visit without a slot would land nowhere on any doctor's day.
+  // Catch it here rather than silently writing a doctorless WALKIN row.
+  if (!unscheduled && !requestedSlotId) throw new ApiError(400, "Pick a time slot for this visit");
 
   const appt = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const patient = await tx.patient.findUnique({
@@ -101,50 +133,74 @@ export async function bookAppointment(
     });
     if (!patient || patient.mergedIntoId || patient.deletedAt) throw new ApiError(404, "Patient not found");
 
-    const slot = await tx.doctorSlot.findUnique({
-      where: { id: input.slotId },
-      // startTime was MISSING here. `timeAtBooking: slot.startTime` therefore
-      // wrote `undefined`, and because the column carries @default("00:00"),
-      // Prisma quietly stored midnight instead of throwing. Every appointment
-      // ever booked was 00:00; reschedule looked "fixed" only because ITS select
-      // happened to include startTime. A default on a field that must always be
-      // set explicitly turns a crash into silent data corruption.
-      select: { id: true, doctorId: true, date: true, startTime: true, isBooked: true },
-    });
-    if (!slot) throw new ApiError(404, "That time slot no longer exists");
-    if (slot.isBooked) throw new ApiError(409, "That slot was just taken. Please pick another.");
-    // Defence in depth: never let the column default swallow this again.
-    if (!slot.startTime) throw new ApiError(500, "That slot has no start time - tell IT before booking.");
+    let slot = null;
+    let targetDoctorId = requestedDoctorId;
+    // Wall clock, in the clinic's own timezone. `toISOString()` here filed a
+    // 2 AM casualty case under YESTERDAY in IST - and emergencies are exactly
+    // the visits that happen at 2 AM. See lib/date.ts: date-only column -> UTC
+    // midnight of the LOCAL calendar day.
+    const now = new Date();
+    let visitDate = parseDateOnly(localDateISO(now));
+    let timeAtBooking = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 
-    const claim = await tx.doctorSlot.updateMany({
-      where: { id: slot.id, isBooked: false }, data: { isBooked: true },
-    });
-    if (claim.count === 0) throw new ApiError(409, "That slot was just taken. Please pick another.");
+    if (requestedSlotId) {
+      slot = await tx.doctorSlot.findUnique({
+        where: { id: requestedSlotId },
+        select: { id: true, doctorId: true, date: true, startTime: true, isBooked: true, isBlocked: true },
+      });
+      if (!slot) throw new ApiError(404, "That time slot no longer exists");
+      if (slot.isBlocked) throw new ApiError(409, "That time is blocked - the doctor isn't available then");
+      if (slot.isBooked) throw new ApiError(409, "That slot was just taken. Please pick another.");
+      if (!slot.startTime) throw new ApiError(500, "That slot has no start time - tell IT before booking.");
 
-    // snapshot the consultation fee now
-    const doctor = await tx.doctor.findUnique({
-      where: { id: slot.doctorId }, select: { consultationFee: true },
-    });
+      const claim = await tx.doctorSlot.updateMany({
+        where: { id: slot.id, isBooked: false }, data: { isBooked: true },
+      });
+      if (claim.count === 0) throw new ApiError(409, "That slot was just taken. Please pick another.");
+
+      // The slot wins over anything the client sent: it is what the grid showed.
+      targetDoctorId = slot.doctorId;
+      visitDate = slot.date;
+      timeAtBooking = slot.startTime;
+    }
+
+    // Fee is snapshotted from the named doctor. An unscheduled visit with nobody
+    // named carries ₹0 - casualty charges are raised afterwards, per procedure.
+    let consultationFee = 0;
+    if (targetDoctorId) {
+      const doctor = await tx.doctor.findUnique({
+        where: { id: targetDoctorId }, select: { id: true, active: true, consultationFee: true },
+      });
+      // Without this the bad id reached the FK and surfaced as a 500. It is a
+      // 404, and reception can act on a 404.
+      if (!doctor) throw new ApiError(404, "That doctor no longer exists");
+      if (!doctor.active && !slot) throw new ApiError(409, "That doctor is no longer in practice here");
+      consultationFee = Number(doctor.consultationFee);
+    }
 
     const opNumber = await nextId("OP", { tx });
     const created = await tx.appointment.create({
       data: {
         patientId: patient.id,
-        doctorId: slot.doctorId,
-        slotId: slot.id,
-        visitDate: slot.date,
-        timeAtBooking: slot.startTime,
+        doctorId: targetDoctorId,
+        slotId: slot ? slot.id : null,
+        visitDate,
+        timeAtBooking,
         type: input.type,
-        status: "BOOKED",
+        // An emergency patient is already in the building - making the desk
+        // press "Check in" a second later would be theatre, and until they did
+        // the casualty case would read as "yet to arrive" on every screen.
+        status: unscheduled ? "CHECKED_IN" : "BOOKED",
+        checkedInAt: unscheduled ? now : null,
         opNumber,
-        priceAtBooking: doctor?.consultationFee ?? 0,
+        priceAtBooking: consultationFee,
         referredByName: nn(input.referredByName),
         referralSource: nn(input.referralSource),
         createdById: actor.id,
       },
       select: {
         id: true, opNumber: true, status: true, type: true, priceAtBooking: true,
-        timeAtBooking: true,
+        timeAtBooking: true, checkedInAt: true,
         patient: { select: { id: true, displayId: true, fullName: true } },
         doctor: { select: { id: true, name: true, department: true } },
       },
@@ -152,22 +208,37 @@ export async function bookAppointment(
 
     await logAudit(
       actor,
-      { action: "APPOINTMENT_BOOKED", targetTable: "Appointment", targetId: created.id, meta: { opNumber, patientId: patient.displayId }, ...ctx },
+      {
+        action: unscheduled ? "EMERGENCY_OP_ISSUED" : "APPOINTMENT_BOOKED",
+        targetTable: "Appointment", targetId: created.id,
+        meta: { opNumber, patientId: patient.displayId, type: input.type, doctorId: targetDoctorId },
+        ...ctx,
+      },
       tx
     );
     return created;
   });
 
-  const dto = {
+  const dto: AppointmentDTO = {
     id: appt.id, opNumber: appt.opNumber, time: appt.timeAtBooking, status: appt.status,
     type: appt.type, price: appt.priceAtBooking.toString(), hasRx: false,
+    checkedInAt: appt.checkedInAt ? appt.checkedInAt.toISOString() : null,
     patient: { id: appt.patient.id, displayId: appt.patient.displayId, name: appt.patient.fullName },
     doctor: appt.doctor,
   };
 
   // Book + bill in one motion. The consultation invoice reuses the same
   // engine as labs/pharmacy - consultation is GST-exempt by default.
-  if (input.billNow) {
+  //
+  // A ₹0 line is skipped rather than billed: a casualty case with no consultant
+  // yet has nothing to charge, and raising the bill anyway would burn a receipt
+  // number on an empty invoice and leave a phantom ₹0 "unpaid" bill on the
+  // billing screen forever.
+  const billableNow = Number(appt.priceAtBooking.toString()) > 0;
+  if (input.billNow && billableNow) {
+    const seenBy = appt.doctor
+      ? `${appt.doctor.name} (${appt.doctor.department})`
+      : `${DUTY_DOCTOR.name} (${DUTY_DOCTOR.department})`;
     const invoice = await createInvoice(
       actor,
       {
@@ -175,7 +246,7 @@ export async function bookAppointment(
         source: "CONSULTATION",
         appointmentId: appt.id,
         lines: [{
-          description: `Consultation · ${appt.doctor.name} (${appt.doctor.department}) · ${appt.opNumber}`,
+          description: `Consultation · ${seenBy} · ${appt.opNumber}`,
           qty: 1,
           unitPrice: Number(appt.priceAtBooking.toString()),
           gstRatePct: 0,
@@ -207,7 +278,7 @@ type ApptRow = {
   referredByName: string | null; referralSource: string | null;
   timeAtBooking: string; checkedInAt: Date | null;
   patient: { id: string; displayId: string; fullName: string };
-  doctor: { id: string; name: string; department: string };
+  doctor: { id: string; name: string; department: string } | null;
   _count: { prescriptionUploads: number };
 };
 
@@ -285,7 +356,10 @@ export async function receptionTodayStats(): Promise<{
 export async function opdPrintData(appointmentId: string): Promise<{
   hospital: { legalName: string; addressLine: string; city: string; state: string; stateCode: string; pincode: string; gstin: string | null; phone: string | null } | null;
   appointment: { id: string; opNumber: string; type: string; status: string; visitDate: string; time: string; referredByName: string | null; visitNumber: number };
-  doctor: { name: string; specialization: string; department: string };
+  /** The named consultant, or the duty-doctor block for an unattributed
+   *  casualty case. `named` is false in the latter, so the sheet prints a
+   *  signature line to fill in rather than "Dr. Duty Medical Officer". */
+  doctor: { name: string; specialization: string; department: string; named: boolean };
   patient: { displayId: string; fullName: string; age: number | null; gender: string | null; bloodGroup: string | null; phone: string; address: string | null; city: string | null };
   rxItems: { medicineName: string; qty: number; dosage: string | null }[];
   vitals: VitalsDTO | null;
@@ -324,7 +398,7 @@ export async function opdPrintData(appointmentId: string): Promise<{
       visitDate: a.visitDate.toISOString().slice(0, 10),
       time: a.timeAtBooking, referredByName: a.referredByName, visitNumber,
     },
-    doctor: a.doctor,
+    doctor: a.doctor ? { ...a.doctor, named: true } : { ...DUTY_DOCTOR, named: false },
     patient: a.patient,
     rxItems: upload?.items ?? [],
     vitals: vitals ? toVitalsDTO(vitals) : null,
@@ -453,6 +527,71 @@ export async function checkInAppointment(
   return { id: appointmentId, status: "CHECKED_IN", checkedInAt: now.toISOString() };
 }
 
+/**
+ * Name the doctor who actually attended an emergency / casualty visit.
+ *
+ * Without this an unattributed visit is a DEAD END: only the assigned doctor can
+ * mark a visit COMPLETED (doctor.service enforces `appt.doctorId === doc.id`),
+ * so a casualty case with nobody on it would sit CHECKED_IN forever, never reach
+ * the completed-visits list, and never count towards revenue-by-doctor.
+ *
+ * This is the same paper-first loop the rest of the desk runs on: the sheet
+ * prints an "Attended by" line, the CMO writes their name on it, reception types
+ * it back in. One-way on purpose - it fills a blank, it does not reassign a
+ * visit away from a doctor who has already been credited (and possibly billed)
+ * for it. That would be a cancel-and-rebook decision, made deliberately.
+ *
+ * Money: the fee is snapshotted now, the same way booking does it - but ONLY if
+ * nothing has been billed yet. Once an invoice exists, priceAtBooking is what
+ * that invoice was raised against and must not shift underneath it.
+ */
+export async function assignAppointmentDoctor(
+  actor: AuthUser,
+  input: { appointmentId: string; doctorId: string },
+  ctx: { ipAddress?: string; userAgent?: string }
+): Promise<{ id: string; doctor: { id: string; name: string; department: string }; price: string }> {
+  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const appt = await tx.appointment.findUnique({
+      where: { id: input.appointmentId },
+      select: {
+        id: true, opNumber: true, status: true, doctorId: true, type: true,
+        invoices: { where: { status: { not: "CANCELLED" } }, select: { id: true } },
+      },
+    });
+    if (!appt) throw new ApiError(404, "Appointment not found");
+    if (appt.doctorId) throw new ApiError(409, "This visit already has a doctor. Cancel and rebook to change it.");
+    if (appt.status === "CANCELLED") throw new ApiError(409, "This visit was cancelled");
+
+    const doctor = await tx.doctor.findUnique({
+      where: { id: input.doctorId },
+      select: { id: true, name: true, department: true, active: true, consultationFee: true },
+    });
+    if (!doctor) throw new ApiError(404, "Doctor not found");
+    if (!doctor.active) throw new ApiError(409, "That doctor is no longer in practice here");
+
+    const alreadyBilled = appt.invoices.length > 0;
+    const price = alreadyBilled ? undefined : doctor.consultationFee;
+
+    const updated = await tx.appointment.update({
+      where: { id: appt.id },
+      data: { doctorId: doctor.id, ...(price !== undefined ? { priceAtBooking: price } : {}) },
+      select: { priceAtBooking: true },
+    });
+
+    await logAudit(actor, {
+      action: "APPOINTMENT_DOCTOR_ASSIGNED", targetTable: "Appointment", targetId: appt.id,
+      meta: { opNumber: appt.opNumber, type: appt.type, doctorId: doctor.id, feeSnapshotted: !alreadyBilled },
+      ...ctx,
+    }, tx);
+
+    return {
+      id: appt.id,
+      doctor: { id: doctor.id, name: doctor.name, department: doctor.department },
+      price: updated.priceAtBooking.toString(),
+    };
+  });
+}
+
 /** Undo a mis-click. CHECKED_IN -> BOOKED. Refused once the doctor has seen them. */
 export async function undoCheckIn(
   actor: AuthUser,
@@ -460,10 +599,15 @@ export async function undoCheckIn(
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<void> {
   const appt = await prisma.appointment.findUnique({
-    where: { id: appointmentId }, select: { status: true, opNumber: true },
+    where: { id: appointmentId }, select: { status: true, opNumber: true, type: true },
   });
   if (!appt) throw new ApiError(404, "Appointment not found");
   if (appt.status !== "CHECKED_IN") throw new ApiError(409, "That visit isn't checked in");
+  // An emergency visit is created already arrived - "un-arriving" it would leave
+  // a casualty case sitting in the "yet to arrive" column. Cancel it instead.
+  if (appt.type === "EMERGENCY" || appt.type === "CASUALTY") {
+    throw new ApiError(409, "An emergency visit is arrived by definition. Cancel it if it was raised by mistake.");
+  }
 
   await prisma.appointment.update({
     where: { id: appointmentId }, data: { status: "BOOKED", checkedInAt: null },
@@ -568,6 +712,11 @@ export async function rescheduleAppointment(
     if (!appt) throw new ApiError(404, "Appointment not found");
     if (appt.status === "COMPLETED") throw new ApiError(409, "This visit is already complete");
     if (appt.status === "CANCELLED") throw new ApiError(409, "This visit was cancelled - book a new one");
+    // Same-doctor-only is the whole rule below, and a casualty case has no
+    // doctor to match against. Say that, instead of "pick the same doctor".
+    if (!appt.doctorId) {
+      throw new ApiError(400, "An emergency visit has no doctor or slot to move. Book a regular appointment instead.");
+    }
 
     const slot = await tx.doctorSlot.findUnique({
       where: { id: input.newSlotId },

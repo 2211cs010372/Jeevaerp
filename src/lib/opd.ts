@@ -82,8 +82,16 @@ export function allowedDays(days: string): Set<number> {
   return s;
 }
 
-/** How many hours a doctor is at the desk each consulting day. */
+/**
+ * How many hours a doctor is at the desk each consulting day.
+ *
+ * "Open 24 Hours" carries no parseable window, so this returned 0 and the
+ * profile page read "At the desk · 0 hrs/day" for the very doctors who are
+ * there round the clock. 24-hour cover is answered first; 0 is reserved for a
+ * roster with genuinely nothing to measure ("By Appointment", "on call").
+ */
 export function dailyHours(opd: string): number {
+  if (is24Hours(opd)) return 24;
   const w = opdWindow(opd);
   return w ? Math.round(((w.end - w.start) / 60) * 10) / 10 : 0;
 }

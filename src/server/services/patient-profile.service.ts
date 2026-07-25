@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
+import { DUTY_DOCTOR } from "./appointments.service";
 import { listPatientPrescriptions, type PrescriptionUploadDTO } from "./prescriptions.service";
 
 export interface PatientProfileDTO {
@@ -79,15 +80,17 @@ export async function getPatientAppointments(patientId: string): Promise<Patient
   });
   return rows.map((a: {
     id: string; opNumber: string; visitDate: Date; status: string; priceAtBooking: { toString(): string };
-    timeAtBooking: string; doctor: { name: string; department: string };
+    timeAtBooking: string; doctor: { name: string; department: string } | null;
   }) => ({
     id: a.id,
     opNumber: a.opNumber,
     visitDate: a.visitDate.toISOString().slice(0, 10),
     time: a.timeAtBooking,
     status: a.status,
-    doctorName: a.doctor.name,
-    department: a.doctor.department,
+    // Emergency visits carry no consultant - the patient's own history should
+    // say so plainly rather than name a doctor who never saw them.
+    doctorName: a.doctor?.name ?? DUTY_DOCTOR.name,
+    department: a.doctor?.department ?? DUTY_DOCTOR.department,
     price: a.priceAtBooking.toString(),
   }));
 }
@@ -112,13 +115,13 @@ export async function getPatientLabTests(patientId: string): Promise<PatientLabT
   });
   return rows.map((t: {
     id: string; testName: string; status: string; reportFileUrl: string | null; createdAt: Date; completedAt: Date | null;
-    appointment: { doctor: { name: string } } | null;
+    appointment: { doctor: { name: string } | null } | null;
   }) => ({
     id: t.id, testName: t.testName, status: t.status,
     reportReady: Boolean(t.reportFileUrl),
     reportUrl: t.reportFileUrl,
     date: (t.completedAt ?? t.createdAt).toISOString().slice(0, 10),
-    doctorName: t.appointment?.doctor.name ?? null,
+    doctorName: t.appointment?.doctor?.name ?? null,
   }));
 }
 

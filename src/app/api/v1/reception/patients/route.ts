@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 /** Register a new patient → issues a real UHID, saves to DB. */
 export const POST = handler(async (req) => {
-  const actor = await requireRole(req, "RECEPTIONIST", "ADMIN");
+  const actor = await requireRole(req, "RECEPTIONIST", "PHARMACIST", "ADMIN");
   const input = await parseBody(req, registerPatientSchema);
   const patient = await registerPatient(actor, input, auditContext(req));
   return NextResponse.json({ patient }, { status: 201 });

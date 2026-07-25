@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Card, PrimaryButton } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
 import { Field, Spinner, SuccessCheck } from "@/components/portal/ui/form-atoms";
@@ -8,8 +9,28 @@ import { api, ApiClientError } from "@/lib/api-client";
 
 const BLOODS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 
-interface Registered { displayId: string; fullName: string; firstName: string; age: number | null; gender: string | null; bloodGroup: string | null; }
+interface Registered { id: string; displayId: string; fullName: string; firstName: string; age: number | null; gender: string | null; bloodGroup: string | null; }
+interface EmergencyAppt { id: string; opNumber: string; time: string }
 type Errs = Partial<Record<"firstName" | "phone" | "age" | "email", string>>;
+
+/**
+ * Reads ?emergency=1 - the red chip on the Today desk lands straight in casualty
+ * mode, so nobody has to remember which button to press at 2 AM.
+ *
+ * Its own component so useSearchParams sits under <Suspense>; Next 15 requires
+ * it. Same shape as PatientFromUrl on the booking form. The state lift happens
+ * in an effect, never during render - a parent setState from a child's render
+ * body is a React error, not just a smell.
+ */
+function EmergencyFromUrl({ onSet }: { onSet: () => void }) {
+  const params = useSearchParams();
+  const wants = params.get("emergency");
+  useEffect(() => {
+    if (wants) onSet();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wants]);
+  return null;
+}
 
 const empty = {
   firstName: "", middleName: "", lastName: "", dob: "", age: "", gender: "FEMALE",
@@ -26,6 +47,16 @@ export default function RegisterPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [errors, setErrors] = useState<Errs>({});
   const [issued, setIssued] = useState<Registered | null>(null);
+  const [emergencyAppt, setEmergencyAppt] = useState<EmergencyAppt | null>(null);
+  const [emergencyMode, setEmergencyMode] = useState(false);
+  /**
+   * Registration is TWO writes: create the patient, then issue the emergency OP.
+   * If the second one failed we used to surface a generic error and drop the
+   * patient we had just created - so the receptionist pressed the button again
+   * and the person ended up with two UHIDs and two files. Holding the created
+   * patient here makes the retry resume from step two instead of redoing step one.
+   */
+  const [pendingPatient, setPendingPatient] = useState<Registered | null>(null);
 
   const set = (k: keyof typeof empty) => (v: string | boolean) => {
     setF((p) => ({ ...p, [k]: v }));
@@ -65,8 +96,11 @@ export default function RegisterPage() {
     return Object.keys(e).length === 0;
   }
 
-  async function submit() {
+  async function submit(isEmergency = false) {
     setFormError(null);
+    // A half-finished emergency registration resumes at the OP step. Retrying
+    // the whole form would mint a second UHID for a patient already on file.
+    if (pendingPatient) return issueEmergencyOp(pendingPatient);
     if (!validate()) return;
     setLoading(true);
     try {
@@ -84,13 +118,43 @@ export default function RegisterPage() {
         referredByName: f.referredByName || undefined, referralSource: f.referralSource || undefined,
         isVip: f.isVip, remarks: f.remarks || undefined,
       });
+
+      if (isEmergency) { await issueEmergencyOp(patient); return; }
       setIssued(patient);
     } catch (err) {
       setFormError(err instanceof ApiClientError ? err.message : "Could not register. Please try again.");
     } finally { setLoading(false); }
   }
 
-  function registerAnother() { setIssued(null); setF({ ...empty }); setErrors({}); setFormError(null); }
+  /**
+   * Step two of the emergency flow: turn a registered patient into a casualty OP.
+   * The patient is ALREADY saved by the time this runs, so a failure here must
+   * never look like "registration failed" - it is one retryable step, and the
+   * UHID is kept so the retry doesn't duplicate the person.
+   */
+  async function issueEmergencyOp(patient: Registered) {
+    setLoading(true); setFormError(null);
+    try {
+      const { appointment } = await api.post<{ appointment: EmergencyAppt }>("/reception/appointments", {
+        patientId: patient.id,
+        type: "EMERGENCY",
+      });
+      setEmergencyAppt(appointment);
+      setPendingPatient(null);
+      setIssued(patient);
+    } catch (err) {
+      setPendingPatient(patient);
+      setFormError(
+        `${patient.firstName} is registered as ${patient.displayId} - do NOT register them again. ` +
+        `Only the emergency OP number failed: ${err instanceof ApiClientError ? err.message : "please try again"}`
+      );
+    } finally { setLoading(false); }
+  }
+
+  function registerAnother() {
+    setIssued(null); setEmergencyAppt(null); setPendingPatient(null);
+    setF({ ...empty }); setErrors({}); setFormError(null);
+  }
 
   const fld = "w-full rounded-lg border bg-white px-3 py-2 text-sm text-[var(--p-ink)] outline-none transition-all duration-200 focus:ring-2 focus:ring-[var(--p-teal)]/15";
   const ok = "border-[var(--p-border)] focus:border-[var(--p-teal)]";
@@ -102,21 +166,42 @@ export default function RegisterPage() {
       <div className="mx-auto max-w-md">
         <Card enter={0} className="flex flex-col items-center p-8 text-center">
           <SuccessCheck />
-          <h3 className="mt-4 font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">{issued.firstName} is registered</h3>
-          <p className="mt-1 text-[14px] text-[var(--p-muted)]">Their permanent Jeeva ID has been issued and saved.</p>
-          <div className="mt-5 rounded-xl bg-[var(--p-teal-soft)] px-6 py-3">
-            <span className="font-mono text-lg tracking-wider text-[var(--p-teal-deep)]">{issued.displayId}</span>
+          <div className="mt-3 flex items-center gap-1.5">
+            <span className={`rounded px-2.5 py-0.5 font-mono text-[10.5px] font-bold uppercase text-white ${emergencyAppt ? "bg-[#dc2626]" : "bg-[#0b5f55]"}`}>
+              {emergencyAppt ? "Emergency OP" : "OP"}
+            </span>
           </div>
-          <p className="mt-6 text-[13px] text-[var(--p-muted)]">Most patients book a consultation right away -</p>
-          <div className="mt-3 flex flex-col gap-2.5 self-stretch">
-            <a href={`/book?patient=${issued.displayId}`}
-               className="inline-flex items-center justify-center gap-2 rounded-lg bg-[var(--p-teal)] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[var(--p-teal-deep)]">
-              <Icon name="calendar" size={15} /> Book appointment for {issued.firstName} →
-            </a>
+          <h3 className="mt-2 font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">{issued.firstName} is registered</h3>
+          <p className="mt-1 text-[14px] text-[var(--p-muted)]">
+            {emergencyAppt
+              ? "Jeeva ID issued and the casualty OP is open - they are already marked as arrived."
+              : "Their permanent Jeeva ID has been issued and saved."}
+          </p>
+          <div className="mt-4 flex flex-col gap-2 rounded-xl bg-[var(--p-teal-soft)] px-6 py-3">
+            <span className="font-mono text-base font-semibold text-[var(--p-teal-deep)]">UHID: {issued.displayId}</span>
+            {emergencyAppt && (
+              <span className="font-mono text-base font-bold text-[#dc2626]">
+                OP NO: {emergencyAppt.opNumber} · {emergencyAppt.time}
+              </span>
+            )}
+          </div>
+
+          <div className="mt-6 flex flex-col gap-2.5 self-stretch">
+            {emergencyAppt ? (
+              <a href={`/print/opd/${emergencyAppt.id}`} target="_blank" rel="noopener noreferrer"
+                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#dc2626] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#b91c1c]">
+                <Icon name="file" size={15} /> Print emergency OPD sheet →
+              </a>
+            ) : (
+              <a href={`/book?patient=${issued.displayId}`}
+                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-[var(--p-teal)] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[var(--p-teal-deep)]">
+                <Icon name="calendar" size={15} /> Book appointment for {issued.firstName} →
+              </a>
+            )}
             <div className="flex gap-2.5">
               <a href={`/patients/${issued.displayId}`}
                  className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-[14px] font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
-                Open patient file
+                Open file
               </a>
               <button onClick={registerAnother}
                  className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-[14px] font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
@@ -131,15 +216,52 @@ export default function RegisterPage() {
 
   return (
     <div className="mx-auto max-w-7xl">
-      <Card enter={0} className="dotgrid p-6">
-        <div className="mb-5">
-          <h3 className="text-[15px] font-semibold text-[var(--p-ink)]">Register new patient</h3>
-          <p className="mt-1 text-[13px] leading-relaxed text-[var(--p-muted)]">A permanent Jeeva ID is issued and saved instantly. Only first name and phone are required.</p>
+      <Suspense fallback={null}>
+        <EmergencyFromUrl onSet={() => setEmergencyMode(true)} />
+      </Suspense>
+      <Card enter={0} className={`dotgrid p-6 ${emergencyMode ? "!border-[#dc2626]/40" : ""}`}>
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h3 className="text-[15px] font-semibold text-[var(--p-ink)]">Register patient</h3>
+            <p className="mt-1 text-[13px] leading-relaxed text-[var(--p-muted)]">A permanent Jeeva ID is issued and saved instantly. Only first name and phone are required.</p>
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-[#dc2626]/30 bg-[#dc2626]/[0.07] px-3 py-2">
+            <input type="checkbox" checked={emergencyMode} onChange={(e) => setEmergencyMode(e.target.checked)} className="h-4 w-4 accent-[#dc2626]" />
+            <span className="text-[12.5px] font-bold text-[#dc2626]">Emergency / casualty case</span>
+          </label>
         </div>
+
+        {emergencyMode && (
+          <div className="mb-4 rounded-lg border border-[#dc2626]/25 bg-[#dc2626]/[0.06] px-4 py-3 text-[12.5px] leading-relaxed text-[#a3160f]">
+            <b>Casualty mode.</b> One press issues the Jeeva ID <i>and</i> an emergency OP number, with no doctor
+            and no time slot, and marks the patient as already arrived. Fill in only what you know -
+            first name and phone are the only required fields; the rest can be completed from the patient
+            file once the patient is stable.
+          </div>
+        )}
 
         {formError && (
           <div data-enter className="mb-4 flex items-start gap-2 rounded-lg border border-[var(--p-rose)]/25 bg-[var(--p-rose-soft)] px-4 py-3 text-[14px] text-[var(--p-rose)]">
             <Icon name="alert" size={15} /> <span>{formError}</span>
+          </div>
+        )}
+
+        {/* The patient exists; only the OP number is missing. Offer the ONE
+            action that finishes the job, and hide the paths that would create
+            a second record for the same person. */}
+        {pendingPatient && (
+          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-[var(--p-amber)]/30 bg-[var(--p-amber-soft)] px-4 py-3">
+            <span className="text-[13px] text-[#8a6414]">
+              <b>{pendingPatient.displayId}</b> is saved. Issue the emergency OP number to finish.
+            </span>
+            <button type="button" onClick={() => issueEmergencyOp(pendingPatient)} disabled={loading}
+              className="inline-flex items-center gap-2 rounded-lg bg-[#dc2626] px-3.5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#b91c1c] disabled:opacity-50">
+              {loading ? <><Spinner /> Retrying…</> : <>Retry emergency OP</>}
+            </button>
+            <button type="button" onClick={() => { setPendingPatient(null); setIssued(pendingPatient); setFormError(null); }}
+              className="rounded-lg border border-[var(--p-border)] px-3.5 py-2 text-[13px] font-medium text-[var(--p-text)]">
+              Skip - keep registration only
+            </button>
           </div>
         )}
 
@@ -198,10 +320,26 @@ export default function RegisterPage() {
           <label htmlFor="vip" className="text-[14px] text-[var(--p-text)]">Mark as VIP patient</label>
         </div>
 
-        <div className="mt-6">
-          <PrimaryButton onClick={submit} disabled={loading}>
-            {loading ? <><Spinner /> Registering…</> : <><Icon name="plus" size={15} /> Register patient</>}
-          </PrimaryButton>
+        {/* Casualty mode swaps the primary action rather than sitting beside it:
+            two near-identical submit buttons at 2 AM is how the wrong one gets
+            pressed. The other path stays reachable, just not as the default. */}
+        <div className="mt-6 flex flex-wrap items-center gap-3">
+          {emergencyMode ? (
+            <>
+              <button type="button" onClick={() => submit(true)} disabled={loading || !!pendingPatient}
+                className="inline-flex items-center gap-2 rounded-lg bg-[#dc2626] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#b91c1c] disabled:opacity-50">
+                {loading ? <><Spinner /> Issuing emergency OP…</> : <><Icon name="alert" size={15} /> Register &amp; issue emergency OP</>}
+              </button>
+              <button type="button" onClick={() => submit(false)} disabled={loading || !!pendingPatient}
+                className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-teal)] hover:text-[var(--p-teal)] disabled:opacity-50">
+                Register only
+              </button>
+            </>
+          ) : (
+            <PrimaryButton onClick={() => submit(false)} disabled={loading || !!pendingPatient}>
+              {loading ? <><Spinner /> Registering…</> : <><Icon name="plus" size={15} /> Register patient</>}
+            </PrimaryButton>
+          )}
         </div>
       </Card>
     </div>

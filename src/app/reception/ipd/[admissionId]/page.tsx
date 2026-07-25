@@ -26,9 +26,13 @@ interface Sheet {
   /** One row per bed occupied. Two rows = they were transferred mid-stay. */
   legs: { wardName: string; bedNo: string; dailyCharge: string; days: number; total: string; current: boolean }[];
   advanceTotal: string;
+  /** Each deposit slip taken on this stay - listed so any can be reprinted. */
+  advances: (Advance & { takenAt: string })[];
   balance: string;
 }
 interface Med { id: string; name: string; unit: string; inStock: number; }
+/** One deposit slip. `receiptNo` is what the family quotes at discharge. */
+interface Advance { id: string; receiptNo: string; amount: string; mode: string; }
 interface History {
   bills: { id: string; receiptNo: string; source: string; status: string; total: string; paid: string; balance: string; date: string }[];
   labs: { id: string; testName: string; status: string; reportReady: boolean; reportUrl: string | null; date: string; forThisStay: boolean }[];
@@ -82,6 +86,8 @@ export default function AdmissionSheetPage() {
   const [advOpen, setAdvOpen] = useState(false);
   const [advAmt, setAdvAmt] = useState("");
   const [advMode, setAdvMode] = useState<"CASH" | "UPI" | "CARD" | "NETBANKING">("CASH");
+  /** The slip just issued - held so the desk can print it straight away. */
+  const [advTaken, setAdvTaken] = useState<Advance | null>(null);
 
   async function openTransfer() {
     setXferOpen(true);
@@ -111,10 +117,13 @@ export default function AdmissionSheetPage() {
     if (!(Number(advAmt) > 0)) return;
     setBusy(true); setErr(null);
     try {
-      const r = await api.post<{ totalAdvance: string }>(`/ipd/admissions/${admissionId}/advance`, {
+      const r = await api.post<{ totalAdvance: string; advance: Advance }>(`/ipd/admissions/${admissionId}/advance`, {
         amount: Number(advAmt), mode: advMode,
       });
-      setFlash(`Advance taken. ₹${r.totalAdvance} held against this stay - it comes off the discharge bill.`);
+      // The family is standing at the counter having just handed over cash. The
+      // receipt has to be one click away from here, not buried in a sub-page.
+      setAdvTaken(r.advance);
+      setFlash(`Advance taken · receipt ${r.advance.receiptNo}. ₹${r.totalAdvance} held against this stay - it comes off the discharge bill.`);
       setAdvOpen(false); setAdvAmt("");
       await load();
     } catch (e) { setErr(e instanceof ApiClientError ? e.message : "Could not record the advance."); }
@@ -309,9 +318,19 @@ export default function AdmissionSheetPage() {
       </div>
 
       {flash && (
-        <div data-rise className="mb-4 flex items-start justify-between gap-3 rounded-lg border border-[var(--p-cyan)]/30 bg-[var(--p-cyan-soft)] px-4 py-3 text-[14px] text-[var(--p-cyan-deep)]">
+        <div data-rise className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--p-cyan)]/30 bg-[var(--p-cyan-soft)] px-4 py-3 text-[14px] text-[var(--p-cyan-deep)]">
           <span className="flex items-start gap-2"><Icon name="check" size={15} /> {flash}</span>
-          <button onClick={() => setFlash(null)}>✕</button>
+          <span className="flex items-center gap-2">
+            {/* The money has just changed hands - the slip belongs here, next to
+                the confirmation, not two clicks away. */}
+            {advTaken && (
+              <a href={`/print/advance/${advTaken.id}`} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--p-cyan-deep)] px-3 py-1.5 text-[13px] font-semibold text-white transition-opacity hover:opacity-90">
+                <Icon name="receipt" size={13} /> Print advance receipt
+              </a>
+            )}
+            <button onClick={() => { setFlash(null); setAdvTaken(null); }}>✕</button>
+          </span>
         </div>
       )}
       {err && <div data-rise className="mb-4 rounded-lg border border-[var(--p-rose)]/25 bg-[var(--p-rose-soft)] px-4 py-3 text-[14px] text-[var(--p-rose)]">{err}</div>}
@@ -549,6 +568,22 @@ export default function AdmissionSheetPage() {
                   <span className="text-[var(--p-muted)]">Advance already taken</span>
                   <span className="font-mono font-semibold text-[var(--p-cyan-deep)]">−₹{money(sheet.advanceTotal)}</span>
                 </div>
+                {/* Every slip, reprintable. The flash banner is gone the moment
+                    the page reloads, and families lose bits of paper. */}
+                {sheet.advances.length > 0 && (
+                  <div className="space-y-1 rounded-lg border border-[var(--p-border)] px-3 py-2">
+                    {sheet.advances.map((adv) => (
+                      <div key={adv.id} className="flex items-center justify-between gap-2 text-[12px]">
+                        <span className="min-w-0 truncate text-[var(--p-muted)]">
+                          <span className="font-mono">{adv.receiptNo ?? "Not numbered"}</span>
+                          {" · "}₹{money(adv.amount)}{" · "}{adv.mode}
+                        </span>
+                        <a href={`/print/advance/${adv.id}`} target="_blank" rel="noopener noreferrer"
+                          className="shrink-0 font-semibold text-[var(--p-teal)] hover:underline">Print</a>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <div className="flex items-center justify-between rounded-lg bg-[var(--p-teal-soft)] px-3 py-2.5">
                   <span className="text-[14px] font-bold text-[var(--p-ink)]">Still to pay</span>
                   <span className="font-mono text-[20px] font-bold text-[var(--p-teal-deep)]">₹{money(sheet.balance)}</span>
@@ -582,7 +617,7 @@ export default function AdmissionSheetPage() {
       {/* IP PRESCRIPTION */}
       {rxOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="surface flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden bg-white">
+          <div className="surface flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden bg-white">
             <div className="flex items-center justify-between border-b border-[var(--p-border)] px-6 py-4">
               <div>
                 <h3 className="text-[15px] font-semibold text-[var(--p-ink)]">Prescription for {a.patient.fullName}</h3>
@@ -614,7 +649,7 @@ export default function AdmissionSheetPage() {
                     return (
                       <div key={i} className="flex gap-2">
                         <div className="relative flex-1">
-                          <input list={`meds-${i}`} className={fld} value={r.name} placeholder="Medicine name"
+                          <input list={`meds-${i}`} className="w-full min-w-[350px] rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]" value={r.name} placeholder="Medicine name"
                             onChange={(e) => {
                               const v = e.target.value;
                               const m = meds.find((x) => x.name.toLowerCase() === v.trim().toLowerCase());

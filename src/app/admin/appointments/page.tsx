@@ -10,7 +10,8 @@ interface Row {
   id: string; opNumber: string; time: string; status: string; price: string; visitDate: string;
   referredByName: string | null; referralSource: string | null;
   patient: { id: string; displayId: string; name: string };
-  doctor: { id: string; name: string; department: string };
+  /** NULL on an emergency/casualty visit taken with no consultant named. */
+  doctor: { id: string; name: string; department: string } | null;
   bill: { total: string; status: string; paymentModes: string[] } | null;
 }
 
@@ -75,7 +76,7 @@ export default function AdminAppointmentsPage() {
       const t = q.toLowerCase();
       return r.patient.name.toLowerCase().includes(t)
         || r.patient.displayId.toLowerCase().includes(t)
-        || r.doctor.name.toLowerCase().includes(t)
+        || (r.doctor?.name ?? "").toLowerCase().includes(t)
         || (r.referredByName ?? "").toLowerCase().includes(t);
     }
     return true;
@@ -140,8 +141,8 @@ export default function AdminAppointmentsPage() {
                     <div className="font-mono text-[12px] text-[var(--p-muted)]">{r.patient.displayId} · {r.opNumber}</div>
                   </div>
                   <div className="min-w-[150px]">
-                    <div className="text-[13px] text-[var(--p-ink)]">{r.doctor.name}</div>
-                    <div className="text-[12px] text-[var(--p-muted)]">{r.doctor.department}</div>
+                    <div className="text-[13px] text-[var(--p-ink)]">{r.doctor?.name ?? "Duty doctor"}</div>
+                    <div className="text-[12px] text-[var(--p-muted)]">{r.doctor?.department ?? "Emergency & Casualty"}</div>
                   </div>
                   <div className="min-w-[110px] text-[12px] text-[var(--p-muted)]">
                     <div className="text-[var(--p-ink)]">{r.visitDate}</div>

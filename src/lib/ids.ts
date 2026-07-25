@@ -18,6 +18,10 @@ const FORMATS = {
   IP: (y: number, n: number) => `JMH${y}IP${String(n).padStart(5, "0")}`,
   /** Insurance claim - CLM-2026-000045. */
   CLAIM: (y: number, n: number) => `CLM-${y}-${pad(n)}`,
+  /// IPD advance / deposit acknowledgement - ADV-2026-000012. Deliberately its
+  /// own series, NOT the INVOICE one: a deposit is money held, not a supply, so
+  /// it must never occupy a tax-invoice number.
+  ADV: (y: number, n: number) => `ADV-${y}-${pad(n)}`,
   /// Pharmacy purchase order - PO-2026-000012. Printed and sent to the distributor.
   PO: (y: number, n: number) => `PO-${y}-${pad(n)}`,
   /// Goods receipt note - GRN-2026-000034. The document a batch traces back to.

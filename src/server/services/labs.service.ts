@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
 import { storeFile } from "@/lib/storage";
 import { logAudit } from "./audit.service";
+import { DUTY_DOCTOR } from "./appointments.service";
 import { createInvoice, type BillLineInput } from "./billing.service";
 import { collectionByMode, type ModeTotal } from "./reports.service";
 import type { AuthUser } from "@/lib/auth/types";
@@ -48,7 +49,7 @@ type TestRow = {
   reportFileUrl: string | null; createdAt: Date; completedAt: Date | null;
   patient: { id: string; displayId: string; fullName: string; phone: string } | null;
   appointment: {
-    opNumber: string; visitDate: Date; doctor: { name: string };
+    opNumber: string; visitDate: Date; doctor: { name: string } | null;
     patient: { id: string; displayId: string; fullName: string; phone: string };
   } | null;
   invoiceItems: { id: string }[];
@@ -65,7 +66,7 @@ function toTestDTO(t: TestRow): LabTestDTO {
     completedAt: t.completedAt ? t.completedAt.toISOString() : null,
     patient: p,
     appointment: t.appointment
-      ? { opNumber: t.appointment.opNumber, doctorName: t.appointment.doctor.name, visitDate: t.appointment.visitDate.toISOString().slice(0, 10) }
+      ? { opNumber: t.appointment.opNumber, doctorName: t.appointment.doctor?.name ?? DUTY_DOCTOR.name, visitDate: t.appointment.visitDate.toISOString().slice(0, 10) }
       : null,
     billed: t.invoiceItems.length > 0,
   };
@@ -510,8 +511,8 @@ export async function patientLabHistory(displayId: string): Promise<{
       ? {
           opNumber: lastAppt.opNumber,
           visitDate: lastAppt.visitDate.toISOString().slice(0, 10),
-          doctorName: lastAppt.doctor.name,
-          department: lastAppt.doctor.department,
+          doctorName: lastAppt.doctor?.name ?? DUTY_DOCTOR.name,
+          department: lastAppt.doctor?.department ?? DUTY_DOCTOR.department,
           status: lastAppt.status,
         }
       : null,

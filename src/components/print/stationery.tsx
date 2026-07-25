@@ -211,6 +211,49 @@ export function LetterHead({ hospital, doctor }: {
   );
 }
 
+/**
+ * Visit classification band - the first thing a nurse or a medico-legal reader
+ * looks for on a casualty sheet.
+ *
+ * Two things it must survive:
+ *
+ *  1. PRINT. Browsers drop background colours by default, which would have left
+ *     white-on-white - i.e. an emergency sheet that looks like a routine one.
+ *     `print-color-adjust: exact` forces the ink, and the border + dark text
+ *     mean it still reads as EMERGENCY on a mono laser that ignores the hint.
+ *  2. THE PAGE. It sits in normal flow above the patient strip, not absolutely
+ *     positioned over it - an overlay landed on top of the Date column.
+ */
+export function VisitTypeBand({ type }: { type?: string | null }) {
+  const norm = (type || "OP").toUpperCase();
+  const isEmerg = norm === "EMERGENCY" || norm === "CASUALTY";
+  const isIp = norm === "IP" || norm === "IPD" || norm === "INPATIENT";
+
+  // Routine OP is stamped in the sheet's own teal rather than suppressed: the
+  // band is a classification every sheet carries, so its ABSENCE can't be read
+  // as "routine" - a missing band would just mean nobody printed one.
+  const bg = isEmerg ? "#c8211b" : isIp ? "#1d4ed8" : "#0b5f55";
+  const label = norm === "CASUALTY" ? "CASUALTY OP" : isEmerg ? "EMERGENCY OP" : isIp ? "INPATIENT (IP)" : "OUTPATIENT (OP)";
+  const note = isEmerg ? "Attended in casualty · seen on arrival, no prior appointment" : null;
+
+  return (
+    <div className="mt-2 flex items-center gap-2">
+      <span
+        className="inline-flex items-center justify-center rounded-sm border px-2.5 py-[3px] font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-white"
+        style={{
+          backgroundColor: bg,
+          borderColor: bg,
+          WebkitPrintColorAdjust: "exact",
+          printColorAdjust: "exact",
+        }}
+      >
+        {label}
+      </span>
+      {note && <span className="text-[9px] font-semibold uppercase tracking-wide" style={{ color: bg }}>{note}</span>}
+    </div>
+  );
+}
+
 /** The two-row patient strip every document opens with. */
 export function PatientStrip({ cells, doctor }: {
   cells: { k: string; v: string; grow?: boolean; mono?: boolean; pen?: boolean }[];

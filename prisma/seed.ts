@@ -4,6 +4,18 @@ import bcrypt from "bcryptjs";
 const prisma = new PrismaClient();
 
 /**
+ * The consulting diary every non-anaesthetist doctor carries: round the clock,
+ * every day of the week. 15-minute cadence = 96 slots per doctor per day; the
+ * reception "Regenerate" action can drop it to 10 when the desk wants finer
+ * granularity.
+ */
+const DIARY_START = "00:00";
+const DIARY_END = "24:00";
+const DIARY_SLOT_MIN = 15;
+/** Days of bookable grid the seed builds. Mirrors SLOT_HORIZON_DAYS. */
+const SLOT_HORIZON_DAYS = 30;
+
+/**
  * Dev seed. Idempotent. Passwords/emails here are for local development only.
  * Staff log in with USERNAME (role.name) + OTP (code prints to server console),
  * or username + password. Their email is the OTP backup channel.
@@ -71,12 +83,36 @@ async function main() {
       update: profile,
       create: { userId: user.id, ...profile },
     });
-    for (let day = 1; day <= 6; day++) {
-      await prisma.doctorSchedule.upsert({
-        where: { doctorId_dayOfWeek_startTime: { doctorId: doctor.id, dayOfWeek: day, startTime: "09:00" } },
-        update: {},
-        create: { doctorId: doctor.id, dayOfWeek: day, startTime: "09:00", endTime: "13:00", slotDurationMin: 15 },
+    // ---- Consulting diary ----
+    //
+    // Jeeva is a multispeciality hospital running round the clock, and the
+    // public panel says so ("Open 24 Hours" on every consultant). The diary now
+    // matches: 00:00-24:00, SEVEN days, Sunday included. It used to be Mon-Sat
+    // 09:00-13:00, which meant the board promised 24 hours, the printed footer
+    // promised 8 AM - 8 PM, and the booking grid actually stopped at 1 PM and
+    // had no Sunday row at all - three different answers to one question.
+    //
+    // ANAESTHESIOLOGY IS THE EXCEPTION, on purpose. lib/opd.ts marks them "By
+    // Appointment": they are booked through the surgical team, not off a grid,
+    // and the public panel offers a phone call instead of slots. Generating a
+    // diary nobody can see would be thousands of dead rows.
+    if (doctor.department !== "Anaesthesiology") {
+      // Old narrow rows are removed, not left behind: upsert alone would keep
+      // the 09:00-13:00 template alongside the new one and quietly double the
+      // morning.
+      await prisma.doctorSchedule.deleteMany({
+        where: { doctorId: doctor.id, startTime: { not: DIARY_START } },
       });
+      for (let day = 0; day <= 6; day++) {
+        await prisma.doctorSchedule.upsert({
+          where: { doctorId_dayOfWeek_startTime: { doctorId: doctor.id, dayOfWeek: day, startTime: DIARY_START } },
+          update: { endTime: DIARY_END, slotDurationMin: DIARY_SLOT_MIN, isActive: true },
+          create: { doctorId: doctor.id, dayOfWeek: day, startTime: DIARY_START, endTime: DIARY_END, slotDurationMin: DIARY_SLOT_MIN },
+        });
+      }
+    } else {
+      // Retire any diary a previous seed gave them.
+      await prisma.doctorSchedule.deleteMany({ where: { doctorId: doctor.id } });
     }
   }
 
@@ -113,24 +149,44 @@ async function main() {
   const year = new Date().getFullYear();
   await prisma.counter.upsert({ where: { key: `PATIENT-${year}` }, update: {}, create: { key: `PATIENT-${year}`, value: 1 } });
 
-  // ---- Generate bookable slots for the next 7 days from doctor schedules ----
+  // ---- Generate the bookable grid from the diaries above ----
+  //
+  // DoctorSlot.date is @db.Date - built at UTC midnight of the LOCAL calendar
+  // day, and read back the same way (see src/lib/date.ts). Local midnight is
+  // 18:30 the previous day in IST, so building it with setHours(0,0,0,0) filed
+  // every slot under the wrong date and the day-of-week test then picked the
+  // wrong schedule. Both sides use UTC here, consistently.
   const allSchedules = await prisma.doctorSchedule.findMany({ where: { isActive: true, doctor: { active: true } } });
-  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const now = new Date();
+  const startUTC = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
   const slotRows: { doctorId: string; date: Date; startTime: string; endTime: string }[] = [];
   const toMin = (t: string) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
-  const toHHMM = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
-  for (let d = 0; d < 7; d++) {
-    const date = new Date(start); date.setDate(start.getDate() + d);
+  // 1440 wraps to "00:00" - a 24-hour diary's last slot ends at midnight, and
+  // "24:00" is not a time anything downstream would read back.
+  const toHHMM = (m: number) => {
+    const w = m % 1440;
+    return `${String(Math.floor(w / 60)).padStart(2, "0")}:${String(w % 60).padStart(2, "0")}`;
+  };
+  for (let d = 0; d < SLOT_HORIZON_DAYS; d++) {
+    const date = new Date(startUTC + d * 86_400_000);
+    const dow = date.getUTCDay();
     for (const sch of allSchedules) {
-      if (sch.dayOfWeek !== date.getDay()) continue;
+      if (sch.dayOfWeek !== dow) continue;
       for (let t = toMin(sch.startTime); t + sch.slotDurationMin <= toMin(sch.endTime); t += sch.slotDurationMin) {
         slotRows.push({ doctorId: sch.doctorId, date, startTime: toHHMM(t), endTime: toHHMM(t + sch.slotDurationMin) });
       }
     }
   }
   if (slotRows.length) {
-    const r = await prisma.doctorSlot.createMany({ data: slotRows, skipDuplicates: true });
-    console.log(`   Generated ${r.count} bookable slots for the next 7 days.`);
+    // Chunked: a single createMany of ~37k rows exceeds the driver's parameter
+    // limit. skipDuplicates + the [doctorId,date,startTime] unique key keeps
+    // re-running the seed free of duplicates.
+    let count = 0;
+    for (let i = 0; i < slotRows.length; i += 5000) {
+      const r = await prisma.doctorSlot.createMany({ data: slotRows.slice(i, i + 5000), skipDuplicates: true });
+      count += r.count;
+    }
+    console.log(`   Generated ${count} bookable slots across the next ${SLOT_HORIZON_DAYS} days (24x7, Sunday included).`);
   }
 
   // ---- Hospital config (GST invoice header). Telangana state code = 36. ----

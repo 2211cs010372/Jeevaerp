@@ -27,6 +27,8 @@ export default function AdminDayClosePage() {
   const [data, setData] = useState<Close | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportErr, setExportErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -35,6 +37,23 @@ export default function AdminDayClosePage() {
     finally { setLoading(false); }
   }, [date]);
   useEffect(() => { load(); }, [load]);
+
+  /**
+   * Excel is built from the data ALREADY on screen - not re-fetched - so the
+   * workbook can never disagree with the figures the manager just read. The
+   * xlsx library is ~1 MB and is imported inside the export helper on demand,
+   * so opening this page doesn't pay for it.
+   */
+  async function downloadExcel() {
+    if (!data) return;
+    setExporting(true); setExportErr(null);
+    try {
+      const { downloadDayCloseXlsx } = await import("@/lib/export/day-close-xlsx");
+      await downloadDayCloseXlsx(data);
+    } catch {
+      setExportErr("Could not build the Excel file. Try the PDF instead.");
+    } finally { setExporting(false); }
+  }
 
   const cash = (data?.modes ?? []).find((m) => m.mode === "CASH")?.collected ?? 0;
   const upi = (data?.modes ?? []).find((m) => m.mode === "UPI")?.collected ?? 0;
@@ -48,9 +67,33 @@ export default function AdminDayClosePage() {
           <h1 className="mt-1 font-serif-p text-[24px] font-semibold text-[var(--p-ink)]">Day close</h1>
           <p className="mt-1 text-[13px] text-[var(--p-muted)]">Hospital-wide collections for a day - by payment type and by counter.</p>
         </div>
-        <input type="date" value={date} max={todayISO()} onChange={(e) => setDate(e.target.value)}
-          className="rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-[13px] text-[var(--p-ink)] outline-none focus:border-[var(--p-teal)]" />
+        <div className="flex flex-wrap items-center gap-2">
+          <input type="date" value={date} max={todayISO()} onChange={(e) => setDate(e.target.value)}
+            className="rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-[13px] text-[var(--p-ink)] outline-none focus:border-[var(--p-teal)]" />
+
+          {/* Both exports are disabled until the day has actually loaded -
+              a workbook built from `null` would download as an empty file that
+              looks like a zero-takings day. */}
+          <button onClick={downloadExcel} disabled={!data || loading || exporting}
+            title="Download this day as a multi-sheet Excel workbook"
+            className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] bg-white px-3.5 py-2 text-[13px] font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-teal)] hover:text-[var(--p-teal)] disabled:opacity-45">
+            {exporting ? <><Spinner size={13} /> Building…</> : <><Icon name="grid" size={14} /> Excel</>}
+          </button>
+
+          <a href={`/print/day-close?date=${date}`} target="_blank" rel="noopener noreferrer"
+            aria-disabled={!data}
+            title="Open the printable statement - use Print / Save PDF"
+            className={`inline-flex items-center gap-2 rounded-lg bg-[var(--p-teal)] px-3.5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[var(--p-teal-deep)] ${!data ? "pointer-events-none opacity-45" : ""}`}>
+            <Icon name="file" size={14} /> PDF
+          </a>
+        </div>
       </div>
+
+      {exportErr && (
+        <div data-rise className="mb-4 flex items-center gap-2 rounded-lg border border-[var(--p-rose)]/25 bg-[var(--p-rose-soft)] px-4 py-2.5 text-[13px] text-[var(--p-rose)]">
+          <Icon name="alert" size={14} /> {exportErr}
+        </div>
+      )}
 
       {error ? (
         <div data-rise className="surface flex flex-col items-center gap-3 px-6 py-16 text-center">

@@ -30,8 +30,24 @@ export default function DispensePage() {
   const [error, setError] = useState<string | null>(null);
   // An admitted patient's medicines are charged to their room, so there is no
   // receipt at the counter. Both outcomes must be renderable.
-  const [done, setDone] = useState<{ receiptNo: string; total: string } | null>(null);
+  const [done, setDone] = useState<{ id?: string; receiptNo: string; total: string } | null>(null);
   const [toRoom, setToRoom] = useState<{ ipNumber: string } | null>(null);
+
+  const [patientTab, setPatientTab] = useState<"search" | "direct">("search");
+  const [directName, setDirectName] = useState("");
+  const [directPhone, setDirectPhone] = useState("");
+  const [directAddress, setDirectAddress] = useState("");
+  const [directBusy, setDirectBusy] = useState(false);
+  const [directError, setDirectError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get("mode") === "direct" || urlParams.get("direct") === "true") {
+        setPatientTab("direct");
+      }
+    }
+  }, []);
 
   useEffect(() => {
     api.get<{ medicines: Med[] }>(`/pharmacy/medicines${search ? `?q=${encodeURIComponent(search)}` : ""}`)
@@ -39,13 +55,47 @@ export default function DispensePage() {
   }, [search]);
 
   useEffect(() => {
-    if (patient || !q.trim()) { setResults([]); return; }
+    if (patient || !q.trim() || patientTab !== "search") { setResults([]); return; }
     const t = setTimeout(() => {
       api.get<{ patients: Patient[] }>(`/reception/patients?q=${encodeURIComponent(q)}&limit=6`)
         .then((r) => setResults(r.patients)).catch(() => setResults([]));
     }, 250);
     return () => clearTimeout(t);
-  }, [q, patient]);
+  }, [q, patient, patientTab]);
+
+  async function handleDirectSaleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const name = directName.trim();
+    const phone = directPhone.trim();
+    const address = directAddress.trim();
+
+    if (!name) { setDirectError("Customer name is required."); return; }
+    if (!/^\d{10}$/.test(phone)) { setDirectError("Enter a valid 10-digit mobile number."); return; }
+
+    setDirectBusy(true); setDirectError(null);
+    try {
+      // Check if a patient with this phone already exists
+      const existing = await api.get<{ patients: Patient[] }>(`/reception/patients?q=${encodeURIComponent(phone)}&limit=5`);
+      const matched = existing.patients.find((p) => p.phone === phone);
+      if (matched) {
+        setPatient(matched);
+        setDirectBusy(false);
+        return;
+      }
+
+      // Create a quick walk-in patient record for this direct pill sale
+      const res = await api.post<{ patient: Patient }>("/reception/patients", {
+        firstName: name,
+        phone,
+        address: address || undefined,
+      });
+      setPatient(res.patient);
+    } catch (err) {
+      setDirectError(err instanceof ApiClientError ? err.message : "Failed to register walk-in customer.");
+    } finally {
+      setDirectBusy(false);
+    }
+  }
 
   function add(m: Med) {
     if (m.inStock === 0) return;
@@ -62,19 +112,23 @@ export default function DispensePage() {
     if (!patient || !lines.length) return;
     setBusy(true); setError(null);
     try {
-      const res = await api.post<{ chargedToRoom: boolean; ipNumber: string | null; invoice: { receiptNo: string; totalAmount: string } | null }>("/pharmacy/dispense", {
+      const res = await api.post<{ chargedToRoom: boolean; ipNumber: string | null; invoice: { id: string; receiptNo: string; totalAmount: string } | null }>("/pharmacy/dispense", {
         patientId: patient.id,
         items: lines.map((l) => ({ medicineId: l.medicineId, qty: l.qty })),
         discountAmount: disc || undefined,
         payments: payNow && payments.length ? payments : undefined,
       });
       if (res.chargedToRoom) setToRoom({ ipNumber: res.ipNumber ?? "" });
-      else if (res.invoice) setDone({ receiptNo: res.invoice.receiptNo, total: res.invoice.totalAmount });
+      else if (res.invoice) setDone({ id: res.invoice.id, receiptNo: res.invoice.receiptNo, total: res.invoice.totalAmount });
     } catch (e) { setError(e instanceof ApiClientError ? e.message : "Could not dispense."); }
     finally { setBusy(false); }
   }
 
-  function reset() { setDone(null); setToRoom(null); setPatient(null); setLines([]); setQ(""); setDisc(0); setPayments([]); setPayValid(true); setShortReason(""); setError(null); }
+  function reset() {
+    setDone(null); setToRoom(null); setPatient(null); setLines([]); setQ(""); setDisc(0);
+    setPayments([]); setPayValid(true); setShortReason(""); setError(null);
+    setDirectName(""); setDirectPhone(""); setDirectAddress(""); setDirectError(null);
+  }
 
   if (toRoom) {
     return (
@@ -101,9 +155,24 @@ export default function DispensePage() {
       <div className="mx-auto max-w-md">
         <div className="surface flex flex-col items-center p-8 text-center">
           <span className="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--p-cyan-soft)] text-[var(--p-cyan-deep)]"><Icon name="check" size={26} /></span>
-          <h3 className="mt-4 font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Dispensed</h3>
+          <h3 className="mt-4 font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Dispensed &amp; Billed</h3>
           <p className="mt-1 text-[13px] text-[var(--p-muted)]">Receipt <span className="font-mono font-semibold text-[var(--p-ink)]">{done.receiptNo}</span> · ₹{done.total}</p>
-          <div className="mt-6"><PrimaryButton onClick={reset}><Icon name="plus" size={15} /> New sale</PrimaryButton></div>
+          
+          <div className="mt-6 flex w-full flex-col gap-2.5">
+            {done.id && (
+              <a
+                href={`/pharmacy/print/invoice/${done.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-primary flex items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-[13px] font-semibold text-white shadow-sm"
+              >
+                <Icon name="file" size={16} /> Print / View Invoice Receipt
+              </a>
+            )}
+            <PrimaryButton onClick={reset}>
+              <Icon name="plus" size={15} /> New sale
+            </PrimaryButton>
+          </div>
         </div>
       </div>
     );
@@ -111,37 +180,162 @@ export default function DispensePage() {
 
   return (
     <PortalScroll>
-      <div data-rise className="surface dotgrid mb-6 px-6 py-5">
-        <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Dispense medicines</h1>
-        <p className="mt-1 text-[13px] text-[var(--p-muted)]">Counter sale. For a doctor&apos;s prescription, use the queue so it&apos;s linked to the scan.</p>
+      <div data-rise className="surface dotgrid mb-6 flex flex-wrap items-center justify-between gap-4 px-6 py-5">
+        <div>
+          <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Dispense medicines</h1>
+          <p className="mt-1 text-[13px] text-[var(--p-muted)]">Counter sale &amp; direct pill dispensing for walk-in users or prescription queue.</p>
+        </div>
+        {!patient && (
+          <button
+            onClick={() => setPatientTab(patientTab === "search" ? "direct" : "search")}
+            className="flex items-center gap-2 rounded-lg border border-[var(--p-blue)]/30 bg-[var(--p-blue-soft)] px-4 py-2 text-[12.5px] font-medium text-[var(--p-blue-deep)] transition-colors hover:bg-[var(--p-blue)]/15"
+          >
+            <Icon name={patientTab === "search" ? "plus" : "search"} size={14} />
+            {patientTab === "search" ? "⚡ Direct Pill Sale (Walk-in User)" : "Search Registered Patients"}
+          </button>
+        )}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
         <div className="space-y-6">
           <section data-rise className="surface overflow-hidden">
-            <div className="border-b border-[var(--p-border)] px-6 py-4"><h3 className="text-[14px] font-semibold text-[var(--p-ink)]">1 · Patient</h3></div>
+            <div className="flex items-center justify-between border-b border-[var(--p-border)] px-6 py-3.5">
+              <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">1 · Patient</h3>
+              {!patient && (
+                <div className="flex rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] p-0.5 text-[12px] font-medium">
+                  <button
+                    type="button"
+                    onClick={() => setPatientTab("search")}
+                    className={`rounded-md px-3 py-1 transition-colors ${
+                      patientTab === "search"
+                        ? "bg-white text-[var(--p-ink)] shadow-sm"
+                        : "text-[var(--p-muted)] hover:text-[var(--p-ink)]"
+                    }`}
+                  >
+                    Search Patient
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPatientTab("direct")}
+                    className={`flex items-center gap-1 rounded-md px-3 py-1 transition-colors ${
+                      patientTab === "direct"
+                        ? "bg-white text-[var(--p-blue)] font-semibold shadow-sm"
+                        : "text-[var(--p-muted)] hover:text-[var(--p-ink)]"
+                    }`}
+                  >
+                    <Icon name="plus" size={12} />
+                    Direct Pill Sale
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="p-6">
               {!patient ? (
-                <>
-                  <div className="flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-3.5 py-2.5">
-                    <Icon name="search" size={16} />
-                    <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name or JMH2026OP00123…" className="w-full text-sm outline-none" />
-                  </div>
-                  {results.length > 0 && (
-                    <div className="mt-3 space-y-2">
-                      {results.map((p) => (
-                        <button key={p.id} onClick={() => { setPatient(p); setQ(""); }} className="surface-hover flex w-full items-center justify-between rounded-lg border border-[var(--p-border)] p-3 text-left">
-                          <div><div className="text-[13px] font-medium text-[var(--p-ink)]">{p.fullName}</div><div className="text-[11px] text-[var(--p-muted)]"><span className="tabular">{p.displayId}</span> · {p.phone}</div></div>
-                          <Icon name="chevron" size={16} />
-                        </button>
-                      ))}
+                patientTab === "search" ? (
+                  <>
+                    <div className="flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-3.5 py-2.5">
+                      <Icon name="search" size={16} />
+                      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name or JMH2026OP00123…" className="w-full text-sm outline-none" />
                     </div>
-                  )}
-                </>
+                    {results.length > 0 && (
+                      <div className="mt-3 space-y-2">
+                        {results.map((p) => (
+                          <button key={p.id} onClick={() => { setPatient(p); setQ(""); }} className="surface-hover flex w-full items-center justify-between rounded-lg border border-[var(--p-border)] p-3 text-left">
+                            <div><div className="text-[13px] font-medium text-[var(--p-ink)]">{p.fullName}</div><div className="text-[11px] text-[var(--p-muted)]"><span className="tabular">{p.displayId}</span> · {p.phone}</div></div>
+                            <Icon name="chevron" size={16} />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <div className="mt-4 flex items-center justify-between rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] px-3.5 py-2 text-[12px] text-[var(--p-muted)]">
+                      <span>Selling pills to a walk-in user without pre-registration?</span>
+                      <button
+                        type="button"
+                        onClick={() => setPatientTab("direct")}
+                        className="font-medium text-[var(--p-blue)] hover:underline"
+                      >
+                        Enter User Details →
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <form onSubmit={handleDirectSaleSubmit} className="space-y-4">
+                    <div className="rounded-lg bg-[var(--p-blue-soft)]/50 p-3 text-[12px] text-[var(--p-blue-deep)]">
+                      Enter the random user&apos;s name, mobile number, and address to proceed with a direct pill sale.
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="block text-[11px] font-semibold uppercase text-[var(--p-muted)]">Customer Name *</label>
+                        <input
+                          type="text"
+                          required
+                          value={directName}
+                          onChange={(e) => setDirectName(e.target.value)}
+                          placeholder="e.g. Ramesh Kumar"
+                          className="mt-1 w-full rounded-lg border border-[var(--p-border)] px-3 py-2 text-sm outline-none focus:border-[var(--p-blue)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold uppercase text-[var(--p-muted)]">Mobile Number *</label>
+                        <input
+                          type="tel"
+                          required
+                          maxLength={10}
+                          value={directPhone}
+                          onChange={(e) => setDirectPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                          placeholder="10-digit phone number"
+                          className="mt-1 w-full rounded-lg border border-[var(--p-border)] px-3 py-2 font-mono text-sm outline-none focus:border-[var(--p-blue)]"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold uppercase text-[var(--p-muted)]">Address / Locality</label>
+                      <input
+                        type="text"
+                        value={directAddress}
+                        onChange={(e) => setDirectAddress(e.target.value)}
+                        placeholder="Street, door no, or city address"
+                        className="mt-1 w-full rounded-lg border border-[var(--p-border)] px-3 py-2 text-sm outline-none focus:border-[var(--p-blue)]"
+                      />
+                    </div>
+                    {directError && (
+                      <div className="rounded-lg bg-[var(--p-rose-soft)] p-2.5 text-[12px] text-[var(--p-rose)] font-medium">
+                        {directError}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-3 pt-1">
+                      <button
+                        type="submit"
+                        disabled={directBusy}
+                        className="flex items-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2 text-[13px] font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                      >
+                        {directBusy ? <Spinner /> : <Icon name="check" size={15} />}
+                        Confirm Customer &amp; Continue
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPatientTab("search")}
+                        className="text-[12px] text-[var(--p-muted)] hover:underline"
+                      >
+                        Cancel / Search
+                      </button>
+                    </div>
+                  </form>
+                )
               ) : (
                 <div className="flex items-center justify-between rounded-xl border border-[var(--p-blue)] bg-[var(--p-blue-soft)] p-4">
-                  <div><div className="text-[14px] font-semibold text-[var(--p-ink)]">{patient.fullName}</div><div className="text-[11px] text-[var(--p-muted)]"><span className="tabular">{patient.displayId}</span> · {patient.phone}</div></div>
-                  <button onClick={() => setPatient(null)} className="rounded-lg border border-[var(--p-border)] bg-white px-3 py-1.5 text-[12px] font-medium text-[var(--p-blue)]">Change</button>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[14px] font-semibold text-[var(--p-ink)]">{patient.fullName}</span>
+                      <span className="rounded bg-[var(--p-blue)]/10 px-2 py-0.5 font-mono text-[10.5px] font-medium text-[var(--p-blue)]">
+                        {patient.displayId}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-[11px] text-[var(--p-muted)]">
+                      <span>Phone: <b className="text-[var(--p-ink)]">{patient.phone}</b></span>
+                    </div>
+                  </div>
+                  <button onClick={() => setPatient(null)} className="rounded-lg border border-[var(--p-border)] bg-white px-3 py-1.5 text-[12px] font-medium text-[var(--p-blue)] hover:bg-gray-50">Change</button>
                 </div>
               )}
             </div>

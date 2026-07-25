@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
 import { storeFile } from "@/lib/storage";
+import { DUTY_DOCTOR } from "./appointments.service";
 import { logAudit } from "./audit.service";
 import type { AuthUser } from "@/lib/auth/types";
 
@@ -74,7 +75,7 @@ export async function uploadPrescription(
     if (!appt || appt.patientId !== input.patientId) {
       throw new ApiError(400, "That appointment doesn't belong to this patient");
     }
-    doctorName = appt.doctor.name;
+    doctorName = appt.doctor?.name ?? DUTY_DOCTOR.name;
   }
 
   // An inpatient Rx hangs off the STAY. Same ownership check, same doctor
@@ -148,14 +149,14 @@ function toDTO(row: {
   fileUrl: string | null; fileName: string | null; mimeType: string | null; fileSize: number | null;
   title: string | null;
   status: string; createdAt: Date;
-  appointment: { opNumber: string; visitDate: Date; doctor: { name: string } } | null;
+  appointment: { opNumber: string; visitDate: Date; doctor: { name: string } | null } | null;
 }): PrescriptionUploadDTO {
   return {
     id: row.id, appointmentId: row.appointmentId,
     fileUrl: row.fileUrl, fileName: row.fileName, mimeType: row.mimeType,
     fileSize: row.fileSize, title: row.title, status: row.status, createdAt: row.createdAt.toISOString(),
     appointment: row.appointment
-      ? { opNumber: row.appointment.opNumber, visitDate: row.appointment.visitDate.toISOString().slice(0, 10), doctorName: row.appointment.doctor.name }
+      ? { opNumber: row.appointment.opNumber, visitDate: row.appointment.visitDate.toISOString().slice(0, 10), doctorName: row.appointment.doctor?.name ?? DUTY_DOCTOR.name }
       : null,
   };
 }
@@ -223,7 +224,7 @@ export async function sendOpdSheetToPharmacy(
       appointmentId: input.appointmentId,
       title: input.title?.trim() || null,
       uploadedById: actor.id,
-      doctorName: appt.doctor.name,
+      doctorName: appt.doctor?.name ?? DUTY_DOCTOR.name,
       diagnosis: clinical.diagnosis,
       advice: clinical.advice,
       labsAdvised: labs.length ? labs.join("\n") : null,
@@ -378,11 +379,11 @@ export async function recentCompletedVisits(displayId: string): Promise<{
     },
   });
 
-  return rows.map((r: { id: string; opNumber: string; visitDate: Date; doctor: { name: string; department: string } }) => ({
+  return rows.map((r: { id: string; opNumber: string; visitDate: Date; doctor: { name: string; department: string } | null }) => ({
     id: r.id,
     opNumber: r.opNumber,
     visitDate: r.visitDate.toISOString().slice(0, 10),
-    doctorName: r.doctor.name,
-    department: r.doctor.department,
+    doctorName: r.doctor?.name ?? DUTY_DOCTOR.name,
+    department: r.doctor?.department ?? DUTY_DOCTOR.department,
   }));
 }

@@ -73,11 +73,20 @@ export const patientSearchSchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional().default(20),
 });
 
-/** Book an appointment: patient + slot + optional per-visit referral (admin-only). */
+/**
+ * Book an appointment: patient + slot + optional per-visit referral (admin-only).
+ *
+ * The slot is required for a SCHEDULED visit and forbidden-but-optional for an
+ * unscheduled one. EMERGENCY / CASUALTY is the exception the whole shape exists
+ * for: casualty issues an OP number before there is a slot or even a named
+ * doctor, so both are optional there and only there. The refinement below is
+ * what stops a plain walk-in from sliding through with neither.
+ */
 export const bookAppointmentSchema = z.object({
   patientId: z.string().trim().min(1, "Select a patient"),
-  slotId: z.string().trim().min(1, "Select a time slot"),
-  type: z.enum(["WALKIN", "ONLINE"]).optional().default("WALKIN"),
+  slotId: z.string().trim().optional().or(z.literal("")),
+  doctorId: z.string().trim().optional().or(z.literal("")),
+  type: z.enum(["WALKIN", "ONLINE", "EMERGENCY", "CASUALTY"]).optional().default("WALKIN"),
   referredByName: optStr(120),
   referralSource: optStr(80),
   billNow: z
@@ -104,7 +113,11 @@ export const bookAppointmentSchema = z.object({
         .optional(),
     })
     .optional(),
-});
+})
+  .refine(
+    (v) => v.type === "EMERGENCY" || v.type === "CASUALTY" || !!v.slotId?.trim(),
+    { path: ["slotId"], message: "Select a time slot" }
+  );
 
 export type BookAppointmentInput = z.infer<typeof bookAppointmentSchema>;
 
@@ -128,6 +141,11 @@ export const cancelAppointmentSchema = z.object({
 
 export const rescheduleAppointmentSchema = z.object({
   newSlotId: z.string().trim().min(1),
+});
+
+/** Naming the doctor who attended an emergency / casualty visit, after the fact. */
+export const assignDoctorSchema = z.object({
+  doctorId: z.string().trim().min(1, "Pick the doctor who attended"),
 });
 
 export const doctorLeaveSchema = z.object({

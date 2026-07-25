@@ -46,6 +46,10 @@ export interface DayClose {
   }[];
   /** Bills raised today that are still not fully paid. */
   outstanding: { receiptNo: string; patient: string; total: number; paid: number; due: number }[];
+  /** Masthead for the printed statement. Bundled here rather than fetched
+   *  separately so the print sheet needs one round trip and no ADMIN-only
+   *  config call - same pattern as opdPrintData / advancePrintData. */
+  hospital: { legalName: string; addressLine: string; city: string; state: string; stateCode: string; pincode: string; gstin: string | null; phone: string | null } | null;
 }
 
 const MODES = ["CASH", "UPI", "CARD", "NETBANKING", "OTHER"] as const;
@@ -61,7 +65,7 @@ function dayWindow(dateISO?: string) {
 export async function dayClose(dateISO?: string): Promise<DayClose> {
   const { from, to } = dayWindow(dateISO);
 
-  const [payments, refunds, invoices] = await Promise.all([
+  const [payments, refunds, invoices, hospital] = await Promise.all([
     prisma.payment.findMany({
       where: { createdAt: { gte: from, lte: to } },
       select: { mode: true, amount: true, invoiceId: true, receivedBy: { select: { name: true } } },
@@ -84,6 +88,7 @@ export async function dayClose(dateISO?: string): Promise<DayClose> {
         refunds: { select: { amount: true } },
       },
     }),
+    prisma.hospitalConfig.findFirst(),
   ]);
 
   type P = { mode: string; amount: { toString(): string }; receivedBy: { name: string } | null };
@@ -123,6 +128,7 @@ export async function dayClose(dateISO?: string): Promise<DayClose> {
   const refunded = r2(modes.reduce((s, m) => r2(s + m.refunded), 0));
 
   return {
+    hospital,
     date: localDateISO(from),
     modes,
     totals: { collected, refunded, net: r2(collected - refunded) },

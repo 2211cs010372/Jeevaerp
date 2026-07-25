@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
+import { DUTY_DOCTOR } from "./appointments.service";
 import type { AuthUser } from "@/lib/auth/types";
 
 // ---------------------------------------------------------------------------
@@ -223,12 +224,13 @@ export async function doctorPatientChart(actor: AuthUser, displayId: string) {
       phone: patient.phone, address: patient.address, city: patient.city,
       occupation: patient.occupation, remarks: patient.remarks, isVip: patient.isVip,
     },
-    visits: (visits as { opNumber: string; visitDate: Date; status: string; doctor: { name: string; department: string } }[]).map((v) => ({
+    visits: (visits as { opNumber: string; visitDate: Date; status: string; doctor: { name: string; department: string } | null }[]).map((v) => ({
       opNumber: v.opNumber,
       visitDate: v.visitDate.toISOString().slice(0, 10),
       status: v.status,
-      doctorName: v.doctor.name,
-      department: v.doctor.department,
+      // An emergency visit has no consultant on record - see Appointment.doctorId.
+      doctorName: v.doctor?.name ?? DUTY_DOCTOR.name,
+      department: v.doctor?.department ?? DUTY_DOCTOR.department,
     })),
     labs: (labs as { id: string; testName: string; status: string; reportFileUrl: string | null; createdAt: Date; completedAt: Date | null }[]).map((l) => ({
       id: l.id, testName: l.testName, status: l.status, reportFileUrl: l.reportFileUrl,
@@ -239,10 +241,10 @@ export async function doctorPatientChart(actor: AuthUser, displayId: string) {
     prescriptions: (scans as {
       id: string; appointmentId: string | null; fileUrl: string | null; fileName: string | null; title: string | null; doctorName: string | null;
       status: string; createdAt: Date;
-      appointment: { opNumber: string; visitDate: Date; doctor: { name: string } } | null;
+      appointment: { opNumber: string; visitDate: Date; doctor: { name: string } | null } | null;
     }[]).map((p) => ({
       id: p.id, appointmentId: p.appointmentId, fileUrl: p.fileUrl, fileName: p.fileName, title: p.title,
-      doctorName: p.doctorName ?? p.appointment?.doctor.name ?? null,
+      doctorName: p.doctorName ?? p.appointment?.doctor?.name ?? null,
       status: p.status,
       createdAt: p.createdAt.toISOString().slice(0, 10),
       visitDate: p.appointment ? p.appointment.visitDate.toISOString().slice(0, 10) : null,

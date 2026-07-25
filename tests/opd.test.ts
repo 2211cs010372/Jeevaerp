@@ -143,8 +143,16 @@ describe("hours at the desk", () => {
     expect(dailyHours("11:00 – 16:00")).toBe(5);
   });
 
+  it("counts round-the-clock cover as a full day", () => {
+    // "Open 24 Hours" has no parseable window, and falling through to 0 printed
+    // "0 hrs/day" against the doctors who are there the most.
+    expect(dailyHours("Open 24 Hours")).toBe(24);
+    expect(dailyHours("open 24 hrs")).toBe(24);
+  });
+
   it("is zero when there's no window to measure", () => {
     expect(dailyHours("on call")).toBe(0);
+    expect(dailyHours("By Appointment")).toBe(0);
   });
 });
 

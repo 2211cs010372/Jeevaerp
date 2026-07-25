@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
 import { localDateISO, dateOnlyISO } from "@/lib/date";
 import { logAudit } from "./audit.service";
+import { DUTY_DOCTOR } from "./appointments.service";
 import { collectionByMode, type ModeTotal } from "./reports.service";
 import { pharmacyProfitSummary } from "./pharmacy.service";
 import bcrypt from "bcryptjs";
@@ -129,8 +130,8 @@ export async function adminOverview(): Promise<{
   const pharmacyAlerts = (meds as { reorderThreshold: number; batches: { quantity: number }[] }[])
     .filter((mm) => mm.batches.reduce((s, b) => s + b.quantity, 0) <= mm.reorderThreshold).length;
 
-  const todayAppointments = (todayApptRows as { timeAtBooking: string; status: string; patient: { fullName: string }; doctor: { name: string; department: string } }[])
-    .map((a) => ({ time: a.timeAtBooking, patient: a.patient.fullName, doctor: a.doctor.name, dept: a.doctor.department, status: a.status }));
+  const todayAppointments = (todayApptRows as { timeAtBooking: string; status: string; patient: { fullName: string }; doctor: { name: string; department: string } | null }[])
+    .map((a) => ({ time: a.timeAtBooking, patient: a.patient.fullName, doctor: a.doctor?.name ?? DUTY_DOCTOR.name, dept: a.doctor?.department ?? DUTY_DOCTOR.department, status: a.status }));
 
   const recentBills = (recentBillRows as { receiptNo: string; createdAt: Date; totalAmount: { toString(): string }; status: string; subtotal: { toString(): string }; discountAmount: { toString(): string } }[])
     .map((b) => {
@@ -145,7 +146,7 @@ export async function adminOverview(): Promise<{
     });
 
   // revenue by doctor - consultation (via appointment.doctor) + IPD (via admission.doctor)
-  type DocInv = { totalAmount: { toString(): string }; appointment: { doctor: { name: string; department: string } } | null; admission: { doctor: { name: string; department: string } } | null };
+  type DocInv = { totalAmount: { toString(): string }; appointment: { doctor: { name: string; department: string } | null } | null; admission: { doctor: { name: string; department: string } } | null };
   const docMap = new Map<string, { doctor: string; department: string; revenue: number; visits: number }>();
   for (const i of docInvoices as DocInv[]) {
     const doc = i.appointment?.doctor ?? i.admission?.doctor;

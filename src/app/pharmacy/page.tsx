@@ -28,6 +28,7 @@ const nowLabel = new Date().toLocaleString("en-IN", { weekday: "long", day: "num
 const QUICK_LINKS: { href: string; label: string }[] = [
   { href: "/queue", label: "Prescription queue" },
   { href: "/dispense", label: "Dispense" },
+  { href: "/dispense?mode=direct", label: "Direct pill sale (Walk-in)" },
   { href: "/stock", label: "Stock & batches" },
   { href: "/alerts", label: "Alerts" },
 ];

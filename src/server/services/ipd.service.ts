@@ -835,6 +835,8 @@ export async function admissionSheet(admissionId: string): Promise<{
   legs: { wardName: string; bedNo: string; dailyCharge: string; days: number; total: string; current: boolean }[];
   /** Deposit already held. Comes off the discharge bill. */
   advanceTotal: string;
+  /** Each deposit slip, so a lost receipt can be reprinted from the stay. */
+  advances: { id: string; receiptNo: string | null; amount: string; mode: string; takenAt: string }[];
   /** grandTotal − advanceTotal, floored at 0. What the family still owes today. */
   balance: string;
 }> {
@@ -904,12 +906,17 @@ export async function admissionSheet(admissionId: string): Promise<{
     : days * Number(a.dailyChargeAtAdmit.toString());
 
   // ── ADVANCE ── money the hospital is already holding for this stay.
-  const advances = await prisma.admissionAdvance.findMany({
+  const advanceRows = await prisma.admissionAdvance.findMany({
     where: { admissionId },
-    select: { amount: true },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, receiptNo: true, amount: true, mode: true, createdAt: true },
   });
-  const advanceTotal = (advances as { amount: { toString(): string } }[])
-    .reduce((sum, x) => sum + Number(x.amount.toString()), 0);
+  type AdvRow = { id: string; receiptNo: string | null; amount: { toString(): string }; mode: string; createdAt: Date };
+  const advances = (advanceRows as AdvRow[]).map((x) => ({
+    id: x.id, receiptNo: x.receiptNo, amount: x.amount.toString(), mode: x.mode,
+    takenAt: x.createdAt.toISOString(),
+  }));
+  const advanceTotal = advances.reduce((sum, x) => sum + Number(x.amount), 0);
 
   const charges: ChargeDTO[] = (a.charges as ChargeRow[]).map((c) => {
     const amount = c.qty * Number(c.unitPrice.toString());
@@ -947,6 +954,7 @@ export async function admissionSheet(admissionId: string): Promise<{
     charges,
     legs,
     advanceTotal: advanceTotal.toFixed(2),
+    advances,
     // Never negative. An advance bigger than the bill is a REFUND owed, not a
     // negative debt that would quietly subtract from the day's takings.
     balance: Math.max(0, grandTotal - advanceTotal).toFixed(2),
@@ -1170,7 +1178,11 @@ export async function addAdvance(
   actor: AuthUser,
   input: { admissionId: string; amount: number; mode: string; reference?: string },
   ctx: { ipAddress?: string; userAgent?: string }
-): Promise<{ ipNumber: string; totalAdvance: string }> {
+): Promise<{
+  ipNumber: string; totalAdvance: string;
+  /** The slip just created - reception prints this and hands it over. */
+  advance: { id: string; receiptNo: string; amount: string; mode: string };
+}> {
   if (!(input.amount > 0)) throw new ApiError(400, "An advance must be more than ₹0");
 
   const adm = await prisma.admission.findUnique({
@@ -1180,15 +1192,23 @@ export async function addAdvance(
   if (!adm) throw new ApiError(404, "Admission not found");
   if (adm.status !== "ADMITTED") throw new ApiError(400, "That patient has already been discharged");
 
-  await prisma.admissionAdvance.create({
-    data: {
-      admissionId: adm.id,
-      // validated upstream against the PaymentMode values; narrow for Prisma
-      mode: input.mode as PaymentMode,
-      amount: Math.round(input.amount * 100) / 100,
-      reference: input.reference?.trim() || null,
-      receivedById: actor.id,
-    },
+  // Number and row are created together: a receipt number that exists without
+  // the money behind it (or money without a number) is an unreconcilable gap in
+  // the cash book. `nextId` enrols in the transaction so a rollback burns neither.
+  const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const receiptNo = await nextId("ADV", { tx });
+    return tx.admissionAdvance.create({
+      data: {
+        admissionId: adm.id,
+        receiptNo,
+        // validated upstream against the PaymentMode values; narrow for Prisma
+        mode: input.mode as PaymentMode,
+        amount: Math.round(input.amount * 100) / 100,
+        reference: input.reference?.trim() || null,
+        receivedById: actor.id,
+      },
+      select: { id: true, receiptNo: true, amount: true, mode: true },
+    });
   });
 
   const all = await prisma.admissionAdvance.findMany({
@@ -1201,11 +1221,84 @@ export async function addAdvance(
     action: "IPD_ADVANCE_TAKEN",
     targetTable: "Admission",
     targetId: adm.id,
-    meta: { ipNumber: adm.ipNumber, amount: input.amount, mode: input.mode },
+    meta: { ipNumber: adm.ipNumber, receiptNo: created.receiptNo, amount: input.amount, mode: input.mode },
     ...ctx,
   });
 
-  return { ipNumber: adm.ipNumber, totalAdvance: total.toFixed(2) };
+  return {
+    ipNumber: adm.ipNumber,
+    totalAdvance: total.toFixed(2),
+    advance: {
+      id: created.id,
+      receiptNo: created.receiptNo ?? "",
+      amount: created.amount.toString(),
+      mode: created.mode,
+    },
+  };
+}
+
+/**
+ * Everything the printed advance slip needs, in one fetch.
+ *
+ * Deliberately NOT an invoice: no GST split, no HSN, no "tax invoice" wording.
+ * It acknowledges money held against a stay. The tax document is the discharge
+ * bill, where this deposit reappears as a credit - so the slip says so in as
+ * many words, to stop a family treating it as their final bill.
+ */
+export async function advancePrintData(advanceId: string): Promise<{
+  hospital: { legalName: string; addressLine: string; city: string; state: string; stateCode: string; pincode: string; gstin: string | null; phone: string | null } | null;
+  advance: { id: string; receiptNo: string | null; amount: string; mode: string; reference: string | null; takenAt: string; receivedBy: string };
+  admission: { ipNumber: string; ward: string; bedNo: string; admittedAt: string; doctorName: string };
+  patient: { displayId: string; fullName: string; phone: string; age: number | null; gender: string | null; address: string | null };
+  /** Every advance on this stay, so the slip can show the running deposit. */
+  totalAdvance: string;
+}> {
+  const a = await prisma.admissionAdvance.findUnique({
+    where: { id: advanceId },
+    select: {
+      id: true, receiptNo: true, amount: true, mode: true, reference: true, createdAt: true,
+      receivedBy: { select: { name: true } },
+      admission: {
+        select: {
+          id: true, ipNumber: true, admittedAt: true,
+          bed: { select: { bedNo: true, ward: { select: { name: true } } } },
+          doctor: { select: { name: true } },
+          patient: { select: { displayId: true, fullName: true, phone: true, age: true, gender: true, address: true } },
+        },
+      },
+    },
+  });
+  if (!a) throw new ApiError(404, "That advance receipt doesn't exist");
+
+  const siblings = await prisma.admissionAdvance.findMany({
+    where: { admissionId: a.admission.id },
+    select: { amount: true },
+  });
+  const total = siblings.reduce((s: number, x: { amount: { toString(): string } }) => s + Number(x.amount.toString()), 0);
+
+  const hospital = await prisma.hospitalConfig.findFirst();
+
+  return {
+    hospital,
+    advance: {
+      id: a.id,
+      receiptNo: a.receiptNo,
+      amount: a.amount.toString(),
+      mode: a.mode,
+      reference: a.reference,
+      takenAt: a.createdAt.toISOString(),
+      receivedBy: a.receivedBy.name,
+    },
+    admission: {
+      ipNumber: a.admission.ipNumber,
+      ward: a.admission.bed.ward.name,
+      bedNo: a.admission.bed.bedNo,
+      admittedAt: a.admission.admittedAt.toISOString(),
+      doctorName: a.admission.doctor.name,
+    },
+    patient: a.admission.patient,
+    totalAdvance: total.toFixed(2),
+  };
 }
 
 /** Free beds a patient could be moved INTO - never their own, never occupied. */
