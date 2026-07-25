@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { addDateOnlyDays, localDateISO, parseDateOnly } from "@/lib/date";
 
 /** "HH:MM" -> minutes since midnight. */
 function toMinutes(hhmm: string): number {
@@ -29,17 +30,18 @@ export async function generateSlots(days = 7): Promise<{ created: number }> {
     },
   });
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // DoctorSlot.date is @db.Date. Build it at UTC midnight of the clinic's
+  // local calendar day - local midnight is 18:30 the previous day in IST, and
+  // storing that put every generated slot in the wrong day's row.
+  const today = parseDateOnly(localDateISO(new Date()));
 
   const rows: {
     doctorId: string; date: Date; startTime: string; endTime: string; isBooked: boolean;
   }[] = [];
 
   for (let d = 0; d < days; d++) {
-    const date = new Date(today);
-    date.setDate(today.getDate() + d);
-    const dow = date.getDay(); // 0=Sun..6=Sat
+    const date = addDateOnlyDays(today, d);
+    const dow = date.getUTCDay(); // 0=Sun..6=Sat - UTC, to match the date above
 
     for (const sch of schedules) {
       if (sch.dayOfWeek !== dow) continue;

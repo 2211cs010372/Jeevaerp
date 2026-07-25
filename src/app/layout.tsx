@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Bricolage_Grotesque, Fraunces, Geist, Geist_Mono, IBM_Plex_Mono, Instrument_Sans } from "next/font/google";
 import "./globals.css";
+import { SITE_URL } from "@/lib/site";
 
 /* The staff portals' type system - Geist for the UI, Geist Mono for data
    (IDs, prices, timings). The modern-software sans, scoped to .portal so the
@@ -45,13 +46,33 @@ const fraunces = Fraunces({
   display: "swap",
 });
 
+const TITLE = "Jeeva Multispeciality Hospital - Hanamkonda";
+const DESCRIPTION =
+  "Your health, our care. Multispeciality hospital in Hanamkonda: 24/7 emergency, specialized doctors, in-house diagnostics and pharmacy.";
+
 export const metadata: Metadata = {
-  title: {
-    default: "Jeeva Multispeciality Hospital - Hanamkonda",
-    template: "%s - Jeeva Multispeciality Hospital",
+  // Absolute base for canonicals and OG images. Without it, relative OG URLs
+  // are dropped by most scrapers - which is most of how this site gets shared.
+  metadataBase: new URL(SITE_URL),
+  title: { default: TITLE, template: "%s - Jeeva Multispeciality Hospital" },
+  description: DESCRIPTION,
+  applicationName: "Jeeva",
+  keywords: [
+    "hospital in Hanamkonda", "multispeciality hospital Warangal", "emergency hospital Hanamkonda",
+    "paediatrician Hanamkonda", "gynaecologist Hanamkonda", "cardiologist Warangal",
+  ],
+  alternates: { canonical: "/" },
+  openGraph: {
+    type: "website",
+    siteName: "Jeeva Multispeciality Hospital",
+    locale: "en_IN",
+    url: "/",
+    title: TITLE,
+    description: DESCRIPTION,
   },
-  description:
-    "Your health, our care. Multispeciality hospital in Hanamkonda: 24/7 emergency, specialized doctors, in-house diagnostics and pharmacy.",
+  twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION },
+  robots: { index: true, follow: true },
+  formatDetection: { telephone: true, address: true },
 };
 
 export default function RootLayout({

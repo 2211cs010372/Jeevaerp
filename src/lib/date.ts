@@ -51,3 +51,28 @@ export function parseLocalDate(dateStr: string): Date {
   const [y, m, d] = dateStr.split("-").map(Number);
   return new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
 }
+
+/**
+ * Parse "YYYY-MM-DD" to UTC midnight - the exact inverse of `dateOnlyISO`.
+ *
+ * THIS is what you build a `@db.Date` value with, and what you query one by.
+ * The trap: `startOfLocalDay()` on a calendar date gives 18:30 the PREVIOUS
+ * day in IST, so a slot generated for Monday lands in the Sunday row and a
+ * search for Monday returns Sunday's. A patient picks Monday and is booked
+ * for Sunday, with every screen agreeing, because the shift is applied on
+ * both sides.
+ *
+ * Rule of thumb: date-only column -> UTC midnight, always. Real instants
+ * (createdAt, payments) -> local, via localDateISO.
+ */
+export function parseDateOnly(dateStr: string): Date {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(y, (m || 1) - 1, d || 1));
+}
+
+/** The same calendar day, N days on. Stays on the UTC-midnight convention. */
+export function addDateOnlyDays(d: Date, days: number): Date {
+  const x = new Date(d);
+  x.setUTCDate(x.getUTCDate() + days);
+  return x;
+}

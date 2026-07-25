@@ -15,10 +15,16 @@ import { Faq } from "@/components/marketing/faq";
 import { Visit } from "@/components/marketing/visit";
 import { EmergencyBand } from "@/components/marketing/emergency";
 import { PortalCta } from "@/components/marketing/portal-cta";
+import { hospitalJsonLd } from "@/lib/site";
 
 export default function HomePage() {
   return (
     <>
+      {/* the hospital itself, machine-readable: address, phone, OPD hours */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(hospitalJsonLd()) }}
+      />
       <Hero />
       <ActionBar />
       <Ticker />

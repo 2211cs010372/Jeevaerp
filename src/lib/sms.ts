@@ -64,3 +64,61 @@ export async function sendOtpSms(phone: string, code: string): Promise<void> {
     throw new ApiError(503, "Failed to send the SMS. Please try again.");
   }
 }
+
+/**
+ * Appointment confirmation SMS.
+ *
+ * TWO THINGS TO KNOW BEFORE PRODUCTION:
+ *
+ * 1. This NEVER throws. It is called after the appointment row is committed,
+ *    and a failed text must not undo a booked slot - the patient is booked
+ *    whether or not the message lands. Failures are logged for the desk to
+ *    chase, and the OP number is always shown on screen as the real receipt.
+ *
+ * 2. India requires DLT registration for transactional SMS: the template must
+ *    be pre-approved and referenced by name, and free-text sends are rejected
+ *    by the carriers. Register the template in the 2Factor dashboard, put its
+ *    name in SMS_APPOINTMENT_TEMPLATE, and the variables below fill it. Until
+ *    that is set, this logs instead of sending, so nothing silently fails in
+ *    a way that looks like it worked.
+ */
+export async function sendAppointmentSms(
+  phone: string,
+  vars: { name: string; opNumber: string; doctor: string; date: string; time: string }
+): Promise<{ sent: boolean; reason?: string }> {
+  const apiKey = env().TWO_FACTOR_API_KEY;
+  const template = process.env.SMS_APPOINTMENT_TEMPLATE;
+
+  const line = `Dear ${vars.name}, your appointment ${vars.opNumber} with ${vars.doctor} is confirmed for ${vars.date} at ${vars.time}. - Jeeva Hospital`;
+
+  if (!apiKey || !template) {
+    // Dev, or DLT template not registered yet. Say so in the log rather than
+    // pretending it went out.
+    console.log(`[sms:dev] appointment confirmation -> ${phone}: ${line}`);
+    return { sent: false, reason: apiKey ? "no-template" : "not-configured" };
+  }
+
+  const target = toIndianMsisdn(phone);
+  const url =
+    `${TWO_FACTOR_BASE}/${apiKey}/ADDON_SERVICES/SEND/TSMS` +
+    `?From=${encodeURIComponent(process.env.SMS_SENDER_ID ?? "JEEVAH")}` +
+    `&To=${target}&TemplateName=${encodeURIComponent(template)}` +
+    `&VAR1=${encodeURIComponent(vars.name)}` +
+    `&VAR2=${encodeURIComponent(vars.opNumber)}` +
+    `&VAR3=${encodeURIComponent(vars.doctor)}` +
+    `&VAR4=${encodeURIComponent(vars.date)}` +
+    `&VAR5=${encodeURIComponent(vars.time)}`;
+
+  try {
+    const r = await fetch(url, { method: "GET", signal: AbortSignal.timeout(10_000) });
+    const b: { Status?: string } | null = await r.json().catch(() => null);
+    if (!r.ok || b?.Status !== "Success") {
+      console.error("[sms:2factor] confirmation failed", { phone: target, httpStatus: r.status, body: b });
+      return { sent: false, reason: "provider-error" };
+    }
+    return { sent: true };
+  } catch (err) {
+    console.error("[sms:2factor] confirmation network error", err);
+    return { sent: false, reason: "network" };
+  }
+}

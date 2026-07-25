@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { nextId } from "@/lib/ids";
 import { ApiError } from "@/lib/api";
+import { parseDateOnly } from "@/lib/date";
 import { logAudit } from "./audit.service";
 import { createInvoice } from "./billing.service";
 import type { AuthUser } from "@/lib/auth/types";
@@ -51,9 +52,13 @@ export async function listDoctors(): Promise<DoctorDTO[]> {
 }
 
 export async function listAvailableSlots(doctorId: string, date: string): Promise<SlotDTO[]> {
-  const day = new Date(date);
+  // DoctorSlot.date is @db.Date, stored and read at UTC midnight. Building the
+  // query value with setHours(0,0,0,0) gave 18:30 the PREVIOUS day in IST, so
+  // asking for Monday returned Sunday's grid - and the booking that followed
+  // landed on Sunday. Date-only column, date-only parse.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new ApiError(400, "Invalid date");
+  const day = parseDateOnly(date);
   if (Number.isNaN(day.getTime())) throw new ApiError(400, "Invalid date");
-  day.setHours(0, 0, 0, 0);
   // Every still-open slot for the day. Past-today slots are NOT dropped here -
   // the desk shows the whole day and greys the passed ones out (un-bookable),
   // rather than silently starting the grid mid-afternoon. The client marks
