@@ -55,14 +55,14 @@ export function ActionBar() {
       `}</style>
 
       <div className="nsh-action-root mx-auto max-w-7xl">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {ACTIONS.map((a, i) => {
             const Icon = a.icon;
             return (
               <Reveal key={a.title} delay={i * 80}>
                 <Link
                   href={a.href}
-                  className="group relative flex h-full min-h-[140px] flex-col justify-between overflow-hidden rounded-[1.35rem] bg-[#f0eee9] p-1.5 ring-1 ring-black/5 transition-all duration-300  hover:ring-black/10 hover:shadow-lg "
+                  className="group relative flex h-full min-h-[110px] md:min-h-[140px] flex-col justify-between overflow-hidden rounded-[1.35rem] bg-[#f0eee9] p-1.5 ring-1 ring-black/5 transition-all duration-300  hover:ring-black/10 hover:shadow-lg "
                 >
                   {/* Subtle top background sheen */}
                   <div
@@ -75,16 +75,16 @@ export function ActionBar() {
                     <div className="relative z-10 flex items-center justify-between">
                       <div className="flex items-center gap-2.5">
                         <div
-                          className={`flex h-11 w-11 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-black/5 ${a.iconColor}`}
+                          className={`flex h-8 w-8 md:h-11 md:w-11 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-black/5 ${a.iconColor}`}
                         >
                           <Icon className="h-5 w-5" />
                         </div>
-                        <span className="rounded-full bg-white/80 px-2.5 py-1 text-[11px] font-medium text-[#14181C]/70 backdrop-blur ring-1 ring-black/5">
+                        <span className="rounded-full bg-white/80 px-1.5 md:px-2.5 py-1 text-[9px] sm:text-[11px] font-medium text-[#14181C]/70 backdrop-blur ring-1 ring-black/5">
                           {a.badge}
                         </span>
                       </div>
 
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-[#14181C]/60 shadow-sm ring-1 ring-black/5 transition-all duration-200 group-hover:bg-[#14181C] group-hover:text-white group-hover:shadow-md">
+                      <div className="md:flex h-8 w-8 items-center hidden  justify-center rounded-full bg-white text-[#14181C]/60 shadow-sm ring-1 ring-black/5 transition-all duration-200 group-hover:bg-[#14181C] group-hover:text-white group-hover:shadow-md">
                         <ArrowUpRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
                       </div>
                     </div>
@@ -131,7 +131,7 @@ export function ActionBar() {
                   </span>
                 </div>
 
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-[#E53E3E] shadow-sm ring-1 ring-[#E53E3E]/20 transition-all duration-200 group-hover:bg-[#E53E3E] group-hover:text-white">
+                <div className="hidden md:flex h-8 w-8 items-center justify-center rounded-full bg-white text-[#E53E3E] shadow-sm ring-1 ring-[#E53E3E]/20 transition-all duration-200 group-hover:bg-[#E53E3E] group-hover:text-white">
                   <ArrowUpRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
                 </div>
               </div>

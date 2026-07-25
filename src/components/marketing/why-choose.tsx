@@ -1,150 +1,136 @@
+"use client";
+
 import Link from "next/link";
 import { Reveal } from "@/components/ui/reveal";
 import { DeptVisual } from "@/components/marketing/dept-visual";
 import { DEPARTMENTS, STATS, HOSPITAL } from "@/lib/data";
+import { ArrowUpRight, Activity, Clock, FlaskConical } from "lucide-react";
 
-/**
- * Departments - wears the hero's material language: one framed porcelain shell
- * (two-column header + deep-pine feature panel + welded stat rail), followed by
- * a grid of real department photography as pine-tinted tiles. Same tokens as the
- * hero, so the page reads as one system.
- */
 export function Departments() {
   const railFacts = [
-    STATS[0], // 8 Departments
-    STATS[1], // 12+ Specialists
-    { value: "Same", suffix: "-day", label: "OPD slots", sub: "walk in or book" },
-    { value: "In", suffix: "-house", label: "Diagnostics", sub: "lab · imaging · pharmacy" },
+    { value: STATS[0].value, label: "Specialties", icon: Activity },
+    { value: STATS[1].value, label: "Top Specialists", icon: ArrowUpRight },
+    { value: "Same-day", label: "OPD Walk-ins", icon: Clock },
+    { value: "In-house", label: "Diagnostics", icon: FlaskConical },
   ] as const;
 
   return (
-    <section id="departments" className="px-3 py-16 sm:px-5 lg:py-24">
-      <div className="mx-auto max-w-[1280px]">
-        {/* ── hero-style header shell ─────────────────────────────── */}
-        <div className="relative overflow-hidden rounded-[36px] border border-[var(--line)] bg-[var(--paper)] shadow-[var(--shadow)]">
-          <div aria-hidden className="pointer-events-none absolute -left-32 -top-40 h-[520px] w-[520px] rounded-full bg-[radial-gradient(circle,rgba(11,84,76,0.10),transparent_62%)]" />
+    <section id="departments" className="px-4 py-16 sm:px-6 lg:py-24">
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;600;700&family=Inter:wght@400;500;600&display=swap');
 
-          <div className="relative grid items-stretch gap-8 p-6 sm:p-9 lg:grid-cols-[1.05fr_0.95fr] lg:gap-10 lg:p-12">
-            {/* copy */}
-            <div className="flex flex-col justify-center py-2 lg:py-4">
-              <Reveal>
-                <span className="mb-6 inline-flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--muted)]" style={{ fontFamily: "var(--font-mono)" }}>
-                  <span className="pulse" aria-hidden /> Departments · {DEPARTMENTS.length} specialties
+        .nsh-care-root {
+          --font-display: 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
+          --font-body: 'Inter', ui-sans-serif, system-ui, sans-serif;
+          font-family: var(--font-body);
+        }
+      `}</style>
+      <div className="mx-auto max-w-7xl">
+
+        {/* ── 1. The Porcelain Shell (Header) ─────────────────────────────── */}
+        <Reveal>
+          <div className="relative overflow-hidden rounded-[2.5rem] bg-[var(--paper)] ring-1 ring-[var(--line)] shadow-[var(--shadow-lg)] lg:p-3">
+            {/* Ambient Background Glows */}
+            <div aria-hidden className="pointer-events-none absolute -left-20 -top-20 h-96 w-96 rounded-full bg-[radial-gradient(circle,rgba(11,84,76,0.06),transparent_70%)] blur-2xl" />
+
+            <div className="relative flex flex-col lg:flex-row lg:items-stretch lg:gap-3">
+
+              {/* Left: Copy & Context */}
+              <div className="flex flex-1 flex-col justify-center px-8 py-10 lg:px-12 lg:py-16">
+                <span className="mb-5 inline-flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--muted)]" style={{ fontFamily: "var(--font-mono)" }}>
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--teal)] opacity-50"></span>
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--teal)]"></span>
+                  </span>
+                  Integrated Care
                 </span>
-              </Reveal>
-              <Reveal delay={40}>
-                <h2 className="display text-[clamp(2.1rem,4.4vw,3.4rem)] text-[var(--ink)]">
-                  Every specialty,
-                  <br />
-                  <span className="text-[var(--teal)]">one building.</span>
+
+                <h2 className="display text-[clamp(2.2rem,4vw,3.5rem)] font-bold leading-[1.05] tracking-tight text-[var(--ink)]">
+                  Every specialty,<br />
+                  <span className="text-[var(--teal)]">under one roof.</span>
                 </h2>
-              </Reveal>
-              <Reveal delay={90}>
-                <div className="mt-6 flex max-w-lg items-start gap-5">
-                  <span className="idx mt-1 shrink-0">(002)</span>
-                  <p className="text-[15px] leading-[1.75] text-[var(--ink-soft)]">
-                    From a racing heart to a child&apos;s fever, most of a family&apos;s care lives
-                    under one roof in {HOSPITAL.locality.split(",")[0]} - each department staffed by
-                    its own specialists, with lab, imaging and pharmacy a corridor away.
-                  </p>
-                </div>
-              </Reveal>
-              <Reveal delay={160}>
-                <div className="mt-8 flex flex-wrap items-center gap-3">
-                  <Link href="/doctors" className="btn btn-solid">
-                    Explore specialists <span aria-hidden>→</span>
+
+                <p className="mt-5 max-w-md text-[15px] leading-relaxed text-[var(--ink-soft)]">
+                  From a racing heart to a child&apos;s fever, most of a family&apos;s care lives here in {HOSPITAL.locality.split(",")[0]}. Consult, test, and collect medicines in a single visit.
+                </p>
+
+                <div className="mt-8 flex flex-wrap items-center gap-4">
+                  <Link href="/doctors" className="inline-flex h-12 items-center justify-center rounded-full bg-[var(--teal)] px-6 text-[14px] font-semibold text-white shadow-md transition-transform hover:scale-105">
+                    Explore specialists
                   </Link>
-                  <a href={`tel:${HOSPITAL.emergency.replace(/\s/g, "")}`} className="btn btn-ghost !text-[var(--alert)]">
+                  <a href={`tel:${HOSPITAL.emergency.replace(/\s/g, "")}`} className="inline-flex h-12 items-center justify-center rounded-full bg-[var(--alert)]/10 px-6 text-[14px] font-bold text-[var(--alert)] transition-colors hover:bg-[var(--alert)] hover:text-white">
                     Emergency 24×7
                   </a>
                 </div>
-              </Reveal>
-            </div>
+              </div>
 
-            {/* feature panel - the building */}
-            <Reveal delay={140} className="relative min-h-[360px] lg:min-h-0">
-              <div className="relative h-full min-h-[360px] overflow-hidden rounded-[26px] bg-[var(--pine-ink)]">
-                <div aria-hidden className="pointer-events-none absolute -right-16 -top-16 z-10 h-72 w-72 rounded-full bg-[radial-gradient(circle,rgba(23,112,95,0.5),transparent_65%)]" />
+              {/* Right: Architectural Feature & Stats */}
+              <div className="relative flex min-h-[320px] flex-1 flex-col overflow-hidden rounded-[2rem] bg-[var(--pine-ink)] lg:min-h-0">
                 <img
                   src="/images/hospital_banner.jpeg"
                   alt={`Inside ${HOSPITAL.name}`}
-                  className="absolute inset-0 h-full w-full object-cover opacity-90"
+                  className="absolute inset-0 h-full w-full object-cover opacity-60 mix-blend-overlay saturate-50 transition-transform duration-1000 hover:scale-105"
                 />
-                <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-[var(--pine-ink)] via-[var(--pine-ink)]/70 to-transparent" />
-                <div className="absolute right-4 top-4 z-20 rounded-full border border-white/15 bg-black/25 px-3.5 py-1.5 text-[11px] font-medium text-white backdrop-blur" style={{ fontFamily: "var(--font-mono)" }}>
-                  {HOSPITAL.locality.split(",")[0]}
-                </div>
-                <div className="absolute inset-x-4 bottom-4 z-20 rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur-md sm:inset-x-5 sm:bottom-5">
-                  <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--teal-tint)]" style={{ fontFamily: "var(--font-mono)" }}>
-                    One roof, one record
-                  </p>
-                  <p className="mt-1.5 text-[14px] leading-snug text-white">
-                    Consult, test and collect medicines in a single visit - every step on your
-                    permanent Jeeva ID.
-                  </p>
+                <div aria-hidden className="absolute inset-0 bg-gradient-to-t from-[var(--pine-ink)] via-transparent to-transparent opacity-90" />
+
+                <div className="relative mt-auto p-6 sm:p-8">
+                  {/* Inline Stat Rail integrated directly into the image panel */}
+                  <div className="grid grid-cols-2 gap-4 rounded-2xl bg-white/10 p-5 backdrop-blur-md ring-1 ring-white/20 sm:grid-cols-4 sm:gap-2">
+                    {railFacts.map((stat, idx) => {
+                      const Icon = stat.icon;
+                      return (
+                        <div key={idx} className="flex flex-col items-center text-center sm:items-start sm:text-left">
+                          <Icon className="mb-2 h-5 w-5 text-[var(--teal-tint)] opacity-80" />
+                          <span className="font-serif-p text-[18px] font-bold tracking-tight text-white">{stat.value}</span>
+                          <span className="mt-0.5 text-[11px] font-medium text-white/70">{stat.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
-            </Reveal>
-          </div>
 
-          {/* stat rail */}
-          <div className="relative grid grid-cols-2 gap-px border-t border-[var(--line)] bg-[var(--line)] sm:grid-cols-4">
-            {railFacts.map((s) => (
-              <div key={s.label} className="bg-[var(--paper)] px-6 py-6 sm:px-7">
-                <p className="display text-[clamp(1.5rem,2.4vw,2rem)] text-[var(--ink)]">
-                  <span className="tabular">{s.value}</span>
-                  <span className="text-[var(--teal)]">{s.suffix}</span>
-                </p>
-                <p className="mt-1 text-[13px] font-medium text-[var(--ink-soft)]">{s.label}</p>
-                <p className="text-[12px] text-[var(--muted)]">{s.sub}</p>
-              </div>
-            ))}
+            </div>
           </div>
-        </div>
+        </Reveal>
 
-        {/* ── department photo grid ───────────────────────────────── */}
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+        {/* ── 2. The Compact Directory Grid ───────────────────────────────── */}
+        <div className="mt-6 grid grid-cols-1 gap-3 xs:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
           {DEPARTMENTS.map((d, i) => (
-            <Reveal key={d.name} delay={Math.min(i * 40, 280)}>
+            <Reveal key={d.name} delay={Math.min(i * 30, 250)}>
               <Link
                 href={`/book?dept=${encodeURIComponent(d.name)}`}
-                className="group relative flex aspect-[4/5] flex-col justify-end overflow-hidden rounded-[22px] bg-[var(--pine-ink)] ring-1 ring-[var(--line)]"
+                className="group relative flex h-[240px] w-full flex-col justify-end overflow-hidden rounded-[1.25rem] bg-[var(--pine-ink)] shadow-sm ring-1 ring-[var(--line)] transition-all hover:-translate-y-0.5 hover:shadow-md hover:ring-[var(--teal)]/40"
               >
+                {/* Background Image & Shaders */}
                 <DeptVisual
                   name={d.name}
                   src={d.image}
-                  className="absolute inset-0 h-full w-full transition-transform duration-[900ms] ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.07]"
+                  className="absolute inset-0 h-full w-full object-cover opacity-50 transition-all duration-[800ms] ease-out group-hover:scale-110 group-hover:opacity-70"
                 />
-                <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[var(--pine-ink)] via-[var(--pine-ink)]/30 to-transparent" />
-                <div aria-hidden className="pointer-events-none absolute inset-0 opacity-0 ring-2 ring-inset ring-[var(--teal-lift)] transition-opacity duration-300 group-hover:opacity-100" />
+                <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent transition-opacity duration-300 group-hover:opacity-80" />
 
-                {/* index */}
-                <span className="absolute left-3.5 top-3.5 z-10 rounded-full bg-black/30 px-2 py-0.5 text-[10.5px] text-white/90 backdrop-blur" style={{ fontFamily: "var(--font-mono)" }}>
-                  {d.index}
-                </span>
-                {/* book affordance */}
-                <span
-                  aria-hidden
-                  className="absolute right-3.5 top-3.5 z-10 grid h-8 w-8 place-items-center rounded-full bg-white/15 text-white backdrop-blur transition-all duration-300 group-hover:rotate-45 group-hover:bg-[var(--teal)]"
-                >
-                  ↗
-                </span>
+                {/* Content */}
+                <div className="relative z-10 flex w-full items-end justify-between p-4">
+                  <div>
+                    <span className="mb-1 block text-[9.5px] font-bold uppercase tracking-[0.15em] text-[var(--teal-tint)]" style={{ fontFamily: "var(--font-mono)" }}>
+                      {d.common}
+                    </span>
+                    <h3 className="text-[16px] font-semibold leading-tight text-white tracking-tight">
+                      {d.name}
+                    </h3>
+                  </div>
 
-                {/* label */}
-                <div className="relative z-10 p-4">
-                  <h3 className="display text-[19px] leading-tight text-white">{d.name}</h3>
-                  <p className="mt-1.5 text-[10px] uppercase tracking-[0.1em] text-[var(--teal-tint)]" style={{ fontFamily: "var(--font-mono)" }}>
-                    {d.common}
-                  </p>
-                  <span className="mt-2 flex items-center gap-1.5 text-[12px] font-semibold text-white/0 transition-colors duration-300 group-hover:text-white">
-                    Book appointment
-                    <span className="transition-transform duration-300 group-hover:translate-x-1" aria-hidden>→</span>
-                  </span>
+                  {/* Micro Action Button */}
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/20 text-white backdrop-blur-sm transition-all duration-300 group-hover:bg-[var(--teal)] group-hover:text-white">
+                    <ArrowUpRight className="h-3.5 w-3.5 transition-transform duration-300 group-hover:translate-x-[1px] group-hover:-translate-y-[1px]" />
+                  </div>
                 </div>
               </Link>
             </Reveal>
           ))}
         </div>
+
       </div>
     </section>
   );
