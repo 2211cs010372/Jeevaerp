@@ -86,37 +86,35 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
         <BillHead hospital={inv.hospital} />
 
         {/* title + barcode row */}
-        <div className="keep-together rule mt-2 flex items-start justify-between gap-4 pb-2">
-          <div>
-            <p className="text-[12.5px] font-extrabold uppercase tracking-[0.05em]" style={{ color: "var(--pr-primary)" }}>
+        <div className="keep-together rule mt-1 flex items-start justify-between gap-4 pb-0.5">
+          <div className="flex items-center justify-center gap-3" >
+            <p className="text-[9px] font-extrabold uppercase tracking-[0.05em]" style={{ color: "var(--pr-primary)" }}>
               {gstApplies ? "Tax Invoice" : "Bill of Supply"}
               <span className="ml-1 text-[9px] font-semibold text-[#57655f]">(Original)</span>
             </p>
-            <p className="mt-0.5 text-[9px] font-semibold uppercase tracking-wide text-[#57655f]">
+            <p className="mt-0.5 text-[8px] font-semibold uppercase tracking-wide text-[#57655f]">
               {SOURCE_LABEL[inv.source] ?? inv.source}
             </p>
           </div>
           <div className="flex flex-col items-end">
             <svg ref={barcodeRef} className="h-[26px] w-[120px]" aria-label={`Barcode ${inv.receiptNo}`} />
-            <span className="font-mono text-[7.5px] tracking-[0.14em] text-[#57655f]">{inv.receiptNo}</span>
           </div>
         </div>
 
         {/* bill meta */}
-        <div className="keep-together mt-2 grid grid-cols-2 gap-x-6 gap-y-1">
+        <div className="keep-together mt-2 grid grid-cols-3 gap-x-6 gap-y-0.5">
           <Meta k="Bill No" v={inv.receiptNo} />
           <Meta k="UHID" v={inv.patient.displayId} />
           <Meta k="Bill Date" v={created.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })} />
-          <Meta k="Time" v={created.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })} />
         </div>
 
         {/* patient / payor block */}
-        <div className="keep-together rule mt-2 grid grid-cols-[2fr_1fr] gap-x-6 py-2.5">
-          <div className="space-y-1">
+        <div className="keep-together  mt-2 grid grid-cols-[2fr_2fr] gap-x-6 py-1.5">
+          <div className="space-y-0.5">
             <Meta k="Patient" v={inv.patient.fullName} />
             <Meta k="Address" v={inv.patient.address || "-"} />
           </div>
-          <div className="space-y-1">
+          <div className="space-y-0.5">
             <Meta k="Age/Sex" v={ageSex} />
             <Meta k="Phone" v={inv.patient.phone} />
           </div>
@@ -139,7 +137,7 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
             {inv.items.map((it, i) => (
               <tr key={i} className="align-top">
                 <td className="rule py-[4px] pr-1 font-mono text-[9px] text-[#57655f]">{i + 1}</td>
-                <td className="rule py-[4px] pr-2">{it.description}</td>
+                <td className="rule py-[4px] text-[9px] pr-2">{it.description}</td>
                 <td className="rule py-[4px] pr-1 font-mono text-[9px]">{it.hsnSac ?? "-"}</td>
                 <td className="rule py-[4px] pr-1 text-right font-mono">{it.qty}</td>
                 <td className="rule py-[4px] pr-1 text-right font-mono">{money(it.unitPrice)}</td>
@@ -185,21 +183,6 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
             </tbody>
           </table>
         </div>
-
-        {/* signature */}
-        <div className="keep-together mt-6 flex items-end justify-between">
-          <div>
-            <div className="w-[130px] border-b border-[var(--pr-ink)]" />
-            <div className="mt-1 text-[9px] font-semibold">{inv.patient.fullName}</div>
-            <div className="text-[7.5px] text-[#57655f]">Patient / Attendant</div>
-          </div>
-          <div className="text-center">
-            <div className="mx-auto w-[150px] border-b border-[var(--pr-ink)]" />
-            <div className="mt-1 text-[9px] font-semibold">For {inv.hospital?.legalName ?? "Jeeva Multispeciality Hospital"}</div>
-            <div className="text-[7.5px] text-[#57655f]">Authorised Signatory</div>
-          </div>
-        </div>
-
         {/* footer - printed timestamp only, no website / URL */}
         <p className="mt-4 border-t border-[var(--pr-line)] pt-1.5 text-center text-[7.5px] text-[#6b7772]">
           {(inv.hospital?.legalName ?? "Jeeva Multispeciality Hospital")} · Printed{" "}

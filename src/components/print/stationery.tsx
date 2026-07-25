@@ -58,21 +58,43 @@ export const PRINT_CSS = `
 export const INVOICE_PRINT_CSS = `
   .print-stage { --pr-primary: #0b5f55; --pr-accent: #c77d33; --pr-ink: #17211e; --pr-line: #b9c4c0; }
   .print-stage { background: #e8e6e1; min-height: 100vh; padding: 24px 12px 64px; }
-  #print-sheet { width: 148mm; margin: 0 auto; background: #fff; color: var(--pr-ink);
-    box-shadow: 0 8px 40px rgba(0,0,0,.18); padding: 8mm 9mm;
+  
+  #print-sheet { 
+    width: 148mm; 
+    margin: 0 auto; 
+    background: #fff; 
+    color: var(--pr-ink);
+    box-shadow: 0 8px 40px rgba(0,0,0,.18); 
+    padding: 8mm 9mm;
     font-family: var(--font-sans, "Instrument Sans"), "Noto Sans Telugu", "Nirmala UI", Arial, sans-serif;
-    font-size: 9.7px; line-height: 1.42; }
-  #print-sheet .rule { border-bottom: 1px solid var(--pr-line); }
+    font-size: 9.7px; 
+    line-height: 1.42; 
+  }
+  
+  #print-sheet .rule { border-bottom: 0.5px solid var(--pr-line); }
   #print-sheet .rule-strong { border-bottom: 2px solid var(--pr-primary); }
+  
   @media print {
-    html, body { background: #fff !important; }
+    html, body { background: #fff !important; margin: 0 !important; padding: 0 !important; }
     body * { visibility: hidden !important; }
     #print-sheet, #print-sheet * { visibility: visible !important; }
-    /* static flow (NOT absolute) is what lets a long bill run onto a second A5 */
-    #print-sheet { position: static !important; width: auto; margin: 0; box-shadow: none; padding: 0; }
+    
     .print-stage { background: #fff !important; padding: 0 !important; margin: 0 !important; min-height: 0 !important; }
-    @page { size: A5 portrait; margin: 8mm; }
-    thead { display: table-header-group; }   /* repeat the column header on every page */
+    
+    @page { 
+      size: 148mm 210mm; /* Explicitly define exact A5 dimensions */
+      margin: 0mm;       /* Strip all browser-injected margins */
+    }
+    
+    #print-sheet { 
+      position: static !important; 
+      width: 148mm !important; /* Force exact A5 width */
+      margin: 0 !important; 
+      box-shadow: none !important; 
+      padding: 8mm 9mm !important; /* Your internal margins are handled via padding */
+    }
+    
+    thead { display: table-header-group; }  
     tr { break-inside: avoid; }
     .keep-together { break-inside: avoid; }
   }
