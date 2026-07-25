@@ -26,14 +26,34 @@ async function main() {
     });
   }
 
-  // ---- Doctors (each also a login; username doctor.<surname>) ----
+  // ---- Doctors (each also a login; username doctor.<distinguishing-name>) ----
   // Profile fields (photo, qualification, experience…) power the booking cards
   // and the public directory. Photos live in /public/images.
+  // Source: the 15-doctor public directory dataset. Usernames are generated
+  // from the most distinguishing token in each name (not a plain surname),
+  // because three doctors here share "Kumar" as part of their name and a
+  // surname-only scheme would collide (P. Rajakshi Kumar / K. Sravan Kumar /
+  // A. Rakesh Kumar).
+  // Phones start at 9000002xxx (not 9000001xxx) so these don't collide with
+  // the 4 legacy placeholder doctors (doctor.rao/menon/verma/das), which are
+  // retired below rather than deleted - per this schema's own policy that
+  // doctors are deactivated, never hard-deleted.
   const doctors = [
-    { username: "doctor.rao",   phone: "9000001001", email: "rao@jeeva.local",   name: "Dr. K. Rao",   specialization: "Interventional Cardiologist", department: "Cardiology",   fee: 700, qualification: "MBBS, MD, DM (Cardiology)", experienceYears: 18, age: 49, languages: "Telugu, English, Hindi", photoUrl: "/images/doctor-1.avif",  bio: "Two decades treating chest pain, blood pressure and heart rhythm - with ECG, 2D echo and TMT done the same day, in-house." },
-    { username: "doctor.menon", phone: "9000001002", email: "menon@jeeva.local", name: "Dr. S. Menon", specialization: "Obstetrician & Gynaecologist", department: "Gynaecology",  fee: 600, qualification: "MBBS, MS (OBG)",            experienceYears: 14, age: 43, languages: "Telugu, English, Malayalam", photoUrl: "/images/doctor-2.avif",  bio: "Antenatal care through delivery, and women's health at every stage of life." },
-    { username: "doctor.verma", phone: "9000001003", email: "verma@jeeva.local", name: "Dr. A. Verma", specialization: "Orthopaedic Surgeon",          department: "Orthopaedics", fee: 650, qualification: "MBBS, MS (Ortho)",          experienceYears: 16, age: 46, languages: "Telugu, English, Hindi", photoUrl: "/images/doctor-3.avif",  bio: "Fractures, joint pain and spine trouble, with digital X-ray on site so you don't travel for a scan." },
-    { username: "doctor.das",   phone: "9000001004", email: "das@jeeva.local",   name: "Dr. P. Das",   specialization: "Paediatrician",                department: "Paediatrics",  fee: 400, qualification: "MBBS, DCH, MD (Paed)",      experienceYears: 11, age: 38, languages: "Telugu, English, Bengali", photoUrl: "/images/doctor-10.avif", bio: "Newborns to teenagers - vaccinations, fevers, growth checks and the 2 a.m. worries." },
+    { username: "doctor.shireesha",     phone: "9000002001", email: "shireesha@jeeva.local",     name: "Dr. Shireesha M",               specialization: "Obstetrician & Gynaecologist", department: "Gynaecology",      fee: 600,  qualification: "MBBS, MS",                                   experienceYears: 12, age: 40, languages: "Telugu, English", photoUrl: "/images/doctor-1.avif",  bio: "Experienced consultant in women's health providing antenatal care, pregnancy management, gynaecological surgery and preventive women's healthcare." },
+    { username: "doctor.shanthosh",     phone: "9000002002", email: "shanthosh@jeeva.local",     name: "Dr. A. Shanthosh",              specialization: "General Physician",            department: "General Medicine",  fee: 500,  qualification: "DNB (General Medicine)",                     experienceYears: 10, age: 39, languages: "Telugu, English", photoUrl: "/images/doctor-2.avif",  bio: "Consultant physician managing diabetes, hypertension, infectious diseases and preventive healthcare." },
+    { username: "doctor.poornachander", phone: "9000002003", email: "poornachander@jeeva.local", name: "Dr. B. Poornachander",          specialization: "General Surgeon",              department: "General Surgery",   fee: 650,  qualification: "MS (General Surgery)",                       experienceYears: 15, age: 45, languages: "Telugu, English", photoUrl: "/images/doctor-3.avif",  bio: "General surgeon experienced in abdominal surgeries, laparoscopic procedures and emergency surgical care." },
+    { username: "doctor.chesamalla",    phone: "9000002004", email: "chesamalla@jeeva.local",    name: "Dr. Venkata Ratnam Chesamalla", specialization: "ENT Surgeon",                  department: "ENT",               fee: 600,  qualification: "MS (ENT)",                                   experienceYears: 18, age: 49, languages: "Telugu, English", photoUrl: "/images/doctor-4.avif",  bio: "Specialist in ear, nose and throat disorders with expertise in hearing loss, sinus disease and head & neck conditions." },
+    { username: "doctor.rajakshi",      phone: "9000002005", email: "rajakshi@jeeva.local",      name: "Dr. P. Rajakshi Kumar",         specialization: "Plastic Surgeon",              department: "Plastic Surgery",   fee: 900,  qualification: "MCh Plastic Surgery",                        experienceYears: 14, age: 44, languages: "Telugu, English", photoUrl: "/images/doctor-5.avif",  bio: "Plastic and reconstructive surgeon specialising in trauma reconstruction, burns and cosmetic procedures." },
+    { username: "doctor.prashanth",     phone: "9000002006", email: "prashanth@jeeva.local",     name: "Dr. V. Prashanth",              specialization: "Orthopaedic Surgeon",          department: "Orthopaedics",      fee: 650,  qualification: "MS Orthopaedics",                            experienceYears: 13, age: 42, languages: "Telugu, English", photoUrl: "/images/doctor-6.avif",  bio: "Orthopaedic consultant treating fractures, arthritis, sports injuries and spine disorders." },
+    { username: "doctor.laxmi",         phone: "9000002007", email: "laxmi@jeeva.local",         name: "Dr. B. Laxmi",                  specialization: "Urologist",                    department: "Urology",           fee: 800,  qualification: "MBBS, MS (General Surgery), MCh Urology",   experienceYears: 12, age: 41, languages: "Telugu, English", photoUrl: "/images/doctor-7.avif",  bio: "Consultant urologist treating kidney stones, prostate disorders and urinary tract diseases." },
+    { username: "doctor.sravan",        phone: "9000002008", email: "sravan@jeeva.local",        name: "Dr. K. Sravan Kumar",           specialization: "Paediatrician",                department: "Paediatrics",       fee: 500,  qualification: "MBBS, MD Paediatrics",                       experienceYears: 11, age: 38, languages: "Telugu, English", photoUrl: "/images/doctor-8.avif",  bio: "Paediatric consultant providing comprehensive healthcare for newborns, infants, children and adolescents." },
+    { username: "doctor.aditya",        phone: "9000002009", email: "aditya@jeeva.local",        name: "Dr. Aditya Bala",               specialization: "Neurologist",                  department: "Neurology",         fee: 850,  qualification: "MBBS, MD (General Medicine), DM Neurology", experienceYears: 15, age: 44, languages: "Telugu, English", photoUrl: "/images/doctor-9.avif",  bio: "Neurologist managing stroke, epilepsy, headaches, Parkinson's disease and nerve disorders." },
+    { username: "doctor.manjithun",     phone: "9000002010", email: "manjithun@jeeva.local",     name: "Dr. G. Manjithun",              specialization: "Neurosurgeon",                 department: "Neurosurgery",      fee: 1200, qualification: "MBBS, MCh Neurosurgery",                     experienceYears: 17, age: 47, languages: "Telugu, English", photoUrl: "/images/doctor-10.avif", bio: "Neurosurgeon treating brain, spine and peripheral nerve disorders using advanced surgical techniques." },
+    { username: "doctor.pooja",         phone: "9000002011", email: "pooja@jeeva.local",         name: "Dr. K. Pooja",                  specialization: "Anaesthesiologist",            department: "Anaesthesiology",   fee: 0,    qualification: "MBBS, MD Anaesthesiology",                   experienceYears: 9,  age: 36, languages: "Telugu, English", photoUrl: "/images/doctor-11.avif", bio: "Anaesthesiologist providing perioperative care, ICU support and pain management services." },
+    { username: "doctor.athyan",        phone: "9000002012", email: "athyan@jeeva.local",        name: "Dr. Athyan G",                  specialization: "Anaesthesiologist",            department: "Anaesthesiology",   fee: 0,    qualification: "MBBS, MD Anaesthesiology",                   experienceYears: 8,  age: 35, languages: "Telugu, English", photoUrl: "/images/doctor-12.avif", bio: "Consultant anaesthesiologist specialising in safe anaesthesia and critical care medicine." },
+    { username: "doctor.ravinder",      phone: "9000002013", email: "ravinder@jeeva.local",      name: "Dr. B. Ravinder",               specialization: "Pulmonologist",                department: "Pulmonology",       fee: 650,  qualification: "MBBS, MD Pulmonary Medicine",                experienceYears: 13, age: 43, languages: "Telugu, English", photoUrl: "/images/doctor-13.avif", bio: "Pulmonary medicine specialist treating asthma, COPD, pneumonia and chronic respiratory diseases." },
+    { username: "doctor.rakeshkumar",   phone: "9000002014", email: "rakeshkumar@jeeva.local",   name: "Dr. A. Rakesh Kumar",           specialization: "Psychiatrist",                 department: "Psychiatry",        fee: 700,  qualification: "MBBS, MD Psychiatry",                        experienceYears: 10, age: 40, languages: "Telugu, English", photoUrl: "/images/doctor-14.avif", bio: "Psychiatrist providing evidence-based treatment for anxiety, depression, stress-related disorders and other mental health conditions." },
+    { username: "doctor.rakesh",        phone: "9000002015", email: "rakesh@jeeva.local",        name: "Dr. G. Rakesh",                 specialization: "Physiotherapist",              department: "Physiotherapy",     fee: 400,  qualification: "BPT",                                        experienceYears: 8,  age: 34, languages: "Telugu, English", photoUrl: "/images/doctor-15.avif", bio: "Physiotherapist specialising in rehabilitation after surgery, sports injuries, neurological disorders and chronic pain." },
   ];
   for (const d of doctors) {
     const user = await prisma.user.upsert({
@@ -60,6 +80,24 @@ async function main() {
     }
   }
 
+  // ---- Retire legacy placeholder doctors (deactivate, never hard-delete) ----
+  // doctor.rao / doctor.menon / doctor.verma / doctor.das were the original
+  // 4 placeholder doctors, replaced by the 15-doctor dataset above. Per this
+  // schema's policy, doctors are deactivated rather than removed - their
+  // appointments/vitals/prescriptions/invoices stay intact and queryable.
+  // Idempotent: safe to run every time this seed runs.
+  const LEGACY_DOCTOR_USERNAMES = ["doctor.rao", "doctor.menon", "doctor.verma", "doctor.das"];
+  const legacyUsers = await prisma.user.findMany({
+    where: { username: { in: LEGACY_DOCTOR_USERNAMES } },
+    select: { id: true, username: true },
+  });
+  if (legacyUsers.length > 0) {
+    const legacyUserIds = legacyUsers.map((u) => u.id);
+    await prisma.user.updateMany({ where: { id: { in: legacyUserIds } }, data: { isActive: false } });
+    await prisma.doctor.updateMany({ where: { userId: { in: legacyUserIds } }, data: { active: false } });
+    console.log(`   Retired ${legacyUsers.length} legacy placeholder doctor(s): ${legacyUsers.map((u) => u.username).join(", ")}`);
+  }
+
   // ---- Demo patient (fixed ID for OTP login testing) ----
   await prisma.patient.upsert({
     where: { displayId: "JMH2026OP00001" },
@@ -76,7 +114,7 @@ async function main() {
   await prisma.counter.upsert({ where: { key: `PATIENT-${year}` }, update: {}, create: { key: `PATIENT-${year}`, value: 1 } });
 
   // ---- Generate bookable slots for the next 7 days from doctor schedules ----
-  const allSchedules = await prisma.doctorSchedule.findMany({ where: { isActive: true } });
+  const allSchedules = await prisma.doctorSchedule.findMany({ where: { isActive: true, doctor: { active: true } } });
   const start = new Date(); start.setHours(0, 0, 0, 0);
   const slotRows: { doctorId: string; date: Date; startTime: string; endTime: string }[] = [];
   const toMin = (t: string) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
@@ -140,9 +178,13 @@ async function main() {
     { name: "2D Echo", code: "ECHO", price: 1500 },
   ];
   for (const t of labTests) {
+    // Matched by `code`, not `name`: a prior seed/manual entry may already
+    // hold this code under a different display name, and matching on `name`
+    // would miss it, then collide on the unique `code` when trying to create.
+    // `update` repairs the name/price on that existing row instead of skipping it.
     await prisma.labTestCatalog.upsert({
-      where: { name: t.name },
-      update: {},
+      where: { code: t.code },
+      update: { name: t.name, price: t.price },
       create: { name: t.name, code: t.code, price: t.price, gstRatePct: 0, active: true },
     });
   }
@@ -150,7 +192,7 @@ async function main() {
 
   console.log("✅ Seed complete.");
   console.log("   Staff login (username + OTP to console, or password Password123!):");
-  console.log("     admin.priya · reception.ravi · labs.sana · pharmacy.kiran · doctor.rao");
+  console.log("     admin.priya · reception.ravi · labs.sana · pharmacy.kiran · doctor.shireesha");
   console.log("   Patient OTP login: JMH2026OP00001  (code prints to server console)");
   // ---- Pharmacy: medicines + stock batches -------------------------------
   // Medicines ARE taxable in India (unlike diagnostics, which are exempt).
