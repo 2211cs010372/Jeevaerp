@@ -148,7 +148,7 @@ export function Modal({
 
   return (
     <div className="modal-veil" onClick={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
-      <div className={`surface flex max-h-[90vh] w-full flex-col bg-white ${wide ? "max-w-4xl" : "max-w-md"}`}>
+      <div className={`surface flex max-h-[90vh] w-full flex-col bg-white ${wide ? "max-w-9xl" : "max-w-md"}`}>
         <div className="shrink-0 border-b border-[var(--p-border)] px-6 py-4">
           <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">{title}</h3>
           {sub && <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">{sub}</p>}
@@ -227,6 +227,11 @@ export const PROC_CSS = `
 .ptable th { padding:8px 10px; text-align:left; font-size:9.5px; font-weight:700; letter-spacing:.09em;
   text-transform:uppercase; color:var(--p-muted); border-bottom:1px solid var(--p-border); white-space:nowrap; }
 .ptable td { padding:9px 10px; font-size:13px; color:var(--p-ink); border-bottom:1px solid var(--p-border); vertical-align:middle; }
+/* A unit qualifier under a column head - "Qty (packs)" vs "Units (on shelf)".
+   The distinction is the whole point of the column, so it is spelled out
+   rather than left to be inferred from the heading. */
+.th-sub { display:block; margin-top:1px; font-size:8px; font-weight:600; letter-spacing:.04em;
+  text-transform:none; color:var(--p-muted); }
 .ptable tbody tr:last-child td { border-bottom:0; }
 .ptable .r { text-align:right; }
 

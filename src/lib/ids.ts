@@ -22,6 +22,10 @@ const FORMATS = {
   /// own series, NOT the INVOICE one: a deposit is money held, not a supply, so
   /// it must never occupy a tax-invoice number.
   ADV: (y: number, n: number) => `ADV-${y}-${pad(n)}`,
+  /// Website callback request - REQ-2026-000012. Quoted back to the patient by
+  /// SMS so they have something to say on the phone. Not an OP number: no visit
+  /// exists yet, and issuing one here would burn the OP series on enquiries.
+  REQ: (y: number, n: number) => `REQ-${y}-${pad(n)}`,
   /// Pharmacy purchase order - PO-2026-000012. Printed and sent to the distributor.
   PO: (y: number, n: number) => `PO-${y}-${pad(n)}`,
   /// Goods receipt note - GRN-2026-000034. The document a batch traces back to.

@@ -35,11 +35,15 @@ export function hospitalJsonLd() {
       postalCode: "506001",
       addressCountry: "IN",
     },
-    // OPD hours; the emergency department is separate and never closes.
+    // OPD hours, seven days - Sunday included, matching the consulting diary
+    // every doctor now carries. This listed Mon-Sat while the booking grid sold
+    // Sunday slots, which is the kind of drift that has a family arrive on a
+    // day Google told them the hospital was shut.
+    // The emergency department is separate and never closes.
     openingHoursSpecification: [
       {
         "@type": "OpeningHoursSpecification",
-        dayOfWeek: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+        dayOfWeek: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
         opens: "08:00",
         closes: "20:00",
       },

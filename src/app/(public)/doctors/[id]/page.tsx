@@ -14,17 +14,27 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   const doctor = DOCTORS.find((d) => d.id === id);
   if (!doctor) return { title: "Doctor not found" };
   const title = `${doctor.name} · ${doctor.specialization}`;
-  const description = `${doctor.name}, ${doctor.specialization} at Jeeva Multispeciality Hospital, Hanamkonda. ${doctor.qualification}. OPD ${doctor.opd}, ${doctor.days}. Book an appointment online.`;
+  const description = `${doctor.name}, ${doctor.specialization} at Jeeva Multispeciality Hospital, Hanamkonda. ${doctor.qualification}. OPD ${doctor.opd}, ${doctor.days}. Consultation ₹${doctor.fee}. Book an appointment online.`;
   return {
     title,
     description,
+    // What this consultant actually treats is what people type into a search
+    // box - far more often than their name, which they don't know yet.
+    keywords: [
+      doctor.name,
+      `${doctor.specialization} in Hanamkonda`,
+      `${doctor.department} doctor Warangal`,
+      ...doctor.focus.map((f) => `${f} treatment Hanamkonda`),
+    ],
     alternates: { canonical: `/doctors/${id}` },
     openGraph: {
       type: "profile",
       title,
       description,
       url: `/doctors/${id}`,
-      images: [{ url: doctor.image, alt: doctor.name }],
+      siteName: HOSPITAL.name,
+      locale: "en_IN",
+      images: [{ url: doctor.image, alt: `${doctor.name}, ${doctor.specialization}` }],
     },
     twitter: { card: "summary_large_image", title, description, images: [doctor.image] },
   };
@@ -53,6 +63,9 @@ export default async function DoctorPage({ params }: { params: Promise<{ id: str
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "Physician",
+            // Same @id the /doctors ItemList points at, so the roster entry and
+            // this page resolve to one entity rather than two rival records.
+            "@id": abs(`/doctors/${doctor.id}#physician`),
             name: doctor.name,
             medicalSpecialty: doctor.specialization,
             description: doctor.bio,
@@ -60,6 +73,12 @@ export default async function DoctorPage({ params }: { params: Promise<{ id: str
             url: abs(`/doctors/${doctor.id}`),
             knowsLanguage: doctor.languages.split(",").map((l) => l.trim()),
             availableService: doctor.focus.map((f) => ({ "@type": "MedicalProcedure", name: f })),
+            makesOffer: {
+              "@type": "Offer",
+              name: "Outpatient consultation",
+              price: doctor.fee,
+              priceCurrency: "INR",
+            },
             worksFor: { "@type": "Hospital", name: HOSPITAL.name, url: SITE_URL },
             address: {
               "@type": "PostalAddress",

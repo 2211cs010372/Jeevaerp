@@ -27,3 +27,32 @@ export const confirmBookingSchema = z.object({
   phone,
   code: z.string().trim().regex(/^\d{6}$/, "The code is 6 digits"),
 });
+
+// ---------------------------------------------------------------------------
+// Callback requests - the lighter door beside slot booking. No slot, and the
+// doctor is optional, because "any available doctor" is a real answer.
+// ---------------------------------------------------------------------------
+
+/** Only the number is needed to send a code - the rest is collected at submit. */
+export const callbackOtpSchema = z.object({ phone });
+
+export const callbackRequestSchema = z.object({
+  name,
+  phone,
+  code: z.string().trim().regex(/^\d{6}$/, "The code is 6 digits"),
+  doctorId: z.string().trim().max(40).optional().or(z.literal("")),
+  preferredDate: z
+    .string().trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date")
+    .optional().or(z.literal("")),
+  // Free text a patient types about their problem. Capped, and never rendered
+  // as HTML anywhere - React escapes it, and the desk sees it as plain text.
+  note: z.string().trim().max(500, "Please keep this under 500 characters").optional().or(z.literal("")),
+});
+
+/** Reception moving a request along. */
+export const updateCallbackRequestSchema = z.object({
+  status: z.enum(["NEW", "CONTACTED", "BOOKED", "CLOSED"]),
+  note: z.string().trim().max(500).optional().or(z.literal("")),
+  appointmentId: z.string().trim().max(40).optional().or(z.literal("")),
+});

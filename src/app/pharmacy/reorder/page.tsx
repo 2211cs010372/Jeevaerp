@@ -13,8 +13,13 @@ import { api, ApiClientError } from "@/lib/api-client";
 
 interface Line {
   medicineId: string; name: string; unit: string;
-  inStock: number; reorderThreshold: number; reorderQty: number | null;
-  onOrder: number; suggestedQty: number;
+  /** On the shelf, in dispensing units (tablets, ml). */
+  inStock: number;
+  /** Dispensing units per pack, and the label it came from. Orders are packs. */
+  packSize: number; packLabel: string | null;
+  reorderThreshold: number; reorderQty: number | null;
+  /** ORDER QUANTITY, in PACKS. suggestedUnits is what those packs contain. */
+  onOrder: number; suggestedQty: number; suggestedUnits: number;
   lastUnitCost: string | null; gstRatePct: string;
   supplierId: string | null; supplierName: string | null;
   outOfStock: boolean;
@@ -188,10 +193,10 @@ export default function ReorderPage() {
                       <tr>
                         <th style={{ width: 34 }} />
                         <th>Medicine</th>
-                        <th className="r">On shelf</th>
-                        <th className="r">Coming</th>
-                        <th className="r">Order</th>
-                        <th className="r">Rate</th>
+                        <th className="r">On shelf<span className="th-sub">units</span></th>
+                        <th className="r">Coming<span className="th-sub">packs</span></th>
+                        <th className="r">Order<span className="th-sub">packs</span></th>
+                        <th className="r">Rate<span className="th-sub">per pack</span></th>
                         <th className="r">Line</th>
                       </tr>
                     </thead>
@@ -213,14 +218,31 @@ export default function ReorderPage() {
                               </div>
                               <div className="text-[11px] text-[var(--p-muted)]">
                                 reorder line {l.reorderThreshold} {l.unit}s
+                                {l.packSize > 1 && <> · pack of {l.packLabel || l.packSize}</>}
                                 {l.lastUnitCost === null && <> · <span className="font-semibold text-[var(--p-amber)]">never bought before - set a rate</span></>}
                               </div>
                             </td>
-                            <td className={`r num font-semibold ${l.outOfStock ? "text-[var(--p-rose)]" : "text-[var(--p-amber)]"}`}>{l.inStock}</td>
+                            <td className={`r num font-semibold ${l.outOfStock ? "text-[var(--p-rose)]" : "text-[var(--p-amber)]"}`}>
+                              {l.inStock}
+                              {l.packSize > 1 && (
+                                <div className="text-[9.5px] font-semibold text-[var(--p-muted)]">
+                                  {Math.floor(l.inStock / l.packSize)} × {l.packLabel || l.packSize}
+                                  {l.inStock % l.packSize > 0 && ` + ${l.inStock % l.packSize}`}
+                                </div>
+                              )}
+                            </td>
                             <td className="r num text-[var(--p-muted)]">{l.onOrder > 0 ? l.onOrder : "-"}</td>
                             <td className="r">
+                              {/* PACKS - a distributor sells strips, not loose
+                                  tablets. The units those packs contain are
+                                  shown underneath so the shortfall stays legible. */}
                               <input className={`${fld} num w-[86px] py-1.5 text-right`} value={d.qty} inputMode="numeric"
                                 onChange={(e) => set(l.medicineId, { qty: e.target.value.replace(/\D/g, "") })} />
+                              {l.packSize > 1 && (
+                                <div className="mt-0.5 text-[9.5px] text-[var(--p-muted)]">
+                                  = {(Number(d.qty || 0) * l.packSize).toLocaleString("en-IN")} {l.unit}s
+                                </div>
+                              )}
                             </td>
                             <td className="r">
                               <input className={`${fld} num w-[92px] py-1.5 text-right`} value={d.cost} inputMode="decimal"

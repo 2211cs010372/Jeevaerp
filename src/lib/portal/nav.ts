@@ -38,6 +38,7 @@ export const PORTALS: Record<string, PortalMeta> = {
     roleLabel: "Front Desk",
     nav: [
       { label: "Today", href: "/", icon: "grid" },
+      { label: "Callback requests", href: "/requests", icon: "clock", hint: "People the website asked us to ring back" },
       { label: "Register patient", href: "/register", icon: "users" },
       { label: "Book appointment", href: "/book", icon: "calendar" },
       { label: "Prescriptions", href: "/prescriptions", icon: "file" },

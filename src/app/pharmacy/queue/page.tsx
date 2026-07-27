@@ -16,7 +16,17 @@ interface Rx {
   patient: { id: string; displayId: string; fullName: string; phone: string; age: number | null };
   items: RxTypedItem[];
 }
-interface Med { id: string; name: string; unit: string; gstRatePct: string; inStock: number; mrp: string | null; nearestExpiry: string | null; lowStock: boolean; courseCritical: boolean; }
+interface Med {
+  id: string; name: string; unit: string; gstRatePct: string;
+  /** In DISPENSING UNITS - tablets, ml. */
+  inStock: number;
+  /** Printed MRP PER PACK. Never bill with this - see unitMrp. */
+  mrp: string | null;
+  /** What one tablet / ml costs the patient. */
+  unitMrp: string | null;
+  packSize: number; packLabel: string | null;
+  nearestExpiry: string | null; lowStock: boolean; courseCritical: boolean;
+}
 type Line = PadLine;
 
 
@@ -71,8 +81,11 @@ export default function RxQueuePage() {
           const prescribedQty = Math.max(1, it.qty);
           return [{
             medicineId: m.id, name: m.name, unit: m.unit,
+            // A prescription is written in TABLETS ("10 tabs"), not strips.
             qty: Math.min(prescribedQty, m.inStock),
-            mrp: Number(m.mrp ?? 0), gst: Number(m.gstRatePct), inStock: m.inStock,
+            // PER UNIT. The pack MRP billed per tablet was a 15x overcharge.
+            mrp: Number(m.unitMrp ?? m.mrp ?? 0), gst: Number(m.gstRatePct), inStock: m.inStock,
+            packSize: Math.max(1, m.packSize), packLabel: m.packLabel,
             prescribedQty,                              // what the doctor actually wrote
             perDay: perDayFromDosage(it.dosage),        // "1-0-1" -> 2 a day
             courseCritical: m.courseCritical,
@@ -87,8 +100,16 @@ export default function RxQueuePage() {
   function addLine(m: Med) {
     if (m.inStock === 0) return;
     setLines((p) => p.some((l) => l.medicineId === m.id)
+      // Another tap is one more TABLET. A prescription is written in tablets,
+      // and defaulting to a whole strip would over-dispense every line.
       ? p.map((l) => l.medicineId === m.id ? { ...l, qty: Math.min(l.qty + 1, m.inStock) } : l)
-      : [...p, { medicineId: m.id, name: m.name, unit: m.unit, qty: 1, mrp: Number(m.mrp ?? 0), gst: Number(m.gstRatePct), inStock: m.inStock, prescribedQty: 0, perDay: 0, courseCritical: m.courseCritical, locked: m.courseCritical }]);
+      : [...p, {
+          medicineId: m.id, name: m.name, unit: m.unit,
+          qty: 1,
+          mrp: Number(m.unitMrp ?? m.mrp ?? 0), gst: Number(m.gstRatePct), inStock: m.inStock,
+          packSize: Math.max(1, m.packSize), packLabel: m.packLabel,
+          prescribedQty: 0, perDay: 0, courseCritical: m.courseCritical, locked: m.courseCritical,
+        }]);
   }
   const setQty = (id: string, q: number) => setLines((p) => p.map((l) => l.medicineId === id ? { ...l, qty: Math.max(1, Math.min(q, l.inStock)) } : l));
   const removeLine = (id: string) => setLines((p) => p.filter((l) => l.medicineId !== id));
@@ -336,13 +357,20 @@ export default function RxQueuePage() {
                               <div className="min-w-0">
                                 <div className="rx-name truncate text-[13px] font-medium text-[var(--p-ink)]">{m.name}</div>
                                 <div className="truncate text-[11px] text-[var(--p-muted)]">
-                                  {m.inStock === 0 ? "Out of stock" : `${m.inStock} in stock`}
+                                  {m.inStock === 0
+                                    ? "Out of stock"
+                                    : `${m.inStock} ${m.unit}${m.inStock === 1 ? "" : "s"}${m.packSize > 1 ? ` · ${Math.floor(m.inStock / m.packSize)} × ${m.packLabel || m.packSize}` : ""}`}
                                   {m.nearestExpiry && ` · exp ${m.nearestExpiry}`} · GST {m.gstRatePct}%
                                 </div>
                               </div>
                               <span className="flex shrink-0 items-center gap-2">
                                 {inBill && <span className="rounded-full bg-[var(--p-cyan-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--p-cyan-deep)]">✓ in bill - tap for +1</span>}
-                                <span className="font-mono text-[12px] text-[var(--p-ink)]">{m.mrp ? `₹${m.mrp}` : "-"}</span>
+                                <span className="text-right">
+                                  <span className="block font-mono text-[12px] font-semibold text-[var(--p-ink)]">{m.unitMrp ? `₹${m.unitMrp}` : "-"}</span>
+                                  {m.packSize > 1 && m.mrp && (
+                                    <span className="block font-mono text-[9.5px] text-[var(--p-muted)]">₹{m.mrp}/{m.packLabel || "pack"}</span>
+                                  )}
+                                </span>
                               </span>
                             </button>
                           );
@@ -372,19 +400,36 @@ export default function RxQueuePage() {
                                     <span className="rx-name truncate text-[13px] font-medium text-[var(--p-ink)]">{l.name}</span>
                                   </div>
                                   <div className="mt-0.5 text-[10.5px] text-[var(--p-muted)]">
-                                    ₹{l.mrp} · GST {l.gst}%
+                                    ₹{l.mrp}/{l.unit} · GST {l.gst}%
                                     {l.prescribedQty > 0 && <> · prescribed ×{l.prescribedQty}</>}
                                     {" · "}{l.inStock} in stock
+                                    {(l.packSize ?? 1) > 1 && (
+                                      <> · <span className="font-semibold">{l.qty} {l.unit}s
+                                        {Math.floor(l.qty / (l.packSize ?? 1)) > 0 && ` = ${Math.floor(l.qty / (l.packSize ?? 1))} × ${l.packLabel || l.packSize}`}
+                                        {l.qty % (l.packSize ?? 1) > 0 && ` + ${l.qty % (l.packSize ?? 1)} loose`}
+                                      </span></>
+                                    )}
                                   </div>
                                 </div>
+                                {/* SELLING UNIT IS THE TABLET. -/+ move one
+                                    tablet at a time; the pack button beside
+                                    them is for when a whole strip is wanted. */}
                                 <div className="flex shrink-0 items-center gap-1">
-                                  <button onClick={() => setQty(l.medicineId, l.qty - 1)} disabled={l.qty <= 1} aria-label="One less"
+                                  <button onClick={() => setQty(l.medicineId, l.qty - 1)} disabled={l.qty <= 1} aria-label={`One less ${l.unit}`}
                                     className="grid h-7 w-7 place-items-center rounded-md border border-[var(--p-border)] text-[14px] font-bold text-[var(--p-ink)] hover:border-[var(--p-blue)] disabled:opacity-30">−</button>
                                   <input type="number" min={1} max={l.inStock} value={l.qty}
                                     onChange={(e) => setQty(l.medicineId, Number(e.target.value))}
                                     className="w-12 shrink-0 rounded-md border border-[var(--p-border)] px-1 py-1 text-center text-[12px] outline-none focus:border-[var(--p-blue)]" />
-                                  <button onClick={() => setQty(l.medicineId, l.qty + 1)} disabled={l.qty >= l.inStock} aria-label="One more"
+                                  <button onClick={() => setQty(l.medicineId, l.qty + 1)} disabled={l.qty >= l.inStock} aria-label={`One more ${l.unit}`}
                                     className="grid h-7 w-7 place-items-center rounded-md border border-[var(--p-border)] text-[14px] font-bold text-[var(--p-ink)] hover:border-[var(--p-blue)] disabled:opacity-30">+</button>
+                                  <span className="w-10 shrink-0 text-[10px] font-semibold text-[var(--p-muted)]">{l.unit}s</span>
+                                  {(l.packSize ?? 1) > 1 && (
+                                    <button onClick={() => setQty(l.medicineId, l.qty + (l.packSize ?? 1))} disabled={l.qty >= l.inStock}
+                                      title={`Add a whole ${l.packLabel || "pack"}`}
+                                      className="shrink-0 rounded-md border border-[var(--p-border)] px-1.5 py-1 text-[9.5px] font-semibold text-[var(--p-teal)] hover:border-[var(--p-teal)] disabled:opacity-30">
+                                      +{l.packLabel || "pack"}
+                                    </button>
+                                  )}
                                 </div>
                                 <span className="w-16 shrink-0 text-right font-mono text-[12.5px] font-semibold text-[var(--p-ink)]">₹{(l.qty * l.mrp).toFixed(0)}</span>
                                 <button onClick={() => removeLine(l.medicineId)} aria-label={`Remove ${l.name}`}

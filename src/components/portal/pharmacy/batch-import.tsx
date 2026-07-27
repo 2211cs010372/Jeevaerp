@@ -4,82 +4,40 @@ import { useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { api, ApiClientError } from "@/lib/api-client";
+import { parseInvoiceText, parseInvoiceHeader, toISODate, type SupplierRef, type ParsedRow } from "@/lib/pharmacy/invoice-parse";
 
 interface MedRef { id: string; name: string; genericName?: string | null }
-interface Row { medicine: string; batchNo: string; expiry: string; qty: string; mrp: string; rate: string; supplier: string; createNew?: boolean; hsn?: string; gst?: string }
+/** A grid row. Same shape the invoice parser produces, plus the edit state. */
+type Row = ParsedRow;
 interface ImportResult { row: number; medicine: string; batchNo: string; ok: boolean; error?: string; created?: boolean }
-interface ImportReport { created: number; createdMedicines: number; results: ImportResult[] }
+interface ImportReport { created: number; createdMedicines: number; supplierName?: string; results: ImportResult[] }
 
-const blankRow = (): Row => ({ medicine: "", batchNo: "", expiry: "", qty: "", mrp: "", rate: "", supplier: "" });
+const blankRow = (): Row => ({
+  medicine: "", pack: "", qty: "", free: "", oMrp: "", batchNo: "",
+  mrp: "", expiry: "", rate: "", amount: "", gst: "", hsn: "", supplier: "",
+});
 const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
-const isoLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-/** Turn whatever a supplier wrote (a Date cell, DD/MM/YYYY, or MM/YYYY) into
- *  YYYY-MM-DD. Bare month/year → the last day of that month (pharma convention). */
-function toISODate(v: unknown): string {
-  if (v instanceof Date && !Number.isNaN(v.getTime())) return isoLocal(v);
-  const s = String(v ?? "").trim();
-  if (!s) return "";
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  let m;
-  if ((m = s.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})$/))) {
-    const d = m[1], mo = m[2], y = m[3].length === 2 ? "20" + m[3] : m[3];
-    return `${y}-${mo.padStart(2, "0")}-${d.padStart(2, "0")}`;
-  }
-  if ((m = s.match(/^(\d{1,2})[/\-.](\d{2,4})$/))) {
-    const mo = Number(m[1]), y = Number(m[2].length === 2 ? "20" + m[2] : m[2]);
-    const last = new Date(y, mo, 0).getDate();
-    return `${y}-${String(mo).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
-  }
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? "" : isoLocal(d);
-}
+const HEADER_TEMPLATE = [
+  "Medicine,Batch No,Expiry (YYYY-MM-DD or MM/YYYY),Quantity,MRP,Purchase Rate,Supplier Ref",
+  "Paracetamol 500mg,B1234,2027-06-30,100,18.50,12.00,INV-2024-001",
+  "",
+].join("\n");
 
-const HEADER_TEMPLATE = "Medicine,Batch No,Expiry (YYYY-MM-DD or MM/YYYY),Quantity,MRP,Purchase Rate,Supplier Ref\nParacetamol 500mg,B1234,2027-06-30,100,18.50,12.00,INV-2024-001\n";
-
-/**
- * Pull batch lines out of an OCR'd distributor invoice. Indian pharma invoices
- * run  NO · HSN · DESCRIPTION · PACK · QTY · BATCH · MRP · EXPDT · RATE · GST …
- * The expiry (MM/YY) is the one unmistakable anchor on each line, so we find it
- * and read the neighbours: MRP and BATCH sit just left of it, RATE just right.
- * Description length varies, so anchoring beats a fixed regex.
- */
-function parseInvoiceText(text: string): Row[] {
-  const rows: Row[] = [];
-  const cleanNum = (s: string) => (s || "").replace(/[^\d.]/g, "");
-  for (const rawLine of text.split("\n")) {
-    const line = rawLine.replace(/\s+/g, " ").trim();
-    if (line.length < 8) continue;
-    const t = line.split(" ");
-    let ei = -1;
-    for (let i = 3; i < t.length; i++) {
-      const m = t[i].match(/^(\d{1,2})\/(\d{2,4})$/);
-      if (m && +m[1] >= 1 && +m[1] <= 12) { ei = i; break; }
-    }
-    if (ei < 3) continue;
-    const expiry = toISODate(t[ei]);
-    const mrp = cleanNum(t[ei - 1]);
-    const batch = (t[ei - 2] || "").replace(/[^A-Za-z0-9/]/g, "");
-    const rate = cleanNum(t[ei + 1] ?? "");
-    if (!expiry || !mrp || batch.length < 2) continue;
-    let qty = "", qi = -1;
-    for (let j = ei - 3; j >= 2; j--) { if (/^\d{1,4}$/.test(t[j])) { qty = t[j]; qi = j; break; } }
-    const desc = t.slice(2, qi > 2 ? qi : ei - 3).join(" ").replace(/[^A-Za-z0-9 .\-/]/g, "").trim();
-    const hsn = /^\d{3,8}$/.test(t[1] || "") ? t[1] : "";       // HSN sits in column 2
-    const gstRaw = cleanNum(t[ei + 2] ?? "");                    // GST% follows the rate
-    const gst = gstRaw && Number(gstRaw) <= 28 ? String(Number(gstRaw)) : "";
-    rows.push({ medicine: desc, batchNo: batch, expiry, qty: qty || "1", mrp, rate, supplier: "", hsn, gst });
-  }
-  return rows;
-}
-
-export function BatchImport({ meds, onClose, onDone }: {
+export function BatchImport({ meds, suppliers, onClose, onDone }: {
   meds: MedRef[];
+  suppliers: SupplierRef[];
   onClose: () => void;
   onDone: (created: number) => void;
 }) {
   const [tab, setTab] = useState<"SHEET" | "SCAN">("SHEET");
   const [rows, setRows] = useState<Row[]>([]);
+  /** One invoice, one distributor - so these belong to the import, not the row. */
+  const [supplierId, setSupplierId] = useState("");
+  const [invoiceNo, setInvoiceNo] = useState("");
+  const [invoiceDate, setInvoiceDate] = useState("");
+  /** True when the supplier below was read off the invoice rather than chosen. */
+  const [supplierDetected, setSupplierDetected] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
   const [scanUrl, setScanUrl] = useState<string | null>(null);
   const [scanFile, setScanFile] = useState<File | null>(null);
@@ -139,14 +97,22 @@ export function BatchImport({ meds, onClose, onDone }: {
         for (const k of Object.keys(o)) if (re.test(k.toLowerCase().replace(/[^a-z0-9]/g, ""))) return o[k];
         return "";
       };
+      // Columns follow the distributor's own invoice layout, so a sheet keyed
+      // off one imports without re-mapping anything by hand.
       const mapped: Row[] = json.map((o) => ({
         medicine: String(pick(o, /^(medicine|item|product|drug|brand|name)/) ?? "").trim(),
+        pack: String(pick(o, /^(pack|packing|packsize)/) ?? "").trim(),
+        qty: String(pick(o, /(quantity|qty|units|count|stock|nos|pcs)/) ?? "").replace(/[^\d.]/g, ""),
+        free: String(pick(o, /^(free|freeqty|scheme)/) ?? "").replace(/[^\d.]/g, ""),
+        oMrp: String(pick(o, /^(omrp|company|comp|mfr|manufacturer)/) ?? "").trim(),
         batchNo: String(pick(o, /(batch|lot)/) ?? "").trim(),
+        mrp: String(pick(o, /^(mrp|retailprice|saleprice)/) ?? "").replace(/[^\d.]/g, ""),
         expiry: toISODate(pick(o, /(expiry|exp|bestbefore)/)),
-        qty: String(pick(o, /(quantity|qty|units|count|stock|nos|pcs)/) ?? "").replace(/[^\d]/g, ""),
-        mrp: String(pick(o, /(mrp|retailprice|saleprice)/) ?? "").replace(/[^\d.]/g, ""),
         rate: String(pick(o, /(purchase|rate|cost|buyingprice|ptr)/) ?? "").replace(/[^\d.]/g, ""),
-        supplier: String(pick(o, /(supplier|invoice|vendor|billno|ref)/) ?? "").trim(),
+        amount: String(pick(o, /^(amount|value|total)/) ?? "").replace(/[^\d.]/g, ""),
+        gst: String(pick(o, /^(gst|g%|gstrate|tax)/) ?? "").replace(/[^\d.]/g, ""),
+        hsn: String(pick(o, /^(hsn|hsncode|sac)/) ?? "").replace(/[^\d]/g, ""),
+        supplier: String(pick(o, /(supplierref|invoiceno|vendor|billno|ref)/) ?? "").trim(),
       })).filter((r) => r.medicine || r.batchNo);
       if (!mapped.length) setError("Couldn't find any rows. Check the column headers against the template.");
       setRows(mapped.length ? mapped : []);
@@ -174,6 +140,12 @@ export function BatchImport({ meds, onClose, onDone }: {
           if (m.status === "recognizing text") setOcrPct(Math.round(m.progress * 100));
         },
       });
+      // Header first: the supplier, invoice number and date sit above the lines.
+      const head = parseInvoiceHeader(data.text, suppliers);
+      if (head.supplierId) { setSupplierId(head.supplierId); setSupplierDetected(true); }
+      if (head.invoiceNo) setInvoiceNo(head.invoiceNo);
+      if (head.invoiceDate) setInvoiceDate(head.invoiceDate);
+
       const parsed = parseInvoiceText(data.text);
       if (!parsed.length) setError("Couldn't read any line items - try a sharper, straighter photo, or key the rows in below.");
       else setRows(parsed);
@@ -208,7 +180,12 @@ export function BatchImport({ meds, onClose, onDone }: {
     if (!payload.length) return;
     setBusy(true); setError(null);
     try {
-      const res = await api.post<ImportReport>("/pharmacy/batches/bulk", { rows: payload });
+      const res = await api.post<ImportReport>("/pharmacy/batches/bulk", {
+        supplierId,
+        invoiceNo: invoiceNo.trim() || undefined,
+        invoiceDate: invoiceDate || undefined,
+        rows: payload,
+      });
       setReport(res);
       if (res.created > 0) onDone(res.created);
     } catch (e) {
@@ -229,6 +206,48 @@ export function BatchImport({ meds, onClose, onDone }: {
             <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">Upload a spreadsheet, or key in the rows off a scanned invoice.</p>
           </div>
           <button onClick={onClose} className="shrink-0 text-[var(--p-muted)] hover:text-[var(--p-ink)]">✕</button>
+        </div>
+
+        {/* WHOSE INVOICE IS THIS. Above the tabs because it governs every row
+            below: one invoice is one distributor, and the same batch number
+            from a different one is a separate consignment on the shelf. */}
+        <div className="grid gap-3 border-b border-[var(--p-border)] bg-[var(--p-bg)] px-6 py-3.5 sm:grid-cols-[2fr_1.2fr_1fr]">
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--p-muted)]">
+              Supplier *
+              {supplierDetected && (
+                <span className="ml-1.5 rounded bg-[var(--p-teal-soft)] px-1.5 py-0.5 text-[10px] font-bold normal-case tracking-normal text-[var(--p-teal-deep)]">
+                  read from invoice — check it
+                </span>
+              )}
+            </span>
+            <select
+              value={supplierId}
+              onChange={(e) => { setSupplierId(e.target.value); setSupplierDetected(false); }}
+              className={`w-full rounded-md border bg-white px-2 py-1.5 text-[12.5px] text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)] ${supplierId ? "border-[var(--p-border)]" : "border-[var(--p-rose)]"}`}
+            >
+              <option value="">Choose the distributor…</option>
+              {suppliers.map((sp) => <option key={sp.id} value={sp.id}>{sp.name}</option>)}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--p-muted)]">Invoice no.</span>
+            <input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} placeholder="From the bill"
+              className="w-full rounded-md border border-[var(--p-border)] bg-white px-2 py-1.5 text-[12.5px] text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]" />
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--p-muted)]">Invoice date</span>
+            <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)}
+              className="w-full rounded-md border border-[var(--p-border)] bg-white px-2 py-1.5 text-[12.5px] text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]" />
+          </label>
+
+          {suppliers.length === 0 && (
+            <p className="text-[11.5px] text-[var(--p-rose)] sm:col-span-3">
+              No distributors on file. Add one under <b>Suppliers</b> before importing - every batch has to trace to one.
+            </p>
+          )}
         </div>
 
         {report ? (
@@ -418,7 +437,8 @@ export function BatchImport({ meds, onClose, onDone }: {
               </p>
               <div className="flex items-center gap-2">
                 <button onClick={onClose} className="rounded-md border border-[var(--p-border)] px-4 py-2.5 text-[13px] font-medium text-[var(--p-text)]">Cancel</button>
-                <button onClick={submit} disabled={busy || validCount === 0}
+                <button onClick={submit} disabled={busy || validCount === 0 || !supplierId}
+                  title={!supplierId ? "Choose the supplier this invoice is from" : undefined}
                   className="btn-primary inline-flex items-center gap-2 rounded-md px-5 py-2.5 text-[13px] font-semibold text-white disabled:opacity-40">
                   {busy ? <><Spinner size={14} /> Importing…</> : <><Icon name="check" size={15} /> Import {validCount} {validCount === 1 ? "batch" : "batches"}{newCount > 0 ? ` · ${newCount} new` : ""}</>}
                 </button>

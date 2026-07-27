@@ -281,6 +281,30 @@ async function main() {
   const farExpiry  = new Date(); farExpiry.setFullYear(farExpiry.getFullYear() + 2);
   const nearExpiry = new Date(); nearExpiry.setDate(nearExpiry.getDate() + 45);
 
+  // ---- Distributors ----
+  // Every batch must trace to one (StockBatch.supplierId is NOT NULL), so the
+  // seed needs real ones. Two of them on purpose: the same medicine is stocked
+  // from both below, which is exactly the case that used to collapse into a
+  // single row and lose the first distributor.
+  const distributors = [
+    { name: "Sri Venkateswara Pharma Distributors", city: "Hanamkonda", gstin: "36AABCS1429B1Z9", dl: "TS/WGL/20B/1142", terms: 30 },
+    { name: "Deccan Medico Agencies", city: "Warangal", gstin: "36AAECD8821K1ZP", dl: "TS/WGL/21B/0876", terms: 45 },
+  ];
+  const supplierIds: string[] = [];
+  for (const d of distributors) {
+    const sup = await prisma.supplier.upsert({
+      where: { name: d.name },
+      update: { gstin: d.gstin, drugLicenseNo: d.dl, paymentTermDays: d.terms, active: true },
+      create: {
+        name: d.name, gstin: d.gstin, drugLicenseNo: d.dl, paymentTermDays: d.terms,
+        address: `${d.city}, Telangana`, active: true,
+      },
+      select: { id: true },
+    });
+    supplierIds.push(sup.id);
+  }
+  console.log(`   ${supplierIds.length} distributors seeded.`);
+
   for (const [i, m] of medicines.entries()) {
     // `update: {}` was a trap. On a database that already had these medicines,
     // the upsert matched by name, ran an EMPTY update, and skipped them - so any
@@ -310,11 +334,19 @@ async function main() {
     const mrp = 12 + i * 7;                 // spread of realistic prices
     const lowOne = i % 7 === 0;             // a few sit below reorder level
 
+    // Alternate the primary distributor so the shelf looks like a real one.
+    const primarySupplier = supplierIds[i % supplierIds.length];
+
     await prisma.stockBatch.upsert({
-      where: { medicineId_batchNo: { medicineId: med.id, batchNo: `B${2026}${String(i + 1).padStart(3, "0")}` } },
+      where: {
+        medicineId_batchNo_supplierId: {
+          medicineId: med.id, batchNo: `B${2026}${String(i + 1).padStart(3, "0")}`, supplierId: primarySupplier,
+        },
+      },
       update: {},
       create: {
         medicineId: med.id,
+        supplierId: primarySupplier,
         batchNo: `B${2026}${String(i + 1).padStart(3, "0")}`,
         expiryDate: farExpiry,
         quantity: lowOne ? 4 : 120 + i * 5,
@@ -326,11 +358,20 @@ async function main() {
     // every 4th medicine also gets an older batch expiring soon - FEFO must
     // dispense THIS one first, and it should show up under alerts.
     if (i % 4 === 0) {
+      // Deliberately the OTHER distributor. The same medicine stocked from two
+      // suppliers is the case that used to collapse into one row and lose the
+      // first one; seeding it means the shelf demonstrates the fix.
+      const secondSupplier = supplierIds[(i + 1) % supplierIds.length];
       await prisma.stockBatch.upsert({
-        where: { medicineId_batchNo: { medicineId: med.id, batchNo: `B${2025}${String(i + 1).padStart(3, "0")}` } },
+        where: {
+          medicineId_batchNo_supplierId: {
+            medicineId: med.id, batchNo: `B${2025}${String(i + 1).padStart(3, "0")}`, supplierId: secondSupplier,
+          },
+        },
         update: {},
         create: {
           medicineId: med.id,
+          supplierId: secondSupplier,
           batchNo: `B${2025}${String(i + 1).padStart(3, "0")}`,
           expiryDate: nearExpiry,
           quantity: 18,

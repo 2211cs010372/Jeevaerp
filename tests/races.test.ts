@@ -74,9 +74,11 @@ describe.skipIf(!HAS_DB)("races - exactly one winner", () => {
 
   it("TWO pharmacists dispensing the LAST strip: stock never goes negative", async () => {
     const med = await prisma.medicine.findFirst({ select: { id: true } });
+    // Every batch traces to a supplier now - the fixture needs one too.
+    const sup = await prisma.supplier.findFirst({ select: { id: true } });
     const batch = await prisma.stockBatch.create({
       data: {
-        medicineId: med!.id, batchNo: `RACE-${Date.now()}`,
+        medicineId: med!.id, supplierId: sup!.id, batchNo: `RACE-${Date.now()}`,
         expiryDate: new Date("2099-01-01"), quantity: 1, mrp: "10.00",
       },
     });

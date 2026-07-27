@@ -10,7 +10,17 @@ import { DispenseScratchpad, type PadLine } from "@/components/portal/pharmacy/s
 import { DiscountInput, PaymentSection, type Tender } from "@/components/portal/ui/bill-fields";
 
 interface Patient { id: string; displayId: string; fullName: string; phone: string; }
-interface Med { id: string; name: string; unit: string; gstRatePct: string; inStock: number; mrp: string | null; nearestExpiry: string | null;  courseCritical: boolean; }
+interface Med {
+  id: string; name: string; unit: string; gstRatePct: string;
+  /** In DISPENSING UNITS - tablets, ml. */
+  inStock: number;
+  /** Printed MRP PER PACK. Never bill with this - see unitMrp. */
+  mrp: string | null;
+  /** What one tablet / ml actually costs the patient. */
+  unitMrp: string | null;
+  packSize: number; packLabel: string | null;
+  nearestExpiry: string | null; courseCritical: boolean;
+}
 type Line = PadLine;
 
 export default function DispensePage() {
@@ -100,8 +110,21 @@ export default function DispensePage() {
   function add(m: Med) {
     if (m.inStock === 0) return;
     setLines((p) => p.some((l) => l.medicineId === m.id)
+      // SELLING IS IN TABLETS, not packs. Tapping again adds one more tablet.
+      // Defaulting to a whole strip forced pack-selling: a patient asking for
+      // ten paracetamol would have been given fifteen and billed for fifteen.
+      // The "+1 pack" button below is there for when a whole strip IS wanted.
       ? p.map((l) => l.medicineId === m.id ? { ...l, qty: Math.min(l.qty + 1, m.inStock) } : l)
-      : [...p, { medicineId: m.id, name: m.name, unit: m.unit, qty: 1, mrp: Number(m.mrp ?? 0), gst: Number(m.gstRatePct), inStock: m.inStock, prescribedQty: 0, perDay: 0, courseCritical: m.courseCritical, locked: m.courseCritical }]);
+      // Opens at ONE unit. Type 10 and the patient gets exactly ten tablets.
+      : [...p, {
+          medicineId: m.id, name: m.name, unit: m.unit,
+          qty: 1,
+          // PER UNIT. Billing the pack price per tablet was a 15x overcharge.
+          mrp: Number(m.unitMrp ?? m.mrp ?? 0),
+          gst: Number(m.gstRatePct), inStock: m.inStock,
+          packSize: Math.max(1, m.packSize), packLabel: m.packLabel,
+          prescribedQty: 0, perDay: 0, courseCritical: m.courseCritical, locked: m.courseCritical,
+        }]);
   }
 
   const subtotal = lines.reduce((s, l) => s + l.qty * l.mrp, 0);
@@ -358,10 +381,20 @@ export default function DispensePage() {
                     <div>
                       <div className="rx-name text-[13px] font-medium text-[var(--p-ink)]">{m.name}</div>
                       <div className="text-[11px] text-[var(--p-muted)]">
-                        {m.inStock === 0 ? "Out of stock" : `${m.inStock} in stock`}{m.nearestExpiry && ` · exp ${m.nearestExpiry}`} · GST {m.gstRatePct}%
+                        {m.inStock === 0
+                          ? "Out of stock"
+                          : `${m.inStock} ${m.unit}${m.inStock === 1 ? "" : "s"} in stock${m.packSize > 1 ? ` · ${Math.floor(m.inStock / m.packSize)} × ${m.packLabel || m.packSize}` : ""}`}
+                        {m.nearestExpiry && ` · exp ${m.nearestExpiry}`} · GST {m.gstRatePct}%
                       </div>
                     </div>
-                    <span className="font-mono text-[12px]">{m.mrp ? `₹${m.mrp}` : "-"}</span>
+                    {/* The per-unit price is what the patient pays; the pack
+                        MRP under it is the number printed on the box. */}
+                    <span className="text-right">
+                      <span className="block font-mono text-[12px] font-semibold">{m.unitMrp ? `₹${m.unitMrp}` : "-"}</span>
+                      {m.packSize > 1 && m.mrp && (
+                        <span className="block font-mono text-[9.5px] text-[var(--p-muted)]">₹{m.mrp}/{m.packLabel || "pack"}</span>
+                      )}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -374,12 +407,51 @@ export default function DispensePage() {
             <div className="border-b border-[var(--p-border)] px-5 py-4"><p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--p-ink)]">Bill</p></div>
             <div className="max-h-56 divide-y divide-[var(--p-border)] overflow-y-auto overscroll-contain">
               {lines.length === 0 ? <p className="px-5 py-8 text-center text-[12px] text-[var(--p-muted)]">No medicines added.</p> : lines.map((l) => (
-                <div key={l.medicineId} className="flex items-center gap-2 px-5 py-2.5">
-                  <div className="flex-1"><div className="rx-name text-[12px] text-[var(--p-ink)]">{l.name}</div><div className="text-[10px] text-[var(--p-muted)]">₹{l.mrp} · GST {l.gst}%</div></div>
-                  <input type="number" min={1} max={l.inStock} value={l.qty}
-                    onChange={(e) => setLines((p) => p.map((x) => x.medicineId === l.medicineId ? { ...x, qty: Math.max(1, Math.min(Number(e.target.value), x.inStock)) } : x))}
-                    className="w-12 rounded border border-[var(--p-border)] px-1 py-0.5 text-center text-[11px] outline-none" />
-                  <button onClick={() => setLines((p) => p.filter((x) => x.medicineId !== l.medicineId))} className="text-[var(--p-rose)]">✕</button>
+                <div key={l.medicineId} className="px-5 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <div className="rx-name text-[12px] text-[var(--p-ink)]">{l.name}</div>
+                      <div className="text-[10px] text-[var(--p-muted)]">₹{l.mrp}/{l.unit} · GST {l.gst}%</div>
+                    </div>
+                    {/* SELLING UNIT. Type 10 and the patient gets ten tablets
+                        out of a strip of fifteen - never a rounded-up strip.
+                        The unit is printed beside the box so there is nothing
+                        to infer from context. */}
+                    <span className="flex items-center gap-1">
+                      <input type="number" min={1} max={l.inStock} value={l.qty}
+                        onChange={(e) => setLines((p) => p.map((x) => x.medicineId === l.medicineId ? { ...x, qty: Math.max(1, Math.min(Number(e.target.value), x.inStock)) } : x))}
+                        className="w-14 rounded border border-[var(--p-border)] px-1 py-0.5 text-center text-[11px] outline-none" />
+                      <span className="w-10 shrink-0 text-[10px] font-semibold text-[var(--p-muted)]">{l.unit}s</span>
+                    </span>
+                    <button onClick={() => setLines((p) => p.filter((x) => x.medicineId !== l.medicineId))} className="text-[var(--p-rose)]">✕</button>
+                  </div>
+                  {(l.packSize ?? 1) > 1 && (
+                    <div className="mt-1 flex items-center justify-between gap-2 pl-0.5">
+                      <span className="text-[10px] text-[var(--p-muted)]">
+                        {l.qty} {l.unit}{l.qty === 1 ? "" : "s"}
+                        {" = "}
+                        {Math.floor(l.qty / (l.packSize ?? 1)) > 0 && `${Math.floor(l.qty / (l.packSize ?? 1))} × ${l.packLabel || l.packSize}`}
+                        {Math.floor(l.qty / (l.packSize ?? 1)) > 0 && l.qty % (l.packSize ?? 1) > 0 && " + "}
+                        {l.qty % (l.packSize ?? 1) > 0 && `${l.qty % (l.packSize ?? 1)} loose`}
+                      </span>
+                      {/* Selling whole strips is the common case; loose tablets
+                          are the exception. Both are one action away. */}
+                      <span className="flex gap-1">
+                        <button
+                          onClick={() => setLines((p) => p.map((x) => x.medicineId === l.medicineId
+                            ? { ...x, qty: Math.max(1, Math.min(x.qty + (x.packSize ?? 1), x.inStock)) } : x))}
+                          className="rounded border border-[var(--p-border)] px-1.5 py-0.5 text-[9.5px] font-semibold text-[var(--p-teal)] hover:border-[var(--p-teal)]">
+                          +1 {l.packLabel || "pack"}
+                        </button>
+                        <button
+                          onClick={() => setLines((p) => p.map((x) => x.medicineId === l.medicineId
+                            ? { ...x, qty: Math.max(1, x.qty - (x.packSize ?? 1)) } : x))}
+                          className="rounded border border-[var(--p-border)] px-1.5 py-0.5 text-[9.5px] font-semibold text-[var(--p-muted)] hover:border-[var(--p-rose)] hover:text-[var(--p-rose)]">
+                          −1
+                        </button>
+                      </span>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

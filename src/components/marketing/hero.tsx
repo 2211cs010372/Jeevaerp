@@ -19,7 +19,7 @@ export function Hero() {
   const chips = [`${DEPARTMENTS.length} specialties`, `OPD ${HOSPITAL.opdHours}`, "Emergency 24×7", "In-house diagnostics"];
 
   return (
-    <div className="relative w-full px-3 pb-3 pt-[70px] sm:px-5 sm:pb-5 sm:pt-[82px] lg:pt-[120px]">
+    <div className="relative w-full px-3 pb-3 pt-[70px] sm:px-5 sm:pb-5 bg-white sm:pt-[82px] lg:pt-[120px]">
       <style>{`
         .hero-rise { animation: hero-rise .8s cubic-bezier(.16,1,.3,1) both; }
         @keyframes hero-rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }

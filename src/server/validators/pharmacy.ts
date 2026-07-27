@@ -2,9 +2,16 @@ import { z } from "zod";
 
 export const addBatchSchema = z.object({
   medicineId: z.string().trim().min(1),
+  /// WHO IT CAME FROM. Required - a batch on the shelf that cannot be traced to
+  /// a distributor cannot be recalled or returned. `supplierRef` below is free
+  /// text (a docket number); this is the actual link.
+  supplierId: z.string().trim().min(1, "Choose the supplier this stock came from"),
   batchNo: z.string().trim().min(1, "Batch number is required").max(40),
   expiryDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD"),
+  /// In PACKS, as bought. The shelf stores dispensing units - see lib/pharmacy/pack.
   quantity: z.coerce.number().int().min(1, "Quantity must be at least 1"),
+  pack: z.string().trim().max(20).optional().catch(undefined),
+  packSize: z.coerce.number().int().min(1).max(5000).optional().catch(undefined),
   mrp: z.coerce.number().min(0),
   purchasePrice: z.coerce.number().min(0).optional(),
   supplierRef: z.string().trim().max(60).optional(),
@@ -13,6 +20,15 @@ export const addBatchSchema = z.object({
 /** Bulk stock receipt - from a spreadsheet or a keyed-in scanned invoice.
  *  Each row identifies its medicine by catalog id (preferred) or by name. */
 export const bulkAddBatchesSchema = z.object({
+  /// ONE INVOICE, ONE SUPPLIER. Every row in an import is stock off the same
+  /// distributor's invoice, so the supplier belongs to the import and not to
+  /// each line - which also stops a half-filled sheet producing rows attributed
+  /// to nobody. A second supplier's invoice is a second import.
+  supplierId: z.string().trim().min(1, "Choose the supplier this invoice is from"),
+  /// The distributor's invoice number and date, carried onto every row's ledger
+  /// entry so a batch traces back to the document it arrived on.
+  invoiceNo: z.string().trim().max(60).optional().or(z.literal("")),
+  invoiceDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").optional().or(z.literal("")),
   rows: z.array(
     z.object({
       medicineId: z.string().trim().min(1).optional(),
@@ -23,7 +39,10 @@ export const bulkAddBatchesSchema = z.object({
       gstRatePct: z.coerce.number().min(0).max(28).optional(),
       batchNo: z.string().trim().min(1, "Batch number is required").max(40),
       expiryDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD"),
+      /// In PACKS. Multiplied by packSize to reach dispensing units.
       quantity: z.coerce.number().int().min(1),
+      pack: z.string().trim().max(20).optional().catch(undefined),
+      packSize: z.coerce.number().int().min(1).max(5000).optional().catch(undefined),
       mrp: z.coerce.number().min(0),
       purchasePrice: z.coerce.number().min(0).optional(),
       supplierRef: z.string().trim().max(60).optional(),

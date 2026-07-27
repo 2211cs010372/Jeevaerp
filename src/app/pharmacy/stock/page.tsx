@@ -19,6 +19,12 @@ interface Med {
 interface Batch {
   id: string; batchNo: string; expiryDate: string; quantity: number; mrp: string;
   rate: string | null; margin: string | null; marginPct: number | null; expired: boolean;
+  /** As printed on the distributor's invoice. */
+  pack: string | null; freeQty: number; oMrp: string | null;
+  /** Dispensing units per pack, and what that means for the shelf and the bill. */
+  packSize: number; packsOnHand: number; looseUnits: number;
+  unitMrp: string; unitRate: string | null;
+  hsn: string | null; gstRatePct: string;
   supplierId: string | null; supplierName: string | null;
   grnId: string | null; grnNumber: string | null; supplierInvoiceNo: string | null; receivedAt: string | null;
 }
@@ -29,7 +35,10 @@ const blankMed = {
   reorderThreshold: "10", rackLocation: "", active: true, courseCritical: false,
   preferredSupplierId: "", reorderQty: "",
 };
-const blankBatch = { batchNo: "", expiryDate: "", quantity: "", mrp: "", purchasePrice: "", supplierRef: "" };
+// supplierId is required by the API: every batch on the shelf must trace to a
+// distributor, or a recall cannot be answered and a return goes to the wrong
+// company. supplierRef stays as the free-text docket/invoice number.
+const blankBatch = { supplierId: "", batchNo: "", expiryDate: "", quantity: "", mrp: "", purchasePrice: "", supplierRef: "" };
 
 /** Fixed reasons keep the stock ledger auditable. Free text invites "adj" and "fix". */
 const REMOVE_REASONS = ["Expired - pulled from shelf", "Damaged / broken", "Spillage", "Returned to supplier", "Stock count correction"];
@@ -161,12 +170,14 @@ export default function StockPage() {
     setBusy(true); setError(null);
     try {
       await api.post("/pharmacy/batches", {
-        medicineId: receiving.id, batchNo: bf.batchNo, expiryDate: bf.expiryDate,
+        medicineId: receiving.id, supplierId: bf.supplierId,
+        batchNo: bf.batchNo, expiryDate: bf.expiryDate,
         quantity: Number(bf.quantity), mrp: Number(bf.mrp),
         purchasePrice: bf.purchasePrice ? Number(bf.purchasePrice) : undefined,
         supplierRef: bf.supplierRef || undefined,
       });
-      setFlash(`Received ${bf.quantity} ${receiving.unit}s of ${receiving.name}.`);
+      const from = suppliers.find((x) => x.id === bf.supplierId)?.name ?? "supplier";
+      setFlash(`Received ${bf.quantity} ${receiving.unit}s of ${receiving.name} from ${from}.`);
       setReceiving(null); setBf({ ...blankBatch }); setExpanded(null); await load();
     } catch (e) { setError(e instanceof ApiClientError ? e.message : "Could not receive stock."); }
     finally { setBusy(false); }
@@ -312,44 +323,91 @@ export default function StockPage() {
               <p className="py-3 text-[12px] text-[var(--p-muted)]">No batches yet - use <b>Receive</b> to add one.</p>
             ) : (
               <div className="space-y-1.5">
-                {batches.map((b, bi) => (
-                  <div key={b.id} className={`batch ${b.expired ? "batch-dead" : ""}`}>
-                    {!b.expired && bi === 0 && <span className="fefo">Next out</span>}
-                    <span className="num w-[118px] text-[12px] font-semibold text-[var(--p-ink)]">{b.batchNo}</span>
-                    <span className="w-[120px] text-[12px] text-[var(--p-muted)]">
-                      Exp <span className={`num ${b.expired ? "font-semibold text-[var(--p-rose)]" : "text-[var(--p-ink)]"}`}>{dmy(b.expiryDate)}</span>
-                    </span>
-                    <span className="w-[92px] text-[12px]">
-                      <span className="num font-semibold text-[var(--p-ink)]">{b.quantity}</span>
-                      <span className="text-[var(--p-muted)]"> {m.unit}s</span>
-                    </span>
-                    <span className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-[12px]">
-                      <span className="text-[var(--p-muted)]">MRP</span><span className="num font-semibold text-[var(--p-ink)]">₹{b.mrp}</span>
-                      {b.rate != null && <><span className="text-[var(--p-muted)]">· rate</span><span className="num text-[var(--p-ink)]">₹{b.rate}</span></>}
-                      {b.margin != null && <span className="num rounded bg-[var(--p-teal-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--p-teal-deep)]">+₹{b.margin}{b.marginPct != null ? ` · ${b.marginPct}%` : ""}</span>}
-                    </span>
-                    {b.expired && <span className="dead-tag">Expired</span>}
-                    <button onClick={() => { setRemove({ med: m, batch: b }); setRmQty(String(b.quantity)); setRmReason(b.expired ? REMOVE_REASONS[0] : REMOVE_REASONS[1]); }}
-                      className="ml-auto rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[11px] font-medium text-[var(--p-rose)] transition-colors hover:border-[var(--p-rose)] hover:bg-[var(--p-rose-soft)]">
-                      Remove
-                    </button>
-
-                    {/* Where this physical stock came from. The question a recall
-                        notice asks, and the one the shelf could never answer. */}
-                    <span className="lineage">
-                      {b.supplierName ? (
-                        <>
-                          <Icon name="truck" size={11} />
-                          <span>{b.supplierName}</span>
-                          {b.grnNumber && <span className="num">· {b.grnNumber}</span>}
-                          {b.supplierInvoiceNo && <span className="num">· inv {b.supplierInvoiceNo}</span>}
-                        </>
-                      ) : (
-                        <span className="lineage-none">Opening stock - no supplier on record</span>
-                      )}
-                    </span>
-                  </div>
-                ))}
+                {/* THE INVOICE, ON THE SHELF.
+                    Column order is the distributor's own - PACK · QTY · FREE ·
+                    OMrp · BATCH · MRP · EXP · RATE · GST · HSN - so a pharmacist
+                    reconciling a delivery reads the paper and the screen
+                    left-to-right together instead of translating between them. */}
+                <div className="overflow-x-auto">
+                  <table className="btable">
+                    <thead>
+                      <tr>
+                        <th>Pack</th>
+                        <th className="r">Qty<span className="th-sub2">units</span></th>
+                        <th className="r">Free</th>
+                        <th>OMrp</th>
+                        <th>Batch</th>
+                        <th className="r">MRP<span className="th-sub2">per pack</span></th>
+                        <th className="r">Rate<span className="th-sub2">per pack</span></th>
+                        <th>Expiry</th>
+                        <th className="r">GST%</th>
+                        <th>HSN</th>
+                        <th>Received from</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {batches.map((b, bi) => (
+                        <tr key={b.id} className={b.expired ? "dead" : ""}>
+                          <td className="num">{b.pack || "—"}</td>
+                          {/* UNITS, then the boxes to actually go and find.
+                              Showing only "45" loses the pharmacist; showing
+                              only "3" was the bug that started all of this. */}
+                          <td className="r num font-semibold">
+                            {b.quantity}
+                            {!b.expired && bi === 0 && <span className="fefo-tag">next out</span>}
+                            {b.packSize > 1 && (
+                              <div className="packs">
+                                {b.packsOnHand > 0 && `${b.packsOnHand} × ${b.pack || b.packSize}`}
+                                {b.packsOnHand > 0 && b.looseUnits > 0 && " + "}
+                                {b.looseUnits > 0 && `${b.looseUnits} loose`}
+                              </div>
+                            )}
+                          </td>
+                          <td className="r num">{b.freeQty > 0 ? `+${b.freeQty}` : "—"}</td>
+                          <td className="num">{b.oMrp || "—"}</td>
+                          <td className="num font-semibold">{b.batchNo}</td>
+                          <td className="r num">
+                            ₹{b.mrp}
+                            {/* The printed MRP is per pack. What a patient pays
+                                for one tablet is the number below it. */}
+                            {b.packSize > 1 && <div className="per-unit">₹{b.unitMrp}/{"unit"}</div>}
+                          </td>
+                          <td className="r num">
+                            {b.rate != null ? `₹${b.rate}` : "—"}
+                            {b.packSize > 1 && b.unitRate != null && <div className="per-unit">₹{b.unitRate}/unit</div>}
+                            {b.marginPct != null && (
+                              <span className={`mg ${b.marginPct >= 0 ? "" : "mg-bad"}`}>{b.marginPct}%</span>
+                            )}
+                          </td>
+                          <td className={`num ${b.expired ? "exp-dead" : ""}`}>
+                            {dmy(b.expiryDate)}
+                            {b.expired && <span className="dead-tag">Expired</span>}
+                          </td>
+                          <td className="r num">{Number(b.gstRatePct) ? `${Number(b.gstRatePct)}%` : "—"}</td>
+                          <td className="num">{b.hsn || "—"}</td>
+                          <td>
+                            {/* The question a recall notice asks. */}
+                            {b.supplierName ? (
+                              <span className="src">
+                                <Icon name="truck" size={10} /> {b.supplierName}
+                                {b.supplierInvoiceNo && <span className="num"> · inv {b.supplierInvoiceNo}</span>}
+                              </span>
+                            ) : (
+                              <span className="src src-none">no supplier on record</span>
+                            )}
+                          </td>
+                          <td className="r">
+                            <button onClick={() => { setRemove({ med: m, batch: b }); setRmQty(String(b.quantity)); setRmReason(b.expired ? REMOVE_REASONS[0] : REMOVE_REASONS[1]); }}
+                              className="rounded-lg border border-[var(--p-border)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--p-rose)] transition-colors hover:border-[var(--p-rose)] hover:bg-[var(--p-rose-soft)]">
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>
@@ -381,6 +439,7 @@ export default function StockPage() {
       {showImport && (
         <BatchImport
           meds={meds.map((m) => ({ id: m.id, name: m.name, genericName: m.genericName }))}
+          suppliers={suppliers}
           onClose={() => setShowImport(false)}
           onDone={(created) => { setFlash(`Imported ${created} ${created === 1 ? "batch" : "batches"} into stock.`); load(); }}
         />
@@ -492,7 +551,20 @@ export default function StockPage() {
               </p>
             </div>
             <div className="grid gap-4 p-6 sm:grid-cols-2">
-              <Field label="Batch number"><input className={fld} value={bf.batchNo} onChange={(e) => setBf({ ...bf, batchNo: e.target.value })} placeholder="Printed on the strip" autoFocus /></Field>
+              {/* First field, and required: who this stock came from decides
+                  which consignment it belongs to, not just who to pay. */}
+              <Field label="Received from" span>
+                <select className={fld} value={bf.supplierId} onChange={(e) => setBf({ ...bf, supplierId: e.target.value })} autoFocus>
+                  <option value="">Choose the distributor…</option>
+                  {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                {suppliers.length === 0 && (
+                  <p className="mt-1.5 text-[11.5px] text-[var(--p-rose)]">
+                    No suppliers yet - add one under Suppliers before receiving stock.
+                  </p>
+                )}
+              </Field>
+              <Field label="Batch number"><input className={fld} value={bf.batchNo} onChange={(e) => setBf({ ...bf, batchNo: e.target.value })} placeholder="Printed on the strip" /></Field>
               <Field label="Expiry date"><input type="date" className={fld} value={bf.expiryDate} onChange={(e) => setBf({ ...bf, expiryDate: e.target.value })} /></Field>
               <Field label={`Quantity (${receiving.unit}s)`}><input className={fld} value={bf.quantity} onChange={(e) => setBf({ ...bf, quantity: e.target.value.replace(/\D/g, "") })} inputMode="numeric" /></Field>
               <Field label="MRP (₹)"><input className={fld} value={bf.mrp} onChange={(e) => setBf({ ...bf, mrp: e.target.value.replace(/[^\d.]/g, "") })} inputMode="decimal" /></Field>
@@ -504,7 +576,7 @@ export default function StockPage() {
             </p>
             <div className="flex justify-end gap-3 border-t border-[var(--p-border)] p-5">
               <button onClick={() => setReceiving(null)} className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm text-[var(--p-text)]">Cancel</button>
-              <PrimaryButton onClick={receive} disabled={busy || !bf.batchNo || !bf.expiryDate || !bf.quantity || !bf.mrp}>
+              <PrimaryButton onClick={receive} disabled={busy || !bf.supplierId || !bf.batchNo || !bf.expiryDate || !bf.quantity || !bf.mrp}>
                 {busy ? <><Spinner /> Saving…</> : <><Icon name="check" size={15} /> Receive</>}
               </PrimaryButton>
             </div>
@@ -669,20 +741,39 @@ const CSS = `
   font-size:12px; color:var(--p-rose); transition:background-color .15s ease; }
 .pull-strip:hover { background:rgba(224,67,92,.16); }
 
-.batch { display:flex; flex-wrap:wrap; align-items:center; gap:6px 18px; position:relative;
-  border-radius:9px; border:1px solid var(--p-border); background:#fff; padding:10px 14px; }
-.batch-dead { border-color:rgba(224,67,92,.3); background:var(--p-rose-soft); }
-.fefo { position:absolute; top:-7px; left:12px; border-radius:4px; background:var(--p-cyan);
-  padding:1px 6px; font-size:9px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:#fff; }
-.dead-tag { border-radius:4px; background:var(--p-rose); padding:2px 7px; font-size:9px; font-weight:800;
-  letter-spacing:.06em; text-transform:uppercase; color:#fff; }
-
-/* chain of custody, on its own line so it never crowds the numbers above it */
-.lineage { display:flex; flex-basis:100%; align-items:center; gap:5px; margin-top:2px;
-  padding-top:7px; border-top:1px dashed var(--p-border);
-  font-size:11px; color:var(--p-muted); }
-.lineage .num { font-size:11px; }
-.lineage-none { font-style:italic; }
+/* THE SHELF, LAID OUT LIKE THE INVOICE IT ARRIVED ON.
+   Same column order as the distributor's bill, so a delivery is reconciled by
+   reading across rather than hunting for the matching field. */
+.btable { width:100%; border-collapse:collapse; background:#fff;
+  border:1px solid var(--p-border); border-radius:9px; overflow:hidden; }
+.btable th { background:var(--p-bg); padding:6px 9px; text-align:left; white-space:nowrap;
+  font-size:9.5px; font-weight:800; letter-spacing:.07em; text-transform:uppercase;
+  color:var(--p-teal-deep); border-bottom:1px solid var(--p-border); }
+.btable td { padding:7px 9px; font-size:12px; color:var(--p-ink); white-space:nowrap;
+  border-bottom:1px solid var(--p-border); }
+.btable tbody tr:last-child td { border-bottom:0; }
+.btable tbody tr:hover td { background:var(--p-bg); }
+.btable .r, .btable th.r { text-align:right; }
+/* Expired stock is tinted, not hidden - it is still physically on the shelf
+   until someone pulls it, and hiding it is how it gets dispensed. */
+.btable tr.dead td { background:var(--p-rose-soft); color:#8a3b2e; }
+.btable tr.dead:hover td { background:var(--p-rose-soft); }
+.exp-dead { font-weight:700; color:var(--p-rose); }
+.fefo-tag { margin-left:5px; border-radius:4px; background:var(--p-cyan); padding:1px 5px;
+  font-size:8.5px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; color:#fff; }
+.dead-tag { margin-left:5px; border-radius:4px; background:var(--p-rose); padding:1px 5px;
+  font-size:8.5px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; color:#fff; }
+.packs { margin-top:1px; font-size:9.5px; font-weight:600; color:var(--p-muted); }
+.per-unit { margin-top:1px; font-size:9.5px; font-weight:700; color:var(--p-teal-deep); }
+.th-sub2 { display:block; margin-top:1px; font-size:8px; font-weight:600; letter-spacing:.03em;
+  text-transform:none; color:var(--p-muted); }
+.mg { margin-left:5px; border-radius:4px; background:var(--p-teal-soft); padding:1px 5px;
+  font-size:9.5px; font-weight:700; color:var(--p-teal-deep); }
+.mg-bad { background:var(--p-rose-soft); color:var(--p-rose); }
+/* chain of custody - the question a recall notice asks */
+.src { display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--p-muted); }
+.src .num { font-size:11px; }
+.src-none { font-style:italic; }
 
 .kbd { border-radius:5px; border:1px solid var(--p-border); background:var(--p-bg); padding:1px 6px;
   font-family:var(--font-mono); font-size:11px; color:var(--p-muted); }

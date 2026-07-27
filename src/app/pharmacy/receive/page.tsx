@@ -6,6 +6,7 @@ import { PrimaryButton } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
+import { parsePack, packsToUnits } from "@/lib/pharmacy/pack";
 import {
   EmptyState, ErrorNote, Flash, GhostButton, Modal, PROC_CSS, PageHead, Tag,
   daysUntil, dmy, dmyFromISO, fld, inr,
@@ -54,12 +55,20 @@ interface Row {
   freeQty: string;
   unitCost: string;
   mrp: string;
+  /** As printed on the distributor's bill - PACK · OMrp · G% · HSN. */
+  pack: string;
+  oMrp: string;
+  gst: string;
+  hsn: string;
+  /** True when this line adds a product the catalogue has never seen. */
+  createNew?: boolean;
 }
 
 let rowSeq = 0;
 const newRow = (over: Partial<Row> = {}): Row => ({
   key: `r${++rowSeq}`, medicineId: "", name: "", unit: "unit",
-  batchNo: "", expiryDate: "", qty: "", freeQty: "", unitCost: "", mrp: "", ...over,
+  batchNo: "", expiryDate: "", qty: "", freeQty: "", unitCost: "", mrp: "",
+  pack: "", oMrp: "", gst: "", hsn: "", ...over,
 });
 
 export default function ReceivePage() {
@@ -94,6 +103,12 @@ function ReceiveInner() {
   const [invoiceAmount, setInvoiceAmount] = useState("");
   const [notes, setNotes] = useState("");
   const [rows, setRows] = useState<Row[]>([]);
+
+  // ── Reading the delivery straight off the distributor's bill ──────────────
+  const [scanFile, setScanFile] = useState<File | null>(null);
+  const [ocrBusy, setOcrBusy] = useState(false);
+  const [ocrPct, setOcrPct] = useState(0);
+  const [ocrNote, setOcrNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -182,13 +197,133 @@ function ReceiveInner() {
     return { value, units, free, variance: v?.variance ?? null, mismatch: v?.mismatch ?? false };
   }, [rows, invoiceAmount]);
 
-  const valid = rows.filter((r) => r.medicineId && r.batchNo.trim() && r.expiryDate && Number(r.qty) > 0);
+  const valid = rows.filter((r) =>
+    (r.medicineId || (r.createNew && r.name.trim().length > 1)) && r.batchNo.trim() && r.expiryDate &&
+    Number(r.qty) > 0 &&
+    // Whole units only - StockBatch.quantity is an integer, and posting a
+    // fraction is a 400 from the API with nothing on screen explaining why.
+    Number.isInteger(Number(r.qty)) &&
+    Number.isInteger(Number(r.freeQty || 0))
+  );
   const canPost = !!supplierId && valid.length > 0 && valid.length === rows.length;
+
+  /**
+   * Lines the invoice named but the catalogue doesn't have.
+   *
+   * After OCR this is routinely most of a delivery - a distributor's bill is
+   * full of products nobody has stocked before. Ticking twenty rows one at a
+   * time is the slowest part of booking a delivery in, so they get one button.
+   */
+  const unknownRows = rows.filter((r) => !r.medicineId && !r.createNew && r.name.trim().length > 1);
+
+  /** Why Post is greyed out. A disabled button with no reason is a dead end. */
+  const blocker = (() => {
+    if (!rows.length) return "Add at least one line.";
+    if (!supplierId) return "Choose the supplier this delivery came from.";
+    const bad = rows.length - valid.length;
+    if (bad > 0) {
+      const noMed = rows.filter((r) => !r.medicineId && !(r.createNew && r.name.trim().length > 1)).length;
+      const noBatch = rows.filter((r) => r.medicineId && !r.batchNo.trim()).length;
+      const noExp = rows.filter((r) => r.medicineId && !r.expiryDate).length;
+      const frac = rows.filter((r) => !Number.isInteger(Number(r.qty)) || !Number.isInteger(Number(r.freeQty || 0))).length;
+      const parts: string[] = [];
+      if (noMed) parts.push(`${noMed} without a medicine picked`);
+      if (noBatch) parts.push(`${noBatch} without a batch number`);
+      if (noExp) parts.push(`${noExp} without an expiry`);
+      if (frac) parts.push(`${frac} with a fractional quantity`);
+      return `${bad} line${bad === 1 ? "" : "s"} need attention${parts.length ? ` - ${parts.join(", ")}` : ""}.`;
+    }
+    return null;
+  })();
+
+
+  /**
+   * Read the delivery off a photo of the distributor's bill.
+   *
+   * Everything it produces is a SUGGESTION dropped into the grid below - the
+   * pharmacist checks each line against the physical strips before posting, the
+   * same as if they had keyed it. OCR misreads digits, and a misread batch
+   * number or expiry is a patient-safety problem, not a typo.
+   *
+   * Medicines are matched to the catalogue by name; anything unrecognised is
+   * left with an empty selector rather than guessed at.
+   */
+  async function extractFromInvoice(file: File) {
+    setOcrBusy(true); setOcrPct(0); setError(null); setOcrNote(null);
+    try {
+      const { recognize } = await import("tesseract.js");
+      const { data } = await recognize(file, "eng", {
+        logger: (m: { status: string; progress: number }) => {
+          if (m.status === "recognizing text") setOcrPct(Math.round(m.progress * 100));
+        },
+      });
+      const { parseInvoiceHeader } = await import("@/lib/pharmacy/invoice-parse");
+      const inv = parseInvoiceHeader(data.text, suppliers.map((sp) => ({ id: sp.id, name: sp.name })));
+
+      // Header: supplier, invoice number, date, total.
+      if (inv.supplierId && !poId) setSupplierId(inv.supplierId);
+      if (inv.invoiceNo) setInvoiceNo(inv.invoiceNo);
+      if (inv.invoiceDate) setInvoiceDate(inv.invoiceDate);
+      if (inv.netAmount) setInvoiceAmount(inv.netAmount);
+
+      // Lines, matched to the catalogue by name where possible.
+      const byName = new Map<string, Med>();
+      for (const m2 of meds) byName.set(m2.name.trim().toLowerCase(), m2);
+      const matchMed = (name: string) => {
+        const key = name.trim().toLowerCase();
+        if (byName.has(key)) return byName.get(key)!;
+        // Fall back to the longest catalogue name contained in the OCR'd text.
+        let best: Med | null = null;
+        for (const m2 of meds) {
+          const n = m2.name.trim().toLowerCase();
+          if (n.length >= 5 && (key.includes(n) || n.includes(key)) && (!best || m2.name.length > best.name.length)) best = m2;
+        }
+        return best;
+      };
+
+      const mapped: Row[] = inv.rows.map((r) => {
+        const med = matchMed(r.medicine);
+        return newRow({
+          medicineId: med?.id ?? "",
+          name: med?.name ?? r.medicine,
+          unit: med?.unit ?? "unit",
+          batchNo: r.batchNo.toUpperCase(),
+          expiryDate: r.expiry,
+          // Kept verbatim, decimal point and all. Stripping non-digits turned
+          // the invoice's "2.5" into "25" - twenty-five bottles instead of two
+          // and a half, silently, with nothing on screen to notice. A
+          // fractional quantity is flagged below and the pharmacist resolves it.
+          qty: r.qty,
+          freeQty: r.free,
+          unitCost: r.rate,
+          mrp: r.mrp,
+          pack: r.pack,
+          oMrp: r.oMrp,
+          gst: r.gst,
+          hsn: r.hsn,
+        });
+      });
+
+      if (!mapped.length) {
+        setError("Couldn't read any line items off that image. Try a sharper, straighter photo - or key the rows in below.");
+      } else {
+        setRows(mapped);
+        const unmatched = mapped.filter((r) => !r.medicineId).length;
+        const bits = [`Read ${mapped.length} line${mapped.length === 1 ? "" : "s"}`];
+        if (inv.supplierName) bits.push(inv.supplierId ? `supplier matched (${inv.supplierName})` : `invoice says "${inv.supplierName}" - not on your supplier list`);
+        if (inv.gstin) bits.push(`GSTIN ${inv.gstin}`);
+        if (unmatched) bits.push(`${unmatched} medicine${unmatched === 1 ? "" : "s"} not in the catalogue - pick them below`);
+        setOcrNote(`${bits.join(" · ")}. Check every batch and expiry against the strips before posting.`);
+      }
+    } catch {
+      setError("Couldn't run OCR on that file. Key the rows in below instead.");
+    } finally { setOcrBusy(false); }
+  }
 
   async function post() {
     setBusy(true); setError(null);
     try {
-      const r = await api.post<{ receipt: { grnNumber: string; receivedValue: string; mismatch: boolean; variance: number | null } }>(
+      const r = await api.post<{ receipt: { grnNumber: string; receivedValue: string; mismatch: boolean; variance: number | null; createdMedicines?: { id: string; name: string }[] } }>(
         "/pharmacy/receipts",
         {
           supplierId,
@@ -198,7 +333,8 @@ function ReceiveInner() {
           invoiceAmount: invoiceAmount ? Number(invoiceAmount) : undefined,
           notes: notes || undefined,
           items: rows.map((x) => ({
-            medicineId: x.medicineId,
+            medicineId: x.medicineId || undefined,
+            newMedicineName: !x.medicineId && x.createNew ? x.name.trim() : undefined,
             purchaseOrderItemId: x.purchaseOrderItemId,
             batchNo: x.batchNo,
             expiryDate: x.expiryDate,
@@ -206,14 +342,22 @@ function ReceiveInner() {
             freeQty: x.freeQty ? Number(x.freeQty) : undefined,
             unitCost: Number(x.unitCost || 0),
             mrp: Number(x.mrp || 0),
+            pack: x.pack || undefined,
+            packSize: parsePack(x.pack).size,
+            oMrp: x.oMrp || undefined,
+            hsn: x.hsn || undefined,
+            gstRatePct: x.gst ? Number(x.gst) : undefined,
           })),
         }
       );
       const g = r.receipt;
+      const added = g.createdMedicines?.length
+        ? ` ${g.createdMedicines.length} new product${g.createdMedicines.length === 1 ? "" : "s"} added to the catalogue: ${g.createdMedicines.map((m) => m.name).join(", ")}.`
+        : "";
       setFlash(
-        g.mismatch
+        (g.mismatch
           ? `${g.grnNumber} posted - but their invoice and the carton differ by ${inr(Math.abs(g.variance ?? 0), 2)}. Worth a call before you pay it.`
-          : `${g.grnNumber} posted. ${inr(g.receivedValue, 2)} of stock is on the shelf.`
+          : `${g.grnNumber} posted. ${inr(g.receivedValue, 2)} of stock is on the shelf.`) + added
       );
       setOpen(false); setRows([]);
       await load();
@@ -352,6 +496,9 @@ function ReceiveInner() {
                   </div>
                 )}
               </div>
+              {blocker && (
+                <span className="max-w-[320px] text-right text-[11.5px] leading-snug text-[#8a6414]">{blocker}</span>
+              )}
               <GhostButton onClick={() => setOpen(false)} disabled={busy}>Cancel</GhostButton>
               <PrimaryButton onClick={post} disabled={busy || !canPost}>
                 {busy ? <><Spinner /> Posting…</> : <><Icon name="check" size={15} /> Post receipt</>}
@@ -360,6 +507,42 @@ function ReceiveInner() {
           }
         >
           <div className="space-y-5 p-6">
+            {/* READ IT OFF THE BILL. Reception has the paper in hand; typing 23
+                lines off it is where batch numbers and expiry dates get
+                mistyped. Everything below fills in as a suggestion. */}
+            <div className="rounded-xl border border-[var(--p-border)] bg-[var(--p-bg)] px-4 py-3.5">
+              <div className="flex flex-wrap items-center gap-3">
+                <label className={`inline-flex cursor-pointer items-center gap-2 rounded-lg bg-[var(--p-teal)] px-3.5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[var(--p-teal-deep)] ${ocrBusy ? "pointer-events-none opacity-60" : ""}`}>
+                  <Icon name="file" size={14} />
+                  {ocrBusy ? `Reading invoice… ${ocrPct}%` : "Extract from invoice image"}
+                  <input type="file" accept="image/*,application/pdf" className="hidden" disabled={ocrBusy}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) { setScanFile(f); extractFromInvoice(f); }
+                      e.target.value = "";
+                    }} />
+                </label>
+                {scanFile && !ocrBusy && (
+                  <span className="text-[12px] text-[var(--p-muted)]">{scanFile.name}</span>
+                )}
+                <span className="text-[12px] leading-relaxed text-[var(--p-muted)]">
+                  Photograph or scan the distributor&apos;s bill. Reads supplier, GSTIN, invoice no., date,
+                  total and every line.
+                </span>
+              </div>
+              {ocrBusy && (
+                <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-[var(--p-border)]">
+                  <div className="h-full rounded-full bg-[var(--p-teal)] transition-all" style={{ width: `${ocrPct}%` }} />
+                </div>
+              )}
+              {ocrNote && !ocrBusy && (
+                <p className="mt-2.5 flex items-start gap-2 rounded-lg bg-[var(--p-teal-soft)] px-3 py-2 text-[12px] leading-relaxed text-[var(--p-teal-deep)]">
+                  <span className="mt-0.5 shrink-0"><Icon name="check" size={13} /></span>
+                  <span>{ocrNote}</span>
+                </p>
+              )}
+            </div>
+
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Field label="Supplier">
                 <select className={fld} value={supplierId} disabled={!!poId}
@@ -392,17 +575,47 @@ function ReceiveInner() {
               </div>
             )}
 
+            {/* ONE BUTTON for the whole delivery. Each row still has its own
+                toggle for the odd case where a name is a misread rather than a
+                genuinely new product. */}
+            {unknownRows.length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--p-amber)]/35 bg-[var(--p-amber-soft)] px-4 py-3">
+                <span className="text-[12.5px] leading-relaxed text-[#8a6414]">
+                  <b>{unknownRows.length} product{unknownRows.length === 1 ? " is" : "s are"} not in your catalogue</b>
+                  {" — "}
+                  {unknownRows.slice(0, 3).map((r) => r.name.trim()).join(", ")}
+                  {unknownRows.length > 3 && ` and ${unknownRows.length - 3} more`}.
+                  {" "}Add them and the receipt creates them as it posts.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setRows((rs) => rs.map((r) =>
+                    !r.medicineId && !r.createNew && r.name.trim().length > 1 ? { ...r, createNew: true } : r))}
+                  className="shrink-0 rounded-lg bg-[var(--p-teal)] px-3.5 py-2 text-[12.5px] font-semibold text-white transition-colors hover:bg-[var(--p-teal-deep)]"
+                >
+                  Add all {unknownRows.length} as new products
+                </button>
+              </div>
+            )}
+
             <div className="overflow-x-auto">
               <table className="ptable">
                 <thead>
                   <tr>
-                    <th style={{ minWidth: 180 }}>Medicine</th>
-                    <th style={{ minWidth: 110 }}>Batch no.</th>
-                    <th style={{ minWidth: 130 }}>Expiry</th>
-                    <th className="r">Qty</th>
-                    <th className="r">Free</th>
-                    <th className="r">Rate</th>
+                    {/* Column order follows the distributor's invoice, so the
+                        screen and the paper are read left-to-right together. */}
+                    <th style={{ minWidth: 170 }}>Product name</th>
+                    <th style={{ minWidth: 68 }}>Pack</th>
+                    <th className="r">Qty<span className="th-sub">packs</span></th>
+                    <th className="r">Free<span className="th-sub">packs</span></th>
+                    <th className="r">Units<span className="th-sub">on shelf</span></th>
+                    <th style={{ minWidth: 62 }}>OMrp</th>
+                    <th style={{ minWidth: 108 }}>Batch</th>
                     <th className="r">MRP</th>
+                    <th style={{ minWidth: 128 }}>Expiry</th>
+                    <th className="r">Rate</th>
+                    <th className="r">GST%</th>
+                    <th style={{ minWidth: 74 }}>HSN</th>
                     <th className="r">Cost/unit</th>
                     <th />
                   </tr>
@@ -416,6 +629,11 @@ function ReceiveInner() {
                     const shortDated = expDays !== null && expDays > 0 && expDays < 180;
                     const dead = expDays !== null && expDays <= 0;
                     const over = r.pending !== undefined && q > r.pending;
+                    const fractional = !Number.isInteger(q) || !Number.isInteger(f);
+                    // Packs in, units on the shelf - the conversion the whole
+                    // pharmacy turns on. See lib/pharmacy/pack.
+                    const packSpec = parsePack(r.pack);
+                    const shelfUnits = packsToUnits(q + f, packSpec.size);
                     return (
                       <tr key={r.key}>
                         <td>
@@ -428,34 +646,81 @@ function ReceiveInner() {
                               </div>
                             </>
                           ) : (
-                            <select className={fld} value={r.medicineId}
-                              onChange={(e) => {
-                                const m = meds.find((x) => x.id === e.target.value);
-                                setRow(r.key, { medicineId: e.target.value, name: m?.name ?? "", unit: m?.unit ?? "unit", mrp: r.mrp || (m?.mrp ?? "") });
-                              }}>
-                              <option value="">Select…</option>
-                              {meds.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                            </select>
+                            <>
+                              {r.createNew ? (
+                                /* A product the catalogue has never seen. It is
+                                   created by the receipt itself - sending the
+                                   pharmacist away to a separate screen mid-
+                                   delivery is how a delivery ends up half
+                                   entered. */
+                                <input className={fld} value={r.name} autoFocus
+                                  placeholder="New product name"
+                                  onChange={(e) => setRow(r.key, { name: e.target.value, medicineId: "" })} />
+                              ) : (
+                                <select className={fld} value={r.medicineId}
+                                  onChange={(e) => {
+                                    const m = meds.find((x) => x.id === e.target.value);
+                                    setRow(r.key, { medicineId: e.target.value, name: m?.name ?? "", unit: m?.unit ?? "unit", mrp: r.mrp || (m?.mrp ?? "") });
+                                  }}>
+                                  <option value="">Select…</option>
+                                  {meds.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                                </select>
+                              )}
+                              <button type="button"
+                                onClick={() => setRow(r.key, { createNew: !r.createNew, medicineId: "", name: r.createNew ? "" : r.name })}
+                                className="mt-1 text-[10.5px] font-semibold text-[var(--p-teal)] hover:underline">
+                                {r.createNew ? "← pick from catalogue" : "+ new product"}
+                              </button>
+                              {r.createNew && (
+                                <div className="mt-0.5 text-[10px] text-[var(--p-muted)]">
+                                  added to the catalogue on posting
+                                </div>
+                              )}
+                            </>
                           )}
                         </td>
+                        <td><input className={`${fld} num w-[62px] py-1.5`} value={r.pack}
+                          onChange={(e) => setRow(r.key, { pack: e.target.value.toUpperCase() })} placeholder="15T" /></td>
+                        <td className="r">
+                          <input className={`${fld} num w-[64px] py-1.5 text-right ${fractional ? "border-[var(--p-amber)]" : ""}`} value={r.qty} inputMode="decimal"
+                            onChange={(e) => setRow(r.key, { qty: e.target.value.replace(/[^\d.]/g, "") })} />
+                          {/* Liquids are invoiced in fractions of a pack ("2.5"),
+                              but the shelf counts whole units. Surfaced rather
+                              than rounded - only the pharmacist knows whether
+                              that is 2 bottles or 3. */}
+                          {fractional && <div className="mt-1 text-[10px] font-semibold text-[#8a6414]">whole units only</div>}
+                        </td>
+                        <td className="r"><input className={`${fld} num w-[56px] py-1.5 text-right`} value={r.freeQty} inputMode="decimal"
+                          onChange={(e) => setRow(r.key, { freeQty: e.target.value.replace(/[^\d.]/g, "") })} placeholder="0" /></td>
+                        {/* WHAT ACTUALLY REACHES THE SHELF. 3 strips of 15T is
+                            45 tablets. Shown live so a wrong pack label is
+                            caught here, not at a stock count months later. */}
+                        <td className="r">
+                          <div className="num text-[13px] font-bold text-[var(--p-ink)]">{shelfUnits || "-"}</div>
+                          <div className="text-[10px] text-[var(--p-muted)]">
+                            {packSpec.known ? `${packSpec.size} ${packSpec.unit}${packSpec.size === 1 ? "" : "s"}/pack` : "loose units"}
+                          </div>
+                        </td>
+                        <td><input className={`${fld} num w-[58px] py-1.5`} value={r.oMrp}
+                          onChange={(e) => setRow(r.key, { oMrp: e.target.value.toUpperCase() })} placeholder="—" /></td>
                         <td>
                           <input className={`${fld} num py-1.5`} value={r.batchNo}
                             onChange={(e) => setRow(r.key, { batchNo: e.target.value.toUpperCase() })} placeholder="On the strip" />
                         </td>
+                        <td className="r"><input className={`${fld} num w-[78px] py-1.5 text-right`} value={r.mrp} inputMode="decimal"
+                          onChange={(e) => setRow(r.key, { mrp: e.target.value.replace(/[^\d.]/g, "") })} /></td>
                         <td>
                           <input type="date" className={`${fld} py-1.5 ${dead ? "border-[var(--p-rose)]" : ""}`} value={r.expiryDate}
                             onChange={(e) => setRow(r.key, { expiryDate: e.target.value })} />
                           {dead && <div className="mt-1 text-[10.5px] font-semibold text-[var(--p-rose)]">Expired - send it back</div>}
                           {shortDated && <div className="mt-1 text-[10.5px] font-semibold text-[#8a6414]">{Math.round(expDays / 30)} mo left</div>}
                         </td>
-                        <td className="r"><input className={`${fld} num w-[74px] py-1.5 text-right`} value={r.qty} inputMode="numeric"
-                          onChange={(e) => setRow(r.key, { qty: e.target.value.replace(/\D/g, "") })} /></td>
-                        <td className="r"><input className={`${fld} num w-[62px] py-1.5 text-right`} value={r.freeQty} inputMode="numeric"
-                          onChange={(e) => setRow(r.key, { freeQty: e.target.value.replace(/\D/g, "") })} placeholder="0" /></td>
-                        <td className="r"><input className={`${fld} num w-[82px] py-1.5 text-right`} value={r.unitCost} inputMode="decimal"
+                        <td className="r"><input className={`${fld} num w-[78px] py-1.5 text-right`} value={r.unitCost} inputMode="decimal"
                           onChange={(e) => setRow(r.key, { unitCost: e.target.value.replace(/[^\d.]/g, "") })} /></td>
-                        <td className="r"><input className={`${fld} num w-[82px] py-1.5 text-right`} value={r.mrp} inputMode="decimal"
-                          onChange={(e) => setRow(r.key, { mrp: e.target.value.replace(/[^\d.]/g, "") })} /></td>
+                        <td className="r"><input className={`${fld} num w-[54px] py-1.5 text-right`} value={r.gst} inputMode="decimal"
+                          onChange={(e) => setRow(r.key, { gst: e.target.value.replace(/[^\d.]/g, "") })} placeholder="—" /></td>
+                        <td><input className={`${fld} num w-[70px] py-1.5`} value={r.hsn} inputMode="numeric"
+                          onChange={(e) => setRow(r.key, { hsn: e.target.value.replace(/\D/g, "") })} placeholder="—" /></td>
                         <td className="r">
                           {/* Free goods folded in - the number the margin is really made on. */}
                           <div className="num text-[13px] font-semibold text-[var(--p-ink)]">{landed > 0 ? inr(landed, 2) : "-"}</div>

@@ -17,6 +17,12 @@ export interface PadLine {
   prescribedQty: number;
   /** Units per day, derived from the dosage pattern. 0 = not day-scalable. */
   perDay: number;
+  /** Dispensing units in one pack ("15T" -> 15), and its printed label.
+   *  `qty` and `inStock` above are in UNITS; `mrp` is the PER-UNIT price. The
+   *  pack is carried so the counter can offer "+1 strip" and show a patient
+   *  what they are actually being handed. */
+  packSize?: number;
+  packLabel?: string | null;
   /** Antibiotic / TB / antimalarial - a partial course is actively harmful. */
   courseCritical: boolean;
   /**

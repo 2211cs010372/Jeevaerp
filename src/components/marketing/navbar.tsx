@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Search, PhoneCall, User, Menu, X, ChevronDown, ArrowRight } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { PhoneCall, User, Menu, X, ChevronDown, ArrowRight } from "lucide-react";
 import { DeptIcon } from "@/components/marketing/dept-icon";
+import { DoctorSearchBox } from "@/components/marketing/doctor-search-box";
 import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
 import { HOSPITAL, DEPARTMENTS, DOCTORS, CARE_AREAS, type CareArea, type Department } from "@/lib/data";
 import { careHref } from "@/lib/care";
@@ -46,11 +46,9 @@ const LINKS = [
 ];
 
 export function Navbar() {
-  const router = useRouter();
   const [menu, setMenu] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [mobileArea, setMobileArea] = useState<string | null>(null);
-  const [q, setQ] = useState("");
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const phone = HOSPITAL.phone.replace(/\s/g, "");
@@ -73,11 +71,6 @@ export function Navbar() {
     closeTimer.current = setTimeout(() => setMenu(null), 120);
   };
 
-  function submitSearch(e: FormEvent) {
-    e.preventDefault();
-    router.push(q.trim() ? `/doctors?q=${encodeURIComponent(q.trim())}` : "/doctors");
-    setOpen(false);
-  }
   const close = () => { setMenu(null); setOpen(false); };
 
   return (
@@ -95,14 +88,7 @@ export function Navbar() {
             </span>
           </Link>
 
-          <form onSubmit={submitSearch} className="relative mx-auto hidden max-w-[440px] flex-1 md:block">
-            <Search size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search doctors, specialities…"
-              className="w-full rounded-full border border-[var(--line-strong)] bg-[var(--bone)] py-2.5 pl-9 pr-11 text-[13px] text-[var(--ink)] outline-none transition-colors placeholder:text-[var(--muted)] focus:border-[var(--teal)] focus:bg-white" />
-            <button type="submit" aria-label="Search" className="absolute right-1 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-full bg-[var(--teal)] text-white transition-colors hover:bg-[var(--teal-deep)]">
-              <Search size={14} />
-            </button>
-          </form>
+          <DoctorSearchBox onNavigate={close} />
 
           <div className="flex shrink-0 items-center gap-2">
             <a href={`tel:${phone}`} className="hidden items-center gap-2 rounded-full border border-[var(--line-strong)] px-2.5 py-1.5 transition-colors hover:border-[var(--teal)] xl:inline-flex">
@@ -176,11 +162,7 @@ export function Navbar() {
       {open && (
         <div className="max-h-[calc(100vh-58px)] overflow-y-auto border-t border-[var(--line)] bg-[var(--paper)] lg:hidden">
           <div className="space-y-3 px-4 py-3">
-            <form onSubmit={submitSearch} className="relative">
-              <Search size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search doctors, specialities…"
-                className="w-full rounded-full border border-[var(--line-strong)] bg-[var(--bone)] py-2.5 pl-9 pr-4 text-[13px] text-[var(--ink)] outline-none focus:border-[var(--teal)] focus:bg-white" />
-            </form>
+            <DoctorSearchBox variant="mobile" onNavigate={close} />
 
             {CARE_AREAS.map((area) => {
               const on = mobileArea === area.label;

@@ -64,7 +64,11 @@ export const receiveGoodsSchema = z.object({
   invoiceAmount: money.optional(),
   notes: optText(500),
   items: z.array(z.object({
-    medicineId: z.string().trim().min(1),
+    // One of these two. `medicineId` for a catalogued product; `newMedicineName`
+    // to book in something the catalogue has never seen, which a distributor's
+    // delivery routinely contains.
+    medicineId: z.string().trim().optional().or(z.literal("")),
+    newMedicineName: z.string().trim().min(2).max(120).optional().or(z.literal("")),
     purchaseOrderItemId: z.string().trim().optional(),
     batchNo: z.string().trim().min(1, "Batch number is on the strip").max(40),
     expiryDate: ymd,
@@ -72,6 +76,24 @@ export const receiveGoodsSchema = z.object({
     freeQty: z.coerce.number().int().min(0).optional(),
     unitCost: money,
     mrp: money,
+    // As printed on the bill, and DELIBERATELY UNABLE TO FAIL THE RECEIPT.
+    //
+    // These four are read off a photograph by OCR. A misread G% of "300490"
+    // (the HSN, one column over) used to reject the whole delivery with a 400 -
+    // refusing to put real stock on a real shelf because a cosmetic column was
+    // misread. They are labels, not quantities: anything out of range is
+    // dropped and the pharmacist can type it, while batch, expiry, quantity and
+    // price stay strict because those are the ones that hurt someone.
+    pack: z.string().trim().max(20).optional().catch(undefined),
+    /// Units per pack. Strict-ish (it multiplies the shelf) but still
+    /// non-fatal: a bad value falls back to reading the pack label.
+    packSize: z.coerce.number().int().min(1).max(5000).optional().catch(undefined),
+    oMrp: z.string().trim().max(20).optional().catch(undefined),
+    hsn: z.string().trim().max(12).optional().catch(undefined),
+    gstRatePct: z.coerce.number().min(0).max(28).optional().catch(undefined),
+  }).refine((i) => !!i.medicineId?.trim() || !!i.newMedicineName?.trim(), {
+    path: ["medicineId"],
+    message: "Pick a medicine, or give a name to add it to the catalogue",
   })).min(1, "Add at least one line").max(200),
 });
 

@@ -58,6 +58,21 @@ function PatientFromUrl({ onFound }: { onFound: (p: Patient) => void }) {
   return null;
 }
 
+/**
+ * Reads ?req= - the callback request this booking came from.
+ *
+ * Reception clicks "Book" on the queue and lands here; once the visit exists,
+ * the request is marked BOOKED and linked to it. Without this the desk would
+ * have to remember to go back and tick the queue, and it would fill with
+ * requests that were actually dealt with weeks ago.
+ */
+function RequestFromUrl({ onFound }: { onFound: (id: string) => void }) {
+  const params = useSearchParams();
+  const req = params.get("req");
+  useEffect(() => { if (req) onFound(req); }, [req, onFound]);
+  return null;
+}
+
 export default function BookAppointmentPage() {
   const [patientMode, setPatientMode] = useState<"existing" | "new">("existing");
   const [query, setQuery] = useState("");
@@ -88,6 +103,8 @@ export default function BookAppointmentPage() {
   const [error, setError] = useState<string | null>(null);
   const [booked, setBooked] = useState<Booked | null>(null);
   const [prefilled, setPrefilled] = useState(false);
+  /** Set when this booking was started from a website callback request. */
+  const [requestId, setRequestId] = useState<string | null>(null);
 
   useEffect(() => {
     api.get<{ doctors: Doctor[] }>("/reception/doctors").then((r) => setDoctors(r.doctors)).catch(() => { });
@@ -147,6 +164,17 @@ export default function BookAppointmentPage() {
         ...(canBill && billNow ? { billNow: { discountAmount: bookDisc || undefined, payments: payments.length ? payments : undefined } } : {}),
       });
       setBooked(appointment);
+
+      // Close the loop on the callback queue. Deliberately after the booking
+      // and deliberately swallowed: the visit is real either way, and failing
+      // the whole booking because a queue tick didn't save would be worse.
+      if (requestId) {
+        try {
+          await api.patch(`/reception/appointment-requests/${requestId}`, {
+            status: "BOOKED", appointmentId: appointment.id,
+          });
+        } catch { /* the desk can close it by hand from the queue */ }
+      }
     } catch (err) {
       setError(err instanceof ApiClientError ? err.message : "Could not book. Please try again.");
       // Someone else may have taken the slot mid-flight - reload the grid so the
@@ -259,6 +287,7 @@ export default function BookAppointmentPage() {
     <PortalScroll>
       <Suspense fallback={null}>
         <PatientFromUrl onFound={(p) => { setPatient(p); setPrefilled(true); }} />
+        <RequestFromUrl onFound={setRequestId} />
       </Suspense>
       {/* page header band */}
       <div data-rise className="surface dotgrid mb-6 flex flex-wrap items-center justify-between gap-4 px-6 py-5">

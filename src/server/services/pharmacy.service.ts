@@ -2,6 +2,7 @@ import { collectionByMode, type ModeTotal } from "./reports.service";
 import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
 import { logAudit } from "./audit.service";
+import { parsePack, packsToUnits, perUnitPrice, describeStock } from "@/lib/pharmacy/pack";
 import { chargePharmacyToRoom } from "./ipd.service";
 import { createInvoice, type BillLineInput } from "./billing.service";
 import type { AuthUser } from "@/lib/auth/types";
@@ -23,7 +24,15 @@ export interface MedicineDTO {
   courseCritical: boolean;   // antibiotic / TB drug - a partial course is harmful
   inStock: number;              // sum of non-expired batch qty
   expiredQty: number;           // expired stock STILL PHYSICALLY ON THE SHELF - must be pulled
-  mrp: string | null;           // MRP of the batch we'd dispense next (FEFO)
+  /** MRP of the batch we'd dispense next (FEFO), PER PACK as printed. */
+  mrp: string | null;
+  /** THE PRICE A PATIENT PAYS FOR ONE UNIT. mrp / packSize.
+   *  Counters must bill with this - charging the pack price per tablet was a
+   *  15x overcharge on a strip of 15. */
+  unitMrp: string | null;
+  /** Dispensing units in one pack of that batch, and its printed label. */
+  packSize: number;
+  packLabel: string | null;
   nearestExpiry: string | null; // that batch's expiry
   lowStock: boolean;
   // ── Procurement ──────────────────────────────────────────────────────────
@@ -51,7 +60,7 @@ export async function listMedicines(query?: string): Promise<MedicineDTO[]> {
     orderBy: { name: "asc" },
     take: 200,
     select: {
-      id: true, name: true, genericName: true, manufacturer: true, hsnCode: true,
+      id: true, name: true, genericName: true, manufacturer: true, hsnCode: true, defaultPackSize: true,
       gstRatePct: true, unit: true, rackLocation: true, reorderThreshold: true, active: true,
       courseCritical: true, reorderQty: true,
       preferredSupplier: { select: { id: true, name: true } },
@@ -60,7 +69,7 @@ export async function listMedicines(query?: string): Promise<MedicineDTO[]> {
         // pharmacist is told what to physically pull off the shelf.
         where: { quantity: { gt: 0 } },
         orderBy: { expiryDate: "asc" }, // FEFO
-        select: { quantity: true, mrp: true, expiryDate: true },
+        select: { quantity: true, mrp: true, expiryDate: true, packSize: true, pack: true },
       },
       // Stock the distributor already owes us. Without this the shelf reads
       // "low" and the pharmacist orders a second time.
@@ -77,7 +86,8 @@ export async function listMedicines(query?: string): Promise<MedicineDTO[]> {
     rackLocation: string | null; reorderThreshold: number; active: boolean; courseCritical: boolean;
     reorderQty: number | null;
     preferredSupplier: { id: string; name: string } | null;
-    batches: { quantity: number; mrp: { toString(): string }; expiryDate: Date }[];
+    defaultPackSize: number;
+    batches: { quantity: number; mrp: { toString(): string }; expiryDate: Date; packSize: number; pack: string | null }[];
     poItems: { qtyOrdered: number; qtyReceived: number }[];
   };
 
@@ -94,6 +104,9 @@ export async function listMedicines(query?: string): Promise<MedicineDTO[]> {
       inStock,
       expiredQty: expired.reduce((s, b) => s + b.quantity, 0),
       mrp: first ? first.mrp.toString() : null,
+      unitMrp: first ? perUnitPrice(Number(first.mrp.toString()), first.packSize).toFixed(2) : null,
+      packSize: first?.packSize ?? m.defaultPackSize ?? 1,
+      packLabel: first?.pack ?? null,
       nearestExpiry: first ? first.expiryDate.toISOString().slice(0, 10) : null,
       lowStock: inStock <= m.reorderThreshold,
       preferredSupplierId: m.preferredSupplier?.id ?? null,
@@ -104,10 +117,58 @@ export async function listMedicines(query?: string): Promise<MedicineDTO[]> {
   });
 }
 
+/**
+ * The supplier must exist and still be trading. `active:false` covers both a
+ * distributor the hospital has stopped using and the synthetic "Opening stock"
+ * record created when supplier became mandatory - neither may take new stock.
+ */
+async function assertReceivableSupplier(supplierId: string): Promise<{ id: string; name: string }> {
+  const s = await prisma.supplier.findUnique({
+    where: { id: supplierId },
+    select: { id: true, name: true, active: true },
+  });
+  if (!s) throw new ApiError(404, "That supplier doesn't exist");
+  if (!s.active) throw new ApiError(409, `${s.name} is not an active supplier - stock can't be booked against it.`);
+  return { id: s.id, name: s.name };
+}
+
+/**
+ * A batch number is printed on the manufacturer's strip, so the same number on
+ * the same medicine carries the same expiry whoever delivered it. Two different
+ * expiries under one number is a typing error, and letting it through puts two
+ * real expiry dates into FEFO behind a single label.
+ */
+async function assertConsistentExpiry(
+  medicineId: string, batchNo: string, expiry: Date, supplierId: string, medName: string
+): Promise<void> {
+  const elsewhere = await prisma.stockBatch.findFirst({
+    where: { medicineId, batchNo, supplierId: { not: supplierId } },
+    select: { expiryDate: true, supplier: { select: { name: true } } },
+  });
+  if (!elsewhere) return;
+  const a = elsewhere.expiryDate.toISOString().slice(0, 10);
+  const b = expiry.toISOString().slice(0, 10);
+  if (a !== b) {
+    throw new ApiError(
+      400,
+      `Batch ${batchNo} of ${medName} is already on the shelf from ${elsewhere.supplier.name} expiring ${a}, but this one says ${b}. Same batch number, two expiry dates - check the strip.`
+    );
+  }
+}
+
 /** Receive stock (a purchase). Creates/tops-up a batch and writes the ledger. */
 export async function addBatch(
   actor: AuthUser,
-  input: { medicineId: string; batchNo: string; expiryDate: string; quantity: number; mrp: number; purchasePrice?: number; supplierRef?: string },
+  input: {
+    medicineId: string; supplierId: string; batchNo: string; expiryDate: string;
+    /** In PACKS, as bought. Converted to dispensing units below. */
+    quantity: number;
+    /** Printed pack label ("15T"). Sets how many units a pack holds. */
+    pack?: string;
+    /** Explicit override, for when the label can't be read. */
+    packSize?: number;
+    mrp: number; purchasePrice?: number; supplierRef?: string;
+  },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<void> {
   if (input.quantity <= 0) throw new ApiError(400, "Quantity must be at least 1");
@@ -119,20 +180,38 @@ export async function addBatch(
   const med = await prisma.medicine.findUnique({ where: { id: input.medicineId }, select: { id: true, name: true } });
   if (!med) throw new ApiError(404, "Medicine not found");
 
+  const supplier = await assertReceivableSupplier(input.supplierId);
+  await assertConsistentExpiry(input.medicineId, input.batchNo.trim(), expiry, input.supplierId, med.name);
+
+  // Packs in, units on the shelf. See lib/pharmacy/pack.
+  const packSize = Math.max(1, Math.floor(input.packSize ?? parsePack(input.pack).size));
+  const units = packsToUnits(input.quantity, packSize);
+
   await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    // A batch number is unique per medicine - receiving the same batch again tops it up.
+    // Batch identity is medicine + batch number + SUPPLIER. The same batch from
+    // this same distributor tops up; the same batch from a different one is a
+    // separate consignment and gets its own row.
     const batch = await tx.stockBatch.upsert({
-      where: { medicineId_batchNo: { medicineId: input.medicineId, batchNo: input.batchNo.trim() } },
+      where: {
+        medicineId_batchNo_supplierId: {
+          medicineId: input.medicineId, batchNo: input.batchNo.trim(), supplierId: input.supplierId,
+        },
+      },
       update: {
-        quantity: { increment: input.quantity },
+        quantity: { increment: units },
+        packSize,
         mrp: input.mrp.toFixed(2),
+        ...(input.pack?.trim() ? { pack: input.pack.trim() } : {}),
         ...(input.purchasePrice !== undefined ? { purchasePrice: input.purchasePrice.toFixed(2) } : {}),
       },
       create: {
         medicineId: input.medicineId,
+        supplierId: input.supplierId,
         batchNo: input.batchNo.trim(),
         expiryDate: expiry,
-        quantity: input.quantity,
+        quantity: units,
+        packSize,
+        pack: input.pack?.trim() || null,
         mrp: input.mrp.toFixed(2),
         purchasePrice: input.purchasePrice !== undefined ? input.purchasePrice.toFixed(2) : null,
       },
@@ -141,7 +220,7 @@ export async function addBatch(
 
     await tx.stockTransaction.create({
       data: {
-        batchId: batch.id, type: "PURCHASE", qty: input.quantity,
+        batchId: batch.id, type: "PURCHASE", qty: units,
         refId: input.supplierRef?.trim() || null,
         reason: "Stock received", performedById: actor.id,
       },
@@ -160,7 +239,11 @@ export interface BulkBatchRow {
   gstRatePct?: number;
   batchNo: string;
   expiryDate: string;
+  /// In PACKS, as invoiced. Multiplied by packSize to reach the shelf.
   quantity: number;
+  /// Printed pack label ("15T"); packSize overrides it when known explicitly.
+  pack?: string;
+  packSize?: number;
   mrp: number;
   purchasePrice?: number;
   supplierRef?: string;
@@ -176,9 +259,15 @@ export interface BulkBatchResult { row: number; medicine: string; batchNo: strin
  */
 export async function bulkAddBatches(
   actor: AuthUser,
-  rows: BulkBatchRow[],
+  input: { supplierId: string; invoiceNo?: string; invoiceDate?: string; rows: BulkBatchRow[] },
   ctx: { ipAddress?: string; userAgent?: string }
-): Promise<{ created: number; createdMedicines: number; results: BulkBatchResult[] }> {
+): Promise<{ created: number; createdMedicines: number; supplierName: string; results: BulkBatchResult[] }> {
+  // One invoice, one supplier. Checked once up front rather than per row, so a
+  // bad supplier fails the whole import instead of half-importing it.
+  const supplier = await assertReceivableSupplier(input.supplierId);
+  const rows = input.rows;
+  const invoiceNo = input.invoiceNo?.trim() || null;
+
   const meds = await prisma.medicine.findMany({ where: { active: true }, select: { id: true, name: true, genericName: true } });
   const byName = new Map<string, { id: string; name: string }>();
   for (const m of meds) {
@@ -228,34 +317,57 @@ export async function bulkAddBatches(
         }
       }
 
-      const qty = Math.floor(r.quantity);
-      if (!(qty > 0)) throw new Error("Quantity must be at least 1");
+      // Rows are counted in PACKS, like the invoice they were keyed from.
+      const packs = Math.floor(r.quantity);
+      if (!(packs > 0)) throw new Error("Quantity must be at least 1");
+      const packSize = Math.max(1, Math.floor(r.packSize ?? parsePack(r.pack).size));
+      const qty = packsToUnits(packs, packSize);
       const expiry = new Date(r.expiryDate);
       if (Number.isNaN(expiry.getTime())) throw new Error("Invalid expiry date");
       if (expiry < today) throw new Error("Batch has already expired");
 
+      await assertConsistentExpiry(medId!, r.batchNo.trim(), expiry, input.supplierId, medName);
+
       await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        // Same batch from THIS supplier tops up; the same batch number from a
+        // different distributor is a separate consignment with its own row.
         const batch = await tx.stockBatch.upsert({
-          where: { medicineId_batchNo: { medicineId: medId!, batchNo: r.batchNo.trim() } },
+          where: {
+            medicineId_batchNo_supplierId: { medicineId: medId!, batchNo: r.batchNo.trim(), supplierId: input.supplierId },
+          },
           update: {
             quantity: { increment: qty },
+            packSize,
             mrp: r.mrp.toFixed(2),
+            ...(r.pack?.trim() ? { pack: r.pack.trim() } : {}),
             ...(r.purchasePrice !== undefined ? { purchasePrice: r.purchasePrice.toFixed(2) } : {}),
           },
           create: {
             medicineId: medId!,
+            supplierId: input.supplierId,
             batchNo: r.batchNo.trim(),
             expiryDate: expiry,
             quantity: qty,
+            packSize,
+            pack: r.pack?.trim() || null,
             mrp: r.mrp.toFixed(2),
             purchasePrice: r.purchasePrice !== undefined ? r.purchasePrice.toFixed(2) : null,
           },
           select: { id: true },
         });
         await tx.stockTransaction.create({
-          data: { batchId: batch.id, type: "PURCHASE", qty, refId: r.supplierRef?.trim() || null, reason: "Bulk import", performedById: actor.id },
+          data: {
+            batchId: batch.id, type: "PURCHASE", qty,
+            // The invoice is the document this stock arrived on - it belongs on
+            // the ledger row, not just in someone's memory of the import.
+            refId: invoiceNo ?? r.supplierRef?.trim() ?? null,
+            reason: invoiceNo
+              ? `Received from ${supplier.name} · invoice ${invoiceNo}`
+              : `Received from ${supplier.name}`,
+            performedById: actor.id,
+          },
         });
-        await logAudit(actor, { action: "STOCK_RECEIVED", targetTable: "StockBatch", targetId: batch.id, meta: { medicine: medName, qty, batchNo: r.batchNo, source: "bulk" }, ...ctx }, tx);
+        await logAudit(actor, { action: "STOCK_RECEIVED", targetTable: "StockBatch", targetId: batch.id, meta: { medicine: medName, qty, batchNo: r.batchNo, supplier: supplier.name, invoiceNo, source: "invoice-import" }, ...ctx }, tx);
       });
 
       created++;
@@ -265,7 +377,7 @@ export async function bulkAddBatches(
     }
   }
 
-  return { created, createdMedicines, results };
+  return { created, createdMedicines, supplierName: supplier.name, results };
 }
 
 /** Manual stock correction (damage, count mismatch, expiry write-off). */
@@ -299,22 +411,34 @@ async function pickBatchesFEFO(
   tx: Prisma.TransactionClient,
   medicineId: string,
   qtyNeeded: number
-): Promise<{ batchId: string; batchNo: string; qty: number; mrp: number }[]> {
+): Promise<{ batchId: string; batchNo: string; qty: number; mrp: number; packSize: number; packMrp: number }[]> {
   const today = new Date(); today.setHours(0, 0, 0, 0);
 
   const batches = await tx.stockBatch.findMany({
     where: { medicineId, quantity: { gt: 0 }, expiryDate: { gte: today } },
     orderBy: { expiryDate: "asc" }, // soonest expiry first
-    select: { id: true, batchNo: true, quantity: true, mrp: true },
+    select: { id: true, batchNo: true, quantity: true, mrp: true, packSize: true },
   });
 
-  const picks: { batchId: string; batchNo: string; qty: number; mrp: number }[] = [];
+  const picks: { batchId: string; batchNo: string; qty: number; mrp: number; packSize: number; packMrp: number }[] = [];
   let remaining = qtyNeeded;
 
-  for (const b of batches as { id: string; batchNo: string; quantity: number; mrp: { toString(): string } }[]) {
+  type B = { id: string; batchNo: string; quantity: number; mrp: { toString(): string }; packSize: number };
+  for (const b of batches as B[]) {
     if (remaining <= 0) break;
+    // quantity is in dispensing units, so this take is in units too.
     const take = Math.min(remaining, b.quantity);
-    picks.push({ batchId: b.id, batchNo: b.batchNo, qty: take, mrp: Number(b.mrp.toString()) });
+    const packMrp = Number(b.mrp.toString());
+    picks.push({
+      batchId: b.id,
+      batchNo: b.batchNo,
+      qty: take,
+      // THE PRICE A PATIENT ACTUALLY PAYS. mrp is printed PER PACK; billing it
+      // per tablet charged Rs 18.59 for one paracetamol out of a Rs 18.59 strip.
+      mrp: perUnitPrice(packMrp, b.packSize),
+      packSize: b.packSize,
+      packMrp,
+    });
     remaining -= take;
   }
 
@@ -371,7 +495,9 @@ export async function dispense(
         });
         // one bill line per batch, so the invoice shows the exact batch
         built.push({
-          description: `${med.name} (${med.unit}) · Batch ${p.batchNo}`,
+          description: p.packSize > 1
+            ? `${med.name} · ${p.qty} ${med.unit}${p.qty === 1 ? "" : "s"} @ ₹${p.mrp} (pack of ${p.packSize} · MRP ₹${p.packMrp}) · Batch ${p.batchNo}`
+            : `${med.name} (${med.unit}) · Batch ${p.batchNo}`,
           qty: p.qty,
           unitPrice: p.mrp, // Indian pharmacies bill at printed MRP
           gstRatePct: Number(med.gstRatePct.toString()),
@@ -487,6 +613,10 @@ export async function medicineBatches(medicineId: string) {
     orderBy: { expiryDate: "asc" },
     select: {
       id: true, batchNo: true, expiryDate: true, quantity: true, mrp: true, purchasePrice: true,
+      // The distributor's own columns, so the shelf reads like the bill it
+      // arrived on rather than a re-interpretation of it.
+      pack: true, packSize: true, freeQty: true, oMrp: true,
+      medicine: { select: { hsnCode: true, gstRatePct: true } },
       supplier: { select: { id: true, name: true } },
       // The receipt this batch arrived on - the answer to "where did this come
       // from?" when a recall notice names a batch number.
@@ -501,6 +631,8 @@ export async function medicineBatches(medicineId: string) {
   type BatchRow = {
     id: string; batchNo: string; expiryDate: Date; quantity: number;
     mrp: { toString(): string }; purchasePrice: { toString(): string } | null;
+    pack: string | null; packSize: number; freeQty: number; oMrp: string | null;
+    medicine: { hsnCode: string | null; gstRatePct: { toString(): string } };
     supplier: { id: string; name: string } | null;
     grnItems: { goodsReceipt: { id: string; grnNumber: string; invoiceNo: string | null; createdAt: Date } }[];
   };
@@ -513,6 +645,17 @@ export async function medicineBatches(medicineId: string) {
       id: b.id, batchNo: b.batchNo,
       expiryDate: b.expiryDate.toISOString().slice(0, 10),
       quantity: b.quantity,
+      pack: b.pack,
+      packSize: b.packSize,
+      /// Whole packs still unopened, and what a per-unit sale actually costs.
+      packsOnHand: Math.floor(b.quantity / Math.max(1, b.packSize)),
+      looseUnits: b.quantity % Math.max(1, b.packSize),
+      unitMrp: perUnitPrice(mrp, b.packSize).toFixed(2),
+      unitRate: rate != null ? perUnitPrice(rate, b.packSize).toFixed(2) : null,
+      freeQty: b.freeQty,
+      oMrp: b.oMrp,
+      hsn: b.medicine.hsnCode,
+      gstRatePct: b.medicine.gstRatePct.toString(),
       mrp: b.mrp.toString(),
       rate: rate != null ? rate.toFixed(2) : null,
       margin: margin != null ? margin.toFixed(2) : null,

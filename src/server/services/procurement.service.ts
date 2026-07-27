@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
 import { nextId } from "@/lib/ids";
+import { parsePack, packsToUnits } from "@/lib/pharmacy/pack";
 import { logAudit } from "./audit.service";
 import {
   effectiveUnitCost, invoiceVariance, lineValue, orderTotals, round2, suggestedOrderQty,
@@ -189,11 +190,20 @@ export async function supplierDetail(id: string) {
 
 export interface ReorderLine {
   medicineId: string; name: string; unit: string;
-  inStock: number; reorderThreshold: number; reorderQty: number | null;
+  /** ON HAND, in dispensing units (tablets, ml) - what the shelf holds. */
+  inStock: number;
+  /** Dispensing units per pack, from the last delivery. Orders are in packs. */
+  packSize: number;
+  /** The pack label that packSize came from ("15T"), for the screen. */
+  packLabel: string | null;
+  reorderThreshold: number; reorderQty: number | null;
   /** Already ordered and not yet delivered - the reason not to order twice. */
   onOrder: number;
+  /** HOW MUCH TO ORDER, in PACKS - the unit a distributor actually sells in. */
   suggestedQty: number;
-  /** Last rate we actually paid, so the draft PO isn't priced from thin air. */
+  /** What those packs come to in dispensing units, so the shortfall is legible. */
+  suggestedUnits: number;
+  /** Last rate we actually paid PER PACK, so the draft PO isn't priced from air. */
   lastUnitCost: string | null;
   gstRatePct: string;
   supplierId: string | null;
@@ -220,11 +230,13 @@ export async function reorderSuggestions(): Promise<{
   const meds = await prisma.medicine.findMany({
     where: { active: true },
     select: {
-      id: true, name: true, unit: true, reorderThreshold: true, reorderQty: true, gstRatePct: true,
+      id: true, name: true, unit: true, defaultPackSize: true, reorderThreshold: true, reorderQty: true, gstRatePct: true,
       preferredSupplier: { select: { id: true, name: true } },
       batches: {
         where: { quantity: { gt: 0 }, expiryDate: { gte: today } },
-        select: { quantity: true },
+        // packSize comes along so a shortfall in units can be rounded into
+        // whole packs - a distributor sells strips, not loose tablets.
+        select: { quantity: true, packSize: true, pack: true },
       },
       // Most recent rate actually paid - the honest starting price for a new order.
       grnItems: {
@@ -247,16 +259,28 @@ export async function reorderSuggestions(): Promise<{
     const onOrder = m.poItems.reduce((s, p) => s + Math.max(0, p.qtyOrdered - p.qtyReceived), 0);
     if (inStock > m.reorderThreshold) continue;
 
-    const suggested = suggestedOrderQty({
+    // The shortfall is computed in UNITS - that is what the shelf and the
+    // threshold are both counted in.
+    const shortfallUnits = suggestedOrderQty({
       inStock, reorderThreshold: m.reorderThreshold, reorderQty: m.reorderQty, onOrder,
     });
     // Fully covered by stock already on its way - nothing to decide.
-    if (suggested <= 0) continue;
+    if (shortfallUnits <= 0) continue;
+
+    // Then rounded UP into whole packs, because that is the only thing a
+    // distributor will sell. Ordering 40 tablets of a 15-strip means 3 strips.
+    // Prefer what is physically on the shelf; fall back to the product's own
+    // default, which receiveGoods keeps current. Out of stock is exactly when
+    // this matters most, and that is when `batches` is empty.
+    const onShelf = m.batches.find((b) => b.packSize > 1);
+    const packSize = Math.max(1, onShelf?.packSize ?? m.defaultPackSize ?? 1);
+    const suggested = Math.max(1, Math.ceil(shortfallUnits / packSize));
 
     lines.push({
       medicineId: m.id, name: m.name, unit: m.unit,
-      inStock, reorderThreshold: m.reorderThreshold, reorderQty: m.reorderQty,
-      onOrder, suggestedQty: suggested,
+      inStock, packSize, packLabel: onShelf?.pack ?? null,
+      reorderThreshold: m.reorderThreshold, reorderQty: m.reorderQty,
+      onOrder, suggestedQty: suggested, suggestedUnits: suggested * packSize,
       lastUnitCost: m.grnItems[0] ? m.grnItems[0].unitCost.toString() : null,
       gstRatePct: m.gstRatePct.toString(),
       supplierId: m.preferredSupplier?.id ?? null,
@@ -638,7 +662,14 @@ export async function purchaseOrderDetail(id: string) {
 // ===========================================================================
 
 export interface GrnLineInput {
-  medicineId: string;
+  /** Empty when this line is for a product not yet in the catalogue - see
+   *  `newMedicineName` below. One of the two must be present. */
+  medicineId?: string;
+  /** Book in something the catalogue has never seen. A distributor's delivery
+   *  routinely contains a product nobody has stocked before, and forcing the
+   *  pharmacist to leave the receipt, create it, and start again is how a
+   *  delivery ends up half-entered. */
+  newMedicineName?: string;
   purchaseOrderItemId?: string;
   batchNo: string;
   expiryDate: string;
@@ -646,6 +677,15 @@ export interface GrnLineInput {
   freeQty?: number;
   unitCost: number;
   mrp: number;
+  /** As printed on the distributor's bill. All optional - a hand-written
+   *  delivery note carries none of them, and stock must still reach the shelf. */
+  pack?: string;
+  /** Dispensing units per pack. Overrides whatever `pack` parses to, for the
+   *  cases where the label is unreadable and the pharmacist knows the answer. */
+  packSize?: number;
+  oMrp?: string;
+  hsn?: string;
+  gstRatePct?: number;
 }
 
 /**
@@ -678,7 +718,12 @@ export async function receiveGoods(
     items: GrnLineInput[];
   },
   ctx: { ipAddress?: string; userAgent?: string }
-): Promise<{ id: string; grnNumber: string; receivedValue: string; variance: number | null; mismatch: boolean }> {
+): Promise<{
+  id: string; grnNumber: string; receivedValue: string;
+  variance: number | null; mismatch: boolean;
+  /** Products this delivery added to the catalogue, so the desk is told. */
+  createdMedicines: { id: string; name: string }[];
+}> {
   if (!input.items.length) throw new ApiError(400, "Nothing to receive - add at least one line");
 
   const supplier = await prisma.supplier.findUnique({ where: { id: input.supplierId }, select: { id: true, name: true, active: true } });
@@ -717,6 +762,7 @@ export async function receiveGoods(
   const result = await prisma.$transaction(async (tx) => {
     const grnNumber = await nextId("GRN", { tx });
     let receivedValue = 0;
+    const createdMedicines: { id: string; name: string }[] = [];
 
     const grn = await tx.goodsReceipt.create({
       data: {
@@ -733,23 +779,106 @@ export async function receiveGoods(
     });
 
     for (const it of input.items) {
-      const med = await tx.medicine.findUnique({ where: { id: it.medicineId }, select: { id: true, name: true } });
-      if (!med) throw new ApiError(404, "Medicine not found");
+      const medSelect = { id: true, name: true, hsnCode: true, gstRatePct: true, defaultPackSize: true } as const;
+
+      let med = it.medicineId
+        ? await tx.medicine.findUnique({ where: { id: it.medicineId }, select: medSelect })
+        : null;
+
+      // A product the catalogue has never seen. Created here rather than sent
+      // away to a separate screen - but matched by name first, because two
+      // spellings of the same drug on two shelves is a dispensing hazard, not
+      // a tidiness problem.
+      if (!med && it.newMedicineName?.trim()) {
+        const name = it.newMedicineName.trim().replace(/\s+/g, " ");
+        med = await tx.medicine.findFirst({ where: { name: { equals: name, mode: "insensitive" } }, select: medSelect });
+        if (!med) {
+          med = await tx.medicine.create({
+            data: {
+              name,
+              // Seeded from the invoice where it said so; the pharmacist can
+              // correct any of it afterwards from the stock screen.
+              hsnCode: it.hsn?.trim() || null,
+              ...(it.gstRatePct !== undefined ? { gstRatePct: it.gstRatePct.toFixed(2) } : {}),
+              unit: parsePack(it.pack).unit,
+            },
+            select: medSelect,
+          });
+          createdMedicines.push({ id: med.id, name: med.name });
+          await logAudit(actor, {
+            action: "MEDICINE_CREATED", targetTable: "Medicine", targetId: med.id,
+            meta: { name: med.name, source: "goods-receipt", grn: grnNumber }, ...ctx,
+          }, tx);
+        }
+      }
+      if (!med) throw new ApiError(404, "Medicine not found - pick one, or give a name for a new product");
+
+      // Units per pack for THIS line. An explicit value wins; otherwise it is
+      // read off the printed pack label, and an unreadable label falls back to
+      // 1 (loose units) rather than guessing - a wrong multiplier would inflate
+      // the whole shelf invisibly.
+      const packSize = Math.max(1, Math.floor(it.packSize ?? parsePack(it.pack).size));
+
+      // HSN and GST% belong to the PRODUCT, not the consignment, so they go on
+      // the medicine - but only to fill a blank. The catalogue is the hospital's
+      // own tax position; a distributor's bill may differ, and letting each
+      // delivery rewrite it would make the rate flap with whoever supplied last.
+      //
+      // The pack size is different: it is remembered on the product because
+      // reorder needs it when the shelf is EMPTY - which is exactly when there
+      // is no batch left to read it from, and exactly when reordering matters.
+      const learnPack = packSize > 1 && packSize !== med.defaultPackSize;
+
+      if (learnPack || (it.hsn?.trim() && !med.hsnCode) || (it.gstRatePct !== undefined && Number(med.gstRatePct) === 0)) {
+        await tx.medicine.update({
+          where: { id: med.id },
+          data: {
+            ...(learnPack ? { defaultPackSize: packSize } : {}),
+            ...(it.hsn?.trim() && !med.hsnCode ? { hsnCode: it.hsn.trim() } : {}),
+            ...(it.gstRatePct !== undefined && Number(med.gstRatePct) === 0 ? { gstRatePct: it.gstRatePct.toFixed(2) } : {}),
+          },
+        });
+      }
 
       const batchNo = it.batchNo.trim();
       const expiry = asDate(it.expiryDate);
-      const free = Math.max(0, Math.floor(it.freeQty ?? 0));
-      const qty = Math.floor(it.qty);
-      const units = qty + free; // free goods are still physical stock
+      // The invoice counts PACKS. The shelf counts UNITS.
+      // "PACK 15T · QTY 3" is 45 tablets, not 3. (packSize resolved above.)
+      const packsBought = Math.floor(it.qty);
+      const packsFree = Math.max(0, Math.floor(it.freeQty ?? 0));
+      const qty = packsBought;                       // packs, for costing
+      const free = packsFree;                        // packs, for costing
+      const units = packsToUnits(packsBought + packsFree, packSize);
+      const freeUnits = packsToUnits(packsFree, packSize);
 
       // Landed cost per unit, free goods folded in. This is what makes the
       // pharmacy's profit figures honest - see procurement-math.
       const landed = effectiveUnitCost(qty, free, it.unitCost);
 
+      // A batch is identified by medicine + batch number + SUPPLIER. The same
+      // manufacturer batch bought from two distributors is two consignments,
+      // and they stay two rows: one recall, one return and one landed cost each.
       const existing = await tx.stockBatch.findUnique({
-        where: { medicineId_batchNo: { medicineId: med.id, batchNo } },
+        where: {
+          medicineId_batchNo_supplierId: { medicineId: med.id, batchNo, supplierId: input.supplierId },
+        },
         select: { id: true, expiryDate: true },
       });
+
+      // Batch numbers come off the manufacturer's strip, so the same number on
+      // the same medicine must carry the same expiry no matter who delivered
+      // it. A mismatch is a typing error, and letting it through would put two
+      // different expiries into FEFO under one number.
+      const elsewhere = await tx.stockBatch.findFirst({
+        where: { medicineId: med.id, batchNo, supplierId: { not: input.supplierId } },
+        select: { expiryDate: true, supplier: { select: { name: true } } },
+      });
+      if (elsewhere && iso(elsewhere.expiryDate) !== iso(expiry)) {
+        throw new ApiError(
+          400,
+          `Batch ${batchNo} of ${med.name} is already on the shelf from ${elsewhere.supplier.name} expiring ${iso(elsewhere.expiryDate)}, but this delivery says ${iso(expiry)}. Same batch number, two expiry dates - check the strip before receiving.`
+        );
+      }
 
       let batchId: string;
       if (existing) {
@@ -759,13 +888,21 @@ export async function receiveGoods(
             `Batch ${batchNo} of ${med.name} is already on the shelf expiring ${iso(existing.expiryDate)}, but this delivery says ${iso(expiry)}. Check the strip before receiving - merging them would break expiry-first dispensing.`
           );
         }
+        // Same supplier, same batch, second delivery: genuinely the same
+        // consignment continuing, so quantity and the latest landed cost merge.
         await tx.stockBatch.update({
           where: { id: existing.id },
           data: {
             quantity: { increment: units },
             mrp: dec(it.mrp),
             purchasePrice: dec(landed),
-            supplierId: input.supplierId,
+            freeQty: { increment: freeUnits },
+            packSize,
+            // Only overwrite a label when this delivery actually carried one -
+            // a blank column on today's bill shouldn't erase what the last one
+            // told us about the same consignment.
+            ...(it.pack?.trim() ? { pack: it.pack.trim() } : {}),
+            ...(it.oMrp?.trim() ? { oMrp: it.oMrp.trim() } : {}),
           },
         });
         batchId = existing.id;
@@ -779,6 +916,10 @@ export async function receiveGoods(
             mrp: dec(it.mrp),
             purchasePrice: dec(landed),
             supplierId: input.supplierId,
+            freeQty: freeUnits,
+            packSize,
+            pack: it.pack?.trim() || null,
+            oMrp: it.oMrp?.trim() || null,
           },
           select: { id: true },
         });
@@ -810,7 +951,13 @@ export async function receiveGoods(
         // it's received, just not matched to a line.
         if (poItem && poItem.purchaseOrderId === po.id) {
           poItemId = poItem.id;
-          await tx.purchaseOrderItem.update({ where: { id: poItem.id }, data: { qtyReceived: { increment: units } } });
+          // PACKS, not units. A PO is placed in packs ("order 3 strips"), so
+          // crediting it with 45 tablets would mark a 3-pack order as
+          // fifteen-fold over-delivered the moment it arrived.
+          await tx.purchaseOrderItem.update({
+            where: { id: poItem.id },
+            data: { qtyReceived: { increment: packsBought + packsFree } },
+          });
         }
       }
 
@@ -849,7 +996,7 @@ export async function receiveGoods(
       });
     }
 
-    return { id: grn.id, grnNumber: grn.grnNumber, receivedValue };
+    return { id: grn.id, grnNumber: grn.grnNumber, receivedValue, createdMedicines };
   });
 
   const v = invoiceVariance(input.invoiceAmount, result.receivedValue);
@@ -870,6 +1017,7 @@ export async function receiveGoods(
     receivedValue: dec(result.receivedValue),
     variance: v?.variance ?? null,
     mismatch: v?.mismatch ?? false,
+    createdMedicines: result.createdMedicines,
   };
 }
 

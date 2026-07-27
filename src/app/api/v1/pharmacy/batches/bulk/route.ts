@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
  */
 export const POST = handler(async (req) => {
   const actor = await requireRole(req, "PHARMACIST", "ADMIN");
-  const { rows } = await parseBody(req, bulkAddBatchesSchema);
-  const result = await bulkAddBatches(actor, rows, auditContext(req));
+  const input = await parseBody(req, bulkAddBatchesSchema);
+  const result = await bulkAddBatches(actor, input, auditContext(req));
   return NextResponse.json(result, { status: 201 });
 });

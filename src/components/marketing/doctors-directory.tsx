@@ -9,6 +9,7 @@ import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
 import { OpdBand } from "@/components/marketing/opd-band";
 import { CountUp, Reveal } from "@/components/ui/reveal";
 import { DEPARTMENTS } from "@/lib/data";
+import { searchDoctors } from "@/lib/doctor-search";
 
 /**
  * The directory, in the bento language.
@@ -30,16 +31,11 @@ export function DoctorsDirectory({ doctors }: { doctors: Doctor[] }) {
   );
   const [query, setQuery] = useState(params.get("q") ?? "");
 
+  // Same matcher the header typeahead uses. When these drifted apart, the
+  // header could suggest a consultant that this page then refused to show.
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return doctors.filter((d) => {
-      const inDept = dept === "All" || d.department === dept;
-      if (!q) return inDept;
-      return inDept && (
-        d.name.toLowerCase().includes(q) ||
-        d.specialization.toLowerCase().includes(q)
-      );
-    });
+    const inDept = dept === "All" ? doctors : doctors.filter((d) => d.department === dept);
+    return searchDoctors(inDept, query).map((m) => m.doctor);
   }, [doctors, dept, query]);
 
   return (
@@ -80,7 +76,7 @@ export function DoctorsDirectory({ doctors }: { doctors: Doctor[] }) {
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search by name or speciality…"
+                  placeholder="Search by name, speciality or what you need treated…"
                   aria-label="Search doctors"
                   className="w-full rounded-full border border-[var(--line-strong)] bg-white py-3 pl-11 pr-4 text-[14px] outline-none transition-colors focus:border-[var(--teal)]"
                 />
