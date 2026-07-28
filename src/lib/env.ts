@@ -12,10 +12,19 @@ const schema = z.object({
   CLOUDINARY_CLOUD_NAME: z.string().optional(),
   CLOUDINARY_API_KEY: z.string().optional(),
   CLOUDINARY_API_SECRET: z.string().optional(),
-  // SMS OTP delivery (2Factor.in). Optional - absence => dev console log,
-  // or a hard failure in production. See lib/sms.ts. Same key works for
-  // both the free-trial wallet and a recharged/paid one.
+  // SMS delivery. Optional - absence => dev console log, or a hard failure in
+  // production. See lib/sms.ts for how one is chosen.
+  //
+  // Fast2SMS is the primary provider; 2Factor is kept as a fallback so adding
+  // the new key is the whole migration. SMS_PROVIDER forces one when both keys
+  // are present.
+  FAST2SMS_API_KEY: z.string().optional(),
   TWO_FACTOR_API_KEY: z.string().optional(),
+  SMS_PROVIDER: z.enum(["fast2sms", "2factor"]).optional(),
+  /** DLT-approved template id, required only for the appointment confirmation. */
+  SMS_APPOINTMENT_TEMPLATE: z.string().optional(),
+  /** DLT-approved 6-character sender header, e.g. JEEVAH. */
+  SMS_SENDER_ID: z.string().optional(),
 });
 
 /**

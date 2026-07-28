@@ -371,7 +371,7 @@ export function RxTable({ items, blankRows = 0, note }: {
       <table className="w-full border-collapse text-[12px]">
         <thead>
           <tr className="text-left text-[9.5px] uppercase tracking-wide" style={{ color: "var(--pr-primary)" }}>
-            <th className="w-[66px] text-[48px] border-y-2 py-1.5 pr-1 font-bold" style={{ borderColor: "var(--pr-primary)" }}>℞</th>
+            <th className="w-[66px] text-[38px] border-y-2 py-1.5 pr-1 font-bold" style={{ borderColor: "var(--pr-primary)" }}>℞</th>
             <th className="border-y-2 py-1.5 pr-2 font-bold" style={{ borderColor: "var(--pr-primary)" }}>Medicine</th>
             <th className="w-[86px] border-y-2 py-1.5 pr-2 font-bold" style={{ borderColor: "var(--pr-primary)" }}>Dosage<br /><span className="font-medium normal-case text-[#57655f]">ఉ – మ – రా</span></th>
             <th className="w-[190px] border-y-2 py-1.5 font-bold" style={{ borderColor: "var(--pr-primary)" }}>Timing & duration<br /><span className="font-medium normal-case text-[#57655f]">భోజనం ముందు / తర్వాత</span></th>
