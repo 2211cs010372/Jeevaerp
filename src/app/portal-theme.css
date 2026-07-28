@@ -178,11 +178,20 @@
    a layered shadow (contact + hover glow), a lift on hover and a quick
    settle on press. Semibold, 6px radius. Every portal shares the shape;
    only the accent (var(--p-blue)) changes. Applies to .btn-primary and the
-   inline accent buttons. */
+   inline accent buttons.
+
+   The match is by CLASS SUBSTRING, which is a heuristic: "a button painted the
+   accent colour is a primary button". That is true of every real button and
+   false of a switch, whose track is also painted the accent colour when it is
+   on. Without the :not(), a toggle silently inherited this whole skin the
+   moment it was switched on - 6px radius beating its own rounded-full (the
+   attribute selector outranks a utility class), plus a gradient and a border
+   it never asked for. So it rendered as a pill when off and a rectangle when
+   on. Anything with role="switch" is exempt. */
     
     .portal .btn-primary,
-    .portal button[class*="bg-[var(--p-teal)]"],
-    .portal button[class*="bg-[var(--p-blue)]"] {
+    .portal button[class*="bg-[var(--p-teal)]"]:not([role="switch"]),
+    .portal button[class*="bg-[var(--p-blue)]"]:not([role="switch"]) {
         border-radius: 6px;
         background-color: var(--p-blue);
         background-image: linear-gradient(180deg, color-mix(in oklab, var(--p-blue), #fff 14%), var(--p-blue) 60%);
@@ -195,8 +204,8 @@
     }
     
     .portal .btn-primary:hover:not(:disabled),
-    .portal button[class*="bg-[var(--p-teal)]"]:hover:not(:disabled),
-    .portal button[class*="bg-[var(--p-blue)]"]:hover:not(:disabled) {
+    .portal button[class*="bg-[var(--p-teal)]"]:not([role="switch"]):hover:not(:disabled),
+    .portal button[class*="bg-[var(--p-blue)]"]:not([role="switch"]):hover:not(:disabled) {
         background-color: var(--p-blue-deep);
         background-image: linear-gradient(180deg, color-mix(in oklab, var(--p-blue-deep), #fff 14%), var(--p-blue-deep) 60%);
         border-color: color-mix(in oklab, var(--p-blue-deep), #000 16%);
@@ -206,16 +215,16 @@
     }
     
     .portal .btn-primary:active:not(:disabled),
-    .portal button[class*="bg-[var(--p-teal)]"]:active:not(:disabled),
-    .portal button[class*="bg-[var(--p-blue)]"]:active:not(:disabled) {
+    .portal button[class*="bg-[var(--p-teal)]"]:not([role="switch"]):active:not(:disabled),
+    .portal button[class*="bg-[var(--p-blue)]"]:not([role="switch"]):active:not(:disabled) {
         transform: translateY(0.5px);
         box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.18), 0 0 10px -4px var(--p-blue-glow);
         transition-duration: 0.08s;
     }
     
     .portal .btn-primary:disabled,
-    .portal button[class*="bg-[var(--p-teal)]"]:disabled,
-    .portal button[class*="bg-[var(--p-blue)]"]:disabled {
+    .portal button[class*="bg-[var(--p-teal)]"]:not([role="switch"]):disabled,
+    .portal button[class*="bg-[var(--p-blue)]"]:not([role="switch"]):disabled {
         background-color: color-mix(in oklab, var(--p-blue), var(--p-muted) 55%);
         background-image: none;
         border-color: var(--p-border-strong);
@@ -226,8 +235,8 @@
     }
     
     .portal .btn-primary:focus-visible,
-    .portal button[class*="bg-[var(--p-teal)]"]:focus-visible,
-    .portal button[class*="bg-[var(--p-blue)]"]:focus-visible {
+    .portal button[class*="bg-[var(--p-teal)]"]:not([role="switch"]):focus-visible,
+    .portal button[class*="bg-[var(--p-blue)]"]:not([role="switch"]):focus-visible {
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 0 0 4px var(--p-blue-soft);
     }
     /* ============================ INPUTS ===================================== */

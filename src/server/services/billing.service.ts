@@ -69,6 +69,14 @@ export interface InvoiceDTO {
     legalName: string; addressLine: string; city: string; state: string;
     stateCode: string; pincode: string; gstin: string | null; phone: string | null;
   } | null;
+  /** The registered buyer, when this bill is B2B rather than to the patient. */
+  buyer: { gstin: string; legalName: string; address: string | null; stateCode: string | null } | null;
+  /**
+   * The government's registration of this bill, when it has one. Present only
+   * on a live IRN - a failed or cancelled one prints nothing, because a QR on a
+   * bill is a claim that the supply is registered.
+   */
+  eInvoice: { irn: string; ackNo: string | null; ackDt: string | null; signedQrCode: string | null } | null;
 }
 
 /**
@@ -285,10 +293,14 @@ export async function getInvoice(invoiceId: string): Promise<InvoiceDTO> {
       id: true, receiptNo: true, source: true, status: true, createdAt: true,
       subtotal: true, discountAmount: true, taxableAmount: true,
       cgstAmount: true, sgstAmount: true, totalAmount: true,
+      buyerGstin: true, buyerLegalName: true, buyerAddress: true, buyerStateCode: true,
       patient: { select: { displayId: true, fullName: true, phone: true, address: true, age: true, gender: true } },
       items: { select: { description: true, hsnSac: true, qty: true, unitPrice: true, amount: true, gstRatePct: true } },
       payments: { select: { mode: true, amount: true, reference: true, createdAt: true }, orderBy: { createdAt: "asc" } },
       refunds: { select: { mode: true, amount: true, reason: true, createdAt: true }, orderBy: { createdAt: "asc" } },
+      // signedInvoice is deliberately NOT selected - it is a large JWT nobody
+      // prints, and this query runs on every bill view.
+      eInvoice: { select: { status: true, irn: true, ackNo: true, ackDt: true, signedQrCode: true } },
     },
   });
   if (!inv) throw new ApiError(404, "Invoice not found");
@@ -340,6 +352,26 @@ export async function getInvoice(invoiceId: string): Promise<InvoiceDTO> {
           gstin: config.gstin, phone: config.phone,
         }
       : null,
+    buyer: inv.buyerGstin
+      ? {
+          gstin: inv.buyerGstin,
+          legalName: inv.buyerLegalName ?? "",
+          address: inv.buyerAddress,
+          stateCode: inv.buyerStateCode,
+        }
+      : null,
+    // Only a LIVE registration prints. A cancelled IRN must not carry a QR: the
+    // QR is what a tax officer scans to confirm the supply was registered, and
+    // showing one for a cancelled invoice would assert something untrue.
+    eInvoice:
+      inv.eInvoice?.status === "GENERATED" && inv.eInvoice.irn
+        ? {
+            irn: inv.eInvoice.irn,
+            ackNo: inv.eInvoice.ackNo,
+            ackDt: inv.eInvoice.ackDt?.toISOString() ?? null,
+            signedQrCode: inv.eInvoice.signedQrCode,
+          }
+        : null,
   };
 }
 

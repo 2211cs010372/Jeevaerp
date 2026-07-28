@@ -43,6 +43,23 @@ export const logoSchema = z
   .max(512 * 1024, "Logo must be under 512 KB - resize it and try again")
   .regex(LOGO_DATA_URL, "Upload a PNG, JPEG, WEBP or SVG image");
 
+/**
+ * A favicon. Same shape as a logo but a tighter cap and one extra format.
+ *
+ * 64 KB is generous for something rendered at 16 px - and the limit matters more
+ * here than for the logo, because this one is fetched by every browser tab on
+ * every page of the public site, not just by a signed-in staff member.
+ *
+ * image/x-icon is allowed because a .ico is what most people already have to
+ * hand; SVG is allowed because it is what actually stays sharp on a retina tab.
+ */
+const FAVICON_DATA_URL = /^data:image\/(png|x-icon|vnd\.microsoft\.icon|webp|svg\+xml);base64,[A-Za-z0-9+/]+=*$/;
+export const faviconSchema = z
+  .string()
+  .trim()
+  .max(64 * 1024, "Favicon must be under 64 KB - it is rendered at 16 pixels")
+  .regex(FAVICON_DATA_URL, "Upload a PNG, ICO, WEBP or SVG image");
+
 export const hospitalConfigSchema = z.object({
   legalName: z.string().trim().min(2).max(120),
   addressLine: z.string().trim().min(2).max(200),
@@ -57,6 +74,7 @@ export const hospitalConfigSchema = z.object({
   // Branding. An empty string is how the form says "remove the logo" - distinct
   // from the field being absent, which means "leave whatever is there alone".
   logoDataUrl: logoSchema.optional().or(z.literal("")),
+  faviconDataUrl: faviconSchema.optional().or(z.literal("")),
   brandName: z.string().trim().min(1).max(40).optional(),
   tagline: z.string().trim().max(120).optional().or(z.literal("")),
   invoiceFooterNote: z.string().trim().max(600).optional().or(z.literal("")),
@@ -66,4 +84,5 @@ export const hospitalConfigSchema = z.object({
   blockDischargeOnDues: z.boolean().optional(),
   onlineBookingEnabled: z.boolean().optional(),
   callbackRequestsEnabled: z.boolean().optional(),
+  accountsTabEnabled: z.boolean().optional(),
 });

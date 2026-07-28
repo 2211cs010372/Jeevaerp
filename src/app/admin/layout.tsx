@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { PortalShell } from "@/components/portal/shell/portal-shell";
+import { getHiddenAdminNavHrefs } from "@/server/services/admin.service";
 
 /**
  * The sign-in screen renders on top of the layout - no sidebar, no topbar.
@@ -12,8 +13,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // Login and print pages render bare - no sidebar/topbar. Print especially:
   // the sheet must flow in normal document order so a long A5 bill can paginate.
   if (path.endsWith("/login") || path.includes("/print/")) return <>{children}</>;
+  // Read here rather than in the shell so the sidebar is correct on first paint
+  // - a client fetch would show the tab and then take it away again.
+  const hiddenNavHrefs = await getHiddenAdminNavHrefs();
   return (
-    <PortalShell portalKey="admin" userName="Admin User" title="Admin">
+    <PortalShell portalKey="admin" userName="Admin User" title="Admin" hiddenNavHrefs={hiddenNavHrefs}>
       {children}
     </PortalShell>
   );

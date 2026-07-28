@@ -68,6 +68,7 @@ export const PORTALS: Record<string, PortalMeta> = {
       { label: "All bills", href: "/bills", icon: "receipt" },
       { label: "Insurance claims", href: "/insurance", icon: "shield" },
       { label: "Day close", href: "/day-close", icon: "rupee" },
+      { label: "Accounts & GST", href: "/accounts", icon: "trend" },
       { label: "Pharmacy", href: "/pharmacy", icon: "pill" },
       { label: "HR & staff", href: "/hr", icon: "users" },
       { label: "Lab catalog & GST", href: "/catalog", icon: "flask" },

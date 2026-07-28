@@ -343,22 +343,45 @@ export async function getSettings(): Promise<OperationalSettings> {
   };
 }
 
+/**
+ * Nav rows the admin console should leave out, read server-side by the admin
+ * layout so the sidebar is right on the first paint.
+ *
+ * Its own narrow query rather than a field on getSettings(): this runs on every
+ * admin page render, and it has no business loading the invoice footer note to
+ * decide whether to draw one link.
+ *
+ * Fails OPEN. If the config row is missing we show everything, because a
+ * hospital with no settings row should see the console it had yesterday - a
+ * missing row must never be the reason a feature disappears.
+ */
+export async function getHiddenAdminNavHrefs(): Promise<string[]> {
+  const c = await prisma.hospitalConfig.findFirst({ select: { accountsTabEnabled: true } });
+  return c?.accountsTabEnabled === false ? ["/accounts"] : [];
+}
+
 export async function updateHospitalConfig(
   actor: AuthUser,
   input: {
     legalName: string; addressLine: string; city: string; state: string;
     stateCode: string; pincode: string; gstin?: string; phone?: string; email?: string;
-    logoDataUrl?: string; brandName?: string; tagline?: string; invoiceFooterNote?: string;
+    logoDataUrl?: string; faviconDataUrl?: string; brandName?: string; tagline?: string;
+    invoiceFooterNote?: string;
     expiryAlertDays?: number; blockDischargeOnDues?: boolean;
     onlineBookingEnabled?: boolean; callbackRequestsEnabled?: boolean;
+    accountsTabEnabled?: boolean;
   },
   ctx: { ipAddress?: string; userAgent?: string }
 ) {
   const existing = await prisma.hospitalConfig.findFirst({
-    select: { id: true, logoDataUrl: true, blockDischargeOnDues: true, onlineBookingEnabled: true, callbackRequestsEnabled: true, expiryAlertDays: true },
+    select: {
+      id: true, logoDataUrl: true, faviconDataUrl: true, blockDischargeOnDues: true,
+      onlineBookingEnabled: true, callbackRequestsEnabled: true, expiryAlertDays: true,
+      accountsTabEnabled: true,
+    },
   });
 
-  const { logoDataUrl, tagline, invoiceFooterNote, ...rest } = input;
+  const { logoDataUrl, faviconDataUrl, tagline, invoiceFooterNote, ...rest } = input;
   const data = {
     ...rest,
     gstin: input.gstin || null,
@@ -369,6 +392,7 @@ export async function updateHospitalConfig(
     // Absent = leave the current logo alone. Empty string = the admin pressed
     // Remove. Those are different intentions and a spread would collapse them.
     ...(logoDataUrl === undefined ? {} : { logoDataUrl: logoDataUrl === "" ? null : logoDataUrl }),
+    ...(faviconDataUrl === undefined ? {} : { faviconDataUrl: faviconDataUrl === "" ? null : faviconDataUrl }),
   };
 
   const saved = existing
@@ -392,8 +416,14 @@ export async function updateHospitalConfig(
     if (input.expiryAlertDays !== undefined && input.expiryAlertDays !== existing.expiryAlertDays) {
       changes.expiryAlertDays = `${existing.expiryAlertDays} -> ${input.expiryAlertDays}`;
     }
+    if (input.accountsTabEnabled !== undefined && input.accountsTabEnabled !== existing.accountsTabEnabled) {
+      changes.accountsTabEnabled = `${existing.accountsTabEnabled} -> ${input.accountsTabEnabled}`;
+    }
     if (logoDataUrl !== undefined && (logoDataUrl || null) !== (existing.logoDataUrl || null)) {
       changes.logo = logoDataUrl ? "replaced" : "removed";
+    }
+    if (faviconDataUrl !== undefined && (faviconDataUrl || null) !== (existing.faviconDataUrl || null)) {
+      changes.favicon = faviconDataUrl ? "replaced" : "removed";
     }
   }
 

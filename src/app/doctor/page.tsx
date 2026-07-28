@@ -6,6 +6,7 @@ import { Kpi, Pill, statusTone } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
+import { AbnormalPill, LabResultTable, type LabResultRow } from "@/components/portal/ui/lab-results";
 import { api, ApiClientError } from "@/lib/api-client";
 
 interface Q {
@@ -16,6 +17,7 @@ interface LabResult {
   id: string; testName: string; reportReady: boolean; reportUrl: string | null;
   completedAt: string; source: "OPD" | "IPD";
   patient: { displayId: string; fullName: string };
+  results: LabResultRow[]; abnormal: number;
 }
 interface Inpatient {
   admissionId: string; ipNumber: string; wardName: string; bedNo: string; days: number; admittedAt: string;
@@ -37,6 +39,17 @@ export default function DoctorToday() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Which result sheets are open. Collapsed by default: this is a list to scan,
+  // and ten expanded sheets is a page nobody reads. The abnormal count sits on
+  // the row itself, so the decision to open one is already informed.
+  const [openSheets, setOpenSheets] = useState<Set<string>>(new Set());
+
+  const toggleSheet = (id: string) =>
+    setOpenSheets((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
 
   const load = useCallback(async () => {
     try { setD(await api.get<Today>("/doctor/today")); }
@@ -204,22 +217,42 @@ export default function DoctorToday() {
             <p className="px-5 py-10 text-center text-[13px] text-[var(--p-muted)]">No results in the last two weeks.</p>
           ) : (
             <div className="divide-y divide-[var(--p-border)]">
-              {d.labResults.map((l) => (
-                <div key={l.id} className="flex items-center justify-between gap-3 px-5 py-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate text-[13.5px] font-medium text-[var(--p-ink)]">{l.testName}</span>
-                      <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${l.source === "IPD" ? "bg-[var(--p-blue-soft)] text-[var(--p-blue-deep)]" : "bg-[var(--p-teal-soft)] text-[var(--p-teal-deep)]"}`}>{l.source}</span>
+              {d.labResults.map((l) => {
+                const open = openSheets.has(l.id);
+                const hasValues = l.results.length > 0;
+                return (
+                  <div key={l.id} className="px-5 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-[13.5px] font-medium text-[var(--p-ink)]">{l.testName}</span>
+                          <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${l.source === "IPD" ? "bg-[var(--p-blue-soft)] text-[var(--p-blue-deep)]" : "bg-[var(--p-teal-soft)] text-[var(--p-teal-deep)]"}`}>{l.source}</span>
+                          {hasValues && <AbnormalPill count={l.abnormal} compact />}
+                        </div>
+                        <div className="text-[12px] text-[var(--p-muted)]">{l.patient.fullName} · <span className="tabular">{l.patient.displayId}</span> · {dayMonth(l.completedAt)}</div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {hasValues && (
+                          <button
+                            type="button"
+                            onClick={() => toggleSheet(l.id)}
+                            aria-expanded={open}
+                            className="inline-flex items-center gap-1 rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 text-[11.5px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]"
+                          >
+                            {open ? "Hide" : "Values"} ({l.results.length})
+                          </button>
+                        )}
+                        {l.reportUrl ? (
+                          <a href={l.reportUrl} target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--p-cyan)] px-3 py-1.5 text-[12px] font-semibold text-white hover:opacity-90"><Icon name="file" size={13} /> Report</a>
+                        ) : !hasValues && (
+                          <span className="shrink-0 text-[11.5px] text-[var(--p-muted)]">Result on paper</span>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-[12px] text-[var(--p-muted)]">{l.patient.fullName} · <span className="tabular">{l.patient.displayId}</span> · {dayMonth(l.completedAt)}</div>
+                    {hasValues && open && <LabResultTable results={l.results} className="mt-2.5" />}
                   </div>
-                  {l.reportUrl ? (
-                    <a href={l.reportUrl} target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--p-cyan)] px-3 py-1.5 text-[12px] font-semibold text-white hover:opacity-90"><Icon name="file" size={13} /> Report</a>
-                  ) : (
-                    <span className="shrink-0 text-[11.5px] text-[var(--p-muted)]">Result on paper</span>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>

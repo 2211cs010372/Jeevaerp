@@ -26,26 +26,33 @@ interface Config {
   legalName: string; addressLine: string; city: string; state: string;
   stateCode: string; pincode: string; gstin: string; phone: string; email: string;
   logoDataUrl: string | null;
+  faviconDataUrl: string | null;
   brandName: string; tagline: string; invoiceFooterNote: string;
   expiryAlertDays: number;
   blockDischargeOnDues: boolean;
   onlineBookingEnabled: boolean;
   callbackRequestsEnabled: boolean;
+  accountsTabEnabled: boolean;
 }
 
 const blank: Config = {
   legalName: "", addressLine: "", city: "", state: "", stateCode: "36", pincode: "",
   gstin: "", phone: "", email: "",
-  logoDataUrl: null, brandName: "Jeeva", tagline: "", invoiceFooterNote: "",
+  logoDataUrl: null, faviconDataUrl: null, brandName: "Jeeva", tagline: "", invoiceFooterNote: "",
   expiryAlertDays: 90,
   blockDischargeOnDues: true,
   onlineBookingEnabled: true,
   callbackRequestsEnabled: true,
+  accountsTabEnabled: true,
 };
 
 /** Matches the server's cap. Rejected here too so a 3 MB photo fails instantly. */
 const MAX_LOGO_BYTES = 512 * 1024;
 const LOGO_TYPES = ["image/png", "image/jpeg", "image/webp", "image/svg+xml"];
+
+/** Tighter than the logo - this one is drawn at 16px and fetched by every tab. */
+const MAX_FAVICON_BYTES = 64 * 1024;
+const FAVICON_TYPES = ["image/png", "image/x-icon", "image/vnd.microsoft.icon", "image/webp", "image/svg+xml"];
 
 export default function SettingsPage() {
   const [f, setF] = useState<Config>({ ...blank });
@@ -54,6 +61,9 @@ export default function SettingsPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const faviconRef = useRef<HTMLInputElement>(null);
+  /** Whether the tab icon changed this session - drives the "reload" hint on save. */
+  const [faviconTouched, setFaviconTouched] = useState(false);
 
   useEffect(() => {
     api.get<{ config: Partial<Config> | null }>("/admin/config")
@@ -72,28 +82,60 @@ export default function SettingsPage() {
       .catch(() => {}).finally(() => setLoading(false));
   }, []);
 
-  function pickLogo(file: File) {
+  /** One reader for both image slots - they differ only in limits and label. */
+  function pickImage(
+    file: File,
+    opts: { key: "logoDataUrl" | "faviconDataUrl"; types: string[]; maxBytes: number; hint: string }
+  ) {
     setError(null); setMsg(null);
-    if (!LOGO_TYPES.includes(file.type)) {
-      setError("Use a PNG, JPEG, WEBP or SVG image."); return;
-    }
-    if (file.size > MAX_LOGO_BYTES) {
-      setError(`That file is ${Math.round(file.size / 1024)} KB. Resize it under 512 KB and try again.`);
+    // Some browsers report an empty type for .ico - fall back to the extension
+    // rather than rejecting a file that is perfectly valid.
+    const type = file.type || (/\.ico$/i.test(file.name) ? "image/x-icon" : "");
+    if (!opts.types.includes(type)) { setError(opts.hint); return; }
+    if (file.size > opts.maxBytes) {
+      setError(`That file is ${Math.round(file.size / 1024)} KB. Keep it under ${Math.round(opts.maxBytes / 1024)} KB.`);
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => setF((p) => ({ ...p, logoDataUrl: String(reader.result) }));
+    reader.onload = () => {
+      let out = String(reader.result);
+      // A .ico read by FileReader can come back as image/vnd.microsoft.icon or
+      // with no type at all; the server's regex accepts a known list, so
+      // normalise before it gets there rather than failing validation.
+      if (!file.type && type === "image/x-icon") out = out.replace(/^data:[^;]*;/, "data:image/x-icon;");
+      setF((p) => ({ ...p, [opts.key]: out }));
+      if (opts.key === "faviconDataUrl") setFaviconTouched(true);
+    };
     reader.onerror = () => setError("Couldn't read that file.");
     reader.readAsDataURL(file);
   }
 
+  const pickLogo = (file: File) =>
+    pickImage(file, {
+      key: "logoDataUrl", types: LOGO_TYPES, maxBytes: MAX_LOGO_BYTES,
+      hint: "Use a PNG, JPEG, WEBP or SVG image.",
+    });
+  const pickFavicon = (file: File) =>
+    pickImage(file, {
+      key: "faviconDataUrl", types: FAVICON_TYPES, maxBytes: MAX_FAVICON_BYTES,
+      hint: "Use a PNG, ICO, WEBP or SVG image.",
+    });
+
   async function save() {
     setSaving(true); setError(null); setMsg(null);
     try {
-      // logoDataUrl null means "no logo set". The server treats an ABSENT field
-      // as "leave it alone" and an empty string as "remove it", so send "".
-      await api.put("/admin/config", { ...f, logoDataUrl: f.logoDataUrl ?? "" });
+      // A null image means "none set". The server treats an ABSENT field as
+      // "leave it alone" and an empty string as "remove it", so send "".
+      await api.put("/admin/config", {
+        ...f,
+        logoDataUrl: f.logoDataUrl ?? "",
+        faviconDataUrl: f.faviconDataUrl ?? "",
+      });
       setMsg("Saved. Branding and switches apply across every portal immediately.");
+      // The tab icon is cached by the browser, so a saved favicon doesn't appear
+      // until something re-requests it. Say so rather than letting the admin
+      // conclude the upload silently failed.
+      if (faviconTouched) setMsg("Saved. Reload the page to see the new tab icon — browsers cache it.");
     } catch (e) { setError(e instanceof ApiClientError ? e.message : "Could not save."); }
     finally { setSaving(false); }
   }
@@ -150,6 +192,44 @@ export default function SettingsPage() {
                 sidebar. Stored in the database rather than as a file, so it survives
                 every deploy.
               </p>
+
+              {/* ── Browser tab icon ──────────────────────────────────────────
+                  Its own upload rather than reusing the logo: a letterhead
+                  scaled to 16px is a grey smudge, and the hospital should get
+                  to pick a mark that survives being that small. */}
+              <div className="border-t border-[var(--p-border)] pt-3">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-dashed border-[var(--p-border-strong)] bg-[var(--p-bg)]">
+                    {f.faviconDataUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={f.faviconDataUrl} alt="Browser tab icon" className="max-h-full max-w-full object-contain" />
+                    ) : (
+                      <Icon name="building" size={16} />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[12.5px] font-semibold text-[var(--p-ink)]">Browser tab icon</p>
+                    <p className="mt-0.5 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+                      Shown in the browser tab and in bookmarks, on the public site and every portal.
+                      PNG, ICO, WEBP or SVG, under 64 KB. Square, and simple enough to read at 16 pixels.
+                    </p>
+                    <input ref={faviconRef} type="file" accept={[...FAVICON_TYPES, ".ico"].join(",")} className="hidden"
+                      onChange={(e) => { const file = e.target.files?.[0]; if (file) pickFavicon(file); e.target.value = ""; }} />
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button onClick={() => faviconRef.current?.click()}
+                        className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border-strong)] bg-white px-3 py-1.5 text-[12.5px] font-semibold text-[var(--p-ink)] transition-colors hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
+                        <Icon name="inbox" size={13} /> {f.faviconDataUrl ? "Replace icon" : "Upload icon"}
+                      </button>
+                      {f.faviconDataUrl && (
+                        <button onClick={() => { setF((p) => ({ ...p, faviconDataUrl: null })); setFaviconTouched(true); }}
+                          className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12.5px] font-medium text-[var(--p-rose)] transition-colors hover:border-[var(--p-rose)]">
+                          <Icon name="x" size={13} /> Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Brand name">
                   <input className={fld} value={f.brandName} maxLength={40}
@@ -234,6 +314,17 @@ export default function SettingsPage() {
             label="Accept callback requests"
             on="Visitors can leave a name, mobile and preferred doctor. Requests queue up for reception to ring back."
             off="The callback form is closed. Requests already in the queue stay there."
+          />
+        </Card>
+
+        {/* ── ADMIN CONSOLE ──────────────────────────────────────────────── */}
+        <Card title="Admin console" sub="What appears in this console's own sidebar.">
+          <Toggle
+            checked={f.accountsTabEnabled}
+            onChange={(v) => set("accountsTabEnabled")(v)}
+            label={"Show the “Accounts & GST” tab"}
+            on="The sidebar carries a tab for the Tally ledger export and e-invoice (IRN) registration."
+            off="The tab is hidden. This only tidies the sidebar — the screen and its API stay reachable and admin-only, so a saved link still works. Turn it off if your CA doesn't use Tally and you raise no bills to GST-registered buyers."
           />
         </Card>
 
@@ -462,12 +553,12 @@ function Toggle({
         >
           <span className={`absolute top-[3px] h-4 w-4 rounded-full bg-white shadow transition-all ${checked ? "left-[19px]" : "left-[3px]"}`} />
         </button>
-        <span className="min-w-0 ">
+        <span className="min-w-0">
           <span className="block text-[13.5px] font-semibold text-[var(--p-ink)]">{label}</span>
-          <span className={`mt-1 block text-[12px] rounded-full leading-relaxed ${checked ? "text-[var(--p-teal-deep)]" : "text-[var(--p-muted)]"}`}>
+          <span className={`mt-1 block text-[12px] leading-relaxed ${checked ? "text-[var(--p-teal-deep)]" : "text-[var(--p-muted)]"}`}>
             <b>On:</b> {on}
           </span>
-          <span className={`mt-0.5 block text-[12px] rounded-full leading-relaxed ${
+          <span className={`mt-0.5 block text-[12px] leading-relaxed ${
             !checked ? (risky ? "text-[var(--p-rose)]" : "text-[var(--p-ink)]") : "text-[var(--p-muted)]"
           }`}>
             <b>Off:</b> {off}

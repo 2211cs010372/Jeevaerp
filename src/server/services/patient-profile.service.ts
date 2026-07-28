@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
 import { DUTY_DOCTOR } from "./appointments.service";
+import { abnormalCount, resultsForTests, type LabResultDTO } from "./labs.service";
 import { listPatientPrescriptions, type PrescriptionUploadDTO } from "./prescriptions.service";
 
 export interface PatientProfileDTO {
@@ -97,6 +98,14 @@ export async function getPatientAppointments(patientId: string): Promise<Patient
 
 export interface PatientLabTestDTO {
   id: string; testName: string; status: string; reportReady: boolean; reportUrl: string | null; date: string; doctorName: string | null;
+  /**
+   * The measured values. Released only once the test is COMPLETED - the same
+   * gate the report file already sits behind. A patient must not read a
+   * half-entered sheet the bench is still working on.
+   */
+  results: LabResultDTO[];
+  /** Lines outside the reference range on this test. */
+  abnormal: number;
 }
 export interface PatientBillDTO {
   id: string; receiptNo: string; source: string; status: string; total: string; paid: string; balance: string; date: string;
@@ -105,7 +114,11 @@ export interface PatientBillDTO {
 /** The patient's own lab tests (newest first) with report-ready state. */
 export async function getPatientLabTests(patientId: string): Promise<PatientLabTestDTO[]> {
   const rows = await prisma.labTest.findMany({
-    where: { patientId },
+    // A test reaches a patient either directly (walk-in) or through the visit
+    // that ordered it. Matching only on patientId hid the second kind from the
+    // person it belongs to, while the lab counter listed both - see
+    // patientLabHistory, which has always used this same pair.
+    where: { OR: [{ patientId }, { appointment: { patientId } }] },
     orderBy: { createdAt: "desc" },
     take: 50,
     select: {
@@ -113,16 +126,30 @@ export async function getPatientLabTests(patientId: string): Promise<PatientLabT
       appointment: { select: { doctor: { select: { name: true } } } },
     },
   });
-  return rows.map((t: {
+  type Row = {
     id: string; testName: string; status: string; reportFileUrl: string | null; createdAt: Date; completedAt: Date | null;
     appointment: { doctor: { name: string } | null } | null;
-  }) => ({
-    id: t.id, testName: t.testName, status: t.status,
-    reportReady: Boolean(t.reportFileUrl),
-    reportUrl: t.reportFileUrl,
-    date: (t.completedAt ?? t.createdAt).toISOString().slice(0, 10),
-    doctorName: t.appointment?.doctor?.name ?? null,
-  }));
+  };
+
+  // Only finished tests hand over their numbers. A sheet the bench is still
+  // filling in is not a result yet, and a patient reading a partial one would
+  // draw a conclusion from values nobody has signed off.
+  const byTest = await resultsForTests(
+    (rows as Row[]).filter((t) => t.status === "COMPLETED").map((t) => t.id)
+  );
+
+  return (rows as Row[]).map((t) => {
+    const results = byTest[t.id] ?? [];
+    return {
+      id: t.id, testName: t.testName, status: t.status,
+      reportReady: Boolean(t.reportFileUrl),
+      reportUrl: t.reportFileUrl,
+      date: (t.completedAt ?? t.createdAt).toISOString().slice(0, 10),
+      doctorName: t.appointment?.doctor?.name ?? null,
+      results,
+      abnormal: abnormalCount(results),
+    };
+  });
 }
 
 /** The patient's own bills (newest first) with paid / balance derived from payments. */

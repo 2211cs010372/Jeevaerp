@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
 import { DUTY_DOCTOR } from "./appointments.service";
+import { abnormalCount, resultsForTests, type LabResultDTO } from "./labs.service";
 import type { AuthUser } from "@/lib/auth/types";
 
 // ---------------------------------------------------------------------------
@@ -42,6 +43,10 @@ export interface DoctorLabResult {
   id: string; testName: string; reportReady: boolean; reportUrl: string | null;
   completedAt: string; source: "OPD" | "IPD";
   patient: { displayId: string; fullName: string };
+  /** The measured values, so the doctor reads the result without opening a file. */
+  results: LabResultDTO[];
+  /** Lines out of range - what decides whether this needs looking at first. */
+  abnormal: number;
 }
 /** One of this doctor's patients currently lying in a bed. */
 export interface DoctorInpatient {
@@ -109,15 +114,25 @@ export async function doctorToday(actor: AuthUser): Promise<{
     id: string; testName: string; reportFileUrl: string | null; completedAt: Date | null; admissionId: string | null;
     patient: { displayId: string; fullName: string } | null;
   };
+  // The numbers, not just a link to them. A doctor scanning the morning list
+  // needs to see "Hb 8.1 LOW" on the row, not open ten PDFs to find the one
+  // that matters.
+  const labValues = await resultsForTests((labRows as LabRow[]).map((t) => t.id));
+
   const labResults: DoctorLabResult[] = (labRows as LabRow[])
     .filter((t) => t.patient)
-    .map((t) => ({
-      id: t.id, testName: t.testName,
-      reportReady: Boolean(t.reportFileUrl), reportUrl: t.reportFileUrl,
-      completedAt: (t.completedAt ?? new Date()).toISOString(),
-      source: t.admissionId ? "IPD" : "OPD",
-      patient: t.patient!,
-    }));
+    .map((t) => {
+      const results = labValues[t.id] ?? [];
+      return {
+        id: t.id, testName: t.testName,
+        reportReady: Boolean(t.reportFileUrl), reportUrl: t.reportFileUrl,
+        completedAt: (t.completedAt ?? new Date()).toISOString(),
+        source: (t.admissionId ? "IPD" : "OPD") as "OPD" | "IPD",
+        patient: t.patient!,
+        results,
+        abnormal: abnormalCount(results),
+      };
+    });
 
   // ── This doctor's patients currently in a bed ──
   const admRows = await prisma.admission.findMany({
@@ -217,6 +232,12 @@ export async function doctorPatientChart(actor: AuthUser, displayId: string) {
     }),
   ]);
 
+  // One query for every test on the chart - see resultsForTests. A chart
+  // showing thirty investigations must not cost thirty round trips.
+  const labValues = await resultsForTests(
+    (labs as { id: string }[]).map((l) => l.id)
+  );
+
   return {
     patient: {
       id: patient.id, displayId: patient.displayId, fullName: patient.fullName,
@@ -232,11 +253,16 @@ export async function doctorPatientChart(actor: AuthUser, displayId: string) {
       doctorName: v.doctor?.name ?? DUTY_DOCTOR.name,
       department: v.doctor?.department ?? DUTY_DOCTOR.department,
     })),
-    labs: (labs as { id: string; testName: string; status: string; reportFileUrl: string | null; createdAt: Date; completedAt: Date | null }[]).map((l) => ({
-      id: l.id, testName: l.testName, status: l.status, reportFileUrl: l.reportFileUrl,
-      createdAt: l.createdAt.toISOString().slice(0, 10),
-      completedAt: l.completedAt ? l.completedAt.toISOString().slice(0, 10) : null,
-    })),
+    labs: (labs as { id: string; testName: string; status: string; reportFileUrl: string | null; createdAt: Date; completedAt: Date | null }[]).map((l) => {
+      const results = labValues[l.id] ?? [];
+      return {
+        id: l.id, testName: l.testName, status: l.status, reportFileUrl: l.reportFileUrl,
+        createdAt: l.createdAt.toISOString().slice(0, 10),
+        completedAt: l.completedAt ? l.completedAt.toISOString().slice(0, 10) : null,
+        results,
+        abnormal: abnormalCount(results),
+      };
+    }),
     /** The scanned handwritten prescriptions - the doctor's own record. */
     prescriptions: (scans as {
       id: string; appointmentId: string | null; fileUrl: string | null; fileName: string | null; title: string | null; doctorName: string | null;

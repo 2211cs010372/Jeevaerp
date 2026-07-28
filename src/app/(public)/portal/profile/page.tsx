@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api-client";
 import { localDateISO } from "@/lib/date";
+import { AbnormalPill, LabResultTable, type LabResultRow } from "@/components/portal/ui/lab-results";
 import {
   Calendar, FileText, FlaskConical, Receipt, User, LogOut, Plus, Download,
   ArrowRight, Activity, Stethoscope, MapPin, Phone, Clock, CheckCircle2,
@@ -21,7 +22,7 @@ interface Profile {
 }
 interface Appt { opNumber: string; visitDate: string; time: string; status: string; doctorName: string; department: string; price: string; }
 interface Rx { id: string; appointmentId: string | null; fileUrl: string | null; fileName: string | null; mimeType: string | null; title: string | null; createdAt: string; appointment: { opNumber: string; visitDate: string; doctorName: string } | null; }
-interface Lab { id: string; testName: string; status: string; reportReady: boolean; reportUrl: string | null; date: string; doctorName: string | null; }
+interface Lab { id: string; testName: string; status: string; reportReady: boolean; reportUrl: string | null; date: string; doctorName: string | null; results: LabResultRow[]; abnormal: number; }
 interface Bill { id: string; receiptNo: string; source: string; status: string; total: string; paid: string; balance: string; date: string; }
 type Bundle = { profile: Profile; appointments: Appt[]; prescriptions: Rx[]; labTests: Lab[]; bills: Bill[] };
 type DocKind = "prescription" | "lab" | "opd" | "invoice";
@@ -230,7 +231,7 @@ export default function PatientPortalPage() {
               {data.labTests.map((l) => (
                 <Row key={l.id}
                   lead={<span className="grid h-10 w-10 place-items-center rounded-lg bg-[var(--p-cyan-soft)] text-[var(--p-cyan-deep)]"><FlaskConical size={18} /></span>}
-                  title={l.testName}
+                  title={<span className="flex items-center gap-2">{l.testName}{l.results.length > 0 && <AbnormalPill count={l.abnormal} compact />}</span>}
                   sub={<>{l.doctorName ? `${l.doctorName} · ` : ""}<span className="font-mono">{prettyDate(l.date)}</span></>}
                   right={<div className="flex items-center gap-2">
                     <Chip status={l.status} />
@@ -239,7 +240,20 @@ export default function PatientPortalPage() {
                     ) : l.reportReady && (
                       <span className="inline-flex items-center gap-1 rounded-lg bg-[var(--p-cyan-soft)] px-2.5 py-1.5 text-[11.5px] font-semibold text-[var(--p-cyan-deep)]"><CheckCircle2 size={13} /> Report ready</span>
                     )}
-                  </div>} />
+                  </div>}
+                  below={l.results.length > 0 && (
+                    <div className="mt-2.5 sm:pl-[52px]">
+                      <LabResultTable results={l.results} />
+                      {/* A highlighted row is a number outside the usual range,
+                          not a diagnosis. Say so plainly - the patient reading
+                          this has nobody standing next to them to explain it. */}
+                      {l.abnormal > 0 && (
+                        <p className="mt-1.5 text-[11.5px] text-[var(--p-muted)]">
+                          Highlighted values fall outside the usual range. Only your doctor can say what that means for you.
+                        </p>
+                      )}
+                    </div>
+                  )} />
               ))}
             </SectionCard>
           )}
@@ -378,14 +392,17 @@ function SectionCard({ title, count, empty, emptyText, header, children }: { tit
     </div>
   );
 }
-function Row({ lead, title, sub, right }: { lead: React.ReactNode; title: React.ReactNode; sub: React.ReactNode; right: React.ReactNode }) {
+function Row({ lead, title, sub, right, below }: { lead: React.ReactNode; title: React.ReactNode; sub: React.ReactNode; right: React.ReactNode; below?: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-3 px-5 py-3.5">
-      <div className="flex min-w-0 items-center gap-3">
-        {lead}
-        <div className="min-w-0"><p className="truncate text-[13.5px] font-semibold text-[var(--p-ink)]">{title}</p><p className="truncate text-[12px] text-[var(--p-muted)]">{sub}</p></div>
+    <div className="px-5 py-3.5">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          {lead}
+          <div className="min-w-0"><p className="truncate text-[13.5px] font-semibold text-[var(--p-ink)]">{title}</p><p className="truncate text-[12px] text-[var(--p-muted)]">{sub}</p></div>
+        </div>
+        <div className="shrink-0">{right}</div>
       </div>
-      <div className="shrink-0">{right}</div>
+      {below}
     </div>
   );
 }

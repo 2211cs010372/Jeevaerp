@@ -32,11 +32,27 @@ function BrandMark({ logo, name }: { logo: string | null; name: string }) {
 }
 
 export function PortalShell({
-  portalKey, userName, title, children,
-}: { portalKey: string; userName: string; title: string; children: React.ReactNode }) {
+  portalKey, userName, title, children, hiddenNavHrefs,
+}: {
+  portalKey: string; userName: string; title: string; children: React.ReactNode;
+  /**
+   * Nav hrefs to leave out of the sidebar, decided by the portal's own layout
+   * from hospital settings.
+   *
+   * Passed in rather than fetched here on purpose: the layout is a server
+   * component that can read config directly, so the sidebar renders correct on
+   * the first paint. Fetching it in the shell would make every admin see the
+   * tab flash in and then vanish.
+   *
+   * This hides a link. It is NOT a permission - the route and its API stay
+   * exactly as reachable and as ADMIN-gated as before.
+   */
+  hiddenNavHrefs?: string[];
+}) {
   const meta = PORTALS[portalKey];
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const hidden = useMemo(() => new Set(hiddenNavHrefs ?? []), [hiddenNavHrefs]);
 
   // pathname arrives rewritten as /reception/... - strip the portal prefix to match nav hrefs.
   const localPath = pathname.replace(new RegExp(`^/${portalKey}`), "") || "/";
@@ -156,19 +172,24 @@ export function PortalShell({
   const NavLinks = () => (
     <nav className="flex flex-col gap-4 mt-4 px-3 pb-4">
       {meta.groups
-        ? meta.groups.map((g) => (
-            <div key={g.title}>
-              <p className="px-3 pb-2 text-[11px] font-bold uppercase tracking-tight border-b border-[var(--p-border)] text-[var(--p-muted)]">
-                {g.title}
-              </p>
-              <div className="flex flex-col gap-0.5">
-                {g.items.map((item) => <NavRow key={item.href} item={item} />)}
+        ? meta.groups.map((g) => {
+            const items = g.items.filter((i) => !hidden.has(i.href));
+            // A heading with every item hidden under it is a heading for nothing.
+            if (items.length === 0) return null;
+            return (
+              <div key={g.title}>
+                <p className="px-3 pb-2 text-[11px] font-bold uppercase tracking-tight border-b border-[var(--p-border)] text-[var(--p-muted)]">
+                  {g.title}
+                </p>
+                <div className="flex flex-col gap-0.5">
+                  {items.map((item) => <NavRow key={item.href} item={item} />)}
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         : (
             <div className="flex flex-col gap-0.5">
-              {meta.nav.map((item) => <NavRow key={item.href} item={item} />)}
+              {meta.nav.filter((i) => !hidden.has(i.href)).map((item) => <NavRow key={item.href} item={item} />)}
             </div>
           )}
     </nav>

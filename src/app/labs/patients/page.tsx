@@ -5,12 +5,13 @@ import { PrimaryButton, Pill, statusTone } from "@/components/portal/ui/primitiv
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
+import { AbnormalPill, LabResultTable, type LabResultRow } from "@/components/portal/ui/lab-results";
 import { api, ApiClientError } from "@/lib/api-client";
 
 interface Bundle {
   patient: { id: string; displayId: string; fullName: string; phone: string; age: number | null; gender: string | null; bloodGroup: string | null };
   lastVisit: { opNumber: string; visitDate: string; doctorName: string; department: string; status: string } | null;
-  tests: { id: string; testName: string; status: string; price: string | null; reportFileUrl: string | null; createdAt: string; billed: boolean }[];
+  tests: { id: string; testName: string; status: string; price: string | null; reportFileUrl: string | null; createdAt: string; billed: boolean; results?: LabResultRow[]; abnormal?: number }[];
   invoices: { receiptNo: string; totalAmount: string; status: string; createdAt: string }[];
 }
 
@@ -83,23 +84,32 @@ export default function LabPatientsPage() {
               <p className="px-6 py-10 text-center text-[13px] text-[var(--p-muted)]">No lab tests for this patient.</p>
             ) : (
               <div className="divide-y divide-[var(--p-border)]">
-                {data.tests.map((t) => (
-                  <div key={t.id} className="flex items-center justify-between gap-3 px-6 py-3.5">
-                    <div>
-                      <div className="text-[13px] font-medium text-[var(--p-ink)]">{t.testName}</div>
-                      <div className="text-[11px] text-[var(--p-muted)]">{new Date(t.createdAt).toLocaleDateString("en-IN")}{t.billed ? " · billed" : " · unbilled"}</div>
+                {data.tests.map((t) => {
+                  const results = t.results ?? [];
+                  return (
+                    <div key={t.id} className="px-6 py-3.5">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[13px] font-medium text-[var(--p-ink)]">{t.testName}</span>
+                            {results.length > 0 && <AbnormalPill count={t.abnormal ?? 0} compact />}
+                          </div>
+                          <div className="text-[11px] text-[var(--p-muted)]">{new Date(t.createdAt).toLocaleDateString("en-IN")}{t.billed ? " · billed" : " · unbilled"}</div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          {t.price && <span className="font-mono text-[12px] text-[var(--p-muted)]">₹{t.price}</span>}
+                          <Pill tone={statusTone(t.status === "PENDING" ? "Waiting" : "Completed")}>{t.status === "PENDING" ? "Pending" : "Completed"}</Pill>
+                          {t.reportFileUrl && (
+                            <a href={t.reportFileUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[11px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
+                              <Icon name="file" size={12} /> Report
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                      {results.length > 0 && <LabResultTable results={results} className="mt-2.5" />}
                     </div>
-                    <div className="flex items-center gap-2">
-                      {t.price && <span className="font-mono text-[12px] text-[var(--p-muted)]">₹{t.price}</span>}
-                      <Pill tone={statusTone(t.status === "PENDING" ? "Waiting" : "Completed")}>{t.status === "PENDING" ? "Pending" : "Completed"}</Pill>
-                      {t.reportFileUrl && (
-                        <a href={t.reportFileUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[11px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
-                          <Icon name="file" size={12} /> Report
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </section>

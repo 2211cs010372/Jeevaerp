@@ -195,6 +195,25 @@ enum PaymentMode {
   OTHER
 }
 
+/// Where a bill stands with the government's Invoice Registration Portal.
+///
+/// An IRN is NOT something this system can mint. It is a 64-character hash the
+/// IRP returns after it has accepted the invoice, and only the IRP can issue
+/// one. So this enum tracks a conversation with an outside authority, not an
+/// internal state machine: FAILED is a real, common, recoverable outcome
+/// (a wrong GSTIN, a duplicate invoice number) and must be distinguishable
+/// from "nobody has tried yet".
+enum EInvoiceStatus {
+  /// Eligible and not yet submitted.
+  PENDING
+  /// The IRP accepted it and returned an IRN.
+  GENERATED
+  /// The IRP rejected it. errorCode / errorMessage say why.
+  FAILED
+  /// Cancelled at the IRP. Only possible within 24h of generation.
+  CANCELLED
+}
+
 // ---------------------------------------------------------------------------
 // Identity & access
 // ---------------------------------------------------------------------------
@@ -240,6 +259,7 @@ model User {
   goodsReceipts   GoodsReceipt[]       @relation("GoodsReceiptReceivedBy")
   purchaseReturns PurchaseReturn[]     @relation("PurchaseReturnCreatedBy")
   requestsHandled AppointmentRequest[] @relation("BookingRequestHandledBy")
+  eInvoicesRaised EInvoice[]           @relation("EInvoiceGeneratedBy")
 }
 
 model Patient {
@@ -1148,6 +1168,27 @@ model Invoice {
   sgstAmount     Decimal @db.Decimal(10, 2)
   totalAmount    Decimal @db.Decimal(10, 2)
 
+  // ── WHO IS BEING BILLED, when it isn't the patient ────────────────────────
+  //
+  // All four are null for an ordinary counter bill, which is B2C - the patient
+  // pays for themselves and is not GST-registered. They are set only when the
+  // bill goes to a REGISTERED business instead: an insurer or TPA on a cashless
+  // claim, or a corporate health-check client.
+  //
+  // That distinction is the whole reason these columns exist. e-Invoicing is a
+  // B2B obligation; a bill with no buyer GSTIN is out of scope for an IRN no
+  // matter what the hospital's turnover is. Storing the buyer here rather than
+  // on Patient is deliberate - the same patient can be self-paying on Monday
+  // and billed to their employer on Friday, and the bill is what carries the
+  // tax position, not the person.
+  /// The recipient's GSTIN. Its presence is what makes a bill B2B.
+  buyerGstin      String?
+  /// Registered name of the buyer, as it appears against that GSTIN.
+  buyerLegalName  String?
+  buyerAddress    String?
+  /// Two-digit GST state code of the buyer. See HospitalConfig.stateCode.
+  buyerStateCode  String?
+
   notes       String?
   paidAt      DateTime?
   cancelledAt DateTime?
@@ -1158,10 +1199,68 @@ model Invoice {
   items    InvoiceItem[]
   payments Payment[]
   refunds  Refund[]
+  eInvoice EInvoice?
 
   @@index([patientId, createdAt])
   @@index([source, createdAt])
   @@index([status])
+}
+
+/// The government's record of one bill, held alongside our own.
+///
+/// Kept in its OWN table rather than as columns on Invoice for two reasons.
+/// First, almost every invoice this hospital raises is B2C and will never have
+/// one - eight mostly-null columns on the busiest table in the system is a poor
+/// trade. Second, the signed payload and QR the IRP returns are large text
+/// blobs, and they would be dragged into every invoice list query that does
+/// `select *`.
+///
+/// The signed fields are stored verbatim, exactly as the IRP returned them.
+/// They are digitally signed by the government: re-deriving, reformatting or
+/// "tidying" them destroys the signature and with it the only proof the
+/// hospital has that the invoice was ever registered.
+model EInvoice {
+  id        String         @id @default(cuid())
+  invoiceId String         @unique
+  invoice   Invoice        @relation(fields: [invoiceId], references: [id])
+  status    EInvoiceStatus @default(PENDING)
+
+  /// Which route reached the IRP - "MANUAL", or a GSP's name. Recorded per
+  /// row, not read from config, because config changes and history shouldn't.
+  provider  String         @default("MANUAL")
+
+  // ── WHAT THE IRP GAVE BACK ────────────────────────────────────────────────
+  /// The 64-character Invoice Reference Number. Null until registered.
+  irn            String?  @unique
+  /// Acknowledgement number and timestamp from the portal.
+  ackNo          String?
+  ackDt          DateTime?
+  /// The signed QR the portal returns, verbatim. This is what gets printed -
+  /// it is NOT a QR we draw from the invoice ourselves, and the difference is
+  /// the entire legal point of it.
+  signedQrCode   String?  @db.Text
+  /// The signed invoice JWT, kept for audit. Rarely read, never edited.
+  signedInvoice  String?  @db.Text
+
+  // ── WHAT WE SENT, AND WHAT WENT WRONG ─────────────────────────────────────
+  /// The exact payload submitted. Kept so a rejection can be diagnosed against
+  /// what actually went, not against what the invoice looks like today.
+  payloadJson  String? @db.Text
+  errorCode    String?
+  errorMessage String? @db.Text
+
+  cancelledAt  DateTime?
+  /// The IRP requires a reason code and free text to cancel.
+  cancelReason String?
+
+  generatedById String?
+  generatedBy   User?    @relation("EInvoiceGeneratedBy", fields: [generatedById], references: [id])
+  generatedAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
 }
 
 model InvoiceItem {
@@ -1414,10 +1513,70 @@ model HospitalConfig {
   brandName        String   @default("Jeeva")
   /// One line under the brand on sign-in screens. Optional.
   tagline          String?
+  /// The browser tab icon, held as a data URI for the same reason as the logo:
+  /// a file written to /public does not survive a deploy.
+  ///
+  /// Kept SEPARATE from logoDataUrl rather than reusing it, because the two have
+  /// different jobs. A logo is wide, detailed and read at 200px on a printed
+  /// bill; a favicon is square and read at 16px in a tab strip. Scaling the
+  /// letterhead down to 16px reliably produces a grey smudge, so the hospital
+  /// gets to choose a mark that actually survives being that small.
+  faviconDataUrl   String?  @db.Text
 
   // ── WHAT PRINTS ON A BILL ─────────────────────────────────────────────────
   /// Free text at the foot of every invoice - terms, a refund policy, a helpline.
   invoiceFooterNote String? @db.Text
+
+  // ── e-INVOICING (IRN) ─────────────────────────────────────────────────────
+  //
+  // Off by default, and it should stay off until two things are true: the
+  // hospital's turnover has crossed the e-invoicing threshold, AND it actually
+  // raises B2B bills (insurer, TPA, corporate). A hospital billing only walk-in
+  // patients has no e-invoicing obligation at any turnover, because every one
+  // of those bills is B2C.
+  /// Show the "Accounts & GST" tab in the admin console.
+  ///
+  /// On by default: the screen behind it is useful the day it exists, and a
+  /// feature that ships hidden is a feature nobody finds. A hospital whose CA
+  /// doesn't use Tally and who raises no B2B bills can turn it off to keep the
+  /// sidebar honest. Hiding the tab does NOT disable the routes behind it -
+  /// this is tidiness, not a permission, and the API stays ADMIN-gated either way.
+  accountsTabEnabled Boolean @default(true)
+
+  /// Master switch. When off, nothing is ever submitted to the IRP.
+  eInvoiceEnabled  Boolean @default(false)
+  /// How we reach the Invoice Registration Portal.
+  ///
+  /// "MANUAL" means a human registers the bill on the government portal (or the
+  /// NIC offline tool) and pastes the IRN, acknowledgement and signed QR back in
+  /// here. That is not a placeholder - it is how a hospital doing a handful of
+  /// B2B bills a month genuinely operates, and it needs no GSP contract.
+  /// Any other value names a GSP adapter; see src/server/irp/.
+  eInvoiceProvider String  @default("MANUAL")
+
+  // ── TALLY EXPORT: LEDGER NAMES ────────────────────────────────────────────
+  //
+  // Tally matches vouchers to ledgers BY NAME, exactly. A ledger that doesn't
+  // already exist in the company file makes the import fail (or, worse, silently
+  // create a duplicate), so these have to be whatever the hospital's CA actually
+  // called them - not what we think they should be called. Defaults are the
+  // conventional Tally names and will be wrong for somebody.
+  /// Must match the company name in Tally exactly, or the import is refused.
+  tallyCompanyName          String?
+  /// Income ledgers, one per revenue stream, so the P&L separates them.
+  tallySalesConsultation    String  @default("Consultation Income")
+  tallySalesLab             String  @default("Laboratory Income")
+  tallySalesPharmacy        String  @default("Pharmacy Sales")
+  tallySalesIpd             String  @default("Inpatient Income")
+  tallySalesOther           String  @default("Other Income")
+  /// Where the money landed.
+  tallyCashLedger           String  @default("Cash")
+  tallyBankLedger           String  @default("Bank Account")
+  /// The party ledger a credit bill sits against until it is settled.
+  tallyDebtorLedger         String  @default("Sundry Debtors")
+  /// Output tax. Only ever used on lines that actually carry GST.
+  tallyCgstLedger           String  @default("Output CGST")
+  tallySgstLedger           String  @default("Output SGST")
 
   // ── PHARMACY BEHAVIOUR ────────────────────────────────────────────────────
   /// How far ahead a batch counts as "expiring soon". Was hardcoded to 90 days,

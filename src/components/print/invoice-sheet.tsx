@@ -16,6 +16,8 @@ interface Invoice {
   amountPaid: string; advanceAdjusted: string; balanceDue: string;
   payments: { mode: string; amount: string; reference: string | null; createdAt: string }[];
   hospital: HospitalInfo | null;
+  buyer: { gstin: string; legalName: string; address: string | null; stateCode: string | null } | null;
+  eInvoice: { irn: string; ackNo: string | null; ackDt: string | null; signedQrCode: string | null } | null;
 }
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -36,6 +38,7 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
   const [inv, setInv] = useState<Invoice | null>(null);
   const [error, setError] = useState<string | null>(null);
   const barcodeRef = useRef<SVGSVGElement>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const path = source === "portal" ? `/portal/invoice/${invoiceId}` : `/billing/invoice/${invoiceId}`;
@@ -49,6 +52,28 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
     try {
       JsBarcode(barcodeRef.current, inv.receiptNo, { format: "CODE128", displayValue: false, height: 26, width: 1.1, margin: 0, background: "transparent", lineColor: "#17211e" });
     } catch { /* non-encodable receipt - barcode simply omitted */ }
+  }, [inv]);
+
+  /**
+   * The signed e-invoice QR.
+   *
+   * What is encoded is the string the government returned, byte for byte - not
+   * anything derived from the invoice on screen. That string is a signed JWT,
+   * and re-deriving or reformatting it would produce a QR that scans but fails
+   * verification, which is worse than printing none at all.
+   *
+   * `qrcode` is imported dynamically: only B2B bills carry a QR, and the other
+   * ninety-odd percent of bills shouldn't load the library to print.
+   */
+  useEffect(() => {
+    const signed = inv?.eInvoice?.signedQrCode;
+    if (!signed) { setQrDataUrl(null); return; }
+    let cancelled = false;
+    import("qrcode")
+      .then((QR) => QR.toDataURL(signed, { errorCorrectionLevel: "M", margin: 0, width: 200 }))
+      .then((url) => { if (!cancelled) setQrDataUrl(url); })
+      .catch(() => { if (!cancelled) setQrDataUrl(null); });
+    return () => { cancelled = true; };
   }, [inv]);
 
   if (error) return <div className="p-10 text-center text-[14px] text-[#8a3b2e]">{error}</div>;
@@ -120,6 +145,22 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
           </div>
         </div>
 
+        {/* Billed To - only on a B2B bill. A GST-registered recipient has to be
+            named on the invoice with their GSTIN for them to claim input credit;
+            without this block the bill is useless to them. */}
+        {inv.buyer && (
+          <div className="keep-together border-t border-[var(--pr-line)] mt-1 grid grid-cols-[2fr_2fr] gap-x-6 py-1.5">
+            <div className="space-y-0.5">
+              <Meta k="Billed To" v={inv.buyer.legalName} />
+              <Meta k="Address" v={inv.buyer.address || "-"} />
+            </div>
+            <div className="space-y-0.5">
+              <Meta k="Buyer GSTIN" v={inv.buyer.gstin} />
+              <Meta k="State Code" v={inv.buyer.stateCode || "-"} />
+            </div>
+          </div>
+        )}
+
         {/* line items - repeats its header and paginates onto a second A5 if long */}
         <table className="mt-2 w-full border-collapse text-[10px]">
           <thead>
@@ -183,6 +224,34 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
             </tbody>
           </table>
         </div>
+        {/* e-Invoice registration.
+            Printed only when the government actually issued an IRN. The QR is
+            what a tax officer scans, so it sits next to the IRN it belongs to
+            rather than being tucked in a corner. */}
+        {inv.eInvoice && (
+          <div className="keep-together border-t border-[var(--pr-line)] mt-2.5 flex items-start justify-between gap-4 pt-1.5">
+            <div className="min-w-0 flex-1 space-y-0.5">
+              <p className="text-[8px] font-bold uppercase tracking-wide" style={{ color: "var(--pr-primary)" }}>
+                e-Invoice
+              </p>
+              <p className="break-all font-mono text-[7.5px] leading-snug text-[var(--pr-ink)]">
+                <span className="font-bold">IRN </span>{inv.eInvoice.irn}
+              </p>
+              <p className="font-mono text-[8px] text-[#4a5652]">
+                <span className="font-bold">Ack </span>{inv.eInvoice.ackNo ?? "-"}
+                {inv.eInvoice.ackDt && (
+                  <> · {new Date(inv.eInvoice.ackDt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</>
+                )}
+              </p>
+            </div>
+            {qrDataUrl && (
+              /* eslint-disable-next-line @next/next/no-img-element -- a data: URI
+                 for print; next/image would defer it past window.print(). */
+              <img src={qrDataUrl} alt="Signed e-invoice QR code" className="h-[76px] w-[76px] shrink-0" />
+            )}
+          </div>
+        )}
+
         {/* Whatever the hospital wants on every bill - terms, refund policy, a
             helpline. Set under Admin → Settings; absent by default so nothing
             appears unless somebody chose to put it there. */}

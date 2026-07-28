@@ -62,6 +62,11 @@ export const metadata: Metadata = {
     "paediatrician Hanamkonda", "gynaecologist Hanamkonda", "cardiologist Warangal",
   ],
   alternates: { canonical: "/" },
+  // The tab icon an admin uploaded under Settings. A fixed same-origin path, so
+  // this stays a static metadata object - the database lookup happens inside the
+  // route, once, and is then cached by the browser. Serves a 404 until somebody
+  // uploads one, which leaves the browser's own default mark in place.
+  icons: { icon: [{ url: "/api/v1/public/favicon" }] },
   openGraph: {
     type: "website",
     siteName: "Jeeva Multispeciality Hospital",

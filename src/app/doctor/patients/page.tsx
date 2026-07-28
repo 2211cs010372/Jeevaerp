@@ -6,12 +6,13 @@ import { PrimaryButton, Pill, statusTone } from "@/components/portal/ui/primitiv
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
+import { AbnormalPill, LabResultTable, type LabResultRow } from "@/components/portal/ui/lab-results";
 import { api, ApiClientError } from "@/lib/api-client";
 
 interface Chart {
   patient: { displayId: string; fullName: string; age: number | null; gender: string | null; bloodGroup: string | null; phone: string; address: string | null; occupation: string | null; remarks: string | null; isVip: boolean };
   visits: { opNumber: string; visitDate: string; status: string; doctorName: string; department: string }[];
-  labs: { id: string; testName: string; status: string; reportFileUrl: string | null; createdAt: string; completedAt: string | null }[];
+  labs: { id: string; testName: string; status: string; reportFileUrl: string | null; createdAt: string; completedAt: string | null; results: LabResultRow[]; abnormal: number }[];
   prescriptions: { id: string; appointmentId: string | null; fileUrl: string | null; title: string | null; doctorName: string | null; status: string; createdAt: string; visitDate: string | null }[];
 }
 
@@ -118,50 +119,66 @@ function ChartInner() {
             )}
           </section>
 
-          <div className="grid gap-6 lg:grid-cols-2">
-            <section data-rise className="surface overflow-hidden">
-              <div className="flex items-center justify-between border-b border-[var(--p-border)] px-6 py-4">
-                <h3 className="text-[13px] font-semibold text-[var(--p-ink)]">Lab results</h3><span className="badge">{c.labs.length}</span>
+          {/* Investigations carry their measured values inline. A doctor reading
+              a chart is looking for the number that moved, not for a list of
+              filenames to open one at a time. */}
+          <section data-rise className="surface overflow-hidden">
+            <div className="flex items-center justify-between border-b border-[var(--p-border)] px-6 py-4">
+              <div>
+                <h3 className="text-[13px] font-semibold text-[var(--p-ink)]">Lab results</h3>
+                <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">Values as reported, against the range each was judged on.</p>
               </div>
-              {!c.labs.length ? <p className="py-10 text-center text-[13px] text-[var(--p-muted)]">No lab tests.</p> : (
-                <div className="max-h-80 divide-y divide-[var(--p-border)] overflow-y-auto overscroll-contain">
-                  {c.labs.map((l) => (
-                    <div key={l.id} className="flex items-center justify-between px-6 py-3">
-                      <div>
-                        <div className="text-[13px] font-medium text-[var(--p-ink)]">{l.testName}</div>
+              <span className="badge">{c.labs.length}</span>
+            </div>
+            {!c.labs.length ? <p className="py-10 text-center text-[13px] text-[var(--p-muted)]">No lab tests.</p> : (
+              <div className="max-h-[32rem] divide-y divide-[var(--p-border)] overflow-y-auto overscroll-contain">
+                {c.labs.map((l) => (
+                  <div key={l.id} className="px-6 py-3.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[13px] font-medium text-[var(--p-ink)]">{l.testName}</span>
+                          {l.results.length > 0 && <AbnormalPill count={l.abnormal} compact />}
+                        </div>
                         <div className="text-[11px] text-[var(--p-muted)]"><span className="font-mono">{l.completedAt ?? l.createdAt}</span></div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex shrink-0 items-center gap-2">
                         <Pill tone={l.status === "COMPLETED" ? "completed" : "waiting"}>{l.status === "COMPLETED" ? "Ready" : "Pending"}</Pill>
                         {l.reportFileUrl && (
                           <a href={l.reportFileUrl} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[11px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">Report</a>
                         )}
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            <section data-rise className="surface overflow-hidden">
-              <div className="flex items-center justify-between border-b border-[var(--p-border)] px-6 py-4">
-                <h3 className="text-[13px] font-semibold text-[var(--p-ink)]">Visit history</h3><span className="badge">{c.visits.length}</span>
+                    {l.results.length > 0 && <LabResultTable results={l.results} className="mt-2.5" />}
+                    {l.status === "COMPLETED" && l.results.length === 0 && (
+                      <p className="mt-2 text-[11.5px] text-[var(--p-muted)]">
+                        No values entered - {l.reportFileUrl ? "the result is in the report file." : "the result was given on paper."}
+                      </p>
+                    )}
+                  </div>
+                ))}
               </div>
-              {!c.visits.length ? <p className="py-10 text-center text-[13px] text-[var(--p-muted)]">No visits.</p> : (
-                <div className="max-h-80 divide-y divide-[var(--p-border)] overflow-y-auto overscroll-contain">
-                  {c.visits.map((v) => (
-                    <div key={v.opNumber} className="flex items-center justify-between px-6 py-3">
-                      <div>
-                        <div className="text-[13px] font-medium text-[var(--p-ink)]">{v.doctorName}</div>
-                        <div className="text-[11px] text-[var(--p-muted)]">{v.department} · <span className="font-mono">{v.visitDate}</span></div>
-                      </div>
-                      <Pill tone={statusTone(v.status === "COMPLETED" ? "Completed" : "Waiting")}>{v.status === "COMPLETED" ? "Done" : "Booked"}</Pill>
+            )}
+          </section>
+
+          <section data-rise className="surface overflow-hidden">
+            <div className="flex items-center justify-between border-b border-[var(--p-border)] px-6 py-4">
+              <h3 className="text-[13px] font-semibold text-[var(--p-ink)]">Visit history</h3><span className="badge">{c.visits.length}</span>
+            </div>
+            {!c.visits.length ? <p className="py-10 text-center text-[13px] text-[var(--p-muted)]">No visits.</p> : (
+              <div className="max-h-80 divide-y divide-[var(--p-border)] overflow-y-auto overscroll-contain">
+                {c.visits.map((v) => (
+                  <div key={v.opNumber} className="flex items-center justify-between px-6 py-3">
+                    <div>
+                      <div className="text-[13px] font-medium text-[var(--p-ink)]">{v.doctorName}</div>
+                      <div className="text-[11px] text-[var(--p-muted)]">{v.department} · <span className="font-mono">{v.visitDate}</span></div>
                     </div>
-                  ))}
-                </div>
-              )}
-            </section>
-          </div>
+                    <Pill tone={statusTone(v.status === "COMPLETED" ? "Completed" : "Waiting")}>{v.status === "COMPLETED" ? "Done" : "Booked"}</Pill>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         </div>
       )}
     </PortalScroll>

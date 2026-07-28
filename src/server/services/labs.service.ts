@@ -19,6 +19,14 @@ export interface LabTestDTO {
   patient: { id: string; displayId: string; fullName: string; phone: string } | null;
   appointment: { opNumber: string; doctorName: string; visitDate: string } | null;
   billed: boolean;
+  /**
+   * The measured analyte values, when the bench entered them. Optional because
+   * the work queue and the billing screens have no use for them and shouldn't
+   * pay to load them - only the screens that READ a result fill this in.
+   */
+  results?: LabResultDTO[];
+  /** Lines out of range on this test. Only meaningful alongside `results`. */
+  abnormal?: number;
 }
 
 /** Active test catalog (what the lab can order/bill). */
@@ -366,6 +374,46 @@ export async function labResultSheet(labTestId: string): Promise<{
 }
 
 /**
+ * The measured values for MANY tests at once, keyed by test id.
+ *
+ * The one query matters: every screen that lists a patient's investigations
+ * would otherwise fetch results per row, and a patient with thirty tests on
+ * file would cost thirty round trips to render one page.
+ *
+ * Returns a bare map - a test with no entered values simply isn't a key, so
+ * callers read `map[id] ?? []` and never branch on "has results".
+ */
+export async function resultsForTests(labTestIds: string[]): Promise<Record<string, LabResultDTO[]>> {
+  if (labTestIds.length === 0) return {};
+
+  const rows = await prisma.labResultItem.findMany({
+    where: { labTestId: { in: labTestIds } },
+    orderBy: [{ labTestId: "asc" }, { sortOrder: "asc" }],
+  });
+
+  type Row = {
+    labTestId: string; name: string; unit: string | null; value: string;
+    refLow: unknown; refHigh: unknown; refText: string | null; flag: string; sortOrder: number;
+  };
+
+  const byTest: Record<string, LabResultDTO[]> = {};
+  for (const r of rows as Row[]) {
+    (byTest[r.labTestId] ??= []).push({
+      name: r.name, unit: r.unit, value: r.value,
+      refLow: dec(r.refLow as { toString(): string } | null),
+      refHigh: dec(r.refHigh as { toString(): string } | null),
+      refText: r.refText, flag: r.flag as LabResultFlagT, sortOrder: r.sortOrder,
+    });
+  }
+  return byTest;
+}
+
+/** How many lines on a sheet are out of range - what a doctor scans for first. */
+export function abnormalCount(results: LabResultDTO[]): number {
+  return results.filter((r) => r.flag !== "NORMAL").length;
+}
+
+/**
  * Save the measured values. Replaces the whole sheet - editing a result is
  * re-entering the sheet, and a half-updated report is worse than none. The
  * range is snapshot onto each line so a later catalog edit can't silently
@@ -546,6 +594,10 @@ export async function patientLabHistory(displayId: string): Promise<{
     }),
   ]);
 
+  // The counter is asked "what did it say?" far more often than "where's the
+  // PDF?" - carry the numbers, not just the file link.
+  const byTest = await resultsForTests((tests as TestRow[]).map((t) => t.id));
+
   return {
     patient: {
       id: patient.id, displayId: patient.displayId, fullName: patient.fullName, phone: patient.phone,
@@ -560,7 +612,10 @@ export async function patientLabHistory(displayId: string): Promise<{
           status: lastAppt.status,
         }
       : null,
-    tests: (tests as TestRow[]).map(toTestDTO),
+    tests: (tests as TestRow[]).map((t) => {
+      const results = byTest[t.id] ?? [];
+      return { ...toTestDTO(t), results, abnormal: abnormalCount(results) };
+    }),
     invoices: invoices.map((i: { receiptNo: string; totalAmount: { toString(): string }; status: string; createdAt: Date }) => ({
       receiptNo: i.receiptNo, totalAmount: i.totalAmount.toString(), status: i.status, createdAt: i.createdAt.toISOString(),
     })),
