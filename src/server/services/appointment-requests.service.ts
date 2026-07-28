@@ -3,6 +3,7 @@ import { ApiError } from "@/lib/api";
 import { nextId } from "@/lib/ids";
 import { parseDateOnly, dateOnlyISO } from "@/lib/date";
 import { logAudit } from "./audit.service";
+import { getSettings } from "./admin.service";
 import { sendOtpSms } from "@/lib/sms";
 import {
   generateOtp, hashOtp, verifyOtp, maskPhone,
@@ -41,9 +42,22 @@ const MAX_NAME = 80;
 // Step 1 - prove the phone is yours
 // ===========================================================================
 
+/**
+ * Callback requests can be switched off by an admin. Checked in the service so
+ * both OTP steps are covered - gating only step one would leave a held code able
+ * to queue a request the desk has said it does not want.
+ */
+async function assertCallbacksOpen(): Promise<void> {
+  const { callbackRequestsEnabled } = await getSettings();
+  if (!callbackRequestsEnabled) {
+    throw new ApiError(503, "Callback requests are closed right now. Please call the hospital directly.");
+  }
+}
+
 export async function requestCallbackOtp(input: {
   phone: string;
 }): Promise<{ sentTo: string; expiresInMs: number }> {
+  await assertCallbacksOpen();
   const phone = normalisePhone(input.phone);
   if (phone.length !== 10) throw new ApiError(400, "Enter a 10-digit mobile number");
 
@@ -86,6 +100,7 @@ export async function submitCallbackRequest(
   input: { name: string; phone: string; code: string; doctorId?: string; preferredDate?: string; note?: string },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<CallbackRequestResult> {
+  await assertCallbacksOpen();
   const phone = normalisePhone(input.phone);
   const name = input.name.trim().replace(/\s+/g, " ").slice(0, MAX_NAME);
   if (phone.length !== 10) throw new ApiError(400, "Enter a 10-digit mobile number");

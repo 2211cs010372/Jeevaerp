@@ -28,6 +28,10 @@ interface Sheet {
   advanceTotal: string;
   /** Each deposit slip taken on this stay - listed so any can be reprinted. */
   advances: (Advance & { takenAt: string })[];
+  /** Pharmacy and lab bills for this stay that are still unpaid. Separate
+   *  documents from the discharge bill - this is where they surface. */
+  outstandingBills: { id: string; receiptNo: string; source: string; total: string; paid: string; due: string; createdAt: string }[];
+  outstandingTotal: string;
   balance: string;
 }
 interface Med { id: string; name: string; unit: string; inStock: number; }
@@ -554,6 +558,39 @@ export default function AdmissionSheetPage() {
               <span className="text-[var(--p-muted)]">Charges ({sheet.charges.length})</span>
               <span className="font-mono text-[var(--p-ink)]">₹{money(sheet.chargesTotal)}</span>
             </div>
+
+            {/* PHARMACY AND LAB ARE BILLED SEPARATELY.
+                They are not lines on the stay - they are their own invoices,
+                due on the way out. Shown here because this is the only screen
+                that sees all three, and because a discharge is refused while
+                any of them is unpaid. */}
+            {sheet.outstandingBills?.length > 0 && (
+              <div className="rounded-lg border border-[var(--p-amber)]/35 bg-[var(--p-amber-soft)] px-3 py-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[12px] font-bold uppercase tracking-wide text-[#8a6414]">Due separately</span>
+                  <span className="font-mono text-[14px] font-bold text-[#8a6414]">₹{money(sheet.outstandingTotal)}</span>
+                </div>
+                <div className="mt-1.5 space-y-1">
+                  {sheet.outstandingBills.map((b) => (
+                    <div key={b.id} className="flex items-center justify-between gap-2 text-[12px] text-[#8a6414]">
+                      <span className="min-w-0 truncate">
+                        {b.source === "LAB" ? "Lab" : b.source === "PHARMACY" ? "Pharmacy" : "Other"}
+                        {" · "}<span className="font-mono">{b.receiptNo}</span>
+                      </span>
+                      <span className="flex shrink-0 items-center gap-2">
+                        <span className="font-mono font-semibold">₹{money(b.due)}</span>
+                        <a href={`/print/invoice/${b.id}`} target="_blank" rel="noopener noreferrer"
+                          className="font-semibold text-[var(--p-teal)] hover:underline">Bill</a>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-1.5 text-[11px] leading-relaxed text-[#8a6414]">
+                  Not part of the discharge bill. Collect these at the pharmacy / lab counter -
+                  discharge is blocked until they are settled.
+                </p>
+              </div>
+            )}
 
             <div className="flex items-center justify-between border-t border-[var(--p-border)] pt-3">
               <span className="text-[14px] font-semibold text-[var(--p-ink)]">Total so far</span>

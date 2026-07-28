@@ -28,10 +28,55 @@ export interface ModeTotal {
   count: number;
 }
 
+/**
+ * A TILL is a drawer somebody physically counts at the end of their shift.
+ *
+ * The question a day close answers is "what should be in MY drawer", so a till is
+ * defined by WHO TOOK THE MONEY - not by what the money was for. Those two differ
+ * more often than people expect: a lab bill settled at the front desk is lab
+ * REVENUE but reception's CASH. Counting it against the lab would leave the
+ * receptionist holding ₹520 the system says they don't have, which is exactly the
+ * kind of unexplained surplus that makes staff stop trusting the reconciliation.
+ *
+ * So: the headline number is per till, and each till also shows what its money was
+ * FOR (`bySource`), which is how a pharmacist sees that ₹520 of their day was
+ * somebody paying off a lab bill at the medicine window.
+ */
+export type Till = "RECEPTION" | "PHARMACY" | "LAB" | "ADMIN";
+
+/** Which staff roles hand their cash in at which drawer. */
+const TILL_ROLES: Record<Till, string[]> = {
+  RECEPTION: ["RECEPTIONIST"],
+  PHARMACY: ["PHARMACIST"],
+  LAB: ["LAB_TECH"],
+  ADMIN: ["ADMIN"],
+};
+export const TILLS = ["RECEPTION", "PHARMACY", "LAB", "ADMIN"] as const;
+export const TILL_LABEL: Record<Till, string> = {
+  RECEPTION: "Reception",
+  PHARMACY: "Pharmacy",
+  LAB: "Laboratory",
+  ADMIN: "Admin office",
+};
+
+/** What a till's money was FOR, as opposed to who took it. */
+export interface SourceTotal {
+  source: string;
+  collected: number;
+  refunded: number;
+  net: number;
+  count: number;
+}
+
 export interface DayClose {
   date: string;
+  /** Which drawer this statement is for. null = the whole hospital. */
+  till: Till | null;
+  tillLabel: string;
   /** Every mode, even the ones with no activity - a missing row reads as a bug. */
   modes: ModeTotal[];
+  /** What this till's takings were for - consultation, pharmacy, lab, IPD. */
+  bySource: SourceTotal[];
   totals: { collected: number; refunded: number; net: number };
   /** The number the receptionist physically counts. */
   cashInHand: number;
@@ -62,25 +107,39 @@ function dayWindow(dateISO?: string) {
   return { from, to };
 }
 
-export async function dayClose(dateISO?: string): Promise<DayClose> {
-  const { from, to } = dayWindow(dateISO);
+export async function dayClose(opts?: { dateISO?: string; till?: Till }): Promise<DayClose> {
+  const { from, to } = dayWindow(opts?.dateISO);
+  const till = opts?.till ?? null;
+
+  // Scoped by WHO handled it, not what it was for - see the Till doc above.
+  const roles = till ? TILL_ROLES[till] : null;
+  const paymentWhere = roles ? { receivedBy: { role: { in: roles as never } } } : {};
+  const refundWhere = roles ? { refundedBy: { role: { in: roles as never } } } : {};
+  // A bill "belongs" to the counter that raised it, which is not necessarily the
+  // counter that got paid - a ward bill raised at reception can be settled at the
+  // pharmacy. Bills counted here are the ones this till wrote.
+  const invoiceWhere = roles ? { createdBy: { role: { in: roles as never } } } : {};
 
   const [payments, refunds, invoices, hospital] = await Promise.all([
     prisma.payment.findMany({
-      where: { createdAt: { gte: from, lte: to } },
-      select: { mode: true, amount: true, invoiceId: true, receivedBy: { select: { name: true } } },
+      where: { createdAt: { gte: from, lte: to }, ...paymentWhere },
+      select: {
+        mode: true, amount: true, invoiceId: true,
+        receivedBy: { select: { name: true } },
+        invoice: { select: { source: true } },
+      },
     }),
     prisma.refund.findMany({
-      where: { createdAt: { gte: from, lte: to } },
+      where: { createdAt: { gte: from, lte: to }, ...refundWhere },
       orderBy: { createdAt: "desc" },
       select: {
         mode: true, amount: true, reason: true, createdAt: true,
         refundedBy: { select: { name: true } },
-        invoice: { select: { receiptNo: true, patient: { select: { fullName: true } } } },
+        invoice: { select: { receiptNo: true, source: true, patient: { select: { fullName: true } } } },
       },
     }),
     prisma.invoice.findMany({
-      where: { createdAt: { gte: from, lte: to } },
+      where: { createdAt: { gte: from, lte: to }, ...invoiceWhere },
       select: {
         receiptNo: true, totalAmount: true, status: true,
         patient: { select: { fullName: true } },
@@ -91,11 +150,15 @@ export async function dayClose(dateISO?: string): Promise<DayClose> {
     prisma.hospitalConfig.findFirst(),
   ]);
 
-  type P = { mode: string; amount: { toString(): string }; receivedBy: { name: string } | null };
+  type P = {
+    mode: string; amount: { toString(): string };
+    receivedBy: { name: string } | null;
+    invoice: { source: string } | null;
+  };
   type R = {
     mode: string; amount: { toString(): string }; reason: string; createdAt: Date;
     refundedBy: { name: string } | null;
-    invoice: { receiptNo: string; patient: { fullName: string } | null } | null;
+    invoice: { receiptNo: string; source: string; patient: { fullName: string } | null } | null;
   };
 
   const modes: ModeTotal[] = MODES.map((m) => {
@@ -114,6 +177,21 @@ export async function dayClose(dateISO?: string): Promise<DayClose> {
     };
   });
 
+  // What this till's money was FOR. Every source that moved, plus nothing that
+  // didn't - unlike modes, an absent source here is information, not a gap.
+  const sourceMap = new Map<string, SourceTotal>();
+  const bumpSource = (src: string, collected: number, refunded: number, n: number) => {
+    const cur = sourceMap.get(src) ?? { source: src, collected: 0, refunded: 0, net: 0, count: 0 };
+    cur.collected = r2(cur.collected + collected);
+    cur.refunded = r2(cur.refunded + refunded);
+    cur.net = r2(cur.collected - cur.refunded);
+    cur.count += n;
+    sourceMap.set(src, cur);
+  };
+  for (const p of payments as P[]) bumpSource(p.invoice?.source ?? "OTHER", Number(p.amount.toString()), 0, 1);
+  for (const x of refunds as R[]) bumpSource(x.invoice?.source ?? "OTHER", 0, Number(x.amount.toString()), 0);
+  const bySource = [...sourceMap.values()].sort((a, b) => b.net - a.net);
+
   // per-counter (receptionist) tally
   const counterMap = new Map<string, { name: string; count: number; amount: number }>();
   for (const p of payments as P[]) {
@@ -130,7 +208,10 @@ export async function dayClose(dateISO?: string): Promise<DayClose> {
   return {
     hospital,
     date: localDateISO(from),
+    till,
+    tillLabel: till ? TILL_LABEL[till] : "Whole hospital",
     modes,
+    bySource,
     totals: { collected, refunded, net: r2(collected - refunded) },
     // The drawer only ever sees cash. A ₹5,000 UPI refund does not empty it.
     cashInHand: modes.find((m) => m.mode === "CASH")?.net ?? 0,
@@ -168,6 +249,166 @@ export async function dayClose(dateISO?: string): Promise<DayClose> {
       })
       .filter((i) => i.due > 0)
       .sort((a, b) => b.due - a.due),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// THE ADMIN ROLL-UP - every drawer in the hospital, side by side.
+// ---------------------------------------------------------------------------
+
+export interface TillSummary {
+  till: Till | "UNASSIGNED";
+  label: string;
+  collected: number;
+  refunded: number;
+  /** collected − refunded. The line the owner reads. */
+  net: number;
+  /** What should physically be in this drawer. */
+  cash: number;
+  digital: number;
+  /** Number of tenders taken, not bills - a split payment is two. */
+  payments: number;
+  /** Bills this counter raised today. */
+  bills: number;
+  /** Who was on this counter, biggest taker first. */
+  staff: { name: string; count: number; amount: number }[];
+  /** What this counter's money was for. */
+  bySource: SourceTotal[];
+}
+
+/**
+ * Every till's takings for one day, in a single pass over the day's money.
+ *
+ * Deliberately one query rather than one per portal: the roll-up must add up to
+ * the hospital total exactly, and four independent queries can drift if a payment
+ * lands between them. UNASSIGNED catches money taken by somebody whose role maps
+ * to no drawer - it should be zero, and if it isn't, the owner needs to see it
+ * rather than have it quietly vanish from the reconciliation.
+ */
+export async function dayCloseByTill(dateISO?: string): Promise<{
+  date: string;
+  tills: TillSummary[];
+  totals: { collected: number; refunded: number; net: number; cash: number; payments: number; bills: number };
+}> {
+  const { from, to } = dayWindow(dateISO);
+
+  const [payments, refunds, invoices] = await Promise.all([
+    prisma.payment.findMany({
+      where: { createdAt: { gte: from, lte: to } },
+      select: {
+        mode: true, amount: true,
+        receivedBy: { select: { name: true, role: true } },
+        invoice: { select: { source: true } },
+      },
+    }),
+    prisma.refund.findMany({
+      where: { createdAt: { gte: from, lte: to } },
+      select: {
+        mode: true, amount: true,
+        refundedBy: { select: { role: true } },
+        invoice: { select: { source: true } },
+      },
+    }),
+    prisma.invoice.findMany({
+      where: { createdAt: { gte: from, lte: to } },
+      select: { createdBy: { select: { role: true } } },
+    }),
+  ]);
+
+  const tillOf = (role?: string | null): Till | "UNASSIGNED" => {
+    for (const t of TILLS) if (role && TILL_ROLES[t].includes(role)) return t;
+    return "UNASSIGNED";
+  };
+
+  const blank = (till: Till | "UNASSIGNED"): TillSummary => ({
+    till,
+    label: till === "UNASSIGNED" ? "Unassigned" : TILL_LABEL[till],
+    collected: 0, refunded: 0, net: 0, cash: 0, digital: 0,
+    payments: 0, bills: 0, staff: [], bySource: [],
+  });
+
+  const acc = new Map<string, TillSummary>();
+  const staffAcc = new Map<string, Map<string, { name: string; count: number; amount: number }>>();
+  const sourceAcc = new Map<string, Map<string, SourceTotal>>();
+  for (const t of [...TILLS, "UNASSIGNED" as const]) {
+    acc.set(t, blank(t));
+    staffAcc.set(t, new Map());
+    sourceAcc.set(t, new Map());
+  }
+
+  type P = {
+    mode: string; amount: { toString(): string };
+    receivedBy: { name: string; role: string } | null;
+    invoice: { source: string } | null;
+  };
+  for (const p of payments as P[]) {
+    const key = tillOf(p.receivedBy?.role);
+    const row = acc.get(key)!;
+    const amt = Number(p.amount.toString());
+    row.collected = r2(row.collected + amt);
+    row.payments += 1;
+    if (p.mode === "CASH") row.cash = r2(row.cash + amt);
+    else row.digital = r2(row.digital + amt);
+
+    const name = p.receivedBy?.name ?? "—";
+    const s = staffAcc.get(key)!;
+    const cur = s.get(name) ?? { name, count: 0, amount: 0 };
+    cur.count += 1; cur.amount = r2(cur.amount + amt);
+    s.set(name, cur);
+
+    const src = p.invoice?.source ?? "OTHER";
+    const sm = sourceAcc.get(key)!;
+    const sc = sm.get(src) ?? { source: src, collected: 0, refunded: 0, net: 0, count: 0 };
+    sc.collected = r2(sc.collected + amt); sc.count += 1; sc.net = r2(sc.collected - sc.refunded);
+    sm.set(src, sc);
+  }
+
+  type R = {
+    mode: string; amount: { toString(): string };
+    refundedBy: { role: string } | null;
+    invoice: { source: string } | null;
+  };
+  for (const x of refunds as R[]) {
+    const key = tillOf(x.refundedBy?.role);
+    const row = acc.get(key)!;
+    const amt = Number(x.amount.toString());
+    row.refunded = r2(row.refunded + amt);
+    // A cash refund physically empties this drawer; a UPI refund does not.
+    if (x.mode === "CASH") row.cash = r2(row.cash - amt);
+    else row.digital = r2(row.digital - amt);
+
+    const src = x.invoice?.source ?? "OTHER";
+    const sm = sourceAcc.get(key)!;
+    const sc = sm.get(src) ?? { source: src, collected: 0, refunded: 0, net: 0, count: 0 };
+    sc.refunded = r2(sc.refunded + amt); sc.net = r2(sc.collected - sc.refunded);
+    sm.set(src, sc);
+  }
+
+  for (const inv of invoices as { createdBy: { role: string } | null }[]) {
+    acc.get(tillOf(inv.createdBy?.role))!.bills += 1;
+  }
+
+  const tills = [...TILLS, "UNASSIGNED" as const].map((t) => {
+    const row = acc.get(t)!;
+    row.net = r2(row.collected - row.refunded);
+    row.staff = [...staffAcc.get(t)!.values()].sort((a, b) => b.amount - a.amount);
+    row.bySource = [...sourceAcc.get(t)!.values()].sort((a, b) => b.net - a.net);
+    return row;
+  })
+    // A drawer that saw no money and wrote no bill is noise on this screen.
+    .filter((r) => r.till !== "UNASSIGNED" || r.collected > 0 || r.refunded > 0 || r.bills > 0);
+
+  return {
+    date: localDateISO(from),
+    tills,
+    totals: {
+      collected: r2(tills.reduce((s, t) => r2(s + t.collected), 0)),
+      refunded: r2(tills.reduce((s, t) => r2(s + t.refunded), 0)),
+      net: r2(tills.reduce((s, t) => r2(s + t.net), 0)),
+      cash: r2(tills.reduce((s, t) => r2(s + t.cash), 0)),
+      payments: tills.reduce((s, t) => s + t.payments, 0),
+      bills: tills.reduce((s, t) => s + t.bills, 0),
+    },
   };
 }
 

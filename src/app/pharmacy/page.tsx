@@ -10,7 +10,7 @@ import { api } from "@/lib/api-client";
 import { PharmacyFlow } from "@/components/portal/pharmacy/pharmacy-flow";
 import { CollectionsCard, type CollectionMode } from "@/components/portal/ui/collections-card";
 
-interface Stats { pendingRx: number; dispensedToday: number; revenueToday: string; lowStock: number; expiringSoon: number; expired: number; profitToday: string; marginPct: number; stockValueCost: string; stockValueMrp: string; potentialProfit: string; collections: CollectionMode[]; }
+interface Stats { pendingRx: number; dispensedToday: number; revenueToday: string; lowStock: number; expiringSoon: number; expired: number; profitToday: string; marginPct: number; stockValueCost: string; stockValueMrp: string; potentialProfit: string; collections: CollectionMode[]; duesCount: number; duesTotal: string; duesIpdCount: number; duesIpdTotal: string; }
 interface ProcStats {
   openOrders: number; overdueOrders: number; onOrderValue: string;
   reorderLines: number; outOfStockLines: number;
@@ -99,6 +99,11 @@ export default function PharmacyDashboard() {
                 {stats.expired} expired - quarantine
               </span>
             )}
+            {stats.duesCount > 0 && (
+              <Link href="/dues" className="rounded-full bg-[#f2711c]/20 px-3.5 py-1.5 font-mono text-[11.5px] text-[#ffb98a] transition-colors hover:bg-[#f2711c]/30">
+                ₹{Number(stats.duesTotal).toLocaleString("en-IN")} to collect
+              </Link>
+            )}
           </div>
         )}
 
@@ -118,6 +123,36 @@ export default function PharmacyDashboard() {
         </div>
       </div>
 
+      {/* ---- THE ONE THING THAT ROTS IF IGNORED ----
+           Medicine dispensed to an inpatient is billed separately from the stay and
+           left unpaid on purpose - the family settles on the way out. Nobody is
+           standing at the window to remind the pharmacist, so this does. It sits
+           above every other number because it is the only one that walks out of
+           the building on its own. */}
+      {stats && stats.duesCount > 0 && (
+        <Link href="/dues" data-rise
+          className="mb-6 flex flex-wrap items-center gap-4 rounded-xl border border-[var(--p-amber)]/40 bg-[var(--p-amber-soft)] px-5 py-4 transition-colors hover:border-[var(--p-amber)]">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--p-amber)]/20 text-[#8a6414]">
+            <Icon name="rupee" size={20} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-[14px] font-bold text-[#8a6414]">
+              ₹{Number(stats.duesTotal).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} dispensed but not collected
+            </div>
+            <p className="mt-0.5 text-[12.5px] leading-relaxed text-[#8a6414]">
+              {stats.duesCount} bill{stats.duesCount === 1 ? "" : "s"} still open
+              {stats.duesIpdCount > 0 && (
+                <> · <b>{stats.duesIpdCount} on the ward</b> (₹{Number(stats.duesIpdTotal).toLocaleString("en-IN")}) — those patients cannot be discharged until it is paid</>
+              )}
+              . Collect the money and print the bill here.
+            </p>
+          </div>
+          <span className="btn-primary inline-flex shrink-0 items-center gap-2 rounded-lg px-4 py-2.5 text-[13px] font-semibold text-white">
+            Collect dues <Icon name="chevron" size={14} />
+          </span>
+        </Link>
+      )}
+
       {/* ---- 01 · the counter right now ---- */}
       <SectionHead index="01 · The counter right now" title="Work waiting and work done"
         desc="Prescriptions appear the moment reception sends a scan through. Alerts count every batch that is low on stock or close to its expiry date." />
@@ -133,26 +168,14 @@ export default function PharmacyDashboard() {
         desc="Realized profit is MRP minus purchase rate on today's sales. Potential profit is the same margin still sitting on the shelves, valued at MRP." />
       <div data-rise className="grid gap-6 lg:grid-cols-[2fr_1fr]">
         <div className="grid grid-cols-2 gap-4">
-          <div className="surface px-5 py-4">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Profit today</div>
-            <div className="mt-1 font-mono text-[21px] font-bold text-[var(--p-teal)]">{inr(Number(stats?.profitToday ?? 0))}</div>
-            <div className="mt-0.5 text-[12px] text-[var(--p-muted)]">MRP − purchase rate on today&apos;s sales</div>
-          </div>
-          <div className="surface px-5 py-4">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Margin today</div>
-            <div className="mt-1 font-mono text-[21px] font-bold text-[var(--p-ink)]">{(stats?.marginPct ?? 0).toFixed(1)}%</div>
-            <div className="mt-0.5 text-[12px] text-[var(--p-muted)]">realized on costed lines</div>
-          </div>
+          
+          
           <div className="surface px-5 py-4">
             <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Stock value (MRP)</div>
             <div className="mt-1 font-mono text-[21px] font-bold text-[var(--p-ink)]">{inr(Number(stats?.stockValueMrp ?? 0))}</div>
             <div className="mt-0.5 text-[12px] text-[var(--p-muted)]">bought at {inr(Number(stats?.stockValueCost ?? 0))}</div>
           </div>
-          <div className="surface px-5 py-4">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Potential profit</div>
-            <div className="mt-1 font-mono text-[21px] font-bold text-[var(--p-teal)]">{inr(Number(stats?.potentialProfit ?? 0))}</div>
-            <div className="mt-0.5 text-[12px] text-[var(--p-muted)]">margin waiting in current stock</div>
-          </div>
+          
         </div>
         <CollectionsCard modes={stats?.collections ?? []} accent="blue" subtitle="Collected at the pharmacy today, by payment mode" />
       </div>
@@ -241,6 +264,7 @@ export default function PharmacyDashboard() {
             <A href="/queue" icon="file" title="Prescription queue" sub="Scans sent by reception, oldest first" />
             <A href="/dispense" icon="pill" title="Dispense medicines" sub="Earliest-expiry batch picked automatically, GST bill printed" />
             <A href="/stock" icon="bed" title="Stock & batches" sub="Receive purchases, adjust counts, track every expiry" />
+            <A href="/dues" icon="rupee" title="Dues to collect" sub="Ward and counter bills dispensed but not yet paid for" />
             <A href="/alerts" icon="alert" title="Alerts" sub="Low stock and expiring batches, before they become a problem" />
             <A href="/reorder" icon="trend" title="Reorder" sub="What to buy, priced and grouped by distributor" />
             <A href="/receive" icon="inbox" title="Receive goods" sub="Book a delivery in against the supplier's invoice" />
@@ -270,7 +294,7 @@ function ProcTile({
   );
 }
 
-function A({ href, icon, title, sub }: { href: string; icon: "file" | "pill" | "bed" | "alert" | "trend" | "inbox" | "truck"; title: string; sub: string }) {
+function A({ href, icon, title, sub }: { href: string; icon: "file" | "pill" | "bed" | "alert" | "trend" | "inbox" | "truck" | "rupee"; title: string; sub: string }) {
   return (
     <Link href={href} className="flex items-center gap-3 px-5 py-3.5 transition-colors hover:bg-[var(--p-bg)]">
       <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--p-blue-soft)] text-[var(--p-blue)]"><Icon name={icon} size={17} /></span>

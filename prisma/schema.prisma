@@ -1398,6 +1398,45 @@ model HospitalConfig {
   /// Default GST rate applied to NEW lab catalog entries (%). 0 = exempt (correct
   /// default for diagnostic services). Admin/CA can override per test.
   defaultLabGstPct Decimal  @default(0) @db.Decimal(4, 2)
+
+  // ── BRANDING ──────────────────────────────────────────────────────────────
+  /// The logo, held as a base64 data URI rather than a file path.
+  ///
+  /// The obvious alternative - write it to /public - does not survive a deploy on
+  /// any serverless host, so the hospital's logo would silently revert to the
+  /// stock one every release. Patient records deliberately live on local disk
+  /// (see src/lib/storage.ts), but that store is PRIVATE and auth-gated, which is
+  /// exactly wrong for a logo that has to render on a printed bill and a login
+  /// screen. A logo is small, public, and changes about once a year - the column
+  /// is the honest place for it. Capped at 512 KB by the validator.
+  logoDataUrl      String?  @db.Text
+  /// Shown in the portal sidebar and on the login screens. Was hardcoded "Jeeva".
+  brandName        String   @default("Jeeva")
+  /// One line under the brand on sign-in screens. Optional.
+  tagline          String?
+
+  // ── WHAT PRINTS ON A BILL ─────────────────────────────────────────────────
+  /// Free text at the foot of every invoice - terms, a refund policy, a helpline.
+  invoiceFooterNote String? @db.Text
+
+  // ── PHARMACY BEHAVIOUR ────────────────────────────────────────────────────
+  /// How far ahead a batch counts as "expiring soon". Was hardcoded to 90 days,
+  /// which suits a fast-moving retail counter and not a hospital that buys in
+  /// bulk twice a year.
+  expiryAlertDays  Int      @default(90)
+
+  // ── WARD BEHAVIOUR ────────────────────────────────────────────────────────
+  /// Refuse a discharge while pharmacy or lab bills on that stay are unpaid.
+  /// On by default. A hospital that settles dues after discharge can turn it off,
+  /// but it should be a decision somebody made, not an accident.
+  blockDischargeOnDues Boolean @default(true)
+
+  // ── WHAT THE PUBLIC SITE CAN DO ───────────────────────────────────────────
+  /// Master switch for online appointment booking.
+  onlineBookingEnabled     Boolean @default(true)
+  /// Master switch for the "request a callback" form.
+  callbackRequestsEnabled  Boolean @default(true)
+
   updatedAt        DateTime @updatedAt
 }
 

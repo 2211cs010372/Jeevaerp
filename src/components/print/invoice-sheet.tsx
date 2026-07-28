@@ -183,8 +183,17 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
             </tbody>
           </table>
         </div>
+        {/* Whatever the hospital wants on every bill - terms, refund policy, a
+            helpline. Set under Admin → Settings; absent by default so nothing
+            appears unless somebody chose to put it there. */}
+        {inv.hospital?.invoiceFooterNote && (
+          <p className="mt-3 whitespace-pre-line border-t border-[var(--pr-line)] pt-1.5 text-[8px] leading-relaxed text-[#4a5652]">
+            {inv.hospital.invoiceFooterNote}
+          </p>
+        )}
+
         {/* footer - printed timestamp only, no website / URL */}
-        <p className="mt-4 border-t border-[var(--pr-line)] pt-1.5 text-center text-[7.5px] text-[#6b7772]">
+        <p className={`${inv.hospital?.invoiceFooterNote ? "mt-1.5" : "mt-4 border-t border-[var(--pr-line)] pt-1.5"} text-center text-[7.5px] text-[#6b7772]`}>
           {(inv.hospital?.legalName ?? "Jeeva Multispeciality Hospital")} · Printed{" "}
           {new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
         </p>

@@ -2,12 +2,34 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/portal/ui/icons";
 import { CommandBar } from "@/components/portal/shell/command-bar";
 import type { NavItem } from "@/lib/portal/nav";
 import { PORTALS } from "@/lib/portal/nav";
 import { api } from "@/lib/api-client";
+
+/**
+ * The hospital's logo, or the built-in stethoscope mark when none is set.
+ *
+ * Plain <img> rather than next/image on purpose: the source is a base64 data URI
+ * out of the database, so there is nothing for the image optimiser to fetch,
+ * resize or cache - it would only add a proxy hop to bytes we already hold.
+ */
+function BrandMark({ logo, name }: { logo: string | null; name: string }) {
+  if (logo) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={logo} alt={name}
+        className="h-8 w-8 shrink-0 rounded-lg object-contain" />
+    );
+  }
+  return (
+    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--p-blue)] text-white shadow-[0_4px_12px_-4px_var(--p-blue-glow)]">
+      <Icon name="stethoscope" size={17} />
+    </span>
+  );
+}
 
 export function PortalShell({
   portalKey, userName, title, children,
@@ -24,6 +46,15 @@ export function PortalShell({
     if (localPath === "/login") return;
     api.get<{ name: string; role: string }>("/auth/me").then(setMe).catch(() => {});
   }, [localPath]);
+
+  // The hospital's own logo and name, set by an admin under Settings. Falls back
+  // to the built-in mark, so a hospital that never uploads one sees no gap.
+  const [brand, setBrand] = useState<{ brandName: string; logoDataUrl: string | null } | null>(null);
+  useEffect(() => {
+    api.get<{ brandName: string; logoDataUrl: string | null }>("/public/branding")
+      .then(setBrand).catch(() => {});
+  }, []);
+  const brandName = brand?.brandName ?? meta.brand;
 
   const displayName = me?.name ?? userName;
   const firstName = displayName.split(" ")[0] || displayName;
@@ -43,8 +74,43 @@ export function PortalShell({
   const isActive = (href: string) =>
     href === "/" ? localPath === "/" : localPath.startsWith(href);
 
+  // ── live counts on nav rows ────────────────────────────────────────────────
+  // Declared per-portal in nav.ts, fetched here. Re-polled on a slow timer and
+  // on tab focus, so a bill raised while the pharmacist was on another screen
+  // shows up without them having to reload anything.
+  const badgePaths = useMemo(() => {
+    const items = meta.groups ? meta.groups.flatMap((g) => g.items) : meta.nav;
+    return Array.from(new Set(items.map((i) => i.badge?.path).filter((p): p is string => !!p)));
+  }, [meta]);
+
+  const [badgeData, setBadgeData] = useState<Record<string, Record<string, unknown>>>({});
+  useEffect(() => {
+    if (localPath === "/login" || badgePaths.length === 0) return;
+    let alive = true;
+    const pull = () => {
+      for (const path of badgePaths) {
+        api.get<Record<string, unknown>>(path)
+          .then((r) => { if (alive) setBadgeData((d) => ({ ...d, [path]: r })); })
+          .catch(() => { /* a badge is never worth an error on screen */ });
+      }
+    };
+    pull();
+    const timer = setInterval(pull, 60_000);
+    const onFocus = () => pull();
+    window.addEventListener("focus", onFocus);
+    return () => { alive = false; clearInterval(timer); window.removeEventListener("focus", onFocus); };
+    // badgePaths is derived from a module constant - stable across renders.
+  }, [localPath, badgePaths]);
+
+  const badgeCount = (item: NavItem): number => {
+    if (!item.badge) return 0;
+    const v = badgeData[item.badge.path]?.[item.badge.field];
+    return typeof v === "number" ? v : 0;
+  };
+
   const NavRow = ({ item }: { item: NavItem }) => {
     const active = isActive(item.href);
+    const count = badgeCount(item);
     return (
       <Link
         href={item.href}
@@ -62,9 +128,21 @@ export function PortalShell({
           }`}
         />
         <span className="mt-[1px] shrink-0"><Icon name={item.icon} size={17} /></span>
-        <span className="min-w-0">
-          <span className={`block text-[13.5px] leading-tight ${active ? "font-semibold" : "font-medium"}`}>
-            {item.label}
+        <span className="min-w-0 flex-1">
+          <span className={`flex items-center gap-2 text-[13.5px] leading-tight ${active ? "font-semibold" : "font-medium"}`}>
+            <span className="min-w-0 truncate">{item.label}</span>
+            {count > 0 && (
+              <span
+                aria-label={`${count} pending`}
+                className={`ml-auto shrink-0 rounded-full px-1.5 py-px font-mono text-[10.5px] font-bold leading-[1.5] ${
+                  item.badge?.tone === "rose"
+                    ? "bg-[var(--p-rose)] text-white"
+                    : "bg-[var(--p-amber)] text-white"
+                }`}
+              >
+                {count > 99 ? "99+" : count}
+              </span>
+            )}
           </span>
           {/* the hint is the teaching: a new receptionist learns the flow by reading the sidebar */}
           {item.hint && (
@@ -104,10 +182,8 @@ export function PortalShell({
         {/* ---- Sidebar: frosted glass, light ---- */}
         <aside className="glass sticky top-0 hidden h-screen w-[336px] shrink-0 flex-col border-r border-[var(--p-border)] md:flex">
           <div className="flex items-center gap-2.5 px-6 py-5">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--p-blue)] text-white shadow-[0_4px_12px_-4px_var(--p-blue-glow)]">
-              <Icon name="stethoscope" size={17} />
-            </span>
-            <span className="font-serif-p text-[17px] font-semibold text-[var(--p-ink)]">{meta.brand}</span>
+            <BrandMark logo={brand?.logoDataUrl ?? null} name={brandName} />
+            <span className="font-serif-p text-[17px] font-semibold text-[var(--p-ink)]">{brandName}</span>
           </div>
 
           <div className="mb-2 px-6 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--p-muted)]">

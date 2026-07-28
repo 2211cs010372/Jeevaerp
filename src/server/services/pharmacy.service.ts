@@ -3,8 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
 import { logAudit } from "./audit.service";
 import { parsePack, packsToUnits, perUnitPrice, describeStock } from "@/lib/pharmacy/pack";
-import { chargePharmacyToRoom } from "./ipd.service";
 import { createInvoice, type BillLineInput } from "./billing.service";
+import { getSettings } from "./admin.service";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma } from "@prisma/client";
 
@@ -518,18 +518,46 @@ export async function dispense(
     select: { id: true, ipNumber: true },
   });
 
-  if (liveAdmission) {
-    await chargePharmacyToRoom(actor, {
-      admissionId: liveAdmission.id,
-      lines: lines.map((l: BillLineInput) => ({
-        description: l.description,
-        qty: l.qty ?? 1,
-        unitPrice: l.unitPrice,
-        gstRatePct: l.gstRatePct ?? 0,
-        batchId: l.batchId,
-      })),
-    });
+  // AN INPATIENT'S MEDICINES GET THEIR OWN PHARMACY BILL.
+  //
+  // They used to dissolve into anonymous AdmissionCharge rows on the room tab.
+  // The medicine was billed - eventually, at discharge - but the pharmacy had no
+  // bill of its own, so it could not answer "what does bed 12 owe us", the
+  // family had nothing itemised to check, and a ward dispense left no pharmacy
+  // document behind at all.
+  //
+  // Now it is a real PHARMACY invoice carrying `admissionId`. Three consequences,
+  // all deliberate:
+  //
+  //   * it is a PHARMACY bill, not an IPD one - pharmacy, labs and the stay are
+  //     billed separately, each settled on its own;
+  //   * it is left UNPAID (status PENDING) when the patient is in a bed, because
+  //     the family settles on the way out, not at the ward door - that is the
+  //     "bill me at discharge" the relatives actually ask for;
+  //   * it is linked to the admission, so reception and the discharge desk can
+  //     see it outstanding and nobody walks out owing the pharmacy money.
+  //
+  // No payment is recorded here even if one was passed: a bedside dispense has
+  // nobody standing at the till.
+  const invoice = await createInvoice(
+    actor,
+    {
+      patientId: input.patientId,
+      source: "PHARMACY",
+      prescriptionUploadId: input.prescriptionUploadId,
+      ...(liveAdmission ? { admissionId: liveAdmission.id } : {}),
+      lines,
+      discountAmount: input.discountAmount,
+      notes: [
+        input.shortSupplyReason ? `Short supply: ${input.shortSupplyReason}` : null,
+        liveAdmission ? `Inpatient ${liveAdmission.ipNumber} - due at discharge` : null,
+      ].filter(Boolean).join(" · ") || undefined,
+      ...(liveAdmission ? {} : { payment: input.payment, payments: input.payments }),
+    },
+    ctx
+  );
 
+  if (liveAdmission) {
     if (input.prescriptionUploadId) {
       await prisma.prescriptionUpload.update({
         where: { id: input.prescriptionUploadId },
@@ -537,28 +565,15 @@ export async function dispense(
       });
     }
     await logAudit(actor, {
-      action: "PHARMACY_CHARGED_TO_ROOM", targetTable: "Admission", targetId: liveAdmission.id,
-      meta: { ipNumber: liveAdmission.ipNumber, lines: lines.length }, ...ctx,
+      action: "PHARMACY_BILLED_TO_INPATIENT", targetTable: "Admission", targetId: liveAdmission.id,
+      meta: { ipNumber: liveAdmission.ipNumber, lines: lines.length, receiptNo: invoice.receiptNo, due: invoice.balanceDue },
+      ...ctx,
     });
 
-    // No invoice - deliberately. The caller is told so it can say so on screen.
-    return { chargedToRoom: true as const, ipNumber: liveAdmission.ipNumber, invoice: null };
+    // `chargedToRoom` is kept in the shape so the counter can still say "don't
+    // take money now" - but there IS an invoice behind it now, and it is due.
+    return { chargedToRoom: true as const, ipNumber: liveAdmission.ipNumber, invoice };
   }
-
-  const invoice = await createInvoice(
-    actor,
-    {
-      patientId: input.patientId,
-      source: "PHARMACY",
-      prescriptionUploadId: input.prescriptionUploadId,
-      lines,
-      discountAmount: input.discountAmount,
-      notes: input.shortSupplyReason ? `Short supply: ${input.shortSupplyReason}` : undefined,
-      payment: input.payment,
-      payments: input.payments,
-    },
-    ctx
-  );
 
   // Close the loop on the scanned prescription.
   if (input.prescriptionUploadId) {
@@ -671,7 +686,22 @@ export async function medicineBatches(medicineId: string) {
   });
 }
 
-/** Pharmacy profit numbers - reusable by the pharmacy dashboard and the admin overview. */
+/**
+ * Pharmacy profit numbers - the ONE implementation. pharmacyStats() and the admin
+ * pharmacy tab both read it rather than each doing the arithmetic themselves,
+ * because when this existed twice the two copies drifted and one of them valued
+ * the entire shelf at fifteen times its worth.
+ *
+ * THE UNIT RULE, which is the whole difficulty here:
+ *   InvoiceItem.unitPrice   - price of ONE DISPENSING UNIT (a tablet, a ml)
+ *   StockBatch.quantity     - DISPENSING UNITS on the shelf
+ *   StockBatch.mrp          - price of a WHOLE PACK, as printed on the carton
+ *   StockBatch.purchasePrice- cost of a WHOLE PACK, as invoiced
+ *
+ * So every pack-priced figure must be divided by packSize before it meets a
+ * unit-counted one. Getting this wrong doesn't crash - it just quietly reports a
+ * ₹6 sale of paracetamol as a ₹750 loss.
+ */
 export async function pharmacyProfitSummary(): Promise<{
   profitToday: string; marginPct: number;
   stockValueCost: string; stockValueMrp: string; potentialProfit: string;
@@ -681,34 +711,159 @@ export async function pharmacyProfitSummary(): Promise<{
   const [todayItems, batches] = await Promise.all([
     prisma.invoiceItem.findMany({
       where: { batchId: { not: null }, invoice: { source: "PHARMACY", createdAt: { gte: today, lt: tomorrow }, status: { not: "CANCELLED" } } },
-      select: { qty: true, unitPrice: true, batch: { select: { purchasePrice: true } } },
+      select: { qty: true, unitPrice: true, batch: { select: { purchasePrice: true, packSize: true } } },
     }),
     prisma.stockBatch.findMany({
       where: { quantity: { gt: 0 }, expiryDate: { gte: today } },
-      select: { quantity: true, mrp: true, purchasePrice: true },
+      select: { quantity: true, mrp: true, purchasePrice: true, packSize: true },
     }),
   ]);
 
   let profitToday = 0, costedRevenue = 0;
-  for (const it of todayItems as { qty: number; unitPrice: { toString(): string }; batch: { purchasePrice: { toString(): string } | null } | null }[]) {
+  for (const it of todayItems as { qty: number; unitPrice: { toString(): string }; batch: { purchasePrice: { toString(): string } | null; packSize: number } | null }[]) {
     const pp = it.batch?.purchasePrice;
     if (pp == null) continue;
     const up = Number(it.unitPrice.toString());
-    profitToday = r2(profitToday + (up - Number(pp.toString())) * it.qty);
+    const costPerUnit = perUnitPrice(Number(pp.toString()), it.batch!.packSize);
+    profitToday = r2(profitToday + (up - costPerUnit) * it.qty);
     costedRevenue = r2(costedRevenue + up * it.qty);
   }
   const marginPct = costedRevenue > 0 ? Math.round((profitToday / costedRevenue) * 1000) / 10 : 0;
 
   let stockValueCost = 0, stockValueMrp = 0;
-  for (const b of batches as { quantity: number; mrp: { toString(): string }; purchasePrice: { toString(): string } | null }[]) {
-    stockValueMrp = r2(stockValueMrp + b.quantity * Number(b.mrp.toString()));
-    if (b.purchasePrice != null) stockValueCost = r2(stockValueCost + b.quantity * Number(b.purchasePrice.toString()));
+  for (const b of batches as { quantity: number; mrp: { toString(): string }; purchasePrice: { toString(): string } | null; packSize: number }[]) {
+    stockValueMrp = r2(stockValueMrp + b.quantity * perUnitPrice(Number(b.mrp.toString()), b.packSize));
+    if (b.purchasePrice != null) {
+      stockValueCost = r2(stockValueCost + b.quantity * perUnitPrice(Number(b.purchasePrice.toString()), b.packSize));
+    }
   }
   const potentialProfit = r2(stockValueMrp - stockValueCost);
 
   return {
     profitToday: profitToday.toFixed(2), marginPct,
     stockValueCost: stockValueCost.toFixed(2), stockValueMrp: stockValueMrp.toFixed(2), potentialProfit: potentialProfit.toFixed(2),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// MONEY THE PHARMACY HAS DISPENSED BUT NOT YET COLLECTED
+//
+// An inpatient's medicine leaves this counter unpaid on purpose - the family
+// settles on the way out. That is a deliberate debt, but a debt nobody is
+// looking at is a debt that walks out of the building. This is the list that
+// makes it visible: every pharmacy bill still carrying a balance, with the
+// ward ones first, because those are the ones a discharge is waiting on.
+// ---------------------------------------------------------------------------
+
+export interface PharmacyDue {
+  invoiceId: string;
+  receiptNo: string;
+  createdAt: string;
+  total: string;
+  paid: string;
+  due: string;
+  patient: { id: string; displayId: string; fullName: string; phone: string | null };
+  /** Set only for a bill raised against a live or past admission. */
+  ipNumber: string | null;
+  ward: string | null;
+  bedNo: string | null;
+  /** True while the patient is still in a bed - discharge is blocked on this bill. */
+  stillAdmitted: boolean;
+  /** "Pantop 40 · 6 tab + 2 more" - enough to recognise the sale without opening it. */
+  summary: string;
+}
+
+/**
+ * Every pharmacy invoice with money still on it, newest debt last so the oldest
+ * - the one most likely to be forgotten - sits at the top of the list.
+ */
+export async function pharmacyDues(): Promise<{
+  dues: PharmacyDue[];
+  /** Ward bills only. This is the number that blocks discharges. */
+  ipdCount: number;
+  ipdTotal: string;
+  /** Every unpaid pharmacy bill, ward and counter together. */
+  count: number;
+  totalDue: string;
+}> {
+  const rows = await prisma.invoice.findMany({
+    where: {
+      source: "PHARMACY",
+      status: { notIn: ["CANCELLED", "PAID"] },
+    },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true, receiptNo: true, createdAt: true, totalAmount: true,
+      payments: { select: { amount: true } },
+      refunds: { select: { amount: true } },
+      patient: { select: { id: true, displayId: true, fullName: true, phone: true } },
+      items: { select: { description: true, qty: true }, orderBy: { id: "asc" } },
+      admission: {
+        select: {
+          ipNumber: true, status: true,
+          bed: { select: { bedNo: true, ward: { select: { name: true } } } },
+        },
+      },
+    },
+  });
+
+  type Row = {
+    id: string; receiptNo: string; createdAt: Date; totalAmount: { toString(): string };
+    payments: { amount: { toString(): string } }[];
+    refunds: { amount: { toString(): string } }[];
+    patient: { id: string; displayId: string; fullName: string; phone: string | null } | null;
+    items: { description: string; qty: number }[];
+    admission: { ipNumber: string; status: string; bed: { bedNo: string; ward: { name: string } } | null } | null;
+  };
+
+  const dues: PharmacyDue[] = [];
+  for (const inv of rows as Row[]) {
+    const total = Number(inv.totalAmount.toString());
+    const paid = r2(
+      inv.payments.reduce((s, x) => r2(s + Number(x.amount.toString())), 0) -
+      inv.refunds.reduce((s, x) => r2(s + Number(x.amount.toString())), 0)
+    );
+    const due = r2(total - paid);
+    // A rounding tail of a paisa is settled, not owed.
+    if (due <= 0.01) continue;
+    if (!inv.patient) continue;
+
+    const first = inv.items[0];
+    const more = inv.items.length - 1;
+    const summary = first
+      ? `${first.description.split("·")[0].trim()}${more > 0 ? ` + ${more} more` : ""}`
+      : "—";
+
+    dues.push({
+      invoiceId: inv.id,
+      receiptNo: inv.receiptNo,
+      createdAt: inv.createdAt.toISOString(),
+      total: total.toFixed(2),
+      paid: paid.toFixed(2),
+      due: due.toFixed(2),
+      patient: inv.patient,
+      ipNumber: inv.admission?.ipNumber ?? null,
+      ward: inv.admission?.bed?.ward.name ?? null,
+      bedNo: inv.admission?.bed?.bedNo ?? null,
+      stillAdmitted: inv.admission?.status === "ADMITTED",
+      summary,
+    });
+  }
+
+  // Ward bills first - a discharge is held up by those, a counter bill is not.
+  dues.sort((a, b) => {
+    if (a.stillAdmitted !== b.stillAdmitted) return a.stillAdmitted ? -1 : 1;
+    if (!!a.ipNumber !== !!b.ipNumber) return a.ipNumber ? -1 : 1;
+    return a.createdAt.localeCompare(b.createdAt);
+  });
+
+  const ipd = dues.filter((d) => d.ipNumber !== null);
+  return {
+    dues,
+    ipdCount: ipd.length,
+    ipdTotal: ipd.reduce((s, d) => r2(s + Number(d.due)), 0).toFixed(2),
+    count: dues.length,
+    totalDue: dues.reduce((s, d) => r2(s + Number(d.due)), 0).toFixed(2),
   };
 }
 
@@ -721,12 +876,17 @@ export async function pharmacyStats(): Promise<{
   /** Unrealized margin sitting in current stock. */
   stockValueCost: string; stockValueMrp: string; potentialProfit: string;
   collections: ModeTotal[];
+  /** Dispensed but not paid for - the counter's own debtors. See pharmacyDues(). */
+  duesCount: number; duesTotal: string; duesIpdCount: number; duesIpdTotal: string;
 }> {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
-  const in90 = new Date(today); in90.setDate(today.getDate() + 90);
+  // Same admin-set horizon the alerts screen uses - the dashboard count and the
+  // list behind it must never disagree about what "expiring soon" means.
+  const { expiryAlertDays } = await getSettings();
+  const horizon = new Date(today); horizon.setDate(today.getDate() + expiryAlertDays);
 
-  const [pendingRx, dispensedToday, invoices, meds, expiringSoon, expired, todayItems] = await Promise.all([
+  const [pendingRx, dispensedToday, invoices, meds, expiringSoon, expired, profit] = await Promise.all([
     prisma.prescriptionUpload.count({ where: { status: "SENT_TO_PHARMACY" } }),
     prisma.prescriptionUpload.count({ where: { status: "DISPENSED", dispensedAt: { gte: today, lt: tomorrow } } }),
     prisma.invoice.findMany({
@@ -737,52 +897,33 @@ export async function pharmacyStats(): Promise<{
       where: { active: true },
       select: {
         reorderThreshold: true,
-        batches: { where: { quantity: { gt: 0 }, expiryDate: { gte: today } }, select: { quantity: true, mrp: true, purchasePrice: true } },
+        batches: { where: { quantity: { gt: 0 }, expiryDate: { gte: today } }, select: { quantity: true } },
       },
     }),
-    prisma.stockBatch.count({ where: { quantity: { gt: 0 }, expiryDate: { gte: today, lt: in90 } } }),
+    prisma.stockBatch.count({ where: { quantity: { gt: 0 }, expiryDate: { gte: today, lt: horizon } } }),
     prisma.stockBatch.count({ where: { quantity: { gt: 0 }, expiryDate: { lt: today } } }),
-    prisma.invoiceItem.findMany({
-      where: { batchId: { not: null }, invoice: { source: "PHARMACY", createdAt: { gte: today, lt: tomorrow }, status: { not: "CANCELLED" } } },
-      select: { qty: true, unitPrice: true, batch: { select: { purchasePrice: true } } },
-    }),
+    // Profit and stock valuation are NOT recomputed here - see pharmacyProfitSummary
+    // for why there is exactly one copy of that arithmetic.
+    pharmacyProfitSummary(),
   ]);
 
   const revenue = invoices.reduce((s: number, i: { totalAmount: { toString(): string } }) => r2(s + Number(i.totalAmount.toString())), 0);
-  type MedB = { reorderThreshold: number; batches: { quantity: number; mrp: { toString(): string }; purchasePrice: { toString(): string } | null }[] };
+  type MedB = { reorderThreshold: number; batches: { quantity: number }[] };
   const lowStock = (meds as MedB[])
     .filter((m) => m.batches.reduce((s, b) => s + b.quantity, 0) <= m.reorderThreshold).length;
 
-  // Realized gross profit today - only lines whose batch has a known purchase rate.
-  let profitToday = 0, costedRevenue = 0;
-  for (const it of todayItems as { qty: number; unitPrice: { toString(): string }; batch: { purchasePrice: { toString(): string } | null } | null }[]) {
-    const pp = it.batch?.purchasePrice;
-    if (pp == null) continue;
-    const up = Number(it.unitPrice.toString());
-    profitToday = r2(profitToday + (up - Number(pp.toString())) * it.qty);
-    costedRevenue = r2(costedRevenue + up * it.qty);
-  }
-  const marginPct = costedRevenue > 0 ? Math.round((profitToday / costedRevenue) * 1000) / 10 : 0;
-
-  // Unrealized margin sitting in current (in-date) stock.
-  let stockValueCost = 0, stockValueMrp = 0;
-  for (const m of meds as MedB[]) {
-    for (const b of m.batches) {
-      stockValueMrp = r2(stockValueMrp + b.quantity * Number(b.mrp.toString()));
-      if (b.purchasePrice != null) stockValueCost = r2(stockValueCost + b.quantity * Number(b.purchasePrice.toString()));
-    }
-  }
-  const potentialProfit = r2(stockValueMrp - stockValueCost);
-
   // What the pharmacy till took today, split by payment type.
   const collections = await collectionByMode({ sources: ["PHARMACY"] });
+  // ...and what it dispensed today or any other day without being paid.
+  const dues = await pharmacyDues();
 
   return {
     pendingRx, dispensedToday, revenueToday: revenue.toFixed(2),
     lowStock, expiringSoon, expired,
-    profitToday: profitToday.toFixed(2), marginPct,
-    stockValueCost: stockValueCost.toFixed(2), stockValueMrp: stockValueMrp.toFixed(2), potentialProfit: potentialProfit.toFixed(2),
+    ...profit,
     collections: collections.modes,
+    duesCount: dues.count, duesTotal: dues.totalDue,
+    duesIpdCount: dues.ipdCount, duesIpdTotal: dues.ipdTotal,
   };
 }
 
@@ -792,11 +933,14 @@ export async function stockAlerts(): Promise<{
   lowStock: { medicineId: string; name: string; inStock: number; reorderThreshold: number }[];
 }> {
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const in90 = new Date(today); in90.setDate(today.getDate() + 90);
+  // How far ahead counts as "expiring soon" is an admin setting - a counter that
+  // reorders weekly wants a different horizon from one that buys twice a year.
+  const { expiryAlertDays } = await getSettings();
+  const horizon = new Date(today); horizon.setDate(today.getDate() + expiryAlertDays);
 
   const [batches, meds] = await Promise.all([
     prisma.stockBatch.findMany({
-      where: { quantity: { gt: 0 }, expiryDate: { lt: in90 } },
+      where: { quantity: { gt: 0 }, expiryDate: { lt: horizon } },
       orderBy: { expiryDate: "asc" }, take: 50,
       select: { id: true, batchNo: true, expiryDate: true, quantity: true, medicine: { select: { name: true } } },
     }),

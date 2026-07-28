@@ -6,6 +6,13 @@ export interface NavItem {
   icon: IconName;
   /** One line telling a new staff member WHY they'd click this. */
   hint?: string;
+  /**
+   * A live count pinned to this row, polled by the shell.
+   * `path` is an API path, `field` a numeric key on the response body.
+   * Use it only for work that ROTS if unseen - money not collected, a patient
+   * waiting. A badge on everything is a badge on nothing.
+   */
+  badge?: { path: string; field: string; tone?: "amber" | "rose" };
 }
 
 /**
@@ -61,12 +68,14 @@ export const PORTALS: Record<string, PortalMeta> = {
       { label: "All bills", href: "/bills", icon: "receipt" },
       { label: "Insurance claims", href: "/insurance", icon: "shield" },
       { label: "Day close", href: "/day-close", icon: "rupee" },
+      { label: "Pharmacy", href: "/pharmacy", icon: "pill" },
       { label: "HR & staff", href: "/hr", icon: "users" },
       { label: "Lab catalog & GST", href: "/catalog", icon: "flask" },
       { label: "Wards & beds", href: "/wards", icon: "bed" },
-      { label: "Hospital settings", href: "/settings", icon: "building" },
       { label: "Login activity", href: "/sessions", icon: "clock" },
       { label: "Audit log", href: "/audit", icon: "activity" },
+      { label: "Hospital settings", href: "/settings", icon: "building" },
+
     ],
   },
   doctor: {
@@ -88,6 +97,7 @@ export const PORTALS: Record<string, PortalMeta> = {
       { label: "Order tests", href: "/order", icon: "plus" },
       { label: "Billing", href: "/billing", icon: "rupee" },
       { label: "Invoices", href: "/invoices", icon: "receipt" },
+      { label: "Day close", href: "/day-close", icon: "trend" },
       { label: "Patients", href: "/patients", icon: "search" },
     ],
   },
@@ -106,21 +116,34 @@ export const PORTALS: Record<string, PortalMeta> = {
       { label: "Receive goods", href: "/receive", icon: "inbox" },
       { label: "Returns", href: "/returns", icon: "undo" },
       { label: "Suppliers", href: "/suppliers", icon: "truck" },
+      { label: "Dues to collect", href: "/dues", icon: "rupee" },
+      { label: "Day close", href: "/day-close", icon: "trend" },
     ],
     groups: [
       {
         title: "At the counter",
         items: [
-          { label: "Dashboard", href: "/", icon: "grid", hint: "Today's takings and what's waiting." },
-          { label: "Prescriptions", href: "/queue", icon: "file", hint: "Chits sent up by reception. Dispense them." },
-          { label: "Dispense", href: "/dispense", icon: "pill", hint: "Walk-in sale. No prescription needed." },
+          { label: "Dashboard", href: "/", icon: "grid", },
+          { label: "Prescriptions", href: "/queue", icon: "file", },
+          { label: "Dispense", href: "/dispense", icon: "pill", },
+          {
+            // An inpatient's medicine leaves unpaid by design. Without a number
+            // sitting in the sidebar, nobody remembers to go and collect it.
+            label: "Dues to collect", href: "/dues", icon: "rupee",
+
+            badge: { path: "/pharmacy/dues", field: "count", tone: "amber" },
+          },
+          {
+            label: "Day close", href: "/day-close", icon: "trend",
+
+          },
         ],
       },
       {
         title: "The shelf",
         items: [
-          { label: "Stock", href: "/stock", icon: "grid", hint: "What's on the rack. Add, edit, write off." },
-          { label: "Alerts", href: "/alerts", icon: "alert", hint: "Running low, expiring, or expired." },
+          { label: "Stock", href: "/stock", icon: "grid", },
+          { label: "Alerts", href: "/alerts", icon: "alert", },
         ],
       },
       {
@@ -128,11 +151,11 @@ export const PORTALS: Record<string, PortalMeta> = {
         // in the order you actually do it: decide, order, receive, send back.
         title: "Buying it in",
         items: [
-          { label: "Reorder", href: "/reorder", icon: "trend", hint: "What to buy, priced and grouped by supplier." },
-          { label: "Purchase orders", href: "/purchase-orders", icon: "file", hint: "What's on order and what's overdue." },
-          { label: "Receive goods", href: "/receive", icon: "inbox", hint: "Book in a delivery against its invoice." },
-          { label: "Returns", href: "/returns", icon: "undo", hint: "Expiry credit owed by distributors." },
-          { label: "Suppliers", href: "/suppliers", icon: "truck", hint: "Distributors, licences and terms." },
+          { label: "Reorder", href: "/reorder", icon: "trend", },
+          { label: "Purchase orders", href: "/purchase-orders", icon: "file", },
+          { label: "Receive goods", href: "/receive", icon: "inbox", },
+          { label: "Returns", href: "/returns", icon: "undo", },
+          { label: "Suppliers", href: "/suppliers", icon: "truck", },
         ],
       },
     ],

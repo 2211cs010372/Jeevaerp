@@ -19,6 +19,10 @@ import { useState } from "react";
 export interface HospitalInfo {
   legalName: string; addressLine: string; city: string; state: string;
   stateCode: string; pincode: string; gstin: string | null; phone: string | null;
+  /** Admin-uploaded logo (base64 data URI). Falls back to the shipped mark. */
+  logoDataUrl?: string | null;
+  /** Terms / refund policy the hospital wants at the foot of every bill. */
+  invoiceFooterNote?: string | null;
 }
 
 export const PRINT_CSS = `
@@ -176,8 +180,12 @@ export function LetterHead({ hospital, doctor }: {
       <div className="rule-strong pb-2">
         <div className="flex items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-2.5">
+            {/* The hospital's own logo when an admin has set one under Settings,
+                otherwise the shipped mark. Not next/image: a data URI has
+                nothing for the optimiser to fetch or resize. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/images/jeeva-logo.png" alt={name} className="h-[44px] w-[44px] shrink-0 object-contain" />
+            <img src={hospital?.logoDataUrl || "/images/jeeva-logo.png"} alt={name}
+              className="h-[44px] w-[44px] shrink-0 object-contain" />
             <div className="min-w-0 text-[22px] font-extrabold uppercase leading-[1.05] tracking-tight" style={{ color: "#c8211b" }}>
               {name}
             </div>

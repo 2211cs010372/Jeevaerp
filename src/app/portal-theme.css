@@ -1175,3 +1175,87 @@
     .portal[data-portal="doctor"] .flow-step {
         border-radius: 16px;
     }
+/* ============================================================================
+   OVERLAYS
+
+   .modal-veil was referenced by the shared Modal but never defined, so every
+   "modal" in the portals rendered as a plain block in normal document flow -
+   no backdrop, no centring, and the page behind it still scrollable. These are
+   the rules it always needed.
+
+   .sheet-veil is the same overlay anchored to the BOTTOM of the viewport. At a
+   pharmacy counter the useful thing is to keep the list of dues visible while
+   money is being taken, and to keep the buttons within thumb reach on the
+   tablet that actually sits on the counter - so the collect panel rises from
+   the bottom edge rather than covering the middle of the screen.
+   ========================================================================== */
+
+.portal .modal-veil,
+.portal .sheet-veil {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    background: rgba(9, 26, 52, .42);
+    backdrop-filter: blur(2px);
+    animation: veilIn .16s ease-out;
+}
+
+.portal .modal-veil {
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+}
+
+.portal .sheet-veil {
+    align-items: flex-end;
+    justify-content: center;
+    padding: 0;
+}
+
+/* The sheet itself: full width on a phone, a centred card on a desktop, always
+   flush to the bottom edge. max-height keeps a long bill scrollable inside the
+   sheet instead of pushing its footer off-screen. */
+.portal .sheet-panel {
+    width: 100%;
+    max-width: 560px;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    border-radius: 20px 20px 0 0;
+    background: #fff;
+    box-shadow: 0 -18px 60px -12px rgba(9, 26, 52, .35);
+    animation: sheetUp .22s cubic-bezier(.22, 1, .36, 1);
+    /* Clear the home indicator on iOS so the action button is never under it. */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* The grab handle. Purely affordance - it says "this came from the bottom and
+   can go back there", which a centred dialog never needs to say. */
+.portal .sheet-grip {
+    width: 38px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--p-border-strong);
+    margin: 10px auto 2px;
+    flex-shrink: 0;
+}
+
+@keyframes veilIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+@keyframes sheetUp {
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0); }
+}
+
+/* Someone who has asked the OS to reduce motion should not get a 22px slide. */
+@media (prefers-reduced-motion: reduce) {
+    .portal .modal-veil,
+    .portal .sheet-veil,
+    .portal .sheet-panel {
+        animation: none;
+    }
+}

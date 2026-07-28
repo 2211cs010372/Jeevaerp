@@ -19,8 +19,38 @@ interface Close {
   outstanding: { receiptNo: string; patient: string; total: number; paid: number; due: number }[];
 }
 
+interface SourceTotal { source: string; collected: number; refunded: number; net: number; count: number; }
+interface TillSummary {
+  till: string; label: string;
+  collected: number; refunded: number; net: number;
+  cash: number; digital: number;
+  payments: number; bills: number;
+  staff: { name: string; count: number; amount: number }[];
+  bySource: SourceTotal[];
+}
+interface ByTill {
+  date: string;
+  tills: TillSummary[];
+  totals: { collected: number; refunded: number; net: number; cash: number; payments: number; bills: number };
+}
+
 const money = (n: number) => n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const round = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 const todayISO = () => new Date().toLocaleDateString("en-CA");
+
+const SOURCE_LABEL: Record<string, string> = {
+  CONSULTATION: "Consultation", PHARMACY: "Pharmacy", LAB: "Laboratory",
+  IPD: "Inpatient stay", OTHER: "Other",
+};
+
+/** Each counter gets its own colour so the eye can follow one across the page. */
+const TILL_TINT: Record<string, { bg: string; fg: string }> = {
+  RECEPTION:  { bg: "var(--p-teal-soft)",  fg: "var(--p-teal-deep)" },
+  PHARMACY:   { bg: "var(--p-blue-soft)",  fg: "var(--p-blue)" },
+  LAB:        { bg: "var(--p-cyan-soft)",  fg: "var(--p-cyan-deep)" },
+  ADMIN:      { bg: "var(--p-amber-soft)", fg: "#8a6414" },
+  UNASSIGNED: { bg: "var(--p-rose-soft)",  fg: "var(--p-rose)" },
+};
 
 export default function AdminDayClosePage() {
   const [date, setDate] = useState(todayISO());
@@ -30,9 +60,19 @@ export default function AdminDayClosePage() {
   const [exporting, setExporting] = useState(false);
   const [exportErr, setExportErr] = useState<string | null>(null);
 
+  const [byTill, setByTill] = useState<ByTill | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    try { setData(await api.get<Close>(`/reception/day-close?date=${date}`)); }
+    try {
+      // The hospital total and the per-counter split are fetched together so the
+      // page can never show a roll-up from one day beside a total from another.
+      const [all, tills] = await Promise.all([
+        api.get<Close>(`/reception/day-close?till=ALL&date=${date}`),
+        api.get<ByTill>(`/admin/day-close?date=${date}`),
+      ]);
+      setData(all); setByTill(tills);
+    }
     catch (e) { setError(e instanceof ApiClientError ? e.message : "Couldn't load the day."); }
     finally { setLoading(false); }
   }, [date]);
@@ -119,6 +159,116 @@ export default function AdminDayClosePage() {
               <div className="mt-1 font-mono text-[20px] font-bold text-[var(--p-teal-deep)]">₹{money(data.totals?.net ?? 0)}</div>
             </div>
           </div>
+
+          {/* ── WHAT EACH COUNTER TOOK ──
+              The owner's first question of the day, and until now the console
+              couldn't answer it: the hospital total was one number with no way to
+              see which window it came through. Scoped by WHO TOOK THE MONEY, so
+              each row is a drawer somebody can physically count - see the Till
+              note in reports.service.ts for why that differs from revenue. */}
+          {byTill && byTill.tills.length > 0 && (
+            <section data-rise className="surface mb-6 overflow-hidden">
+              <div className="flex flex-wrap items-end justify-between gap-3 border-b border-[var(--p-border)] px-5 py-4">
+                <div>
+                  <h2 className="text-[14px] font-semibold text-[var(--p-ink)]">What each counter took</h2>
+                  <p className="mt-0.5 max-w-2xl text-[12px] leading-relaxed text-[var(--p-muted)]">
+                    One row per drawer, by who handled the money. A bill from one department
+                    settled at another&apos;s window counts as that window&apos;s cash — which is
+                    what the person counting it will find.
+                  </p>
+                </div>
+                <div className="text-right">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">All counters</div>
+                  <div className="font-mono text-[20px] font-bold text-[var(--p-teal-deep)]">₹{money(byTill.totals.net)}</div>
+                </div>
+              </div>
+
+              <div className="divide-y divide-[var(--p-border)]">
+                {byTill.tills.map((t) => {
+                  const tint = TILL_TINT[t.till] ?? TILL_TINT.UNASSIGNED;
+                  const share = byTill.totals.net > 0 ? (t.net / byTill.totals.net) * 100 : 0;
+                  return (
+                    <div key={t.till} className="px-5 py-4">
+                      <div className="flex flex-wrap items-center gap-4">
+                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[13px] font-bold"
+                          style={{ background: tint.bg, color: tint.fg }}>
+                          {t.label.slice(0, 2).toUpperCase()}
+                        </span>
+                        <div className="min-w-[150px] flex-1">
+                          <div className="text-[14px] font-semibold text-[var(--p-ink)]">{t.label}</div>
+                          <div className="text-[12px] text-[var(--p-muted)]">
+                            {t.payments} payment{t.payments === 1 ? "" : "s"} · {t.bills} bill{t.bills === 1 ? "" : "s"} raised
+                            {t.refunded > 0 && <span className="text-[var(--p-rose)]"> · −₹{money(t.refunded)} refunded</span>}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-[10.5px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Cash drawer</div>
+                          <div className="font-mono text-[14px] font-semibold text-[var(--p-ink)]">{round(t.cash)}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-[10.5px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Digital</div>
+                          <div className="font-mono text-[14px] font-semibold text-[var(--p-ink)]">{round(t.digital)}</div>
+                        </div>
+                        <div className="w-[130px] text-right">
+                          <div className="text-[10.5px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Got</div>
+                          <div className="font-mono text-[20px] font-bold" style={{ color: tint.fg }}>₹{money(t.net)}</div>
+                        </div>
+                      </div>
+
+                      {/* share of the day, and what the money was for */}
+                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                        <div className="h-1.5 min-w-[120px] flex-1 overflow-hidden rounded-full bg-[var(--p-bg)]">
+                          <div className="h-full rounded-full transition-all"
+                            style={{ width: `${Math.max(0, Math.min(100, share))}%`, background: tint.fg }} />
+                        </div>
+                        <span className="font-mono text-[11px] text-[var(--p-muted)]">{share.toFixed(1)}% of the day</span>
+                        {t.bySource.length > 0 && (
+                          <span className="flex flex-wrap gap-1.5">
+                            {t.bySource.map((s) => (
+                              <span key={s.source} className="rounded-full bg-[var(--p-bg)] px-2.5 py-0.5 text-[11px] text-[var(--p-muted)]">
+                                {SOURCE_LABEL[s.source] ?? s.source} {round(s.net)}
+                              </span>
+                            ))}
+                          </span>
+                        )}
+                      </div>
+
+                      {t.staff.length > 0 && (
+                        <p className="mt-2 text-[11.5px] text-[var(--p-muted)]">
+                          {t.staff.map((s) => `${s.name} ${round(s.amount)}`).join(" · ")}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+
+                <div className="flex flex-wrap items-center gap-4 bg-[var(--p-bg)] px-5 py-3.5">
+                  <span className="min-w-[150px] flex-1 text-[12px] font-bold uppercase tracking-wide text-[var(--p-muted)]">
+                    Hospital total
+                  </span>
+                  <span className="text-right font-mono text-[13px] text-[var(--p-ink)]">
+                    cash {round(byTill.totals.cash)}
+                  </span>
+                  <span className="w-[130px] text-right font-mono text-[18px] font-bold text-[var(--p-teal-deep)]">
+                    ₹{money(byTill.totals.net)}
+                  </span>
+                </div>
+              </div>
+
+              {/* If a drawer can't be named, say so rather than let the money vanish
+                  into a total that no longer reconciles against any one counter. */}
+              {byTill.tills.some((t) => t.till === "UNASSIGNED") && (
+                <div className="flex items-start gap-2 border-t border-[var(--p-border)] bg-[var(--p-rose-soft)] px-5 py-3 text-[12px] leading-relaxed text-[var(--p-rose)]">
+                  <span className="mt-0.5 shrink-0"><Icon name="alert" size={14} /></span>
+                  <span>
+                    Some money was taken by staff who don&apos;t belong to a counter — it is counted
+                    in the hospital total but nobody will be handing that drawer over. Check the
+                    roles on those accounts.
+                  </span>
+                </div>
+              )}
+            </section>
+          )}
 
           <div className="grid gap-6 lg:grid-cols-2">
             {/* by mode */}

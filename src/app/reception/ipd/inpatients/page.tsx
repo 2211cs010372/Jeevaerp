@@ -22,6 +22,10 @@ interface DischSheet {
   days: number; bedTotal: string; nurseTotal: string; nursePerDay: string;
   chargesTotal: string; grandTotal: string; advanceTotal: string; balance: string;
   charges: { id: string; category: string; description: string; amount: string; fromPharmacy: boolean }[];
+  /** Pharmacy and lab bills for this stay, still unpaid. NOT part of the
+   *  discharge total below - they are separate invoices, settled on their own. */
+  outstandingBills: { id: string; receiptNo: string; source: string; due: string }[];
+  outstandingTotal: string;
 }
 const money = (v: string | number) => Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2 });
 const SRC_LABEL: Record<string, string> = { CONSULTATION: "Consultation", LAB: "Laboratory", PHARMACY: "Pharmacy", IPD: "Inpatient", OTHER: "Other" };
@@ -102,7 +106,7 @@ export default function InpatientsPage() {
   const est = Math.max(0, afterDiscount - advance);
   const refundDue = Math.max(0, advance - afterDiscount);
 
-  async function discharge() {
+  async function discharge(allowOutstanding = false) {
     if (!dischargeOf) return;
     setBusy(true); setError(null);
     try {
@@ -112,6 +116,8 @@ export default function InpatientsPage() {
           discountAmount: disc || undefined,
           payments: payNow && payments.length ? payments : undefined,
           notes: notes || undefined,
+          // Only ever sent from the explicit override below - never a default.
+          ...(allowOutstanding ? { allowOutstanding: true } : {}),
         }
       );
       setDone({ ipNumber: res.ipNumber, days: res.days, invoiceId: res.invoice.id, receiptNo: res.invoice.receiptNo, total: res.invoice.totalAmount });
@@ -311,7 +317,38 @@ export default function InpatientsPage() {
                           <span className="font-mono text-[16px] font-bold text-[var(--p-blue)] tabular">₹{(refundDue > 0 ? refundDue : est).toFixed(2)}</span>
                         </div>
                         {refundDue > 0 && <p className="mt-2 text-[12px] text-[#8a6414]">The advance exceeds the bill - ₹{refundDue.toFixed(2)} must be refunded, not kept.</p>}
-                        <p className="mt-2 text-[12px] leading-relaxed text-[var(--p-muted)]">Everything on the running tab - bed, nursing, procedures and pharmacy - is billed here on one invoice. GST is applied per line on the printed bill.</p>
+                        <p className="mt-2 text-[12px] leading-relaxed text-[var(--p-muted)]">
+                          This invoice covers the STAY - bed, nursing and procedures. Pharmacy and
+                          lab are billed separately and are listed below if anything is unpaid.
+                        </p>
+
+                        {/* THE THREE BILLS ARE SEPARATE. This total is the stay
+                            only, so the pharmacy and lab money has to be shown
+                            here or the desk would collect the bed and let the
+                            family walk out owing the rest. */}
+                        {sheet.outstandingBills?.length > 0 && (
+                          <div className="mt-3 rounded-lg border border-[var(--p-amber)]/40 bg-[var(--p-amber-soft)] px-3 py-2.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[12px] font-bold uppercase tracking-wide text-[#8a6414]">Still to collect separately</span>
+                              <span className="font-mono text-[14px] font-bold text-[#8a6414]">₹{money(sheet.outstandingTotal)}</span>
+                            </div>
+                            <div className="mt-1.5 space-y-1">
+                              {sheet.outstandingBills.map((b) => (
+                                <div key={b.id} className="flex items-center justify-between gap-2 text-[12px] text-[#8a6414]">
+                                  <span className="truncate">{SRC_LABEL[b.source] ?? b.source} · <span className="font-mono">{b.receiptNo}</span></span>
+                                  <span className="flex shrink-0 items-center gap-2">
+                                    <span className="font-mono font-semibold">₹{money(b.due)}</span>
+                                    <a href={`/print/invoice/${b.id}`} target="_blank" rel="noopener noreferrer"
+                                      className="font-semibold text-[var(--p-teal)] hover:underline">Bill</a>
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                            <p className="mt-1.5 text-[11px] leading-relaxed text-[#8a6414]">
+                              Settle these at their own counters. Discharge is refused while they are outstanding.
+                            </p>
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
@@ -332,7 +369,17 @@ export default function InpatientsPage() {
 
                 <div className="flex justify-end gap-3 border-t border-[var(--p-border)] p-5">
                   <button onClick={closeModal} className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm text-[var(--p-text)]">Cancel</button>
-                  <PrimaryButton onClick={discharge} disabled={busy || !sheet || (payNow && est > 0 && !payValid)}>
+                  {/* The override is a separate, plainly-worded button rather
+                      than a checkbox on the main one - discharging someone who
+                      still owes money should take a deliberate second act, and
+                      it is recorded against the name that pressed it. */}
+                  {(sheet?.outstandingBills?.length ?? 0) > 0 && (
+                    <button onClick={() => discharge(true)} disabled={busy || !sheet}
+                      className="rounded-lg border border-[var(--p-amber)] px-4 py-2 text-sm font-semibold text-[#8a6414] hover:bg-[var(--p-amber-soft)] disabled:opacity-40">
+                      Discharge leaving ₹{money(sheet!.outstandingTotal)} unpaid
+                    </button>
+                  )}
+                  <PrimaryButton onClick={() => discharge(false)} disabled={busy || !sheet || (payNow && est > 0 && !payValid)}>
                     {busy ? <><Spinner /> Discharging…</> : <><Icon name="check" size={15} /> Discharge &amp; bill</>}
                   </PrimaryButton>
                 </div>

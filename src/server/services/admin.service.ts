@@ -281,17 +281,127 @@ export async function getHospitalConfig() {
   return prisma.hospitalConfig.findFirst();
 }
 
+/**
+ * SETTINGS THAT EVERY PORTAL READS.
+ *
+ * Deliberately a separate, narrow query from getHospitalConfig(): this one is
+ * called by the shell on every portal for every signed-in user, so it must not
+ * drag the GSTIN and the address along for the ride, and it must never be the
+ * thing that leaks a setting nobody outside admin should see.
+ *
+ * The fallbacks are the values that were hardcoded before this table had the
+ * columns, so a hospital that has never opened the settings page gets exactly
+ * what it had yesterday.
+ */
+export interface Branding {
+  brandName: string;
+  tagline: string | null;
+  logoDataUrl: string | null;
+  legalName: string | null;
+}
+export async function getBranding(): Promise<Branding> {
+  const c = await prisma.hospitalConfig.findFirst({
+    select: { brandName: true, tagline: true, logoDataUrl: true, legalName: true },
+  });
+  return {
+    brandName: c?.brandName?.trim() || "Jeeva",
+    tagline: c?.tagline?.trim() || null,
+    logoDataUrl: c?.logoDataUrl || null,
+    legalName: c?.legalName || null,
+  };
+}
+
+/**
+ * Operational settings the SERVER reads to decide how a portal behaves.
+ *
+ * Every caller gets a complete object with the old hardcoded value as the
+ * fallback, so a missing config row can never turn a feature off. Failing safe
+ * here means "behave the way you did before anyone touched settings", not
+ * "assume the strictest option" - a hospital with no config row should still be
+ * able to discharge patients.
+ */
+export interface OperationalSettings {
+  expiryAlertDays: number;
+  blockDischargeOnDues: boolean;
+  onlineBookingEnabled: boolean;
+  callbackRequestsEnabled: boolean;
+  invoiceFooterNote: string | null;
+}
+export async function getSettings(): Promise<OperationalSettings> {
+  const c = await prisma.hospitalConfig.findFirst({
+    select: {
+      expiryAlertDays: true, blockDischargeOnDues: true,
+      onlineBookingEnabled: true, callbackRequestsEnabled: true, invoiceFooterNote: true,
+    },
+  });
+  return {
+    expiryAlertDays: c?.expiryAlertDays ?? 90,
+    blockDischargeOnDues: c?.blockDischargeOnDues ?? true,
+    onlineBookingEnabled: c?.onlineBookingEnabled ?? true,
+    callbackRequestsEnabled: c?.callbackRequestsEnabled ?? true,
+    invoiceFooterNote: c?.invoiceFooterNote?.trim() || null,
+  };
+}
+
 export async function updateHospitalConfig(
   actor: AuthUser,
-  input: { legalName: string; addressLine: string; city: string; state: string; stateCode: string; pincode: string; gstin?: string; phone?: string; email?: string },
+  input: {
+    legalName: string; addressLine: string; city: string; state: string;
+    stateCode: string; pincode: string; gstin?: string; phone?: string; email?: string;
+    logoDataUrl?: string; brandName?: string; tagline?: string; invoiceFooterNote?: string;
+    expiryAlertDays?: number; blockDischargeOnDues?: boolean;
+    onlineBookingEnabled?: boolean; callbackRequestsEnabled?: boolean;
+  },
   ctx: { ipAddress?: string; userAgent?: string }
 ) {
-  const existing = await prisma.hospitalConfig.findFirst({ select: { id: true } });
-  const data = { ...input, gstin: input.gstin || null, phone: input.phone || null, email: input.email || null };
+  const existing = await prisma.hospitalConfig.findFirst({
+    select: { id: true, logoDataUrl: true, blockDischargeOnDues: true, onlineBookingEnabled: true, callbackRequestsEnabled: true, expiryAlertDays: true },
+  });
+
+  const { logoDataUrl, tagline, invoiceFooterNote, ...rest } = input;
+  const data = {
+    ...rest,
+    gstin: input.gstin || null,
+    phone: input.phone || null,
+    email: input.email || null,
+    tagline: tagline?.trim() || null,
+    invoiceFooterNote: invoiceFooterNote?.trim() || null,
+    // Absent = leave the current logo alone. Empty string = the admin pressed
+    // Remove. Those are different intentions and a spread would collapse them.
+    ...(logoDataUrl === undefined ? {} : { logoDataUrl: logoDataUrl === "" ? null : logoDataUrl }),
+  };
+
   const saved = existing
     ? await prisma.hospitalConfig.update({ where: { id: existing.id }, data })
     : await prisma.hospitalConfig.create({ data });
-  await logAudit(actor, { action: "HOSPITAL_CONFIG_UPDATED", targetTable: "HospitalConfig", targetId: saved.id, ...ctx });
+
+  // A switch that changes how a whole portal behaves is worth naming in the audit
+  // log, not folding into a generic "settings were updated". Six months from now
+  // "why did discharges stop being blocked" needs an answer with a name on it.
+  const changes: Record<string, string> = {};
+  if (existing) {
+    if (input.blockDischargeOnDues !== undefined && input.blockDischargeOnDues !== existing.blockDischargeOnDues) {
+      changes.blockDischargeOnDues = `${existing.blockDischargeOnDues} -> ${input.blockDischargeOnDues}`;
+    }
+    if (input.onlineBookingEnabled !== undefined && input.onlineBookingEnabled !== existing.onlineBookingEnabled) {
+      changes.onlineBookingEnabled = `${existing.onlineBookingEnabled} -> ${input.onlineBookingEnabled}`;
+    }
+    if (input.callbackRequestsEnabled !== undefined && input.callbackRequestsEnabled !== existing.callbackRequestsEnabled) {
+      changes.callbackRequestsEnabled = `${existing.callbackRequestsEnabled} -> ${input.callbackRequestsEnabled}`;
+    }
+    if (input.expiryAlertDays !== undefined && input.expiryAlertDays !== existing.expiryAlertDays) {
+      changes.expiryAlertDays = `${existing.expiryAlertDays} -> ${input.expiryAlertDays}`;
+    }
+    if (logoDataUrl !== undefined && (logoDataUrl || null) !== (existing.logoDataUrl || null)) {
+      changes.logo = logoDataUrl ? "replaced" : "removed";
+    }
+  }
+
+  await logAudit(actor, {
+    action: "HOSPITAL_CONFIG_UPDATED", targetTable: "HospitalConfig", targetId: saved.id,
+    ...(Object.keys(changes).length ? { meta: changes } : {}),
+    ...ctx,
+  });
   return saved;
 }
 

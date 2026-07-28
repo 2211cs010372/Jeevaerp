@@ -88,9 +88,13 @@ export async function listLabTests(status?: "PENDING" | "COMPLETED"): Promise<La
  * Order tests for a patient.
  *
  * If the patient is ADMITTED, the tests belong to the stay, not to a visit -
- * they file against the admission and the money posts to the ROOM TAB, exactly
- * like pharmacy. Nobody chases an inpatient's family to the lab counter with a
- * bill; it all settles once, at discharge.
+ * they file against the admission and raise their OWN unpaid LAB bill, exactly
+ * like pharmacy. Nobody chases an inpatient's family to the collection window;
+ * the bill is marked due and settled on the way out.
+ *
+ * Labs, pharmacy and the stay are three separate bills. They are deliberately
+ * NOT merged into the discharge invoice: each desk keeps its own document, its
+ * own GST position and its own record of what it is owed.
  *
  * The caller doesn't have to know. We look it up.
  */
@@ -138,20 +142,10 @@ export async function orderTests(
       });
       ids.push(t.id);
 
-      // INPATIENT: post it straight to the room tab. Diagnostics are GST-exempt.
-      if (admission) {
-        await tx.admissionCharge.create({
-          data: {
-            admissionId: admission.id,
-            category: "INVESTIGATION",
-            description: c.name,
-            qty: 1,
-            unitPrice: c.price,
-            gstRatePct: 0,
-            addedById: actor.id,
-          },
-        });
-      }
+      // An inpatient's investigations get their own LAB bill, raised after this
+      // transaction closes - see below. They are NOT posted to the room tab any
+      // more: labs, pharmacy and the stay are three separate bills, each
+      // settled on its own.
     }
     await logAudit(actor, {
       action: admission ? "LAB_TESTS_ORDERED_IP" : "LAB_TESTS_ORDERED",
@@ -163,8 +157,38 @@ export async function orderTests(
   });
 
   const rows: TestRow[] = await prisma.labTest.findMany({ where: { id: { in: created } }, select: testSelect });
+
+  // AN INPATIENT'S TESTS GET THEIR OWN LAB BILL, left UNPAID.
+  //
+  // Raised outside the transaction above because createInvoice runs its own,
+  // and nesting them would hold a write lock across the whole thing.
+  //
+  // Unpaid on purpose: the family settles on the way out, not at the collection
+  // window. Linked to the admission so the discharge desk can see it
+  // outstanding and nobody leaves owing the lab money.
+  if (admission) {
+    await createInvoice(
+      actor,
+      {
+        patientId: input.patientId,
+        source: "LAB",
+        admissionId: admission.id,
+        // Diagnostics are GST-exempt in this hospital's tax position.
+        lines: catalog.map((c) => ({
+          description: c.name,
+          qty: 1,
+          unitPrice: Number(c.price.toString()),
+          gstRatePct: 0,
+        })),
+        notes: `Inpatient ${admission.ipNumber} - due at discharge`,
+      },
+      ctx
+    );
+  }
+
   const dtos = rows.map(toTestDTO) as LabTestDTO[] & { chargedToRoom?: boolean };
-  // The UI must be able to say "do not take money" - same contract as pharmacy.
+  // The UI must be able to say "do not take money now" - the bill is due at
+  // discharge, not at the window.
   dtos.chargedToRoom = !!admission;
   return dtos;
 }

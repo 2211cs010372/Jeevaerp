@@ -3,6 +3,10 @@ import { ApiError } from "@/lib/api";
 import { nextId } from "@/lib/ids";
 import { logAudit } from "./audit.service";
 import { createInvoice, recordPayment, advancePaymentRef, type PaymentModeT } from "./billing.service";
+// One rounding definition across the whole system - money must not be
+// rounded two different ways in two different files.
+import { r2 as round2 } from "@/server/billing/calc";
+import { getSettings } from "./admin.service";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, PaymentMode, ChargeCategory } from "@prisma/client";
 
@@ -335,6 +339,60 @@ type ChargeLine = {
   unitPrice: { toString(): string }; gstRatePct: { toString(): string };
 };
 
+/**
+ * Pharmacy and lab bills raised against a stay that are still unpaid.
+ *
+ * These are SEPARATE invoices, not room-tab charges - the pharmacy and the lab
+ * each keep their own document. Which means the discharge desk is the only
+ * place they can all be seen together, and the only chance to collect before
+ * the patient walks out of the building.
+ */
+export async function outstandingForAdmission(admissionId: string): Promise<{
+  bills: { id: string; receiptNo: string; source: string; total: string; paid: string; due: string; createdAt: string }[];
+  totalDue: string;
+}> {
+  const rows = await prisma.invoice.findMany({
+    where: {
+      admissionId,
+      // The IPD bill itself is raised BY the discharge - it is not an
+      // outstanding prerequisite of it.
+      source: { in: ["PHARMACY", "LAB", "OTHER"] },
+      status: { not: "CANCELLED" },
+    },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true, receiptNo: true, source: true, totalAmount: true, createdAt: true,
+      payments: { select: { amount: true } },
+      refunds: { select: { amount: true } },
+    },
+  });
+
+  type Row = {
+    id: string; receiptNo: string; source: string; totalAmount: { toString(): string }; createdAt: Date;
+    payments: { amount: { toString(): string } }[];
+    refunds: { amount: { toString(): string } }[];
+  };
+
+  const bills = (rows as Row[]).map((i) => {
+    const total = Number(i.totalAmount.toString());
+    const paid = round2(
+      i.payments.reduce((s, x) => round2(s + Number(x.amount.toString())), 0) -
+      i.refunds.reduce((s, x) => round2(s + Number(x.amount.toString())), 0)
+    );
+    return {
+      id: i.id, receiptNo: i.receiptNo, source: i.source,
+      total: total.toFixed(2), paid: paid.toFixed(2),
+      due: Math.max(0, round2(total - paid)).toFixed(2),
+      createdAt: i.createdAt.toISOString(),
+    };
+  }).filter((b) => Number(b.due) > 0);
+
+  return {
+    bills,
+    totalDue: bills.reduce((t, b) => round2(t + Number(b.due)), 0).toFixed(2),
+  };
+}
+
 export async function dischargePatient(
   actor: AuthUser,
   input: {
@@ -343,9 +401,36 @@ export async function dischargePatient(
     payment?: { mode: "CASH" | "UPI" | "CARD" | "NETBANKING" | "OTHER"; amount: number; reference?: string };
     payments?: { mode: "CASH" | "UPI" | "CARD" | "NETBANKING" | "OTHER"; amount: number; reference?: string }[];
     notes?: string;
+    /** Discharge anyway, leaving pharmacy/lab bills unpaid. Audited. */
+    allowOutstanding?: boolean;
   },
   ctx: { ipAddress?: string; userAgent?: string }
 ) {
+  // NOBODY LEAVES OWING THE PHARMACY OR THE LAB.
+  //
+  // Their bills are separate documents, so the IPD invoice below will not
+  // include them and settling the stay would look complete while the medicines
+  // were still unpaid. This is the last point at which the family is still in
+  // the building.
+  //
+  // Refused rather than silently folded in: the desk has to decide - collect it,
+  // or discharge on an explicit override that is recorded with a name against it.
+  //
+  // Whether this blocks at all is an admin setting. A hospital that settles dues
+  // after the patient has gone can turn it off - but that has to be somebody's
+  // decision, recorded in the audit log, not a default nobody chose.
+  const { blockDischargeOnDues } = await getSettings();
+  const outstanding = await outstandingForAdmission(input.admissionId);
+  if (blockDischargeOnDues && outstanding.bills.length > 0 && !input.allowOutstanding) {
+    const list = outstanding.bills
+      .map((b) => `${b.source === "LAB" ? "Lab" : b.source === "PHARMACY" ? "Pharmacy" : "Other"} ${b.receiptNo} ₹${b.due}`)
+      .join(", ");
+    throw new ApiError(
+      409,
+      `₹${outstanding.totalDue} is still unpaid on this stay - ${list}. Collect it, or discharge with the override.`
+    );
+  }
+
   // Close the stay + free the bed atomically.
   const adm = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const a = await tx.admission.findUnique({
@@ -379,7 +464,13 @@ export async function dischargePatient(
 
     await logAudit(actor, {
       action: "PATIENT_DISCHARGED", targetTable: "Admission", targetId: a.id,
-      meta: { ipNumber: a.ipNumber, bed: a.bed.bedNo }, ...ctx,
+      meta: {
+        ipNumber: a.ipNumber, bed: a.bed.bedNo,
+        // If they left owing the pharmacy or the lab, that decision has a name
+        // against it and an amount - months later, this is the only record of it.
+        dischargedWithDues: outstanding.bills.length > 0 ? outstanding.totalDue : null,
+        duesOverridden: outstanding.bills.length > 0 ? true : undefined,
+      }, ...ctx,
     }, tx);
 
     return { ...a, dischargedAt };
@@ -837,6 +928,12 @@ export async function admissionSheet(admissionId: string): Promise<{
   advanceTotal: string;
   /** Each deposit slip, so a lost receipt can be reprinted from the stay. */
   advances: { id: string; receiptNo: string | null; amount: string; mode: string; takenAt: string }[];
+  /** Pharmacy and lab bills raised against this stay that are still unpaid.
+   *  They are separate documents, so this running sheet is the only place
+   *  the ward sees them together - and the reminder that stops a discharge
+   *  leaving money uncollected. */
+  outstandingBills: { id: string; receiptNo: string; source: string; total: string; paid: string; due: string; createdAt: string }[];
+  outstandingTotal: string;
   /** grandTotal − advanceTotal, floored at 0. What the family still owes today. */
   balance: string;
 }> {
@@ -918,6 +1015,9 @@ export async function admissionSheet(admissionId: string): Promise<{
   }));
   const advanceTotal = advances.reduce((sum, x) => sum + Number(x.amount), 0);
 
+  // What the pharmacy and the lab are still owed for this stay.
+  const outstanding = await outstandingForAdmission(admissionId);
+
   const charges: ChargeDTO[] = (a.charges as ChargeRow[]).map((c) => {
     const amount = c.qty * Number(c.unitPrice.toString());
     return {
@@ -955,42 +1055,20 @@ export async function admissionSheet(admissionId: string): Promise<{
     legs,
     advanceTotal: advanceTotal.toFixed(2),
     advances,
+    outstandingBills: outstanding.bills,
+    outstandingTotal: outstanding.totalDue,
     // Never negative. An advance bigger than the bill is a REFUND owed, not a
     // negative debt that would quietly subtract from the day's takings.
     balance: Math.max(0, grandTotal - advanceTotal).toFixed(2),
   };
 }
 
-/**
- * Post a pharmacy dispense to an inpatient's room instead of billing them at the
- * counter. An admitted patient does NOT pay for medicine at the pharmacy window -
- * it goes on the tab and settles at discharge. Returns false when the upload isn't
- * tied to a live admission, so the caller bills normally.
- */
-export async function chargePharmacyToRoom(
-  actor: AuthUser,
-  input: {
-    admissionId: string;
-    lines: { description: string; qty: number; unitPrice: number; gstRatePct: number; batchId?: string }[];
-  },
-  tx?: Prisma.TransactionClient
-): Promise<void> {
-  const db = tx ?? prisma;
-  for (const l of input.lines) {
-    await db.admissionCharge.create({
-      data: {
-        admissionId: input.admissionId,
-        category: "PHARMACY",
-        description: l.description,
-        qty: l.qty,
-        unitPrice: l.unitPrice.toFixed(2),
-        gstRatePct: l.gstRatePct.toFixed(2),
-        sourceRef: l.batchId ?? "pharmacy",
-        addedById: actor.id,
-      },
-    });
-  }
-}
+// chargePharmacyToRoom() lived here. It folded an inpatient's medicine into the
+// discharge bill as AdmissionCharge rows. That is no longer how this works:
+// pharmacy raises its OWN invoice against the admission (pharmacy.service.ts),
+// labs raise theirs (labs.service.ts), and the IPD bill covers only bed, nursing
+// and ward charges. Re-adding a path that writes category: "PHARMACY" charges
+// would double-bill the patient - the medicine invoice already exists.
 
 /** Beds that can actually be filled right now, grouped by ward - for the admit form. */
 export async function availableBeds(): Promise<{

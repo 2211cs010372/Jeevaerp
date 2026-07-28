@@ -51,6 +51,9 @@ export const dischargeSchema = z.object({
   payment: payment.optional(),
   payments: z.array(paymentLeg).min(1).max(4).optional(),
   notes: z.string().trim().max(500).optional().or(z.literal("")),
+  /// Discharge with pharmacy/lab bills still unpaid. A deliberate act by the
+  /// desk, recorded against their name - not a default.
+  allowOutstanding: z.boolean().optional(),
 });
 
 export const addChargeSchema = z.object({

@@ -3,6 +3,7 @@ import { ApiError } from "@/lib/api";
 import { nextId } from "@/lib/ids";
 import { dateOnlyISO, parseLocalDate } from "@/lib/date";
 import { logAudit } from "./audit.service";
+import { getSettings } from "./admin.service";
 import { sendOtpSms, sendAppointmentSms } from "@/lib/sms";
 import {
   generateOtp, hashOtp, verifyOtp, maskPhone,
@@ -97,9 +98,25 @@ async function loadBookableSlot(slotId: string) {
 // Step 1 - prove the phone is yours
 // ===========================================================================
 
+/**
+ * Online booking can be switched off by an admin - a hospital closing for a
+ * fortnight should not be taking web appointments it cannot honour.
+ *
+ * Checked in the SERVICE, not the route, so BOTH steps are covered. Gating only
+ * the "send OTP" call would leave anyone holding a valid code able to post
+ * straight to step two and book against a switch that says the door is shut.
+ */
+async function assertBookingOpen(): Promise<void> {
+  const { onlineBookingEnabled } = await getSettings();
+  if (!onlineBookingEnabled) {
+    throw new ApiError(503, "Online booking is closed right now. Please call the hospital to book an appointment.");
+  }
+}
+
 export async function requestBookingOtp(input: {
   slotId: string; name: string; phone: string;
 }): Promise<{ sentTo: string; expiresInMs: number }> {
+  await assertBookingOpen();
   const phone = normalisePhone(input.phone);
   if (phone.length !== 10) throw new ApiError(400, "Enter a 10-digit mobile number");
 
@@ -150,6 +167,7 @@ export async function confirmBooking(
   input: { slotId: string; name: string; phone: string; code: string },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<PublicBookingResult> {
+  await assertBookingOpen();
   const phone = normalisePhone(input.phone);
   const name = input.name.trim().replace(/\s+/g, " ");
   if (phone.length !== 10) throw new ApiError(400, "Enter a 10-digit mobile number");
