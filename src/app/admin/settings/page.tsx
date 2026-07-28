@@ -285,12 +285,12 @@ function Toggle({
         >
           <span className={`absolute top-[3px] h-4 w-4 rounded-full bg-white shadow transition-all ${checked ? "left-[19px]" : "left-[3px]"}`} />
         </button>
-        <span className="min-w-0">
+        <span className="min-w-0 ">
           <span className="block text-[13.5px] font-semibold text-[var(--p-ink)]">{label}</span>
-          <span className={`mt-1 block text-[12px] leading-relaxed ${checked ? "text-[var(--p-teal-deep)]" : "text-[var(--p-muted)]"}`}>
+          <span className={`mt-1 block text-[12px] rounded-full leading-relaxed ${checked ? "text-[var(--p-teal-deep)]" : "text-[var(--p-muted)]"}`}>
             <b>On:</b> {on}
           </span>
-          <span className={`mt-0.5 block text-[12px] leading-relaxed ${
+          <span className={`mt-0.5 block text-[12px] rounded-full leading-relaxed ${
             !checked ? (risky ? "text-[var(--p-rose)]" : "text-[var(--p-ink)]") : "text-[var(--p-muted)]"
           }`}>
             <b>Off:</b> {off}

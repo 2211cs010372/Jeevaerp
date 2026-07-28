@@ -6,6 +6,8 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import { TOPICS } from "@/lib/realtime/topics";
 
 interface Test {
   id: string; testName: string; status: string; price: string | null; reportFileUrl: string | null;
@@ -98,15 +100,20 @@ export default function LabQueuePage() {
     finally { setSavingSheet(false); }
   }
 
-  async function load() {
-    setLoading(true);
+  async function load(quiet = false) {
+    if (!quiet) setLoading(true);
     try {
       const q = filter === "ALL" ? "" : `?status=${filter}`;
       const { tests } = await api.get<{ tests: Test[] }>(`/labs/tests${q}`);
       setTests(tests);
-    } catch { setTests([]); } finally { setLoading(false); }
+    } catch { if (!quiet) setTests([]); } finally { if (!quiet) setLoading(false); }
   }
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter]);
+
+  // A test ordered at reception appears here while the sample is still being
+  // collected. Suspended while a result sheet is open so typing is never
+  // interrupted by the list reloading underneath.
+  useLive([TOPICS.LABS], () => load(true), { enabled: !sheetFor });
 
   async function complete(id: string) {
     setError(null); setBusyId(id);

@@ -7,6 +7,8 @@ import { Spinner } from "@/components/portal/ui/form-atoms";
 import { Pill, statusTone } from "@/components/portal/ui/primitives";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import { TOPICS } from "@/lib/realtime/topics";
 
 /**
  * The callback queue - people who asked the website to ring them back.
@@ -62,15 +64,22 @@ export default function CallbackRequestsPage() {
   const [closing, setClosing] = useState<Req | null>(null);
   const [closeNote, setCloseNote] = useState("");
 
-  const load = useCallback(async () => {
-    setLoading(true); setErr(null);
+  /**
+   * `quiet` keeps a live refresh from blanking the screen. The first load shows
+   * a spinner; signal-driven ones swap the rows underneath. A list that flashes
+   * "Loading…" whenever another desk acts reads as a fault, not as live data.
+   */
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) { setLoading(true); setErr(null); }
     try {
       const r = await api.get<{ requests: Req[]; open: number }>(`/reception/appointment-requests?status=${tab}`);
       setRows(r.requests); setOpen(r.open);
-    } catch (e) { setErr(e instanceof ApiClientError ? e.message : "Couldn't load the queue."); }
-    finally { setLoading(false); }
+    } catch (e) { if (!quiet) setErr(e instanceof ApiClientError ? e.message : "Couldn't load the queue."); }
+    finally { if (!quiet) setLoading(false); }
   }, [tab]);
   useEffect(() => { load(); }, [load]);
+  // Somebody on the website is waiting for this call right now.
+  useLive([TOPICS.RECEPTION], () => load(true));
 
   async function move(r: Req, status: Req["status"], note?: string) {
     setActing(r.id); setErr(null);

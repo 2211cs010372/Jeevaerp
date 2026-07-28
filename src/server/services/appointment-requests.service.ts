@@ -4,6 +4,8 @@ import { nextId } from "@/lib/ids";
 import { parseDateOnly, dateOnlyISO } from "@/lib/date";
 import { logAudit } from "./audit.service";
 import { getSettings } from "./admin.service";
+import { publishLive } from "@/server/realtime/publish";
+import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import { sendOtpSms } from "@/lib/sms";
 import {
   generateOtp, hashOtp, verifyOtp, maskPhone,
@@ -178,6 +180,12 @@ export async function submitCallbackRequest(
       ...ctx,
     }
   );
+
+  // Somebody on the website is waiting for a phone call. The desk's requests
+  // screen should show it while they are still sitting there expecting it.
+  // openRequestCount() is the same definition the desk's badge uses - counting
+  // it a second way here is how two screens end up disagreeing.
+  await publishLive([TOPICS.RECEPTION, TOPICS.ADMIN], EVENTS.CALLBACK_RAISED, await openRequestCount());
 
   return {
     refNo: created.refNo,

@@ -8,6 +8,8 @@ import { PortalScroll } from "@/components/portal/portal-scroll";
 import { GhostButton } from "@/components/portal/pharmacy/procurement-ui";
 import { PaymentSection, type Tender } from "@/components/portal/ui/bill-fields";
 import { api } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import { TOPICS } from "@/lib/realtime/topics";
 
 /**
  * THE COUNTER'S DEBTORS.
@@ -37,12 +39,23 @@ export default function PharmacyDuesPage() {
   const [loading, setLoading] = useState(true);
   const [collect, setCollect] = useState<Due | null>(null);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    api.get<DuesResponse>("/pharmacy/dues")
-      .then(setData).catch(() => {}).finally(() => setLoading(false));
+  /**
+   * `quiet` is what makes a live refresh feel live rather than broken. The first
+   * load shows a spinner; every later one swaps the numbers underneath without
+   * blanking the screen, because a list that flashes to "Loading…" every time
+   * another counter takes money reads as a fault, not a feature.
+   */
+  const load = useCallback((quiet = false) => {
+    if (!quiet) setLoading(true);
+    return api.get<DuesResponse>("/pharmacy/dues")
+      .then(setData).catch(() => {}).finally(() => { if (!quiet) setLoading(false); });
   }, []);
-  useEffect(load, [load]);
+  useEffect(() => { load(); }, [load]);
+
+  // A ward dispense adds a due; a payment anywhere clears one.
+  // Suspended while the collect sheet is open - refreshing the list out from
+  // under someone who is counting cash is worse than being a few seconds stale.
+  useLive([TOPICS.PHARMACY], () => load(true), { enabled: !collect });
 
   const ward = data?.dues.filter((d) => d.ipNumber !== null) ?? [];
   const counter = data?.dues.filter((d) => d.ipNumber === null) ?? [];

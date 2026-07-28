@@ -6,6 +6,8 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import { TOPICS } from "@/lib/realtime/topics";
 import { DispenseScratchpad, perDayFromDosage, type PadLine } from "@/components/portal/pharmacy/scratchpad";
 import { DiscountInput, PaymentSection, type Tender } from "@/components/portal/ui/bill-fields";
 
@@ -52,13 +54,20 @@ export default function RxQueuePage() {
   const [done, setDone] = useState<{ id: string; receiptNo: string; total: string } | null>(null);
   const [toRoom, setToRoom] = useState<{ ipNumber: string } | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  /**
+   * `quiet` keeps a live refresh from blanking the screen. The first load shows
+   * a spinner; signal-driven ones swap the rows underneath. A list that flashes
+   * "Loading…" whenever another desk acts reads as a fault, not as live data.
+   */
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     try { const { queue } = await api.get<{ queue: Rx[] }>(`/pharmacy/queue?status=${tab}`); setQueue(queue); }
-    catch (e) { setError(e instanceof ApiClientError ? e.message : "Couldn't load the queue."); }
-    finally { setLoading(false); }
+    catch (e) { if (!quiet) setError(e instanceof ApiClientError ? e.message : "Couldn't load the queue."); }
+    finally { if (!quiet) setLoading(false); }
   }, [tab]);
   useEffect(() => { load(); }, [load]);
+  // Reception sending a chit up lands here without anyone pressing refresh.
+  useLive([TOPICS.PHARMACY], () => load(true));
 
   useEffect(() => {
     if (!active) return;

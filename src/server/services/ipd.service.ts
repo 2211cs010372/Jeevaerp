@@ -7,6 +7,8 @@ import { createInvoice, recordPayment, advancePaymentRef, type PaymentModeT } fr
 // rounded two different ways in two different files.
 import { r2 as round2 } from "@/server/billing/calc";
 import { getSettings } from "./admin.service";
+import { publishLive } from "@/server/realtime/publish";
+import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, PaymentMode, ChargeCategory } from "@prisma/client";
 
@@ -173,7 +175,7 @@ export async function admitPatient(
   },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<{ admissionId: string; ipNumber: string; bedNo: string; ward: string }> {
-  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const patient = await tx.patient.findUnique({
       where: { displayId: input.patientDisplayId.toUpperCase() },
       select: { id: true, displayId: true, fullName: true, mergedIntoId: true, deletedAt: true },
@@ -233,6 +235,11 @@ export async function admitPatient(
 
     return { admissionId: adm.id, ipNumber, bedNo: bed.bedNo, ward: bed.ward.name };
   });
+
+  // A bed just went from free to occupied. Every ward board in the building is
+  // now wrong until it hears this.
+  await publishLive([TOPICS.IPD, TOPICS.RECEPTION, TOPICS.ADMIN], EVENTS.ADMISSION_OPENED);
+  return result;
 }
 
 /** Everyone currently in a bed, with the running charge so far. */
@@ -583,6 +590,9 @@ export async function dischargePatient(
 
   // whole-stay length, for the receipt header (individual legs are on the bill)
   const days = stayDays(adm.admittedAt, adm.dischargedAt);
+  // The bed is free again and the ward board must lose this row. Reception is
+  // the screen that most needs it - a bed shown occupied is a bed not offered.
+  await publishLive([TOPICS.IPD, TOPICS.RECEPTION, TOPICS.ADMIN], EVENTS.ADMISSION_CLOSED);
   return { ipNumber: adm.ipNumber, days, invoice };
 }
 

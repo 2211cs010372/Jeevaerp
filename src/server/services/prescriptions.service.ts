@@ -3,6 +3,8 @@ import { ApiError } from "@/lib/api";
 import { storeFile } from "@/lib/storage";
 import { DUTY_DOCTOR } from "./appointments.service";
 import { logAudit } from "./audit.service";
+import { publishLive } from "@/server/realtime/publish";
+import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import type { AuthUser } from "@/lib/auth/types";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -335,6 +337,12 @@ export async function sendToPharmacy(
     data: { status: "SENT_TO_PHARMACY", sentToPharmacyAt: new Date() },
   });
   await logAudit(actor, { action: "RX_SENT_TO_PHARMACY", targetTable: "PrescriptionUpload", targetId: id, ...ctx });
+
+  // The counter's queue moves the instant the desk sends it up - no refresh.
+  // The depth is sent so the pharmacy tab can show the new count immediately;
+  // it is a number about the hospital, not about any patient.
+  const waiting = await prisma.prescriptionUpload.count({ where: { status: "SENT_TO_PHARMACY" } });
+  await publishLive([TOPICS.PHARMACY, TOPICS.RECEPTION], EVENTS.PRESCRIPTION_QUEUED, waiting);
 }
 
 /** Pull a scan back out of the pharmacy queue (sent by mistake). */
@@ -352,6 +360,11 @@ export async function recallFromPharmacy(
     data: { status: "UPLOADED", sentToPharmacyAt: null },
   });
   await logAudit(actor, { action: "RX_RECALLED", targetTable: "PrescriptionUpload", targetId: id, ...ctx });
+
+  // A recall matters MORE than a send: the counter may be about to dispense
+  // against a chit the desk has just pulled back.
+  const waiting = await prisma.prescriptionUpload.count({ where: { status: "SENT_TO_PHARMACY" } });
+  await publishLive([TOPICS.PHARMACY, TOPICS.RECEPTION], EVENTS.PRESCRIPTION_QUEUED, waiting);
 }
 
 

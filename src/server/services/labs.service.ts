@@ -5,6 +5,8 @@ import { logAudit } from "./audit.service";
 import { DUTY_DOCTOR } from "./appointments.service";
 import { createInvoice, type BillLineInput } from "./billing.service";
 import { collectionByMode, type ModeTotal } from "./reports.service";
+import { publishLive } from "@/server/realtime/publish";
+import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma } from "@prisma/client";
 
@@ -190,6 +192,17 @@ export async function orderTests(
   // The UI must be able to say "do not take money now" - the bill is due at
   // discharge, not at the window.
   dtos.chargedToRoom = !!admission;
+
+  // The lab's own queue is the point of this one: a sample can be collected the
+  // moment the desk orders the test, without anybody pressing refresh. An
+  // inpatient order also raises a due, so the ward screens listen too.
+  await publishLive(
+    admission
+      ? [TOPICS.LABS, TOPICS.RECEPTION, TOPICS.IPD, TOPICS.ADMIN]
+      : [TOPICS.LABS, TOPICS.RECEPTION, TOPICS.ADMIN],
+    EVENTS.LAB_ORDERED,
+    rows.length
+  );
   return dtos;
 }
 
@@ -220,6 +233,9 @@ export async function uploadReport(
   });
   await logAudit(actor, { action: "LAB_REPORT_UPLOADED", targetTable: "LabTest", targetId: input.labTestId, ...ctx });
 
+  // A report on the file is what reception hands the patient.
+  await publishLive([TOPICS.LABS, TOPICS.RECEPTION], EVENTS.LAB_RESULTED);
+
   const row: TestRow | null = await prisma.labTest.findUnique({ where: { id: input.labTestId }, select: testSelect });
   if (!row) throw new ApiError(404, "Test not found");
   return toTestDTO(row);
@@ -236,6 +252,9 @@ export async function completeTest(actor: AuthUser, labTestId: string, ctx: { ip
     data: { status: "COMPLETED", completedAt: new Date(), technicianId: actor.id },
   });
   await logAudit(actor, { action: "LAB_TEST_COMPLETED", targetTable: "LabTest", targetId: labTestId, ...ctx });
+
+  // A finished result is something reception is actively waiting on.
+  await publishLive([TOPICS.LABS, TOPICS.RECEPTION, TOPICS.ADMIN], EVENTS.LAB_RESULTED);
 
   const row: TestRow | null = await prisma.labTest.findUnique({ where: { id: labTestId }, select: testSelect });
   if (!row) throw new ApiError(404, "Test not found");
@@ -405,6 +424,7 @@ export async function saveLabResults(
   });
 
   const sheet = await labResultSheet(input.labTestId);
+  await publishLive([TOPICS.LABS, TOPICS.RECEPTION], EVENTS.LAB_RESULTED);
   return { results: sheet.results, abnormal };
 }
 

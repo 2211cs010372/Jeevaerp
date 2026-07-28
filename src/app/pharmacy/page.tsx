@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Kpi, Pill } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import { TOPICS } from "@/lib/realtime/topics";
 import { PharmacyFlow } from "@/components/portal/pharmacy/pharmacy-flow";
 import { CollectionsCard, type CollectionMode } from "@/components/portal/ui/collections-card";
 
@@ -56,18 +58,23 @@ export default function PharmacyDashboard() {
   const [queue, setQueue] = useState<Rx[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const load = useCallback((quiet = false) => {
     Promise.all([
       api.get<{ stats: Stats }>("/pharmacy/stats"),
       api.get<{ queue: Rx[] }>("/pharmacy/queue"),
     ]).then(([s, q]) => { setStats(s.stats); setQueue(q.queue.slice(0, 6)); })
-      .catch(() => {}).finally(() => setLoading(false));
+      .catch(() => {}).finally(() => { if (!quiet) setLoading(false); });
 
     // Procurement loads on its own - it walks the whole catalog to work out the
     // reorder list, so it must never hold up the counter's own numbers.
     api.get<{ stats: ProcStats }>("/pharmacy/procurement-stats")
       .then((r) => setProc(r.stats)).catch(() => {});
   }, []);
+  useEffect(() => { load(); }, [load]);
+
+  // The counter's own dashboard: queue depth, takings and dues all move when
+  // another desk acts. Numbers swap in place - no spinner on a live refresh.
+  useLive([TOPICS.PHARMACY], () => load(true));
 
   const alerts = (stats?.lowStock ?? 0) + (stats?.expiringSoon ?? 0);
 

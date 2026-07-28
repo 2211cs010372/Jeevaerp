@@ -3,6 +3,8 @@ import { computeInvoiceTotals, assertRefundable, assertPaymentsWithinTotal, invo
 import { nextId } from "@/lib/ids";
 import { ApiError } from "@/lib/api";
 import { logAudit } from "./audit.service";
+import { publishLive } from "@/server/realtime/publish";
+import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, PaymentMode } from "@prisma/client";
 
@@ -251,6 +253,13 @@ export async function recordPayments(
     );
   });
 
+  // Money taken is the signal that clears a due. The pharmacy's dues list, the
+  // ward's outstanding panel, and every day-close on screen are all stale now -
+  // and a discharge may have just become possible.
+  await publishLive(
+    [TOPICS.PHARMACY, TOPICS.LABS, TOPICS.RECEPTION, TOPICS.IPD, TOPICS.ADMIN],
+    EVENTS.PAYMENT_TAKEN
+  );
   return getInvoice(input.invoiceId);
 }
 

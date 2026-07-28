@@ -3,6 +3,8 @@ import { ApiError } from "@/lib/api";
 import { nextId } from "@/lib/ids";
 import { parsePack, packsToUnits } from "@/lib/pharmacy/pack";
 import { logAudit } from "./audit.service";
+import { publishLive } from "@/server/realtime/publish";
+import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import {
   effectiveUnitCost, invoiceVariance, lineValue, orderTotals, round2, suggestedOrderQty,
 } from "@/lib/pharmacy/procurement-math";
@@ -1010,6 +1012,10 @@ export async function receiveGoods(
     },
     ...ctx,
   });
+
+  // Stock just went up. The alerts screen, the reorder list and the admin
+  // pharmacy tab were all computed against the shelf as it was a minute ago.
+  await publishLive([TOPICS.PHARMACY, TOPICS.ADMIN], EVENTS.STOCK_RECEIVED);
 
   return {
     id: result.id,

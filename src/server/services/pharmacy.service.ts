@@ -5,6 +5,8 @@ import { logAudit } from "./audit.service";
 import { parsePack, packsToUnits, perUnitPrice, describeStock } from "@/lib/pharmacy/pack";
 import { createInvoice, type BillLineInput } from "./billing.service";
 import { getSettings } from "./admin.service";
+import { publishLive } from "@/server/realtime/publish";
+import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma } from "@prisma/client";
 
@@ -570,6 +572,14 @@ export async function dispense(
       ...ctx,
     });
 
+    // A ward dispense creates a DUE. Reception's ward screen and the counter's
+    // own dues list both have to move, or somebody discharges a patient against
+    // a balance that appeared thirty seconds ago.
+    await publishLive(
+      [TOPICS.PHARMACY, TOPICS.RECEPTION, TOPICS.IPD, TOPICS.ADMIN],
+      EVENTS.INVOICE_RAISED
+    );
+
     // `chargedToRoom` is kept in the shape so the counter can still say "don't
     // take money now" - but there IS an invoice behind it now, and it is due.
     return { chargedToRoom: true as const, ipNumber: liveAdmission.ipNumber, invoice };
@@ -584,6 +594,15 @@ export async function dispense(
   }
 
   await logAudit(actor, { action: "MEDICINES_DISPENSED", targetTable: "Invoice", targetId: invoice.id, meta: { lines: lines.length, prescriptionUploadId: input.prescriptionUploadId ?? null }, ...ctx });
+
+  // Reception watches this to see a chit clear off the queue; stock levels moved
+  // too, so the counter's own alerts are stale as of now.
+  const waiting = await prisma.prescriptionUpload.count({ where: { status: "SENT_TO_PHARMACY" } });
+  await publishLive(
+    [TOPICS.PHARMACY, TOPICS.RECEPTION, TOPICS.ADMIN],
+    EVENTS.PRESCRIPTION_DISPENSED,
+    waiting
+  );
   return { chargedToRoom: false as const, ipNumber: null, invoice };
 }
 

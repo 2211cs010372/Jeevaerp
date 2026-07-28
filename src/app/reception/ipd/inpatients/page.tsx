@@ -8,6 +8,8 @@ import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { DiscountInput, PaymentSection, type Tender } from "@/components/portal/ui/bill-fields";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import { TOPICS } from "@/lib/realtime/topics";
 
 interface Inpatient {
   bedCharge: string; extrasCharge: string; extras: number;
@@ -84,8 +86,13 @@ export default function InpatientsPage() {
     return () => { active = false; };
   }, [dischargeOf]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  /**
+   * `quiet` keeps a live refresh from blanking the screen. The first load shows
+   * a spinner; signal-driven ones swap the rows underneath. A list that flashes
+   * "Loading…" whenever another desk acts reads as a fault, not as live data.
+   */
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     try {
       const [r, d] = await Promise.all([
         api.get<{ inpatients: Inpatient[] }>("/ipd/admissions"),
@@ -93,10 +100,12 @@ export default function InpatientsPage() {
       ]);
       setRows(r.inpatients); setDischarges(d.discharges);
     }
-    catch (e) { setError(e instanceof ApiClientError ? e.message : "Couldn't load inpatients."); }
-    finally { setLoading(false); }
+    catch (e) { if (!quiet) setError(e instanceof ApiClientError ? e.message : "Couldn't load inpatients."); }
+    finally { if (!quiet) setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+  // Beds free up and dues appear while this board is open.
+  useLive([TOPICS.IPD], () => load(true));
 
   // The whole bill, not just the bed. Discount comes off the grand total; the
   // advance already held is then credited, leaving what the family pays now.
