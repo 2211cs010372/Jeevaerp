@@ -16,10 +16,15 @@ describe("asking for a code", () => {
     expect(callbackOtpSchema.safeParse({ phone: "9848012345" }).success).toBe(true);
   });
 
-  it("strips +91 and spaces before judging", () => {
-    const r = callbackOtpSchema.safeParse({ phone: "+91 98480 12345" });
-    expect(r.success).toBe(true);
-    if (r.success) expect(r.data.phone).toBe("9848012345");
+  it("accepts any shape and stores it with the country code", () => {
+    // Numbers are STORED in E.164 (+919848012345) - see lib/phone.ts. The
+    // validator is where that canonical form is produced, so whatever a web
+    // form sends, one value reaches the database.
+    for (const shape of ["+91 98480 12345", "9848012345", "919848012345", "09848012345"]) {
+      const r = callbackOtpSchema.safeParse({ phone: shape });
+      expect(r.success, shape).toBe(true);
+      if (r.success) expect(r.data.phone, shape).toBe("+919848012345");
+    }
   });
 
   it("refuses a number that isn't an Indian mobile", () => {
@@ -62,10 +67,10 @@ describe("what the desk is allowed to receive", () => {
     expect(parse({ note: "x".repeat(501) }).success).toBe(false);
   });
 
-  it("normalises the phone so the desk always sees ten digits", () => {
+  it("normalises the phone to the stored E.164 form", () => {
     const r = parse({ phone: "+91-98480-12345" });
     expect(r.success).toBe(true);
-    if (r.success) expect(r.data.phone).toBe("9848012345");
+    if (r.success) expect(r.data.phone).toBe("+919848012345");
   });
 });
 

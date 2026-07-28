@@ -3,6 +3,7 @@ import { ApiError } from "@/lib/api";
 import { nextId } from "@/lib/ids";
 import { parseDateOnly, dateOnlyISO } from "@/lib/date";
 import { logAudit } from "./audit.service";
+import { toE164, phoneVariants } from "@/lib/phone";
 import { getSettings } from "./admin.service";
 import { publishLive } from "@/server/realtime/publish";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
@@ -34,8 +35,8 @@ import type { Prisma } from "@prisma/client";
  * registration where age, gender and address can actually be asked for.
  */
 
-/** "9876543210" - the only shape accepted, matching public-booking.service. */
-const normalisePhone = (p: string) => p.replace(/\D/g, "").slice(-10);
+/** E.164 storage form, matching every other phone in the ERP. See lib/phone.ts. */
+const normalisePhone = toE164;
 
 const MAX_NOTE = 500;
 const MAX_NAME = 80;
@@ -61,7 +62,10 @@ export async function requestCallbackOtp(input: {
 }): Promise<{ sentTo: string; expiresInMs: number }> {
   await assertCallbacksOpen();
   const phone = normalisePhone(input.phone);
-  if (phone.length !== 10) throw new ApiError(400, "Enter a 10-digit mobile number");
+  // toE164 returns "" for anything that is not a real Indian mobile, so an
+  // empty result IS the validation failure. Never check .length against 10 -
+  // the stored form is "+919876543210" and that test would reject every number.
+  if (!phone) throw new ApiError(400, "Enter a 10-digit mobile number");
 
   // Same window and ceiling as every other OTP path here, so one number cannot
   // be used to pump SMS cost by hopping between forms.
@@ -105,7 +109,10 @@ export async function submitCallbackRequest(
   await assertCallbacksOpen();
   const phone = normalisePhone(input.phone);
   const name = input.name.trim().replace(/\s+/g, " ").slice(0, MAX_NAME);
-  if (phone.length !== 10) throw new ApiError(400, "Enter a 10-digit mobile number");
+  // toE164 returns "" for anything that is not a real Indian mobile, so an
+  // empty result IS the validation failure. Never check .length against 10 -
+  // the stored form is "+919876543210" and that test would reject every number.
+  if (!phone) throw new ApiError(400, "Enter a 10-digit mobile number");
   if (name.length < 2) throw new ApiError(400, "Enter the patient's name");
 
   // ── verify the code ──────────────────────────────────────────────────────
@@ -143,7 +150,8 @@ export async function submitCallbackRequest(
     preferredDate = d;
   }
 
-  const priorCount = await prisma.appointmentRequest.count({ where: { phone } });
+  // Legacy rows may still be bare ten digits - count the caller either way.
+  const priorCount = await prisma.appointmentRequest.count({ where: { phone: { in: phoneVariants(phone) } } });
 
   const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     // Consume the code inside the transaction so a double-submit cannot queue
@@ -169,9 +177,12 @@ export async function submitCallbackRequest(
     });
   });
 
-  // The patient is the actor - they raised it, no staff member did.
+  // NO actor: the person who raised this deliberately has no patient record yet
+  // (see the note at the top of this file). It previously passed the request's
+  // OWN id as a patient id, which failed the foreign key and silently dropped
+  // every audit row this endpoint ever tried to write.
   await logAudit(
-    { id: created.id, role: "PATIENT" },
+    null,
     {
       action: "APPOINTMENT_REQUEST_RAISED",
       targetTable: "AppointmentRequest",

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isIndianMobile, toE164 } from "@/lib/phone";
 
 export const createStaffSchema = z.object({
   /** role.name - e.g. reception.ravi */
@@ -6,7 +7,8 @@ export const createStaffSchema = z.object({
     .regex(/^(admin|reception|labs|pharmacy|doctor)\.[a-z0-9_]{2,30}$/, "Username must be role.name (e.g. reception.ravi)"),
   name: z.string().trim().min(2).max(80),
   email: z.string().trim().email("Invalid email").optional().or(z.literal("")),
-  phone: z.string().trim().regex(/^\d{10}$/, "Enter a valid 10-digit number"),
+  // Staff numbers are stored in the same +91 form as patients - see lib/phone.
+  phone: z.string().trim().refine(isIndianMobile, "Enter a valid 10-digit number").transform(toE164),
   role: z.enum(["ADMIN", "RECEPTIONIST", "LAB_TECH", "PHARMACIST", "DOCTOR"]),
   password: z.string().min(8, "Password must be at least 8 characters").max(72),
 });

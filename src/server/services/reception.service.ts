@@ -113,6 +113,11 @@ export async function registerPatient(
 /** Search by name / UHID / phone. Merged + soft-deleted hidden. Newest first. */
 export async function searchPatients(q: string, limit: number): Promise<PatientDTO[]> {
   const base = { mergedIntoId: null, deletedAt: null };
+  // A phone typed or pasted with spaces, dashes or a country code must still
+  // find the row. Numbers are stored as "+919848012345", so a raw `contains`
+  // on "+91 98480 12345" matches nothing - strip the query down to its digits
+  // and search on those as well as on the literal text.
+  const digits = q.replace(/\D/g, "");
   const where = q
     ? {
         ...base,
@@ -120,6 +125,7 @@ export async function searchPatients(q: string, limit: number): Promise<PatientD
           { fullName: { contains: q, mode: "insensitive" as const } },
           { displayId: { contains: q, mode: "insensitive" as const } },
           { phone: { contains: q } },
+          ...(digits.length >= 4 ? [{ phone: { contains: digits } }] : []),
         ],
       }
     : base;

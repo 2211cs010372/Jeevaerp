@@ -1,6 +1,18 @@
 import { z } from "zod";
+import { isIndianMobile, toE164 } from "@/lib/phone";
 
-const phone10 = z.string().trim().regex(/^\d{10}$/, "Enter a valid 10-digit mobile number");
+/**
+ * Every mobile is normalised to its STORAGE form here, at the edge, so no
+ * service or route ever has to remember to do it. Accepts whatever a human or a
+ * web form supplies - "9876543210", "+91 98765 43210", "09876543210" - and
+ * yields "+919876543210". See lib/phone.ts.
+ */
+const phone10 = z
+  .string()
+  .trim()
+  .refine(isIndianMobile, "Enter a valid 10-digit mobile number")
+  .transform(toE164);
+
 const optStr = (max: number) => z.string().trim().max(max).optional().or(z.literal(""));
 
 /** Full patient registration - rich production fields. Only first name + phone required. */

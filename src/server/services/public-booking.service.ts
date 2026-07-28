@@ -3,6 +3,7 @@ import { ApiError } from "@/lib/api";
 import { nextId } from "@/lib/ids";
 import { dateOnlyISO, parseLocalDate } from "@/lib/date";
 import { logAudit } from "./audit.service";
+import { toE164, phoneVariants } from "@/lib/phone";
 import { getSettings } from "./admin.service";
 import { sendOtpSms, sendAppointmentSms } from "@/lib/sms";
 import {
@@ -39,8 +40,11 @@ import type { Prisma } from "@prisma/client";
  * which is the truth: they booked it.
  */
 
-/** "9876543210" - the only shape we accept. */
-const normalisePhone = (p: string) => p.replace(/\D/g, "").slice(-10);
+/**
+ * Numbers are stored in E.164 ("+919876543210") - see lib/phone.ts. This is the
+ * one shape written to the database and matched against it.
+ */
+const normalisePhone = toE164;
 
 /**
  * The account online bookings are attributed to.
@@ -118,7 +122,10 @@ export async function requestBookingOtp(input: {
 }): Promise<{ sentTo: string; expiresInMs: number }> {
   await assertBookingOpen();
   const phone = normalisePhone(input.phone);
-  if (phone.length !== 10) throw new ApiError(400, "Enter a 10-digit mobile number");
+  // toE164 returns "" for anything that is not a real Indian mobile, so an
+  // empty result IS the validation failure. Never check .length against 10 -
+  // the stored form is "+919876543210" and that test would reject every number.
+  if (!phone) throw new ApiError(400, "Enter a 10-digit mobile number");
 
   // Fail early if the slot has gone, so nobody burns an SMS on a dead slot.
   await loadBookableSlot(input.slotId);
@@ -170,7 +177,10 @@ export async function confirmBooking(
   await assertBookingOpen();
   const phone = normalisePhone(input.phone);
   const name = input.name.trim().replace(/\s+/g, " ");
-  if (phone.length !== 10) throw new ApiError(400, "Enter a 10-digit mobile number");
+  // toE164 returns "" for anything that is not a real Indian mobile, so an
+  // empty result IS the validation failure. Never check .length against 10 -
+  // the stored form is "+919876543210" and that test would reject every number.
+  if (!phone) throw new ApiError(400, "Enter a 10-digit mobile number");
   if (name.length < 2) throw new ApiError(400, "Enter the patient's name");
 
   // ── verify the code ──────────────────────────────────────────────────────
@@ -200,8 +210,12 @@ export async function confirmBooking(
 
     // A shared family number is normal, so match the NAME too before reusing
     // a record - otherwise a mother booking for her son lands on her own file.
+    // Matched on EVERY stored shape, not just the canonical one. A patient
+    // registered before the +91 migration still holds the bare ten digits, and
+    // failing to find them here would silently create a duplicate record - a
+    // split history is a clinical safety problem, not untidy data.
     const candidates = await tx.patient.findMany({
-      where: { phone, mergedIntoId: null, deletedAt: null },
+      where: { phone: { in: phoneVariants(phone) }, mergedIntoId: null, deletedAt: null },
       select: { id: true, displayId: true, fullName: true },
     });
     const match = candidates.find(

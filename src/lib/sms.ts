@@ -1,4 +1,7 @@
 import { ApiError } from "@/lib/api";
+// One definition of a phone number, shared with the rest of the ERP.
+// Numbers are STORED as +91XXXXXXXXXX; each provider gets the shape it wants.
+import { toBare10, toMsisdn } from "@/lib/phone";
 
 /**
  * SMS transport for every OTP and confirmation the ERP sends.
@@ -32,21 +35,6 @@ type Provider = "fast2sms" | "2factor";
 const FAST2SMS_URL = "https://www.fast2sms.com/dev/bulkV2";
 const TWO_FACTOR_BASE = "https://2factor.in/API/V1";
 
-/**
- * "+91 98765 43210" / "919876543210" -> "9876543210". Fast2SMS format.
- * Exported for tests: this conversion is the one thing that silently loses
- * messages if it is wrong, and it deserves cases rather than trust.
- */
-export function toBare10(phone: string): string {
-  const d = phone.replace(/\D/g, "");
-  return d.length > 10 ? d.slice(-10) : d;
-}
-
-/** "9876543210" -> "919876543210". 2Factor format. Exported for tests. */
-export function toIndianMsisdn(phone: string): string {
-  const d = phone.replace(/\D/g, "");
-  return d.length === 12 && d.startsWith("91") ? d : `91${toBare10(d)}`;
-}
 
 /**
  * Which transport to use, and whether we have one at all.
@@ -158,7 +146,7 @@ export async function sendOtpSms(phone: string, code: string): Promise<void> {
   }
 
   // ── 2Factor ──────────────────────────────────────────────────────────────
-  const target = toIndianMsisdn(phone);
+  const target = toMsisdn(phone);
   let res: Response;
   try {
     res = await fetch(`${TWO_FACTOR_BASE}/${picked.apiKey}/SMS/${target}/${code}`, {
@@ -242,7 +230,7 @@ export async function sendAppointmentSms(
   }
 
   // ── 2Factor ──────────────────────────────────────────────────────────────
-  const target = toIndianMsisdn(phone);
+  const target = toMsisdn(phone);
   const url =
     `${TWO_FACTOR_BASE}/${picked.apiKey}/ADDON_SERVICES/SEND/TSMS` +
     `?From=${encodeURIComponent(senderId)}` +

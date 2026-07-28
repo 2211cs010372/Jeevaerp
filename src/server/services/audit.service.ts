@@ -3,12 +3,20 @@ import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma } from "@prisma/client";
 
 /**
- * Append an audit-trail row. Staff actions set actorUserId; patient actions
- * set actorPatientId (exactly one, per the schema). Best-effort and never
- * throws into the caller - an audit failure must not break the real action.
+ * Append an audit-trail row. Staff actions set actorUserId; patient actions set
+ * actorPatientId. Best-effort and never throws into the caller - an audit
+ * failure must not break the real action.
+ *
+ * ANONYMOUS ACTIONS SET NEITHER. The public website can act without any account
+ * behind it - a callback request is raised by somebody who is deliberately not
+ * in the patient index yet. Passing `null` records what happened with no actor,
+ * which is the truth. Previously such callers invented an actor id, and because
+ * both columns are foreign keys the insert failed and the row was silently
+ * dropped - an audit trail with a hole in it exactly where an unauthenticated
+ * endpoint writes.
  */
 export async function logAudit(
-  actor: AuthUser,
+  actor: AuthUser | null,
   entry: {
     action: string;
     targetTable: string;
@@ -29,9 +37,11 @@ export async function logAudit(
         meta: entry.meta,
         ipAddress: entry.ipAddress,
         userAgent: entry.userAgent,
-        ...(actor.role === "PATIENT"
-          ? { actorPatientId: actor.id }
-          : { actorUserId: actor.id }),
+        ...(actor === null
+          ? {}
+          : actor.role === "PATIENT"
+            ? { actorPatientId: actor.id }
+            : { actorUserId: actor.id }),
       },
     });
   } catch (err) {

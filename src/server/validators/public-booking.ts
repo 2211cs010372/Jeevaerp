@@ -1,11 +1,17 @@
 import { z } from "zod";
+import { isIndianMobile, toE164 } from "@/lib/phone";
 
-/** Indian mobile: 10 digits, first one 6-9. Spaces and +91 are stripped first. */
+/**
+ * Every mobile is normalised to its STORAGE form here, at the edge, so no
+ * service or route ever has to remember to do it. Accepts whatever a human or a
+ * web form supplies - "9876543210", "+91 98765 43210", "09876543210" - and
+ * yields "+919876543210". See lib/phone.ts.
+ */
 const phone = z
   .string()
   .trim()
-  .transform((v) => v.replace(/\D/g, "").slice(-10))
-  .refine((v) => /^[6-9]\d{9}$/.test(v), "Enter a valid 10-digit mobile number");
+  .refine(isIndianMobile, "Enter a valid 10-digit mobile number")
+  .transform(toE164);
 
 const name = z
   .string()

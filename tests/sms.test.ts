@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { toBare10, toIndianMsisdn, smsStatus } from "@/lib/sms";
+import { smsStatus } from "@/lib/sms";
+import { toBare10, toMsisdn as toIndianMsisdn } from "@/lib/phone";
 
 /**
  * The two providers disagree about what a phone number is.
