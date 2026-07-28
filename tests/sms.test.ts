@@ -57,6 +57,7 @@ describe("provider selection", () => {
     delete process.env.TWO_FACTOR_API_KEY;
     delete process.env.SMS_PROVIDER;
     delete process.env.SMS_APPOINTMENT_TEMPLATE;
+    delete process.env.SMS_OTP_TEMPLATE;
   });
   afterEach(() => { process.env = { ...saved }; });
 
@@ -96,6 +97,24 @@ describe("provider selection", () => {
   it("whitespace-only keys do not count as configured", () => {
     process.env.FAST2SMS_API_KEY = "   ";
     expect(smsStatus().configured).toBe(false);
+  });
+
+  it("OTPs take the plain otp route until a DLT template is registered", () => {
+    process.env.FAST2SMS_API_KEY = "k";
+    expect(smsStatus().otpRoute).toBe("otp");
+  });
+
+  it("SMS_OTP_TEMPLATE switches OTPs onto the DLT route", () => {
+    // The escape hatch for a Fast2SMS account that has not completed website
+    // verification and is refusing route=otp with status_code 996.
+    process.env.FAST2SMS_API_KEY = "k";
+    process.env.SMS_OTP_TEMPLATE = "1707161234567890";
+    expect(smsStatus().otpRoute).toBe("dlt");
+    delete process.env.SMS_OTP_TEMPLATE;
+  });
+
+  it("reports no OTP route when nothing is configured", () => {
+    expect(smsStatus().otpRoute).toBeNull();
   });
 
   it("templateReady tracks the DLT template, separately from the OTP path", () => {

@@ -204,6 +204,9 @@ export default function SettingsPage() {
           </div>
         </Card>
 
+        {/* ── SMS ────────────────────────────────────────────────────────── */}
+        <SmsCard />
+
         {/* ── WARDS ──────────────────────────────────────────────────────── */}
         <Card title="Wards & discharge" sub="Controls what reception is allowed to do at the point of discharge.">
           <Toggle
@@ -244,6 +247,180 @@ export default function SettingsPage() {
         </div>
       </div>
     </PortalScroll>
+  );
+}
+
+/**
+ * SMS health, and a way to prove it.
+ *
+ * "SMS is not working" is never actionable on its own. An account can hold a
+ * valid key and full credits and still be refused a particular route - which is
+ * exactly what happens on a Fast2SMS account that has not completed website
+ * verification. So this shows the provider, the route, the wallet, and lets an
+ * admin send one real message and read the provider's own words back.
+ */
+function SmsCard() {
+  const [info, setInfo] = useState<{
+    status: { configured: boolean; provider: string | null; otpRoute: string | null; templateReady: boolean };
+    balance: { ok: true; wallet: string; smsCount: number } | { ok: false; error: string };
+  } | null>(null);
+  const [to, setTo] = useState("");
+  const [route, setRoute] = useState<"q" | "otp" | "dlt">("q");
+  const [templateId, setTemplateId] = useState("");
+  const [senderId, setSenderId] = useState("");
+  const [variables, setVariables] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ sent: boolean; route: string; to: string; providerSaid: unknown; sentParams?: unknown } | null>(null);
+
+  useEffect(() => {
+    api.get<NonNullable<typeof info>>("/admin/sms-test").then(setInfo).catch(() => {});
+  }, []);
+
+  async function send() {
+    setBusy(true); setResult(null);
+    try {
+      setResult(await api.post("/admin/sms-test", {
+        phone: to, route,
+        ...(route === "dlt" ? { templateId, senderId, variables } : {}),
+      }));
+    }
+    catch (e) { setResult({ sent: false, route, to, providerSaid: e instanceof Error ? e.message : "Request failed" }); }
+    finally { setBusy(false); }
+  }
+
+  const ROUTES: { key: "q" | "otp" | "dlt"; label: string; hint: string }[] = [
+    { key: "q", label: "Quick SMS", hint: "Free text. No DLT, no website verification. Will not reach a number on DND." },
+    { key: "otp", label: "OTP route", hint: "What patient logins use. Needs website verification on the Fast2SMS account." },
+    { key: "dlt", label: "DLT template", hint: "Your registered template. Needs SMS_OTP_TEMPLATE to be set." },
+  ];
+
+  return (
+    <Card title="SMS" sub="Whether codes and confirmations can actually leave the building — and a way to prove it without waiting for a patient to complain.">
+      <div className="space-y-4 p-6">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Stat label="Provider" value={info?.status.provider ?? "not configured"}
+            tone={info?.status.configured ? "good" : "bad"} />
+          <Stat label="OTPs are sent via" value={info?.status.otpRoute ? `route "${info.status.otpRoute}"` : "—"} />
+          <Stat
+            label="Wallet"
+            value={info?.balance.ok ? `₹${info.balance.wallet} · ${info.balance.smsCount} SMS` : "unavailable"}
+            tone={info?.balance.ok ? (info.balance.smsCount > 0 ? "good" : "bad") : undefined}
+          />
+        </div>
+
+        <div className="rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] p-4">
+          <p className="text-[12.5px] font-semibold text-[var(--p-ink)]">Send a test message</p>
+          <p className="mt-0.5 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+            This sends a real SMS and spends one credit. Use your own number. The provider&apos;s
+            exact reply is shown below — that is what says whether the problem is the key,
+            the credits, or a route this account is not cleared for.
+          </p>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {ROUTES.map((r) => (
+              <button key={r.key} onClick={() => setRoute(r.key)} title={r.hint}
+                className={`rounded-lg border px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                  route === r.key
+                    ? "border-[var(--p-teal)] bg-[var(--p-teal-soft)] text-[var(--p-teal-deep)]"
+                    : "border-[var(--p-border)] bg-white text-[var(--p-text)] hover:border-[var(--p-teal)]"
+                }`}>
+                {r.label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--p-muted)]">
+            {ROUTES.find((r) => r.key === route)!.hint}
+          </p>
+
+          {route === "dlt" && (
+            <div className="mt-3 grid gap-2 rounded-lg border border-[var(--p-border)] bg-white p-3 sm:grid-cols-3">
+              {/* Typed here rather than read from env, so a template can be
+                  PROVEN before it is committed and redeployed. */}
+              <label className="block">
+                <span className="block text-[11px] font-semibold text-[var(--p-text)]">Fast2SMS Message ID</span>
+                <input value={templateId} onChange={(e) => setTemplateId(e.target.value)}
+                  placeholder="from DLT → your template"
+                  className="mt-1 w-full rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 font-mono text-[12px] outline-none focus:border-[var(--p-teal)]" />
+              </label>
+              <label className="block">
+                <span className="block text-[11px] font-semibold text-[var(--p-text)]">Sender ID (header)</span>
+                <input value={senderId} onChange={(e) => setSenderId(e.target.value.toUpperCase())}
+                  placeholder="JEEVAH" maxLength={11}
+                  className="mt-1 w-full rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 font-mono text-[12px] outline-none focus:border-[var(--p-teal)]" />
+              </label>
+              <label className="block">
+                <span className="block text-[11px] font-semibold text-[var(--p-text)]">Variables (pipe-separated)</span>
+                <input value={variables} onChange={(e) => setVariables(e.target.value)}
+                  placeholder="123456"
+                  className="mt-1 w-full rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 font-mono text-[12px] outline-none focus:border-[var(--p-teal)]" />
+              </label>
+              <p className="text-[11px] leading-relaxed text-[var(--p-muted)] sm:col-span-3">
+                Values fill the template&apos;s <code>{"{#var#}"}</code> slots <b>in order</b>, and the
+                provider does not check that order — a template written differently will send a
+                confidently wrong message. One variable for an OTP template.
+              </p>
+            </div>
+          )}
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            <input
+              value={to} inputMode="numeric" maxLength={14} placeholder="10-digit mobile"
+              onChange={(e) => setTo(e.target.value.replace(/[^\d+ ]/g, ""))}
+              className="w-[190px] rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 font-mono text-[13px] text-[var(--p-ink)] outline-none focus:border-[var(--p-teal)]"
+            />
+            <button onClick={send} disabled={busy || to.replace(/\D/g, "").length < 10}
+              className="btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[13px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45">
+              {busy ? <Spinner /> : <Icon name="check" size={14} />} {busy ? "Sending…" : "Send test"}
+            </button>
+          </div>
+
+          {result && (
+            <div className={`mt-3 rounded-lg border px-4 py-3 ${
+              result.sent
+                ? "border-[var(--p-teal)]/30 bg-[var(--p-teal-soft)]"
+                : "border-[var(--p-rose)]/30 bg-[var(--p-rose-soft)]"
+            }`}>
+              <p className={`text-[13px] font-bold ${result.sent ? "text-[var(--p-teal-deep)]" : "text-[var(--p-rose)]"}`}>
+                {result.sent
+                  ? `Sent to ${result.to} on route "${result.route}" — check the handset.`
+                  : `Not sent (route "${result.route}").`}
+              </p>
+              <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed text-[var(--p-text)]">
+{JSON.stringify(result.providerSaid, null, 2)}
+              </pre>
+              {!result.sent && result.sentParams != null && (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-[11px] font-semibold text-[var(--p-text)]">
+                    what was sent
+                  </summary>
+                  <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words text-[11px] text-[var(--p-muted)]">
+{JSON.stringify(result.sentParams, null, 2)}
+                  </pre>
+                </details>
+              )}
+              {!result.sent && (
+                <p className="mt-1.5 text-[11.5px] leading-relaxed text-[var(--p-rose)]">
+                  <b>996</b> complete website verification in the Fast2SMS dashboard (OTP Message
+                  menu) · <b>412</b> the API key is wrong · <b>406</b> that sender ID / header is not
+                  approved on this account · <b>995</b> that DLT template is not approved.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function Stat({ label, value, tone }: { label: string; value: string; tone?: "good" | "bad" }) {
+  return (
+    <div className="rounded-lg border border-[var(--p-border)] bg-white px-4 py-3">
+      <div className="text-[10.5px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">{label}</div>
+      <div className={`mt-0.5 text-[13.5px] font-semibold ${
+        tone === "good" ? "text-[var(--p-teal-deep)]" : tone === "bad" ? "text-[var(--p-rose)]" : "text-[var(--p-ink)]"
+      }`}>{value}</div>
+    </div>
   );
 }
 
