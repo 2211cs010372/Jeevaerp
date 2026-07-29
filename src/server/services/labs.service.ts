@@ -27,6 +27,12 @@ export interface LabTestDTO {
   results?: LabResultDTO[];
   /** Lines out of range on this test. Only meaningful alongside `results`. */
   abnormal?: number;
+  /**
+   * The bench's read of its own numbers (see LabTest.impression). Carried on
+   * the queue row itself, not behind a second fetch: the whole point of writing
+   * it is that whoever opens the list sees it without asking.
+   */
+  impression: string | null;
 }
 
 /** Active test catalog (what the lab can order/bill). */
@@ -42,7 +48,7 @@ export async function listCatalog(): Promise<CatalogItemDTO[]> {
 
 const testSelect = {
   id: true, testName: true, status: true, priceAtOrder: true,
-  reportFileUrl: true, createdAt: true, completedAt: true,
+  reportFileUrl: true, createdAt: true, completedAt: true, impression: true,
   patient: { select: { id: true, displayId: true, fullName: true, phone: true } },
   appointment: {
     select: {
@@ -56,7 +62,7 @@ const testSelect = {
 
 type TestRow = {
   id: string; testName: string; status: string; priceAtOrder: { toString(): string } | null;
-  reportFileUrl: string | null; createdAt: Date; completedAt: Date | null;
+  reportFileUrl: string | null; createdAt: Date; completedAt: Date | null; impression: string | null;
   patient: { id: string; displayId: string; fullName: string; phone: string } | null;
   appointment: {
     opNumber: string; visitDate: Date; doctor: { name: string } | null;
@@ -79,6 +85,7 @@ function toTestDTO(t: TestRow): LabTestDTO {
       ? { opNumber: t.appointment.opNumber, doctorName: t.appointment.doctor?.name ?? DUTY_DOCTOR.name, visitDate: t.appointment.visitDate.toISOString().slice(0, 10) }
       : null,
     billed: t.invoiceItems.length > 0,
+    impression: t.impression,
   };
 }
 
@@ -327,6 +334,9 @@ const dec = (v: { toString(): string } | null | undefined) => (v == null ? null 
 export async function labResultSheet(labTestId: string): Promise<{
   test: {
     id: string; testName: string; status: string; completedAt: string | null;
+    /** The bench's read of these numbers - see LabTest.impression. */
+    impression: string | null;
+    technicianName: string | null;
     patient: { displayId: string; fullName: string; age: number | null; gender: string | null } | null;
   };
   results: LabResultDTO[];
@@ -335,7 +345,8 @@ export async function labResultSheet(labTestId: string): Promise<{
   const t = await prisma.labTest.findUnique({
     where: { id: labTestId },
     select: {
-      id: true, testName: true, status: true, completedAt: true, catalogId: true,
+      id: true, testName: true, status: true, completedAt: true, catalogId: true, impression: true,
+      technician: { select: { name: true } },
       patient: { select: { displayId: true, fullName: true, age: true, gender: true } },
       results: { orderBy: { sortOrder: "asc" } },
     },
@@ -366,6 +377,8 @@ export async function labResultSheet(labTestId: string): Promise<{
     test: {
       id: t.id, testName: t.testName, status: t.status,
       completedAt: t.completedAt ? t.completedAt.toISOString() : null,
+      impression: t.impression,
+      technicianName: t.technician?.name ?? null,
       patient: t.patient,
     },
     results,
@@ -421,9 +434,9 @@ export function abnormalCount(results: LabResultDTO[]): number {
  */
 export async function saveLabResults(
   actor: AuthUser,
-  input: { labTestId: string; items: LabResultInput[]; complete?: boolean },
+  input: { labTestId: string; items: LabResultInput[]; complete?: boolean; impression?: string | null },
   ctx: { ipAddress?: string; userAgent?: string }
-): Promise<{ results: LabResultDTO[]; abnormal: number }> {
+): Promise<{ results: LabResultDTO[]; abnormal: number; impression: string | null }> {
   const test = await prisma.labTest.findUnique({
     where: { id: input.labTestId },
     select: { id: true, testName: true, patientId: true },
@@ -453,27 +466,41 @@ export async function saveLabResults(
     };
   });
 
+  // `undefined` means "the caller didn't send the field" and must leave an
+  // existing impression alone; an empty string is a technician deliberately
+  // clearing what they wrote. Collapsing the two would silently wipe the note
+  // every time an older client saved a correction to the numbers.
+  const impression = input.impression === undefined ? undefined : (input.impression?.trim() || null);
+
   await prisma.$transaction(async (tx) => {
     await tx.labResultItem.deleteMany({ where: { labTestId: input.labTestId } });
     await tx.labResultItem.createMany({ data: prepared });
     if (input.complete !== false) {
       await tx.labTest.update({
         where: { id: input.labTestId },
-        data: { status: "COMPLETED", completedAt: new Date(), technicianId: actor.id },
+        data: {
+          status: "COMPLETED", completedAt: new Date(), technicianId: actor.id,
+          ...(impression !== undefined ? { impression } : {}),
+        },
       });
+    } else if (impression !== undefined) {
+      await tx.labTest.update({ where: { id: input.labTestId }, data: { impression } });
     }
   });
 
   const abnormal = prepared.filter((p) => (p.flag as unknown as string) !== "NORMAL").length;
   await logAudit(actor, {
     action: "LAB_RESULTS_SAVED", targetTable: "LabTest", targetId: input.labTestId,
-    meta: { testName: test.testName, lines: prepared.length, abnormal },
+    meta: { testName: test.testName, lines: prepared.length, abnormal, impression: impression ?? undefined },
     ...ctx,
   });
 
   const sheet = await labResultSheet(input.labTestId);
+  // Reception and the doctor's queue both watch this: an impression written at
+  // the bench is only useful if it reaches the consulting room before the
+  // patient does.
   await publishLive([TOPICS.LABS, TOPICS.RECEPTION], EVENTS.LAB_RESULTED);
-  return { results: sheet.results, abnormal };
+  return { results: sheet.results, abnormal, impression: sheet.test.impression };
 }
 
 /**

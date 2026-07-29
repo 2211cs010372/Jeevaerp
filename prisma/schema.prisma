@@ -632,6 +632,11 @@ model PrescriptionUpload {
   advice      String?
   labsAdvised String?
   nextVisit   String?
+  /// Presenting complaints and history as the doctor took them - the top block
+  /// of the OPD sheet. Free prose on purpose: "fever 3 days, no vomiting, k/c/o
+  /// diabetes" is how it is written on paper and any attempt to structure it
+  /// into fields at a reception desk loses the sentence that mattered.
+  caseHistory String?
 
   invoices Invoice[]
   items    PrescriptionUploadItem[]
@@ -771,6 +776,18 @@ model LabTest {
   technician       User?         @relation("LabTestTechnician", fields: [technicianId], references: [id])
   createdAt        DateTime      @default(now())
   completedAt      DateTime?
+  /// The lab's read of its OWN numbers, written by the technician as the results
+  /// are saved: "Microcytic hypochromic anaemia", "Growth of E. coli, sensitive
+  /// to nitrofurantoin".
+  ///
+  /// This is an IMPRESSION, not the patient's diagnosis. A lab reports on a
+  /// specimen; the doctor diagnoses the person, weighing this against the
+  /// history and examination. It is stored and printed under the lab's name and
+  /// never overwrites PrescriptionUpload.diagnosis, which is the doctor's.
+  ///
+  /// Attribution needs no extra columns: it is written in the same transaction
+  /// that stamps technicianId and completedAt.
+  impression       String?
 
   invoiceItems InvoiceItem[]
   results      LabResultItem[]

@@ -37,6 +37,8 @@ export const DUTY_DOCTOR = {
   name: "Duty Medical Officer",
   specialization: "Casualty Medical Officer",
   department: "Emergency & Casualty",
+  /** No degrees to print for a role that isn't a person yet. */
+  qualification: null,
 } as const;
 
 /** Admin-facing appointment - INCLUDES the referral snapshot. */
@@ -359,24 +361,33 @@ export async function opdPrintData(appointmentId: string): Promise<{
   /** The named consultant, or the duty-doctor block for an unattributed
    *  casualty case. `named` is false in the latter, so the sheet prints a
    *  signature line to fill in rather than "Dr. Duty Medical Officer". */
-  doctor: { name: string; specialization: string; department: string; named: boolean };
+  /** `qualification` is the degree line the pre-printed stationery prints under
+   *  the doctor's name ("MBBS, M.D Paediatrics") - null for the duty block. */
+  doctor: { name: string; specialization: string; department: string; qualification: string | null; named: boolean };
   patient: { displayId: string; fullName: string; age: number | null; gender: string | null; bloodGroup: string | null; phone: string; address: string | null; city: string | null };
   rxItems: { medicineName: string; qty: number; dosage: string | null }[];
   vitals: VitalsDTO | null;
-  clinical: { diagnosis: string | null; advice: string | null; labs: string[]; nextVisit: string | null } | null;
+  clinical: { diagnosis: string | null; advice: string | null; labs: string[]; nextVisit: string | null; caseHistory: string | null } | null;
+  /**
+   * What the lab wrote against this visit's completed tests - one line per test
+   * that has an impression. Printed in the sheet's Investigation block, under
+   * the lab's name, because it is the bench's read of a specimen and not the
+   * consultant's diagnosis.
+   */
+  labImpressions: { testName: string; impression: string }[];
 }> {
   const a = await prisma.appointment.findUnique({
     where: { id: appointmentId },
     select: {
       id: true, opNumber: true, type: true, status: true, visitDate: true, referredByName: true, createdAt: true, patientId: true,
       timeAtBooking: true,
-      doctor: { select: { name: true, specialization: true, department: true } },
+      doctor: { select: { name: true, specialization: true, department: true, qualification: true } },
       patient: { select: { displayId: true, fullName: true, age: true, gender: true, bloodGroup: true, phone: true, address: true, city: true } },
     },
   });
   if (!a) throw new ApiError(404, "Appointment not found");
 
-  const [hospital, visitNumber, upload, vitals] = await Promise.all([
+  const [hospital, visitNumber, upload, vitals, labRows] = await Promise.all([
     prisma.hospitalConfig.findFirst(),
     // "#Visit: 3" the way the paper shows it - this visit's ordinal for the patient.
     prisma.appointment.count({ where: { patientId: a.patientId, createdAt: { lte: a.createdAt } } }),
@@ -385,10 +396,17 @@ export async function opdPrintData(appointmentId: string): Promise<{
       orderBy: { createdAt: "desc" },
       select: {
         items: { select: { medicineName: true, qty: true, dosage: true }, orderBy: { id: "asc" } },
-        diagnosis: true, advice: true, labsAdvised: true, nextVisit: true,
+        diagnosis: true, advice: true, labsAdvised: true, nextVisit: true, caseHistory: true,
       },
     }),
     prisma.vitals.findUnique({ where: { appointmentId: a.id } }),
+    // Only tests the bench actually wrote on. A completed test with no
+    // impression has nothing to say here - its numbers are on the lab report.
+    prisma.labTest.findMany({
+      where: { appointmentId: a.id, impression: { not: null } },
+      orderBy: { completedAt: "asc" },
+      select: { testName: true, impression: true },
+    }),
   ]);
 
   return {
@@ -402,14 +420,18 @@ export async function opdPrintData(appointmentId: string): Promise<{
     patient: a.patient,
     rxItems: upload?.items ?? [],
     vitals: vitals ? toVitalsDTO(vitals) : null,
-    clinical: upload && (upload.diagnosis || upload.advice || upload.labsAdvised || upload.nextVisit)
+    clinical: upload && (upload.diagnosis || upload.advice || upload.labsAdvised || upload.nextVisit || upload.caseHistory)
       ? {
           diagnosis: upload.diagnosis,
           advice: upload.advice,
           labs: upload.labsAdvised?.split("\n").filter(Boolean) ?? [],
           nextVisit: upload.nextVisit,
+          caseHistory: upload.caseHistory,
         }
       : null,
+    labImpressions: (labRows as { testName: string; impression: string | null }[])
+      .filter((l): l is { testName: string; impression: string } => !!l.impression)
+      .map((l) => ({ testName: l.testName, impression: l.impression })),
   };
 }
 

@@ -17,7 +17,7 @@ export const GET = handler(async (req, ctx) => {
   return NextResponse.json(await labResultSheet(id));
 });
 
-/** Enter or correct the measured values. Lab bench only. */
+/** Enter or correct the measured values (and the bench's impression). Lab only. */
 export const PUT = handler(async (req, ctx) => {
   const actor = await requireRole(req, "LAB_TECH", "ADMIN");
   const { id } = await ctx.params;

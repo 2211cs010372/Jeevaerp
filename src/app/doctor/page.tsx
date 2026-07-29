@@ -17,7 +17,7 @@ interface LabResult {
   id: string; testName: string; reportReady: boolean; reportUrl: string | null;
   completedAt: string; source: "OPD" | "IPD";
   patient: { displayId: string; fullName: string };
-  results: LabResultRow[]; abnormal: number;
+  results: LabResultRow[]; abnormal: number; impression: string | null;
 }
 interface Inpatient {
   admissionId: string; ipNumber: string; wardName: string; bedNo: string; days: number; admittedAt: string;
@@ -249,6 +249,14 @@ export default function DoctorToday() {
                         )}
                       </div>
                     </div>
+                    {/* The lab's own read, always visible - it is the shortest
+                        path from a flagged number to a decision. */}
+                    {l.impression && (
+                      <p className="mt-1.5 border-l-2 border-[var(--p-teal)] pl-2.5 text-[12.5px] italic leading-snug text-[var(--p-teal-deep)]">
+                        {l.impression}
+                        <span className="ml-1 not-italic text-[11px] text-[var(--p-muted)]">— lab</span>
+                      </p>
+                    )}
                     {hasValues && open && <LabResultTable results={l.results} className="mt-2.5" />}
                   </div>
                 );

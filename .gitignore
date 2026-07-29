@@ -14,6 +14,8 @@ node_modules
 
 # --- Next.js build output ---
 /.next/
+# Second dev server run alongside yours (NEXT_DIST_DIR in .claude/launch.json)
+/.next-preview/
 /out/
 /build
 next-env.d.ts

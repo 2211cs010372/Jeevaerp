@@ -183,6 +183,7 @@ export async function sendOpdSheetToPharmacy(
     diagnosis?: string;
     advice?: string;
     nextVisit?: string;
+    caseHistory?: string;
     labs?: string[];
   },
   ctx: { ipAddress?: string; userAgent?: string }
@@ -214,6 +215,7 @@ export async function sendOpdSheetToPharmacy(
     diagnosis: input.diagnosis?.trim() || null,
     advice: input.advice?.trim() || null,
     nextVisit: input.nextVisit?.trim() || null,
+    caseHistory: input.caseHistory?.trim() || null,
     labs,
   };
 
@@ -231,6 +233,7 @@ export async function sendOpdSheetToPharmacy(
       advice: clinical.advice,
       labsAdvised: labs.length ? labs.join("\n") : null,
       nextVisit: clinical.nextVisit,
+      caseHistory: clinical.caseHistory,
       ...(input.sendNow ? { status: "SENT_TO_PHARMACY", sentToPharmacyAt: new Date() } : {}),
       ...(cleanItems.length ? { items: { create: cleanItems } } : {}),
     },

@@ -47,6 +47,12 @@ export interface DoctorLabResult {
   results: LabResultDTO[];
   /** Lines out of range - what decides whether this needs looking at first. */
   abnormal: number;
+  /**
+   * What the lab wrote about these numbers (LabTest.impression). Surfaced on
+   * the doctor's own list because a bench note that only exists inside the labs
+   * portal has not reached the person who acts on it.
+   */
+  impression: string | null;
 }
 /** One of this doctor's patients currently lying in a bed. */
 export interface DoctorInpatient {
@@ -106,12 +112,13 @@ export async function doctorToday(actor: AuthUser): Promise<{
     orderBy: { completedAt: "desc" },
     take: 10,
     select: {
-      id: true, testName: true, reportFileUrl: true, completedAt: true, admissionId: true,
+      id: true, testName: true, reportFileUrl: true, completedAt: true, admissionId: true, impression: true,
       patient: { select: { displayId: true, fullName: true } },
     },
   });
   type LabRow = {
     id: string; testName: string; reportFileUrl: string | null; completedAt: Date | null; admissionId: string | null;
+    impression: string | null;
     patient: { displayId: string; fullName: string } | null;
   };
   // The numbers, not just a link to them. A doctor scanning the morning list
@@ -131,6 +138,7 @@ export async function doctorToday(actor: AuthUser): Promise<{
         patient: t.patient!,
         results,
         abnormal: abnormalCount(results),
+        impression: t.impression,
       };
     });
 

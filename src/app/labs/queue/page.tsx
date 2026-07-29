@@ -14,6 +14,8 @@ interface Test {
   createdAt: string; completedAt: string | null; billed: boolean;
   patient: { id: string; displayId: string; fullName: string; phone: string } | null;
   appointment: { opNumber: string; doctorName: string; visitDate: string } | null;
+  /** The bench's read of these results, once written. */
+  impression: string | null;
 }
 
 type Flag = "NORMAL" | "HIGH" | "LOW" | "ABNORMAL";
@@ -23,7 +25,12 @@ interface ResultRow {
   flag: Flag; sortOrder: number;
 }
 interface Sheet {
-  test: { id: string; testName: string; status: string; completedAt: string | null; patient: { displayId: string; fullName: string; age: number | null; gender: string | null } | null };
+  test: {
+    id: string; testName: string; status: string; completedAt: string | null;
+    /** What the bench wrote against these numbers last time, if anything. */
+    impression: string | null; technicianName: string | null;
+    patient: { displayId: string; fullName: string; age: number | null; gender: string | null } | null;
+  };
   results: ResultRow[];
   fromTemplate: boolean;
 }
@@ -66,13 +73,14 @@ export default function LabQueuePage() {
   const [sheetFor, setSheetFor] = useState<Test | null>(null);
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [rows, setRows] = useState<ResultRow[]>([]);
+  const [impression, setImpression] = useState("");
   const [savingSheet, setSavingSheet] = useState(false);
 
   async function openSheet(t: Test) {
-    setSheetFor(t); setSheet(null); setRows([]); setError(null);
+    setSheetFor(t); setSheet(null); setRows([]); setImpression(""); setError(null);
     try {
       const s = await api.get<Sheet>(`/labs/tests/${t.id}/results`);
-      setSheet(s); setRows(s.results);
+      setSheet(s); setRows(s.results); setImpression(s.test.impression ?? "");
     } catch (e) { setError(e instanceof ApiClientError ? e.message : "Couldn't open the result sheet."); }
   }
 
@@ -93,8 +101,10 @@ export default function LabQueuePage() {
     if (items.length === 0) { setError("Enter a value for at least one analyte."); return; }
     setSavingSheet(true); setError(null);
     try {
-      await api.put(`/labs/tests/${sheetFor.id}/results`, { items });
-      setSheetFor(null); setSheet(null); setRows([]);
+      // Always sent, even when empty: on this screen a cleared box means the
+      // technician deleted what they had written, not "leave it as it was".
+      await api.put(`/labs/tests/${sheetFor.id}/results`, { items, impression: impression.trim() });
+      setSheetFor(null); setSheet(null); setRows([]); setImpression("");
       await load();
     } catch (e) { setError(e instanceof ApiClientError ? e.message : "Could not save the results."); }
     finally { setSavingSheet(false); }
@@ -187,6 +197,14 @@ export default function LabQueuePage() {
                     {t.patient?.fullName ?? "-"} · <span className="tabular">{t.patient?.displayId ?? "-"}</span>
                     {t.appointment ? ` · ${t.appointment.doctorName} (${t.appointment.opNumber})` : " · walk-in"}
                   </div>
+                  {/* Shown on the row, not hidden behind the sheet: a queue that
+                      makes you open every test to find the one that was flagged
+                      is a queue nobody reads. */}
+                  {t.impression && (
+                    <p className="mt-1 max-w-[42ch] text-[12px] italic leading-snug text-[var(--p-teal-deep)]">
+                      {t.impression}
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
@@ -322,6 +340,29 @@ export default function LabQueuePage() {
                   <Icon name="plus" size={12} /> Add a line
                 </button>
               )}
+            </div>
+
+            {/* The bench's read of its own numbers. Written here rather than on
+                a separate screen because it is only trustworthy when it is
+                written WITH the values in front of you, in one action. */}
+            <div className="mx-6 mb-4">
+              <label className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
+                Impression / diagnosis from these results
+              </label>
+              <textarea
+                value={impression}
+                onChange={(e) => setImpression(e.target.value)}
+                maxLength={600}
+                placeholder="What these numbers show - e.g. Microcytic hypochromic anaemia. Suggest serum ferritin."
+                className="mt-1.5 min-h-[72px] w-full resize-y rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-[13px] leading-relaxed text-[var(--p-ink)] outline-none focus:border-[var(--p-teal)]"
+              />
+              <p className="mt-1 text-[11px] text-[var(--p-muted)]">
+                Optional. Goes onto the patient&apos;s OPD sheet under <span className="font-semibold">Investigation</span>,
+                attributed to the lab. The consulting doctor&apos;s diagnosis is separate and this never replaces it.
+                {sheet?.test.impression && sheet.test.technicianName && (
+                  <> Currently written by <span className="font-semibold">{sheet.test.technicianName}</span>.</>
+                )}
+              </p>
             </div>
 
             <p className="mx-6 mb-3 rounded-lg bg-[var(--p-teal-soft)] px-3 py-2 text-[12px] leading-relaxed text-[var(--p-teal-deep)]">

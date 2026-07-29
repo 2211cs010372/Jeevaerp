@@ -71,6 +71,7 @@ export default function UploadPrescriptionPage() {
   const [diagnosis, setDiagnosis] = useState("");
   const [advice, setAdvice] = useState("");
   const [nextVisit, setNextVisit] = useState("");
+  const [caseHistory, setCaseHistory] = useState("");
 
   // ---- existing uploads for this patient ----
   const [existing, setExisting] = useState<Existing[]>([]);
@@ -165,7 +166,7 @@ export default function UploadPrescriptionPage() {
   }
 
   function resetClinical() {
-    setLabs([]); setLabInput(""); setDiagnosis(""); setAdvice(""); setNextVisit("");
+    setLabs([]); setLabInput(""); setDiagnosis(""); setAdvice(""); setNextVisit(""); setCaseHistory("");
   }
 
   function pickFile(f: File | null) {
@@ -232,6 +233,7 @@ export default function UploadPrescriptionPage() {
         diagnosis: diagnosis.trim() || undefined,
         advice: advice.trim() || undefined,
         nextVisit: nextVisit.trim() || undefined,
+        caseHistory: caseHistory.trim() || undefined,
         labs,
       });
       setDone({ sent: sendNow, visitId, fileUrl: res.prescription?.fileUrl ?? null, generated: true });
@@ -642,6 +644,12 @@ export default function UploadPrescriptionPage() {
                 )}
 
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  {/* Typed first because it is what the doctor wrote first, and
+                      it prints in the top block of the OPD sheet. */}
+                  <Field label="Case history" span>
+                    <textarea className={`${fld} min-h-[76px] resize-y`} value={caseHistory} onChange={(e) => setCaseHistory(e.target.value)}
+                      placeholder="Presenting complaints and history as written - e.g. Fever 3 days, dry cough, no vomiting. K/c/o type 2 diabetes on metformin." />
+                  </Field>
                   <Field label="Diagnosis">
                     <input className={fld} value={diagnosis} onChange={(e) => setDiagnosis(e.target.value)}
                       placeholder="As written on the sheet - e.g. Viral fever" />

@@ -13,6 +13,13 @@ export const saveLabResultsSchema = z.object({
   })).min(1, "Enter at least one result").max(80),
   /** Default true - entering results finishes the test. */
   complete: z.boolean().optional(),
+  /**
+   * The lab's read of its own numbers, written as the results are saved.
+   * Optional: plenty of tests are a number and nothing more, and forcing a
+   * sentence out of a technician who has none is how "NAD" ends up on reports
+   * that were never actually read.
+   */
+  impression: z.string().trim().max(600).nullish(),
 });
 
 export const orderTestsSchema = z.object({

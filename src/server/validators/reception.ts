@@ -76,6 +76,9 @@ export const sendOpdSheetSchema = z.object({
   diagnosis: optStr(300),
   advice: optStr(600),
   nextVisit: optStr(80),
+  /// presenting complaints + history, printed in the sheet's top block. Longer
+  /// than the rest because it is prose, not a label.
+  caseHistory: optStr(1200),
   /// prescribed lab tests, printed on the sheet as advisory text
   labs: z.array(z.string().trim().min(1).max(120)).max(20).default([]),
 });

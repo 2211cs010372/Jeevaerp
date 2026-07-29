@@ -43,6 +43,48 @@ export const PRINT_CSS = `
 `;
 
 /**
+ * PRE-PRINTED STATIONERY (A4) - the profile used when the tray is loaded with
+ * the hospital's own printed paper instead of blank stock.
+ *
+ * That paper already carries, in ink, the things a generated header would
+ * duplicate: logo top-left, JEEVA wordmark top-right, and the address / phone
+ * band plus the location QR at the foot. So the app must print INTO the gap
+ * between them and nowhere else.
+ *
+ * The reserved bands below are measured off the stationery scan (A4 =
+ * 210 x 297 mm):
+ *
+ *   top    logo + wordmark ink ends at ~37 mm   -> 40 mm of head room
+ *   bottom QR + pin start at ~251 mm, address
+ *          band at ~285 mm                      -> 46 mm of foot room
+ *   sides  13 mm, inside the printed rule
+ *
+ * @page margin is forced to 0 and every offset comes from #print-sheet padding,
+ * so the landing position is the same whatever margin the browser's print
+ * dialog defaults to - a 10 mm browser margin would otherwise have pushed the
+ * whole sheet down into the doctor's writing space.
+ */
+export const STATIONERY_PRINT_CSS = `
+  .print-stage { --pr-primary: #0b5f55; --pr-accent: #c77d33; --pr-ink: #17211e; --pr-line: #b9c4c0; }
+  .print-stage { background: #e8e6e1; min-height: 100vh; padding: 24px 12px 64px; }
+  #print-sheet { position: relative; width: 210mm; min-height: 297mm; margin: 0 auto; background: #fff;
+    color: var(--pr-ink); box-shadow: 0 8px 40px rgba(0,0,0,.18); padding: 40mm 13mm 46mm;
+    display: flex; flex-direction: column;
+    font-family: var(--font-sans, "Instrument Sans"), "Noto Sans Telugu", "Nirmala UI", Arial, sans-serif;
+    font-size: 11.5px; line-height: 1.45; }
+  @media print {
+    html, body { background: #fff !important; margin: 0 !important; padding: 0 !important; }
+    body * { visibility: hidden !important; }
+    #print-sheet, #print-sheet * { visibility: visible !important; }
+    .print-stage { background: #fff !important; padding: 0 !important; margin: 0 !important; min-height: 0 !important; }
+    @page { size: A4 portrait; margin: 0; }
+    #print-sheet { position: absolute; inset: 0 auto auto 0; width: 210mm; min-height: 297mm;
+      margin: 0; box-shadow: none; padding: 40mm 13mm 46mm; }
+    .screen-only { display: none !important; }
+  }
+`;
+
+/**
  * A5 invoice stationery.
  *
  * The bill is printed on A5 (148 × 210 mm) - half a sheet, the size a pharmacy
@@ -403,6 +445,284 @@ export function RxTable({ items, blankRows = 0, note }: {
       </table>
       {items.length > 0 && note && <p className="mt-1 text-[8.5px] text-[#6b7772]">{note}</p>}
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PRE-PRINTED STATIONERY BLOCKS
+//
+// The rule the client set: no writing rules. Every field used to sit on an
+// underline, and on paper that already carries a logo, a wordmark, a watermark
+// and a footer band, that grid of lines read as a form to be argued with rather
+// than a sheet to be written on.
+//
+// Losing the lines lost the structure with them, so the structure is rebuilt
+// out of type and space instead: labels in letterspaced small caps above the
+// ink, a titled masthead rule, tinted vitals cells, and a teal tick before
+// every section heading. The ONE place ruling earns its keep is the ℞ table -
+// four columns of different things (name, dosage pattern, timing) can't be told
+// apart by whitespace alone, and the pharmacy counter reads that block fastest
+// when it looks like the table it has always been.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The sheet's own masthead - a title on the left, the visit classification on
+ * the right, closed by the one heavy rule on the page.
+ *
+ * It exists because the pre-printed paper says who the HOSPITAL is but never
+ * what the sheet IS, and a page that opens straight into "Name" reads like a
+ * fragment. The rule under it also gives the patient block a top edge, which is
+ * what stops the identity strip from floating in the middle of the letterhead.
+ */
+export function SheetTitle({ title = "Out-patient case sheet", right }: {
+  title?: string; right?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-end justify-between gap-4 border-b-2 py-[1px]" style={{ borderColor: "var(--pr-primary)" }}>
+      <span className="text-[10.5px] font-bold uppercase " style={{ color: "var(--pr-primary)" }}>
+        {title}
+      </span>
+      {right}
+    </div>
+  );
+}
+
+/**
+ * A section heading: a short teal tick, the label in letterspaced small caps,
+ * and a hairline running out to the right margin.
+ *
+ * The hairline is a heading underline, not a writing line - it sits ABOVE the
+ * space the doctor writes in, so it organises the page without inviting anyone
+ * to write on it.
+ */
+export function SectionHead({ label, trailing }: { label: string; trailing?: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2">
+      <h3 className="shrink-0 text-[10.5px] font-bold uppercase " style={{ color: "var(--pr-primary)" }}>
+        {label}
+      </h3>
+      <span className="h-px flex-1" style={{ background: "#d7e2df", WebkitPrintColorAdjust: "exact", printColorAdjust: "exact" }} />
+      {trailing}
+    </div>
+  );
+}
+
+/**
+ * The consulting doctor, set where the pre-printed letterhead leaves a gap:
+ * between the logo (left) and the JEEVA wordmark (right), which is exactly
+ * where the hospital writes it by hand today.
+ *
+ * `inset` positions it absolutely into that gap for pre-printed stock; without
+ * it the block sits in normal flow under a generated letterhead instead.
+ */
+export function DoctorHead({ doctor, inset = false }: {
+  doctor?: { name: string; specialization: string; qualification?: string | null } | null;
+  inset?: boolean;
+}) {
+  if (!doctor) return null;
+  // The degree line the hospital hand-writes ("MBBS  M.D Pediatrics"). Falls
+  // back to the specialization so the sheet never prints a nameless credential
+  // gap for a doctor whose profile has no qualification typed in yet.
+  const credentials = doctor.qualification?.trim() || doctor.specialization;
+  const body = (
+    <div className="text-center leading-tight">
+      <div className="text-[18px] font-medium tracking-tight" style={{ color: "var(--pr-ink)" }}>
+        {doctor.name}
+      </div>
+      <div className="mt-0.5 text-[11.5px] font-semibold" style={{ color: "var(--pr-primary)" }}>
+        {credentials}
+      </div>
+    </div>
+  );
+  if (!inset) return <div className="mt-2">{body}</div>;
+  return (
+    /* 38-142mm: clear of the printed logo (ends ~37mm) and the wordmark
+       (starts ~143mm), so a long name still lands in the gap. */
+    <div className="absolute" style={{ top: "8mm", left: "38mm", width: "104mm" }}>
+      {body}
+    </div>
+  );
+}
+
+/**
+ * Screen-only ghost of the pre-printed paper.
+ *
+ * Nothing here prints. It exists so the person at the screen can see where
+ * their sheet will land on the real stationery - otherwise the preview is a
+ * page with a mysterious empty band at the top and no hospital name on it, and
+ * the natural reaction is to "fix" that by switching back to the generated
+ * letterhead and printing the logo twice.
+ */
+export function PreprintedGuide() {
+  // Boxes measured off the stationery scan, in millimetres from the page edge -
+  // drawn rather than photographed, because the only header asset in the repo
+  // is the one-line version used for blank stock and its address sits at the
+  // TOP, which is exactly the opposite of where the printed paper carries it.
+  const zone = (label: string, s: React.CSSProperties) => (
+    <div className="absolute flex items-center justify-center rounded-[2px] border border-dashed border-[#b9a06a] bg-[#f6efdd] text-center text-[8px] font-semibold uppercase tracking-wide text-[#8a6414]"
+      style={s}>
+      {label}
+    </div>
+  );
+  return (
+    <div className="screen-only pointer-events-none select-none opacity-70 print:hidden" aria-hidden>
+      {zone("Logo", { top: "5mm", left: "12mm", width: "25mm", height: "31mm" })}
+      {zone("Jeeva Multi Speciality Hospital", { top: "8mm", left: "143mm", width: "54mm", height: "27mm" })}
+      {zone("QR", { bottom: "19mm", right: "7mm", width: "17mm", height: "27mm" })}
+      {zone("Printed address & phone band", { bottom: "2mm", left: "13mm", right: "13mm", height: "13mm" })}
+      <div className="absolute inset-x-[13mm] border-t border-dashed border-[#b9a06a]" style={{ top: "40mm" }} />
+      <div className="absolute inset-x-[13mm] border-t border-dashed border-[#b9a06a]" style={{ bottom: "46mm" }} />
+    </div>
+  );
+}
+
+/**
+ * The patient block - three columns, as the hospital's own paper sets it:
+ *
+ *   Name          Age           Date
+ *   Phone         UHID          OP No
+ *   Address (full width)
+ *
+ * A field with no value prints its label and a run of blank paper, so the same
+ * sheet serves a computer-filled visit and a hand-written one.
+ */
+export function FieldGrid({ fields }: {
+  fields: { k: string; v?: string | null; span?: 1 | 2 | 3; mono?: boolean }[];
+}) {
+  return (
+    <div className="grid grid-cols-3 gap-x-8 gap-y-0.5">
+      {fields.map((f, i) => (
+        <div key={i} className={`min-w-0 ${f.span === 3 ? "col-span-3 flex items-center" : f.span === 2 ? "col-span-2 flex items-center " : ""}`}>
+          <div className="flex items-center gap-2">
+            <div className="text-[10.5px] font-medium uppercase leading-none tracking-[0.1em] " style={{ color: "var(--pr-primary)" }} >{f.k}: </div>
+            {/* Held to a fixed height with or without ink, so all three rows sit
+              on a common baseline and a blank field is a writing space of a
+              known size rather than a collapsed row. */}
+            <div className={`mt-[3px] min-w-0 truncate text-[12.5px] font-semibold leading-[1.15] ${f.mono ? "font-mono tracking-tight" : ""}`}
+              style={{ color: "var(--pr-ink)", minHeight: "4.4mm" }}>
+              {f.v?.trim() || " "}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Vitals as the pre-printed sheet lists them: three across, two down.
+ *
+ * These six are the only boxed cells on the page, and deliberately so. They are
+ * numbers read at a glance - by a nurse mid-round, not by anyone reading prose
+ * - and a tint with a hairline finds them far faster than six labels floating
+ * in open space. The border carries the box on its own if a printer drops the
+ * background tint.
+ */
+export function VitalsGrid({ items }: { items: { label: string; value: string | null }[] }) {
+  return (
+    <div className="grid grid-cols-2 mt-2 gap-y-1.5">
+      {items.map((b) => (
+        <div key={b.label} className=" px-2.5 ">
+          <div className="flex  items-center gap-0.5">
+            <div className="text-[9.5px] font-medium uppercase leading-none tracking-[0.14em] text-[#7c8a85]" style={{ color: "var(--pr-primary)" }}>
+              {b.label}:
+            </div>
+            <div className="mt-[3px] font-mono text-[13px] font-bold leading-none">
+              {b.value || " "}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A titled clinical section - case history, investigations, advice.
+ *
+ * `minHeight` is the writing space kept below the heading when nothing was
+ * typed. It is reserved space, not a box: no border, no baseline, because the
+ * doctor writes prose here and a ruled box would fight the handwriting.
+ */
+export function OpenBlock({ label, value, minHeight = "14mm", footnote }: {
+  label: string; value?: string | null; minHeight?: string;
+  /** Small print under the block - only rendered when there is a value. */
+  footnote?: string;
+}) {
+  const text = value?.trim();
+  return (
+    <section className="mt-[9px]">
+      <SectionHead label={label} />
+      <div className="mt-1.5 whitespace-pre-line text-[12px] font-medium leading-relaxed"
+        style={{ minHeight, color: "var(--pr-ink)" }}>
+        {text || ""}
+      </div>
+      {text && footnote && <p className="text-[8px] italic text-[#7c8a85]">{footnote}</p>}
+    </section>
+  );
+}
+
+/**
+ * The ℞ pad - the prescription table, ruled.
+ *
+ * This is the one block on the sheet that keeps its rules. Four columns of
+ * different kinds of thing - the serial, the medicine, the ఉ-మ-రా dosage
+ * pattern and the timing - cannot be told apart by whitespace alone, and the
+ * pharmacy counter has read this exact table for years: the ℞ mark, the two
+ * heavy teal rules around the header, and the Telugu hints under the English
+ * column names, which are what the patient actually reads back at home.
+ *
+ * Always `slots` rows deep whether or not medicines were typed in, so the sheet
+ * keeps one shape: reception's typed medicines print into the top rows and the
+ * doctor keeps the numbered remainder to write on. Dosage is split on the fly -
+ * "1-0-1 after food" becomes the pattern in its own column and "after food" in
+ * timing - because that is the typing convention the /prescriptions form
+ * already uses.
+ */
+export function RxPad({ items, slots = 9 }: {
+  items: { medicineName: string; qty: number; dosage: string | null }[];
+  slots?: number;
+}) {
+  const rows = Math.max(slots, items.length);
+  return (
+    <section className="mt-[9px] flex-1">
+      <table className="w-full border-collapse text-[12px]">
+        <thead>
+          <tr className="text-left align-bottom text-[9px] uppercase tracking-[0.12em]" style={{ color: "var(--pr-primary)" }}>
+            <th className="w-[46px] border-y-2 pb-1 pr-1 text-[27px] font-bold leading-none" style={{ borderColor: "var(--pr-primary)" }}>℞</th>
+            <th className="border-y-2 pb-1.5 pr-2 font-bold" style={{ borderColor: "var(--pr-primary)" }}>Medicine</th>
+            <th className="w-[78px] border-y-2 pb-1.5 pr-2 font-bold" style={{ borderColor: "var(--pr-primary)" }}>
+              Dosage<br /><span className="font-medium normal-case tracking-normal text-[#57655f]">ఉ – మ – రా</span>
+            </th>
+            <th className="w-[168px] border-y-2 pb-1.5 font-bold" style={{ borderColor: "var(--pr-primary)" }}>
+              Timing &amp; duration<br /><span className="font-medium normal-case tracking-normal text-[#57655f]">భోజనం ముందు / తర్వాత</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {Array.from({ length: rows }).map((_, i) => {
+            const it = items[i];
+            // "1-0-0 after food 1 month" -> pattern into its column, rest into timing
+            const dosage = it?.dosage?.trim() ?? "";
+            const m = dosage.match(/^([0-9]+(?:\/[0-9]+)?\s*[-–]\s*[0-9]+(?:\/[0-9]+)?\s*[-–]\s*[0-9]+(?:\/[0-9]+)?)\s*(.*)$/);
+            const pattern = m ? m[1].replace(/\s/g, "") : "";
+            const timing = m ? m[2] : dosage;
+            return (
+              /* 6.9mm: a comfortable handwriting line, and nine of them plus
+                 the header is what fits between the pre-printed bands. */
+              <tr key={i} className="border-b border-dotted align-baseline" style={{ borderColor: "#cfdad6", height: "8.5mm" }}>
+                <td className="pr-1 font-mono text-[10.5px] text-[#8b9691]">{i + 1}.</td>
+                <td className="pr-2 font-bold" style={{ color: "var(--pr-ink)" }}>
+                  {it ? <>{it.medicineName}{it.qty > 1 ? <span className="ml-1 font-normal text-[#57655f]">× {it.qty}</span> : null}</> : " "}
+                </td>
+                <td className="pr-2 font-mono text-[11.5px] font-semibold" style={{ color: "var(--pr-primary)" }}>{pattern}</td>
+                <td className="text-[11.5px] font-medium text-[#3c4a45]">{timing}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </section>
   );
 }
 
