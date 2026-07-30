@@ -1,194 +1,32 @@
 import { PrismaClient } from "@prisma/client";
-import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
 /**
- * The consulting diary every non-anaesthetist doctor carries: round the clock,
- * every day of the week. 15-minute cadence = 96 slots per doctor per day; the
- * reception "Regenerate" action can drop it to 10 when the desk wants finer
- * granularity.
- */
-const DIARY_START = "00:00";
-const DIARY_END = "24:00";
-const DIARY_SLOT_MIN = 15;
-/** Days of bookable grid the seed builds. Mirrors SLOT_HORIZON_DAYS. */
-const SLOT_HORIZON_DAYS = 30;
-
-/**
- * Dev seed. Idempotent. Passwords/emails here are for local development only.
- * Staff log in with USERNAME (role.name) + OTP (code prints to server console),
- * or username + password. Their email is the OTP backup channel.
+ * INFRASTRUCTURE SEED. Idempotent - safe to run against production repeatedly.
+ *
+ * This seeds only the things the hospital's own staff cannot reasonably type in
+ * on day one: the ward/bed layout, the diagnostic price list, and the GST header
+ * that goes on every invoice.
+ *
+ * It deliberately seeds NO PEOPLE and NO STOCK:
+ *
+ *   doctors, staff   Created by an admin in Admin -> Staff. A seeded doctor is a
+ *                    fake consultant with a fake fee sitting on the public
+ *                    directory, and a seeded staff account is a known username
+ *                    with a known password on a live system.
+ *   patients         Registered at reception. A demo patient in the master
+ *                    patient index is a clinical safety problem, not untidy data.
+ *   pharmacy         Medicines, batches and distributors are entered in the
+ *                    pharmacy portal, where the real MRP, expiry and batch
+ *                    numbers come off the actual invoice. Seeded stock means the
+ *                    shelf lies about what is in the cupboard.
+ *
+ * Companion seeds, run separately:
+ *   npm run seed:admins   the named admin accounts (the only logins seeded)
+ *   npm run seed:labs     reference ranges for the catalogue below
  */
 async function main() {
-  const password = await bcrypt.hash("Password123!", 12);
-
-  // ---- Staff: username is role.name; email is the OTP backup ----
-  const staff = [
-    { username: "admin.priya",     phone: "9000000001", email: "priya.admin@jeeva.local",   name: "Priya (Admin)",   role: "ADMIN" as const },
-    { username: "reception.ravi",  phone: "9000000002", email: "ravi.front@jeeva.local",    name: "Ravi (Reception)",role: "RECEPTIONIST" as const },
-    { username: "labs.sana",       phone: "9000000003", email: "sana.labs@jeeva.local",     name: "Sana (Lab)",      role: "LAB_TECH" as const },
-    { username: "pharmacy.kiran",  phone: "9000000004", email: "kiran.pharma@jeeva.local",  name: "Kiran (Pharmacy)",role: "PHARMACIST" as const },
-  ];
-  for (const s of staff) {
-    await prisma.user.upsert({
-      where: { username: s.username },
-      update: { email: s.email, name: s.name, role: s.role },
-      create: { ...s, passwordHash: password },
-    });
-  }
-
-  // ---- Doctors (each also a login; username doctor.<distinguishing-name>) ----
-  // Profile fields (photo, qualification, experience…) power the booking cards
-  // and the public directory. Photos live in /public/images.
-  // Source: the 15-doctor public directory dataset. Usernames are generated
-  // from the most distinguishing token in each name (not a plain surname),
-  // because three doctors here share "Kumar" as part of their name and a
-  // surname-only scheme would collide (P. Rajakshi Kumar / K. Sravan Kumar /
-  // A. Rakesh Kumar).
-  // Phones start at 9000002xxx (not 9000001xxx) so these don't collide with
-  // the 4 legacy placeholder doctors (doctor.rao/menon/verma/das), which are
-  // retired below rather than deleted - per this schema's own policy that
-  // doctors are deactivated, never hard-deleted.
-  const doctors = [
-    { username: "doctor.shireesha",     phone: "9000002001", email: "shireesha@jeeva.local",     name: "Dr. Shireesha M",               specialization: "Obstetrician & Gynaecologist", department: "Gynaecology",      fee: 600,  qualification: "MBBS, MS",                                   experienceYears: 12, age: 40, languages: "Telugu, English", photoUrl: "/images/doctor-1.avif",  bio: "Experienced consultant in women's health providing antenatal care, pregnancy management, gynaecological surgery and preventive women's healthcare." },
-    { username: "doctor.shanthosh",     phone: "9000002002", email: "shanthosh@jeeva.local",     name: "Dr. A. Shanthosh",              specialization: "General Physician",            department: "General Medicine",  fee: 500,  qualification: "DNB (General Medicine)",                     experienceYears: 10, age: 39, languages: "Telugu, English", photoUrl: "/images/doctor-2.avif",  bio: "Consultant physician managing diabetes, hypertension, infectious diseases and preventive healthcare." },
-    { username: "doctor.poornachander", phone: "9000002003", email: "poornachander@jeeva.local", name: "Dr. B. Poornachander",          specialization: "General Surgeon",              department: "General Surgery",   fee: 650,  qualification: "MS (General Surgery)",                       experienceYears: 15, age: 45, languages: "Telugu, English", photoUrl: "/images/doctor-3.avif",  bio: "General surgeon experienced in abdominal surgeries, laparoscopic procedures and emergency surgical care." },
-    { username: "doctor.chesamalla",    phone: "9000002004", email: "chesamalla@jeeva.local",    name: "Dr. Venkata Ratnam Chesamalla", specialization: "ENT Surgeon",                  department: "ENT",               fee: 600,  qualification: "MS (ENT)",                                   experienceYears: 18, age: 49, languages: "Telugu, English", photoUrl: "/images/doctor-4.avif",  bio: "Specialist in ear, nose and throat disorders with expertise in hearing loss, sinus disease and head & neck conditions." },
-    { username: "doctor.rajakshi",      phone: "9000002005", email: "rajakshi@jeeva.local",      name: "Dr. P. Rajakshi Kumar",         specialization: "Plastic Surgeon",              department: "Plastic Surgery",   fee: 900,  qualification: "MCh Plastic Surgery",                        experienceYears: 14, age: 44, languages: "Telugu, English", photoUrl: "/images/doctor-5.avif",  bio: "Plastic and reconstructive surgeon specialising in trauma reconstruction, burns and cosmetic procedures." },
-    { username: "doctor.prashanth",     phone: "9000002006", email: "prashanth@jeeva.local",     name: "Dr. V. Prashanth",              specialization: "Orthopaedic Surgeon",          department: "Orthopaedics",      fee: 650,  qualification: "MS Orthopaedics",                            experienceYears: 13, age: 42, languages: "Telugu, English", photoUrl: "/images/doctor-6.avif",  bio: "Orthopaedic consultant treating fractures, arthritis, sports injuries and spine disorders." },
-    { username: "doctor.laxmi",         phone: "9000002007", email: "laxmi@jeeva.local",         name: "Dr. B. Laxmi",                  specialization: "Urologist",                    department: "Urology",           fee: 800,  qualification: "MBBS, MS (General Surgery), MCh Urology",   experienceYears: 12, age: 41, languages: "Telugu, English", photoUrl: "/images/doctor-7.avif",  bio: "Consultant urologist treating kidney stones, prostate disorders and urinary tract diseases." },
-    { username: "doctor.sravan",        phone: "9000002008", email: "sravan@jeeva.local",        name: "Dr. K. Sravan Kumar",           specialization: "Paediatrician",                department: "Paediatrics",       fee: 500,  qualification: "MBBS, MD Paediatrics",                       experienceYears: 11, age: 38, languages: "Telugu, English", photoUrl: "/images/doctor-8.avif",  bio: "Paediatric consultant providing comprehensive healthcare for newborns, infants, children and adolescents." },
-    { username: "doctor.aditya",        phone: "9000002009", email: "aditya@jeeva.local",        name: "Dr. Aditya Bala",               specialization: "Neurologist",                  department: "Neurology",         fee: 850,  qualification: "MBBS, MD (General Medicine), DM Neurology", experienceYears: 15, age: 44, languages: "Telugu, English", photoUrl: "/images/doctor-9.avif",  bio: "Neurologist managing stroke, epilepsy, headaches, Parkinson's disease and nerve disorders." },
-    { username: "doctor.manjithun",     phone: "9000002010", email: "manjithun@jeeva.local",     name: "Dr. G. Manjithun",              specialization: "Neurosurgeon",                 department: "Neurosurgery",      fee: 1200, qualification: "MBBS, MCh Neurosurgery",                     experienceYears: 17, age: 47, languages: "Telugu, English", photoUrl: "/images/doctor-10.avif", bio: "Neurosurgeon treating brain, spine and peripheral nerve disorders using advanced surgical techniques." },
-    { username: "doctor.pooja",         phone: "9000002011", email: "pooja@jeeva.local",         name: "Dr. K. Pooja",                  specialization: "Anaesthesiologist",            department: "Anaesthesiology",   fee: 0,    qualification: "MBBS, MD Anaesthesiology",                   experienceYears: 9,  age: 36, languages: "Telugu, English", photoUrl: "/images/doctor-11.avif", bio: "Anaesthesiologist providing perioperative care, ICU support and pain management services." },
-    { username: "doctor.athyan",        phone: "9000002012", email: "athyan@jeeva.local",        name: "Dr. Athyan G",                  specialization: "Anaesthesiologist",            department: "Anaesthesiology",   fee: 0,    qualification: "MBBS, MD Anaesthesiology",                   experienceYears: 8,  age: 35, languages: "Telugu, English", photoUrl: "/images/doctor-12.avif", bio: "Consultant anaesthesiologist specialising in safe anaesthesia and critical care medicine." },
-    { username: "doctor.ravinder",      phone: "9000002013", email: "ravinder@jeeva.local",      name: "Dr. B. Ravinder",               specialization: "Pulmonologist",                department: "Pulmonology",       fee: 650,  qualification: "MBBS, MD Pulmonary Medicine",                experienceYears: 13, age: 43, languages: "Telugu, English", photoUrl: "/images/doctor-13.avif", bio: "Pulmonary medicine specialist treating asthma, COPD, pneumonia and chronic respiratory diseases." },
-    { username: "doctor.rakeshkumar",   phone: "9000002014", email: "rakeshkumar@jeeva.local",   name: "Dr. A. Rakesh Kumar",           specialization: "Psychiatrist",                 department: "Psychiatry",        fee: 700,  qualification: "MBBS, MD Psychiatry",                        experienceYears: 10, age: 40, languages: "Telugu, English", photoUrl: "/images/doctor-14.avif", bio: "Psychiatrist providing evidence-based treatment for anxiety, depression, stress-related disorders and other mental health conditions." },
-    { username: "doctor.rakesh",        phone: "9000002015", email: "rakesh@jeeva.local",        name: "Dr. G. Rakesh",                 specialization: "Physiotherapist",              department: "Physiotherapy",     fee: 400,  qualification: "BPT",                                        experienceYears: 8,  age: 34, languages: "Telugu, English", photoUrl: "/images/doctor-15.avif", bio: "Physiotherapist specialising in rehabilitation after surgery, sports injuries, neurological disorders and chronic pain." },
-  ];
-  for (const d of doctors) {
-    const user = await prisma.user.upsert({
-      where: { username: d.username },
-      update: {},
-      create: { username: d.username, phone: d.phone, email: d.email, name: d.name, role: "DOCTOR", passwordHash: password },
-    });
-    const profile = {
-      name: d.name, specialization: d.specialization, department: d.department, consultationFee: d.fee,
-      qualification: d.qualification, experienceYears: d.experienceYears, age: d.age, languages: d.languages,
-      photoUrl: d.photoUrl, bio: d.bio,
-    };
-    const doctor = await prisma.doctor.upsert({
-      where: { userId: user.id },
-      update: profile,
-      create: { userId: user.id, ...profile },
-    });
-    // ---- Consulting diary ----
-    //
-    // Jeeva is a multispeciality hospital running round the clock, and the
-    // public panel says so ("Open 24 Hours" on every consultant). The diary now
-    // matches: 00:00-24:00, SEVEN days, Sunday included. It used to be Mon-Sat
-    // 09:00-13:00, which meant the board promised 24 hours, the printed footer
-    // promised 8 AM - 8 PM, and the booking grid actually stopped at 1 PM and
-    // had no Sunday row at all - three different answers to one question.
-    //
-    // ANAESTHESIOLOGY IS THE EXCEPTION, on purpose. lib/opd.ts marks them "By
-    // Appointment": they are booked through the surgical team, not off a grid,
-    // and the public panel offers a phone call instead of slots. Generating a
-    // diary nobody can see would be thousands of dead rows.
-    if (doctor.department !== "Anaesthesiology") {
-      // Old narrow rows are removed, not left behind: upsert alone would keep
-      // the 09:00-13:00 template alongside the new one and quietly double the
-      // morning.
-      await prisma.doctorSchedule.deleteMany({
-        where: { doctorId: doctor.id, startTime: { not: DIARY_START } },
-      });
-      for (let day = 0; day <= 6; day++) {
-        await prisma.doctorSchedule.upsert({
-          where: { doctorId_dayOfWeek_startTime: { doctorId: doctor.id, dayOfWeek: day, startTime: DIARY_START } },
-          update: { endTime: DIARY_END, slotDurationMin: DIARY_SLOT_MIN, isActive: true },
-          create: { doctorId: doctor.id, dayOfWeek: day, startTime: DIARY_START, endTime: DIARY_END, slotDurationMin: DIARY_SLOT_MIN },
-        });
-      }
-    } else {
-      // Retire any diary a previous seed gave them.
-      await prisma.doctorSchedule.deleteMany({ where: { doctorId: doctor.id } });
-    }
-  }
-
-  // ---- Retire legacy placeholder doctors (deactivate, never hard-delete) ----
-  // doctor.rao / doctor.menon / doctor.verma / doctor.das were the original
-  // 4 placeholder doctors, replaced by the 15-doctor dataset above. Per this
-  // schema's policy, doctors are deactivated rather than removed - their
-  // appointments/vitals/prescriptions/invoices stay intact and queryable.
-  // Idempotent: safe to run every time this seed runs.
-  const LEGACY_DOCTOR_USERNAMES = ["doctor.rao", "doctor.menon", "doctor.verma", "doctor.das"];
-  const legacyUsers = await prisma.user.findMany({
-    where: { username: { in: LEGACY_DOCTOR_USERNAMES } },
-    select: { id: true, username: true },
-  });
-  if (legacyUsers.length > 0) {
-    const legacyUserIds = legacyUsers.map((u) => u.id);
-    await prisma.user.updateMany({ where: { id: { in: legacyUserIds } }, data: { isActive: false } });
-    await prisma.doctor.updateMany({ where: { userId: { in: legacyUserIds } }, data: { active: false } });
-    console.log(`   Retired ${legacyUsers.length} legacy placeholder doctor(s): ${legacyUsers.map((u) => u.username).join(", ")}`);
-  }
-
-  // ---- Demo patient (fixed ID for OTP login testing) ----
-  await prisma.patient.upsert({
-    where: { displayId: "JMH2026OP00001" },
-    update: {},
-    create: {
-      displayId: "JMH2026OP00001",
-      firstName: "Ramesh", lastName: "Kumar", fullName: "Ramesh Kumar",
-      phone: "9848012345", gender: "MALE", bloodGroup: "B+", city: "Hanamkonda",
-    },
-  });
-
-  // ---- Counters so generated IDs continue past the seed ----
-  const year = new Date().getFullYear();
-  await prisma.counter.upsert({ where: { key: `PATIENT-${year}` }, update: {}, create: { key: `PATIENT-${year}`, value: 1 } });
-
-  // ---- Generate the bookable grid from the diaries above ----
-  //
-  // DoctorSlot.date is @db.Date - built at UTC midnight of the LOCAL calendar
-  // day, and read back the same way (see src/lib/date.ts). Local midnight is
-  // 18:30 the previous day in IST, so building it with setHours(0,0,0,0) filed
-  // every slot under the wrong date and the day-of-week test then picked the
-  // wrong schedule. Both sides use UTC here, consistently.
-  const allSchedules = await prisma.doctorSchedule.findMany({ where: { isActive: true, doctor: { active: true } } });
-  const now = new Date();
-  const startUTC = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
-  const slotRows: { doctorId: string; date: Date; startTime: string; endTime: string }[] = [];
-  const toMin = (t: string) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
-  // 1440 wraps to "00:00" - a 24-hour diary's last slot ends at midnight, and
-  // "24:00" is not a time anything downstream would read back.
-  const toHHMM = (m: number) => {
-    const w = m % 1440;
-    return `${String(Math.floor(w / 60)).padStart(2, "0")}:${String(w % 60).padStart(2, "0")}`;
-  };
-  for (let d = 0; d < SLOT_HORIZON_DAYS; d++) {
-    const date = new Date(startUTC + d * 86_400_000);
-    const dow = date.getUTCDay();
-    for (const sch of allSchedules) {
-      if (sch.dayOfWeek !== dow) continue;
-      for (let t = toMin(sch.startTime); t + sch.slotDurationMin <= toMin(sch.endTime); t += sch.slotDurationMin) {
-        slotRows.push({ doctorId: sch.doctorId, date, startTime: toHHMM(t), endTime: toHHMM(t + sch.slotDurationMin) });
-      }
-    }
-  }
-  if (slotRows.length) {
-    // Chunked: a single createMany of ~37k rows exceeds the driver's parameter
-    // limit. skipDuplicates + the [doctorId,date,startTime] unique key keeps
-    // re-running the seed free of duplicates.
-    let count = 0;
-    for (let i = 0; i < slotRows.length; i += 5000) {
-      const r = await prisma.doctorSlot.createMany({ data: slotRows.slice(i, i + 5000), skipDuplicates: true });
-      count += r.count;
-    }
-    console.log(`   Generated ${count} bookable slots across the next ${SLOT_HORIZON_DAYS} days (24x7, Sunday included).`);
-  }
-
   // ---- Hospital config (GST invoice header). Telangana state code = 36. ----
   const existingConfig = await prisma.hospitalConfig.findFirst();
   if (!existingConfig) {
@@ -206,11 +44,19 @@ async function main() {
         defaultLabGstPct: 0, // diagnostics are generally GST-exempt
       },
     });
+    console.log("  ✓ hospital config created (replace the placeholder GSTIN before go-live)");
+  } else {
+    console.log("  · hospital config already present - left untouched");
   }
+
+  // ---- Counters so generated IDs continue past the seed ----
+  const year = new Date().getFullYear();
+  await prisma.counter.upsert({ where: { key: `PATIENT-${year}` }, update: {}, create: { key: `PATIENT-${year}`, value: 0 } });
 
   // ---- Lab test catalog. gstRatePct = 0 (EXEMPT) by default. ----
   // Most diagnostic services are GST-exempt in India. The hospital's CA should
-  // confirm and override any test that is actually taxable.
+  // confirm and override any test that is actually taxable. Prices are editable
+  // in Admin -> Catalog; they are seeded because a lab cannot open without one.
   const labTests = [
     { name: "Complete Blood Picture (CBP)", code: "CBP", price: 300 },
     { name: "Blood Sugar - Fasting", code: "FBS", price: 120 },
@@ -237,151 +83,18 @@ async function main() {
     // Matched by `code`, not `name`: a prior seed/manual entry may already
     // hold this code under a different display name, and matching on `name`
     // would miss it, then collide on the unique `code` when trying to create.
-    // `update` repairs the name/price on that existing row instead of skipping it.
+    // `update` repairs the name on that existing row instead of skipping it.
+    //
+    // The PRICE is deliberately not re-asserted. Once the hospital has set its
+    // own rate in Admin -> Catalog, a re-run of this seed must not quietly put
+    // it back to the number in this file.
     await prisma.labTestCatalog.upsert({
       where: { code: t.code },
-      update: { name: t.name, price: t.price },
+      update: { name: t.name },
       create: { name: t.name, code: t.code, price: t.price, gstRatePct: 0, active: true },
     });
   }
-  console.log(`   Seeded ${labTests.length} lab tests (GST 0% = exempt by default).`);
-
-  console.log("✅ Seed complete.");
-  console.log("   Staff login (username + OTP to console, or password Password123!):");
-  console.log("     admin.priya · reception.ravi · labs.sana · pharmacy.kiran · doctor.shireesha");
-  console.log("   Patient OTP login: JMH2026OP00001  (code prints to server console)");
-  // ---- Pharmacy: medicines + stock batches -------------------------------
-  // Medicines ARE taxable in India (unlike diagnostics, which are exempt).
-  // Most are 5%; a few categories sit at 12%. Confirm rates with the CA.
-  const medicines = [
-    { name: "Paracetamol 650mg",      generic: "Paracetamol",            mfr: "Cipla",     hsn: "3004", gst: 5,  unit: "tablet", reorder: 100, rack: "A1" },
-    { name: "Azithromycin 500mg", courseCritical: true,     generic: "Azithromycin",           mfr: "Alkem",     hsn: "3004", gst: 5,  unit: "tablet", reorder: 40,  rack: "A2" },
-    { name: "Amoxicillin 500mg", courseCritical: true,      generic: "Amoxicillin",            mfr: "Cipla",     hsn: "3004", gst: 5,  unit: "capsule", reorder: 60, rack: "A2" },
-    { name: "Pantoprazole 40mg",      generic: "Pantoprazole",           mfr: "Sun Pharma",hsn: "3004", gst: 5,  unit: "tablet", reorder: 50,  rack: "A3" },
-    { name: "Metformin 500mg",        generic: "Metformin HCl",          mfr: "USV",       hsn: "3004", gst: 5,  unit: "tablet", reorder: 80,  rack: "B1" },
-    { name: "Amlodipine 5mg",         generic: "Amlodipine Besylate",    mfr: "Torrent",   hsn: "3004", gst: 5,  unit: "tablet", reorder: 60,  rack: "B1" },
-    { name: "Atorvastatin 10mg",      generic: "Atorvastatin Calcium",   mfr: "Zydus",     hsn: "3004", gst: 5,  unit: "tablet", reorder: 50,  rack: "B2" },
-    { name: "Cetirizine 10mg",        generic: "Cetirizine HCl",         mfr: "Dr Reddy's",hsn: "3004", gst: 5,  unit: "tablet", reorder: 80,  rack: "C1" },
-    { name: "Ibuprofen 400mg",        generic: "Ibuprofen",              mfr: "Abbott",    hsn: "3004", gst: 5,  unit: "tablet", reorder: 60,  rack: "C1" },
-    { name: "Omeprazole 20mg",        generic: "Omeprazole",             mfr: "Dr Reddy's",hsn: "3004", gst: 5,  unit: "capsule", reorder: 50, rack: "A3" },
-    { name: "Metronidazole 400mg", courseCritical: true,    generic: "Metronidazole",          mfr: "Alkem",     hsn: "3004", gst: 5,  unit: "tablet", reorder: 40,  rack: "C2" },
-    { name: "Losartan 50mg",          generic: "Losartan Potassium",     mfr: "Torrent",   hsn: "3004", gst: 5,  unit: "tablet", reorder: 40,  rack: "B2" },
-    { name: "Levocetirizine 5mg",     generic: "Levocetirizine",         mfr: "Cipla",     hsn: "3004", gst: 5,  unit: "tablet", reorder: 50,  rack: "C1" },
-    { name: "Diclofenac Gel 30g",     generic: "Diclofenac Diethylamine",mfr: "Novartis",  hsn: "3004", gst: 12, unit: "tube",   reorder: 15,  rack: "D1" },
-    { name: "ORS Sachet",             generic: "Oral Rehydration Salts", mfr: "FDC",       hsn: "3004", gst: 5,  unit: "sachet", reorder: 40,  rack: "D2" },
-    { name: "Cough Syrup 100ml",      generic: "Dextromethorphan",       mfr: "Glenmark",  hsn: "3004", gst: 12, unit: "bottle", reorder: 20,  rack: "D2" },
-    { name: "Insulin Glargine 100IU", generic: "Insulin Glargine",       mfr: "Biocon",    hsn: "3004", gst: 5,  unit: "vial",   reorder: 10,  rack: "F1" },
-    { name: "Vitamin D3 60000IU",     generic: "Cholecalciferol",        mfr: "Mankind",   hsn: "3004", gst: 5,  unit: "sachet", reorder: 25,  rack: "E1" },
-    { name: "Iron + Folic Acid",      generic: "Ferrous Ascorbate",      mfr: "Emcure",    hsn: "3004", gst: 5,  unit: "tablet", reorder: 40,  rack: "E1" },
-    { name: "Salbutamol Inhaler",     generic: "Salbutamol Sulphate",    mfr: "Cipla",     hsn: "3004", gst: 12, unit: "inhaler",reorder: 10,  rack: "F2" },
-  ];
-
-  // Batch dates: one comfortably in-date, one deliberately near expiry so the
-  // FEFO logic and the expiry alerts have something real to chew on.
-  const farExpiry  = new Date(); farExpiry.setFullYear(farExpiry.getFullYear() + 2);
-  const nearExpiry = new Date(); nearExpiry.setDate(nearExpiry.getDate() + 45);
-
-  // ---- Distributors ----
-  // Every batch must trace to one (StockBatch.supplierId is NOT NULL), so the
-  // seed needs real ones. Two of them on purpose: the same medicine is stocked
-  // from both below, which is exactly the case that used to collapse into a
-  // single row and lose the first distributor.
-  const distributors = [
-    { name: "Sri Venkateswara Pharma Distributors", city: "Hanamkonda", gstin: "36AABCS1429B1Z9", dl: "TS/WGL/20B/1142", terms: 30 },
-    { name: "Deccan Medico Agencies", city: "Warangal", gstin: "36AAECD8821K1ZP", dl: "TS/WGL/21B/0876", terms: 45 },
-  ];
-  const supplierIds: string[] = [];
-  for (const d of distributors) {
-    const sup = await prisma.supplier.upsert({
-      where: { name: d.name },
-      update: { gstin: d.gstin, drugLicenseNo: d.dl, paymentTermDays: d.terms, active: true },
-      create: {
-        name: d.name, gstin: d.gstin, drugLicenseNo: d.dl, paymentTermDays: d.terms,
-        address: `${d.city}, Telangana`, active: true,
-      },
-      select: { id: true },
-    });
-    supplierIds.push(sup.id);
-  }
-  console.log(`   ${supplierIds.length} distributors seeded.`);
-
-  for (const [i, m] of medicines.entries()) {
-    // `update: {}` was a trap. On a database that already had these medicines,
-    // the upsert matched by name, ran an EMPTY update, and skipped them - so any
-    // column added to the seed AFTER the first run (rackLocation, courseCritical)
-    // never reached existing rows. The racks were in this file and would never
-    // have arrived in the database. Re-seeding must REPAIR, not silently skip.
-    //
-    // Catalogue facts (rack, GST, reorder level, course-critical) are owned by the
-    // seed and are safe to re-assert. Stock levels and batches are NOT touched here.
-    const catalogue = {
-      genericName: m.generic,
-      manufacturer: m.mfr,
-      hsnCode: m.hsn,
-      gstRatePct: m.gst.toFixed(2),
-      unit: m.unit,
-      reorderThreshold: m.reorder,
-      rackLocation: m.rack,
-      courseCritical: (m as { courseCritical?: boolean }).courseCritical ?? false,
-    };
-    const med = await prisma.medicine.upsert({
-      where: { name: m.name },
-      update: catalogue,
-      create: { name: m.name, ...catalogue },
-      select: { id: true },
-    });
-
-    const mrp = 12 + i * 7;                 // spread of realistic prices
-    const lowOne = i % 7 === 0;             // a few sit below reorder level
-
-    // Alternate the primary distributor so the shelf looks like a real one.
-    const primarySupplier = supplierIds[i % supplierIds.length];
-
-    await prisma.stockBatch.upsert({
-      where: {
-        medicineId_batchNo_supplierId: {
-          medicineId: med.id, batchNo: `B${2026}${String(i + 1).padStart(3, "0")}`, supplierId: primarySupplier,
-        },
-      },
-      update: {},
-      create: {
-        medicineId: med.id,
-        supplierId: primarySupplier,
-        batchNo: `B${2026}${String(i + 1).padStart(3, "0")}`,
-        expiryDate: farExpiry,
-        quantity: lowOne ? 4 : 120 + i * 5,
-        purchasePrice: (mrp * 0.7).toFixed(2),
-        mrp: mrp.toFixed(2),
-      },
-    });
-
-    // every 4th medicine also gets an older batch expiring soon - FEFO must
-    // dispense THIS one first, and it should show up under alerts.
-    if (i % 4 === 0) {
-      // Deliberately the OTHER distributor. The same medicine stocked from two
-      // suppliers is the case that used to collapse into one row and lose the
-      // first one; seeding it means the shelf demonstrates the fix.
-      const secondSupplier = supplierIds[(i + 1) % supplierIds.length];
-      await prisma.stockBatch.upsert({
-        where: {
-          medicineId_batchNo_supplierId: {
-            medicineId: med.id, batchNo: `B${2025}${String(i + 1).padStart(3, "0")}`, supplierId: secondSupplier,
-          },
-        },
-        update: {},
-        create: {
-          medicineId: med.id,
-          supplierId: secondSupplier,
-          batchNo: `B${2025}${String(i + 1).padStart(3, "0")}`,
-          expiryDate: nearExpiry,
-          quantity: 18,
-          purchasePrice: (mrp * 0.7).toFixed(2),
-          mrp: mrp.toFixed(2),
-        },
-      });
-    }
-  }
-  console.log(`  ✓ ${medicines.length} medicines seeded with stock batches (incl. near-expiry for FEFO)`);
+  console.log(`  ✓ ${labTests.length} lab tests in the catalogue (GST 0% = exempt by default)`);
 
   // ---- IPD: wards + beds --------------------------------------------------
   // GST on room rent: exempt below ₹5,000/day (non-ICU). ICU is exempt regardless.
@@ -406,14 +119,23 @@ async function main() {
       const bedNo = `${w.prefix}-${String(i).padStart(2, "0")}`;
       await prisma.bed.upsert({
         where: { wardId_bedNo: { wardId: ward.id, bedNo } },
+        // `update: {}` on purpose - re-running the seed must never move an
+        // occupied bed back to AVAILABLE and lose track of a live inpatient.
         update: {},
         create: { wardId: ward.id, bedNo, status: "AVAILABLE" },
       });
     }
   }
   const totalBeds = wards.reduce((n, w) => n + w.beds, 0);
-  console.log(`  ✓ ${wards.length} wards / ${totalBeds} beds seeded (Private ₹5,500 carries 5% GST, rest exempt)`);
+  console.log(`  ✓ ${wards.length} wards / ${totalBeds} beds (Private ₹5,500 carries 5% GST, rest exempt)`);
 
+  console.log("\n✅ Infrastructure seed complete. No people, no stock - by design.");
+  console.log("   Next:");
+  console.log("     npm run seed:admins   create the admin logins");
+  console.log("     npm run seed:labs     reference ranges for the catalogue");
+  console.log("   Then sign in as an admin and add doctors and staff from Admin → Staff.");
+  console.log("   Pharmacy stock is entered in the pharmacy portal.\n");
 }
 
 main().catch((e) => { console.error(e); process.exit(1); }).finally(() => prisma.$disconnect());
+    

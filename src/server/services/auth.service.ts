@@ -13,6 +13,11 @@ import {
 } from "@/lib/auth/otp";
 import { verifyPassword, burnPasswordCheck } from "@/lib/auth/password";
 import {
+  loginThrottle,
+  throttleKey,
+  LOGIN_WINDOW_MS,
+} from "@/lib/auth/login-throttle";
+import {
   signAccessToken,
   signRefreshToken,
   verifyRefreshToken,
@@ -122,7 +127,67 @@ export async function verifyOtpAndLogin(patientId: string, code: string): Promis
 // Staff password login
 // ---------------------------------------------------------------------------
 
-export async function staffLogin(username: string, password: string): Promise<AuthResult> {
+export async function staffLogin(
+  username: string,
+  password: string,
+  ctx: { ipAddress?: string } = {},
+): Promise<AuthResult> {
+  const key = throttleKey(username);
+  const since = new Date(Date.now() - LOGIN_WINDOW_MS);
+
+  // Counted BEFORE the password is checked, on purpose. bcrypt is deliberately
+  // expensive, so letting a locked-out caller reach the compare would leave the
+  // endpoint usable as a CPU drain even while refusing every login - a throttle
+  // that stops the guessing but keeps the denial of service.
+  const [userFails, ipFails, oldestUser, oldestIp] = await Promise.all([
+    prisma.loginAttempt.count({ where: { username: key, createdAt: { gte: since } } }),
+    ctx.ipAddress
+      ? prisma.loginAttempt.count({ where: { ipAddress: ctx.ipAddress, createdAt: { gte: since } } })
+      : Promise.resolve(0),
+    prisma.loginAttempt.findFirst({
+      where: { username: key, createdAt: { gte: since } },
+      orderBy: { createdAt: "asc" },
+      select: { createdAt: true },
+    }),
+    ctx.ipAddress
+      ? prisma.loginAttempt.findFirst({
+        where: { ipAddress: ctx.ipAddress, createdAt: { gte: since } },
+        orderBy: { createdAt: "asc" },
+        select: { createdAt: true },
+      })
+      : Promise.resolve(null),
+  ]);
+
+  const decision = loginThrottle({
+    userFails,
+    ipFails,
+    oldestUserFailAt: oldestUser?.createdAt ?? null,
+    oldestIpFailAt: oldestIp?.createdAt ?? null,
+    now: new Date(),
+  });
+
+  if (decision.blocked) {
+    const mins = Math.ceil(decision.retryAfterSec / 60);
+    throw new ApiError(
+      429,
+      `Too many failed sign-in attempts. Try again in ${mins} minute${mins === 1 ? "" : "s"}.`,
+    );
+  }
+
+  /**
+   * Count this failure. Best-effort: a bookkeeping error must not turn a wrong
+   * password into a 500, because a different status code for one username is
+   * itself a signal that the username is worth attacking.
+   */
+  const countFailure = () =>
+    prisma.loginAttempt
+      .create({ data: { username: key, ipAddress: ctx.ipAddress } })
+      .catch((e) => console.error("[login] failed to record attempt:", e));
+
+  // One message for both wrong-username and wrong-password, so the response
+  // cannot be used to tell which of the two it was.
+  const BAD_CREDENTIALS = "Invalid email or password";
+
   const staff = await prisma.user.findUnique({
     where: { username },
     select: { id: true, name: true, role: true, passwordHash: true, isActive: true },
@@ -132,13 +197,27 @@ export async function staffLogin(username: string, password: string): Promise<Au
   // so timing can't distinguish "no such user" from "wrong password".
   if (!staff || !staff.passwordHash) {
     await burnPasswordCheck(password);
-    throw new ApiError(401, "Invalid email or password");
+    await countFailure();
+    throw new ApiError(401, BAD_CREDENTIALS);
   }
 
   const ok = await verifyPassword(password, staff.passwordHash);
-  if (!ok) throw new ApiError(401, "Invalid email or password");
+  if (!ok) {
+    await countFailure();
+    throw new ApiError(401, BAD_CREDENTIALS);
+  }
+  // Deactivated and wrong-portal are NOT counted as failures: the password was
+  // correct, so counting them would let a suspended member of staff lock out an
+  // account they already know the password to, and would punish an honest person
+  // for the admin's decision.
   if (!staff.isActive) throw new ApiError(403, "This account has been deactivated");
   if (staff.role === "PATIENT") throw new ApiError(403, "Use the patient portal to sign in");
+
+  // Clean slate on success, so this morning's two typos cannot combine with this
+  // afternoon's two to lock out somebody who has proved who they are.
+  await prisma.loginAttempt
+    .deleteMany({ where: { username: key } })
+    .catch((e) => console.error("[login] failed to clear attempts:", e));
 
   await prisma.user.update({
     where: { id: staff.id },

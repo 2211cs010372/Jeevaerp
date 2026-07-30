@@ -38,9 +38,11 @@ function toHHMM(mins: number): string {
  * Returns how many new slots were created - call this from a daily cron, or
  * on-demand before showing a booking screen.
  */
-export async function generateSlots(days = SLOT_HORIZON_DAYS): Promise<{ created: number }> {
+export async function generateSlots(days = SLOT_HORIZON_DAYS, doctorId?: string): Promise<{ created: number }> {
   const schedules = await prisma.doctorSchedule.findMany({
-    where: { isActive: true },
+    // Scoped to one doctor when given: onboarding a single consultant should
+    // build their diary, not walk every other doctor's grid for the horizon.
+    where: { isActive: true, ...(doctorId ? { doctorId } : {}) },
     select: {
       doctorId: true, dayOfWeek: true, startTime: true, endTime: true, slotDurationMin: true,
     },

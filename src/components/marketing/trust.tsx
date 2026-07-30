@@ -1,167 +1,127 @@
-"use client";
-
 import Link from "next/link";
-import { Reveal, CountUp } from "@/components/ui/reveal";
-import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
-import { DEPARTMENTS, DOCTORS } from "@/lib/data";
 import { ArrowUpRight } from "lucide-react";
+import { SmartImage } from "@/components/ui/smart-image";
+import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
+import { DEPARTMENTS, DOCTORS, HOSPITAL } from "@/lib/data";
+import { Chapter, ChapterHead } from "./section";
+import { Counter, Parallax, Reveal, Stagger } from "./motion";
 
-/** 
- * North Star Health - Trust Component
- * ------------------------------------------------------------------
- * Bento-style trust section aligned with the North Star Health aesthetic:
- * warm #f0eee9 framing, deep #14181C dark accents, and #274472 navy branding.
+/**
+ * Chapter 01 - the opening claim.
+ *
+ * One photograph and three numbers. The numbers are all things the ERP behind
+ * this site can actually prove: how many departments are staffed, how many
+ * consultants sit in them, and how fast the lab turns routine bloods around.
+ * Nothing here is a round number chosen because it looked confident.
  */
 export function Trust() {
-  const faces = DOCTORS.slice(0, 3);
-  const remainingCount = Math.max(0, DOCTORS.length - 3);
+  const faces = DOCTORS.slice(0, 4);
+  const rest = Math.max(0, DOCTORS.length - faces.length);
 
-  // Safe fallback access for the orbit graphic
-  const centerDoc = DOCTORS[0] || { id: "1", name: "Doctor", image: "" };
-  const orbitDoc1 = DOCTORS[1] || { id: "2", name: "Doctor", image: "" };
-  const orbitDoc2 = DOCTORS[2] || { id: "3", name: "Doctor", image: "" };
+  const PROOF = [
+    {
+      value: DEPARTMENTS.length,
+      suffix: "",
+      label: "Departments, staffed",
+      text: "Medicine, surgery, women's and children's health and more, consulting under one roof - so most families never leave the building for a referral.",
+    },
+    {
+      value: DOCTORS.length,
+      suffix: "+",
+      label: "Consultants on the panel",
+      text: "Named doctors with published fees, days and OPD hours. You know who you are seeing before you book.",
+    },
+    {
+      value: 30,
+      suffix: " min",
+      label: "Routine report turnaround",
+      text: "Bloods drawn in the morning are usually on your record - and your phone - before you have left.",
+    },
+  ];
 
   return (
-    <section className="nsh-trust-root w-full bg-[#FFFFFF] px-3 py-10 sm:px-6 lg:px-8 lg:py-14">
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;600;700&family=Inter:wght@400;500;600&display=swap');
+    <Chapter id="why" tone="light">
+      <ChapterHead
+        index="01"
+        label="Why Jeeva"
+        lines={[{ text: "Care that" }, { text: "remembers you." }]}
+        lede="A hospital that already knows your history is a hospital that stops asking you to be your own medical record. That is the whole idea, and everything below is what it takes to keep the promise."
+        action={{ href: "/doctors", label: "Meet the consultants" }}
+      />
 
-        .nsh-trust-root {
-          --font-display: 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
-          --font-body: 'Inter', ui-sans-serif, system-ui, sans-serif;
-          font-family: var(--font-body);
-        }
-      `}</style>
+      <div className="mt-14 grid gap-8 sm:mt-18 lg:grid-cols-12 lg:gap-10">
+        {/* the building, held still while the page moves past it */}
+        <Reveal className="lg:col-span-7" y={34}>
+          <figure className="media-frame relative aspect-[16/11] overflow-hidden rounded-[var(--r-xl)] sm:aspect-[16/10]">
+            <Parallax amount={10} className="absolute inset-0 h-[112%] -top-[6%]">
+              <SmartImage
+                src="/images/hospital_banner.jpeg"
+                alt={`Inside ${HOSPITAL.name}`}
+                label="Hospital interior"
+                className="h-full w-full object-cover"
+              />
+            </Parallax>
 
-      <div className="mx-auto grid max-w-7xl grid-cols-1 gap-4 lg:grid-cols-[1fr_2.4fr]">
-        
-        {/* Left Card: Midnight Navy Accent Bento Block */}
-        <Reveal>
-          <div className="group relative flex h-full min-h-[280px] flex-col justify-between overflow-hidden rounded-[1.75rem] bg-[#14181C] p-7 text-white ring-1 ring-black/10 transition-transform duration-300 hover:-translate-y-1 hover:shadow-xl">
-            {/* Soft Ambient Radial Glow */}
-            <div 
-              className="absolute -right-12 -top-12 h-44 w-44 rounded-full bg-[#274472]/40 blur-2xl" 
-              aria-hidden 
-            />
-
-            <div className="relative z-10">
-              <div className="flex items-center justify-between">
-                <p className="font-[family-name:var(--font-display)] text-5xl font-semibold tracking-tight text-white md:text-6xl">
-                  <CountUp to={DEPARTMENTS.length} />
+            <figcaption className="absolute inset-x-0 bottom-0 z-10 flex flex-wrap items-end justify-between gap-4 p-6 sm:p-8">
+              <div>
+                <p className="mono text-[10px] uppercase tracking-[0.2em] text-white/65">
+                  {HOSPITAL.locality}
                 </p>
-                <span className="text-2xl font-light text-[#274472]">+</span>
+                <p className="display-sm mt-2 max-w-xs text-white">
+                  One building. One record. One ID for life.
+                </p>
               </div>
-              <p className="mt-3 max-w-[210px] text-xs leading-relaxed text-white/75">
-                specialized departments under one roof - most visits never leave the building
+
+              {/* who is actually in the building today */}
+              <div className="flex items-center gap-3">
+                <span className="flex -space-x-2.5">
+                  {faces.map((d) => (
+                    <DoctorAvatar
+                      key={d.id}
+                      name={d.name}
+                      image={d.image}
+                      className="h-9 w-9 rounded-full border-2 border-white/85 text-[9px]"
+                    />
+                  ))}
+                  {rest > 0 && (
+                    <span className="grid h-9 w-9 place-items-center rounded-full border-2 border-white/85 bg-[var(--teal)] text-[10px] font-semibold text-white">
+                      +{rest}
+                    </span>
+                  )}
+                </span>
+              </div>
+            </figcaption>
+          </figure>
+        </Reveal>
+
+        {/* the three claims, ruled like a table of contents */}
+        <Stagger each={0.1} y={24} className="grid-lines lg:col-span-5">
+          {PROOF.map((p) => (
+            <div key={p.label} className="flex gap-6 py-7 first:pt-8 sm:gap-8">
+              <p className="stat-num shrink-0 text-[var(--teal)] [font-size:clamp(2.1rem,3.4vw,3rem)]">
+                <Counter value={p.value} suffix={p.suffix} />
               </p>
+              <div className="min-w-0 pt-1.5">
+                <h3 className="text-[15px] font-semibold tracking-[-0.015em] text-[var(--ink)]">
+                  {p.label}
+                </h3>
+                <p className="mt-2 text-[13.5px] leading-[1.65] text-[var(--ink-soft)]">
+                  {p.text}
+                </p>
+              </div>
             </div>
-            
-            {/* Minimalist Avatar Stack */}
-            {faces.length > 0 && (
-              <div className="relative z-10 mt-8 flex items-center isolate -space-x-2">
-                {faces.map((d) => (
-                  <DoctorAvatar 
-                    key={d.id} 
-                    name={d.name} 
-                    image={d.image}
-                    className="h-9 w-9 rounded-full border-2 border-[#14181C] text-[9px] shadow-sm transition-transform duration-200 group-hover:scale-105" 
-                  />
-                ))}
-                {remainingCount > 0 && (
-                  <span className="grid h-9 w-9 place-items-center rounded-full border-2 border-[#14181C] bg-[#274472] text-[10px] font-semibold text-white shadow-sm">
-                    +{remainingCount}
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
-        </Reveal>
+          ))}
 
-        {/* Right Card: Soft Beige & Glassmorphic Canvas */}
-        <Reveal delay={80}>
-          <div className="relative overflow-hidden rounded-[1.75rem] bg-[#f0eee9] p-1.5 ring-1 ring-black/5 transition-all duration-300 hover:shadow-lg">
-            <div className="grid h-full rounded-[1.35rem] bg-white/80 p-6 backdrop-blur-md md:grid-cols-[1.3fr_1fr_auto] md:items-center md:p-8">
-              
-              {/* Content Block */}
-              <div className="flex flex-col justify-between h-full pr-2">
-                <div>
-                  <span className="rounded-full bg-[#274472]/10 px-3 py-1 text-[11px] font-semibold text-[#274472]">
-                    Care Coordination
-                  </span>
-                  <h3 className="mt-3 font-[family-name:var(--font-display)] text-2xl font-semibold leading-tight text-[#14181C] sm:text-3xl">
-                    Connect with our medical specialists
-                  </h3>
-                  <p className="mt-2 max-w-sm text-xs leading-relaxed text-[#14181C]/70">
-                    Book a time with a dedicated doctor - your complete medical history is accessible on their screen when you sit down.
-                  </p>
-                </div>
-
-                <Link 
-                  href="/doctors" 
-                  className="group inline-flex items-center gap-2 pt-6 text-xs font-semibold text-[#274472] transition-colors hover:text-[#14181C]"
-                >
-                  Meet the specialists
-                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#274472]/10 transition-colors group-hover:bg-[#14181C] group-hover:text-white">
-                    <ArrowUpRight className="h-3 w-3 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
-                  </div>
-                </Link>
-              </div>
-
-              {/* Orbit Graphic - Glassmorphic Avatar Layers */}
-              <div aria-hidden className="relative mx-auto hidden h-[150px] w-[150px] md:block">
-                {/* Outer Orbit Ring */}
-                <div className="absolute inset-0 rounded-full border border-[#14181C]/10 animate-[spin_60s_linear_infinite]">
-                  <span className="absolute right-3 top-5 h-2 w-2 rounded-full bg-[#274472]" />
-                  <span className="absolute bottom-6 left-2 h-1.5 w-1.5 rounded-full bg-[#14181C]/40" />
-                </div>
-                
-                {/* Inner Rings */}
-                <span className="absolute inset-[20px] rounded-full border border-[#14181C]/5" />
-                <span className="absolute inset-[40px] rounded-full border border-[#274472]/10" />
-                
-                {/* Floating Avatars */}
-                <DoctorAvatar 
-                  name={centerDoc.name} 
-                  image={centerDoc.image} 
-                  className="absolute left-1/2 top-1/2 h-12 w-12 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-md text-[10px]" 
-                />
-                <DoctorAvatar 
-                  name={orbitDoc1.name} 
-                  image={orbitDoc1.image} 
-                  className="absolute -top-1 left-5 h-8 w-8 rounded-full border border-white shadow-sm text-[8px]" 
-                />
-                <DoctorAvatar 
-                  name={orbitDoc2.name} 
-                  image={orbitDoc2.image} 
-                  className="absolute bottom-1 right-1 h-8 w-8 rounded-full border border-white shadow-sm text-[8px]" 
-                />
-              </div>
-
-              {/* Metrics Column */}
-              <div className="mt-6 flex gap-8 border-t border-black/5 pt-6 sm:gap-12 md:mt-0 md:flex-col md:gap-6 md:border-l md:border-t-0 md:pl-8 md:pt-0">
-                <div>
-                  <p className="font-[family-name:var(--font-display)] text-3xl font-semibold text-[#14181C]">
-                    <CountUp to={DOCTORS.length} suffix="+" />
-                  </p>
-                  <p className="mt-0.5 text-[10.5px] font-medium uppercase tracking-wider text-[#14181C]/60">
-                    experienced<br />doctors
-                  </p>
-                </div>
-                <div>
-                  <p className="font-[family-name:var(--font-display)] text-3xl font-semibold text-[#274472]">
-                    <CountUp to={30} suffix="m" />
-                  </p>
-                  <p className="mt-0.5 text-[10.5px] font-medium uppercase tracking-wider text-[#14181C]/60">
-                    routine lab<br />turnaround
-                  </p>
-                </div>
-              </div>
-
-            </div>
-          </div>
-        </Reveal>
-        
+          <Reveal className="pt-7" y={16}>
+            <Link href="/book" className="link-arrow">
+              Book a consultation
+              <span className="link-arrow-dot">
+                <ArrowUpRight className="h-3.5 w-3.5" />
+              </span>
+            </Link>
+          </Reveal>
+        </Stagger>
       </div>
-    </section>
+    </Chapter>
   );
 }

@@ -75,6 +75,7 @@ export const PORTALS: Record<string, PortalMeta> = {
       { label: "Wards & beds", href: "/wards", icon: "bed" },
       { label: "Login activity", href: "/sessions", icon: "clock" },
       { label: "Audit log", href: "/audit", icon: "activity" },
+      { label: "Errors", href: "/errors", icon: "alert" },
       { label: "Hospital settings", href: "/settings", icon: "building" },
 
     ],

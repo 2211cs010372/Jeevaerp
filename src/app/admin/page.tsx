@@ -303,7 +303,7 @@ const QUICK_LINKS: { href: string; label: string }[] = [
   { href: "/appointments", label: "Appointments" },
   { href: "/bills", label: "Bills" },
   { href: "/wards", label: "Wards & beds" },
-  { href: "/staff", label: "Staff" },
+  { href: "/hr", label: "Staff & doctors" },
   { href: "/audit", label: "Audit log" },
 ];
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DISCHARGE_OUTCOMES } from "@/lib/admission-outcome";
 
 const payment = z.object({
   mode: z.enum(["CASH", "UPI", "CARD", "NETBANKING", "OTHER"]),
@@ -54,6 +55,9 @@ export const dischargeSchema = z.object({
   /// Discharge with pharmacy/lab bills still unpaid. A deliberate act by the
   /// desk, recorded against their name - not a default.
   allowOutstanding: z.boolean().optional(),
+  /// How the stay ended. Optional so every existing caller keeps working and
+  /// still records an ordinary discharge; the desk has to choose to say otherwise.
+  outcome: z.enum(DISCHARGE_OUTCOMES).optional(),
 });
 
 export const addChargeSchema = z.object({

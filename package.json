@@ -14,16 +14,24 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:races": "vitest run --config vitest.races.config.ts",
+    "preflight": "tsx scripts/preflight.ts",
+    "backup": "tsx scripts/backup.ts",
+    "backup:verify": "tsx scripts/restore-verify.ts",
     "doctor": "node scripts/doctor.mjs",
     "predev": "node scripts/doctor.mjs",
     "prebuild": "node scripts/doctor.mjs",
     "postinstall": "prisma generate",
-    "seed:admins": "tsx prisma/seed-admins.ts"
+    "seed:admins": "tsx prisma/seed-admins.ts",
+    "seed:labs": "tsx prisma/seed-lab-analytes.ts",
+    "purge": "tsx scripts/purge-clinical-data.ts",
+    "storage:setup": "tsx scripts/setup-storage.ts",
+    "snapshot": "tsx scripts/snapshot.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1099.0",
     "@prisma/client": "^6.19.3",
     "@supabase/ssr": "^0.12.3",
     "@supabase/supabase-js": "^2.110.7",

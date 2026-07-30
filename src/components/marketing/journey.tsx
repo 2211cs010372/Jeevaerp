@@ -1,44 +1,53 @@
 import Link from "next/link";
-import { Reveal } from "@/components/ui/reveal";
-import { Scoop } from "@/components/ui/scoop";
+import { ArrowUpRight } from "lucide-react";
 import { JOURNEY } from "@/lib/data";
+import { Chapter, ChapterHead } from "./section";
+import { Reveal, Stagger } from "./motion";
 
-/** A visit, in order - one wide rounded panel, the CTA docked in its corner. */
+/**
+ * Chapter 05 - a first visit, in order.
+ *
+ * Four steps on a single hairline, numbered in mono. The rule running across
+ * the top of the row is the visual promise that these happen in sequence and
+ * that there are only four of them - which is the actual reassurance somebody
+ * needs before their first appointment.
+ */
 export function Journey() {
   return (
-    <section className="px-3 py-8 sm:px-5">
-      <div className="mx-auto max-w-[1280px]">
-        <div className="px-2 sm:px-4">
-          <Reveal><p className="sec-index">04 · Your first visit</p></Reveal>
-          <Reveal delay={60}>
-            <h2 className="display mt-8 max-w-xl text-[clamp(2.2rem,4.6vw,3.4rem)] text-[var(--ink)]">
-              Four steps, start to finish.
-            </h2>
-          </Reveal>
-        </div>
+    <Chapter tone="light">
+      <ChapterHead
+        index="05"
+        label="Your first visit"
+        lines={[{ text: "Four steps," }, { text: "start to finish." }]}
+        lede="Registration takes about two minutes and happens once. After that, your Jeeva ID is the only thing you need to bring."
+        action={{ href: "/book", label: "Start with step 01" }}
+      />
 
-        <Reveal delay={120} className="mt-12">
-          <div className="card relative rounded-[var(--r-xl)] px-8 py-10 pb-16 lg:px-12 lg:py-14 lg:pb-20">
-            <ol className="grid gap-x-10 gap-y-10 sm:grid-cols-2 lg:grid-cols-4">
-              {JOURNEY.map((j) => (
-                <li key={j.step} className="border-t border-[var(--line)] pt-6 first:border-t-0 first:pt-0 sm:border-t-0 sm:pt-0 lg:border-l lg:border-[var(--line)] lg:pl-10 lg:first:border-l-0 lg:first:pl-0">
-                  <span className="grid h-10 w-10 place-items-center rounded-full bg-[var(--teal-soft)] font-mono text-[12px] text-[var(--teal)]">
-                    {j.step}
-                  </span>
-                  <h3 className="display mt-5 text-[19px] text-[var(--ink)]">{j.title}</h3>
-                  <p className="mt-2.5 text-[13.5px] leading-[1.7] text-[var(--ink-soft)]">{j.text}</p>
-                </li>
-              ))}
-            </ol>
+      <Stagger
+        as="ol"
+        each={0.1}
+        y={26}
+        className="mt-14 grid gap-x-10 border-t border-[var(--line-strong)] sm:mt-18 sm:grid-cols-2 lg:grid-cols-4"
+      >
+        {JOURNEY.map((j) => (
+          <li key={j.step} className="border-b border-[var(--line)] py-8 lg:border-b-0 lg:border-l lg:border-[var(--line)] lg:pl-10 lg:first:border-l-0 lg:first:pl-0">
+            <span className="mono text-[11px] uppercase tracking-[0.2em] text-[var(--teal)]">
+              ({j.step})
+            </span>
+            <h3 className="display-sm mt-5 text-[var(--ink)]">{j.title}</h3>
+            <p className="mt-3 text-[13.5px] leading-[1.7] text-[var(--ink-soft)]">{j.text}</p>
+          </li>
+        ))}
+      </Stagger>
 
-            <Scoop corner="br" r={20} inner={24}>
-              <Link href="/book" className="btn btn-solid">
-                Start with step 01 <span aria-hidden>→</span>
-              </Link>
-            </Scoop>
-          </div>
-        </Reveal>
-      </div>
-    </section>
+      <Reveal className="mt-10" y={14}>
+        <Link href="/book" className="link-arrow">
+          Book your first appointment
+          <span className="link-arrow-dot">
+            <ArrowUpRight className="h-3.5 w-3.5" />
+          </span>
+        </Link>
+      </Reveal>
+    </Chapter>
   );
 }

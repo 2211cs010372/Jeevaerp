@@ -1,41 +1,51 @@
-import { Reveal } from "@/components/ui/reveal";
-import { FAQ } from "@/lib/data";
+import { HOSPITAL, FAQ } from "@/lib/data";
+import { Chapter, ChapterHead } from "./section";
+import { Stagger } from "./motion";
 
-/** Plain answers, each question its own rounded card. Native accordions. */
+/**
+ * Chapter 10 - the questions the front desk answers fifty times a day.
+ *
+ * Native <details>, so it works before hydration and a browser's in-page find
+ * can still open a closed answer. The accordions are ruled rather than carded:
+ * ten rounded boxes stacked vertically is a list pretending to be a layout.
+ */
 export function Faq() {
   return (
-    <section id="faq" className="px-3 py-16 sm:px-5 lg:py-24">
-      <div className="mx-auto grid max-w-[1280px] gap-x-16 gap-y-10 px-2 sm:px-4 lg:grid-cols-[4fr_8fr]">
-        <div>
-          <Reveal><p className="sec-index">07 · Questions</p></Reveal>
-          <Reveal delay={60}>
-            <h2 className="display mt-8 text-[clamp(2.2rem,4vw,3rem)] text-[var(--ink)]">
-              Before you come.
-            </h2>
-          </Reveal>
-          <Reveal delay={120}>
-            <p className="mt-4 max-w-xs text-[14px] leading-[1.7] text-[var(--muted)]">
-              Can&apos;t find your answer? Call us - a person picks up.
-            </p>
-          </Reveal>
-        </div>
+    <Chapter id="faq" tone="light">
+      <ChapterHead
+        index="10"
+        label="Questions"
+        lines={[{ text: "Before" }, { text: "you come." }]}
+        lede="If your question isn't here, call the front desk. A person picks up."
+        action={{ href: `tel:${HOSPITAL.phone.replace(/\s/g, "")}`, label: HOSPITAL.phone }}
+      />
 
-        <Reveal delay={100}>
-          <div>
-            {FAQ.map((f) => (
-              <details key={f.q} className="faq group">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-4 py-5">
-                  <h3 className="text-[15.5px] font-semibold text-[var(--ink)]">{f.q}</h3>
-                  <span className="faq-chev" aria-hidden><span className="text-[14px] leading-none">+</span></span>
-                </summary>
-                <div className="faq-body pb-6 pr-12">
-                  <p className="text-[14px] leading-[1.8] text-[var(--ink-soft)]">{f.a}</p>
-                </div>
-              </details>
-            ))}
-          </div>
-        </Reveal>
-      </div>
-    </section>
+      <Stagger
+        each={0.06}
+        y={18}
+        className="grid-lines mt-14 sm:mt-18"
+      >
+        {FAQ.map((f, i) => (
+          <details key={f.q} className="group">
+            <summary className="flex cursor-pointer list-none items-center gap-5 py-6 sm:gap-8">
+              <span className="mono shrink-0 text-[10.5px] text-[var(--muted)] transition-colors group-open:text-[var(--teal)]">
+                ({String(i + 1).padStart(2, "0")})
+              </span>
+              <h3 className="flex-1 text-[16px] font-semibold tracking-[-0.02em] text-[var(--ink)] transition-colors group-open:text-[var(--teal-deep)] sm:text-[17.5px]">
+                {f.q}
+              </h3>
+              <span className="faq-chev" aria-hidden>
+                <span className="text-[14px] leading-none">+</span>
+              </span>
+            </summary>
+            <div className="faq-body pb-8">
+              <p className="max-w-[72ch] text-[14.5px] leading-[1.8] text-[var(--ink-soft)] sm:pl-[76px]">
+                {f.a}
+              </p>
+            </div>
+          </details>
+        ))}
+      </Stagger>
+    </Chapter>
   );
 }

@@ -8,6 +8,10 @@ import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { DiscountInput, PaymentSection, type Tender } from "@/components/portal/ui/bill-fields";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import {
+  DISCHARGE_OUTCOMES, OUTCOME_LABEL, OUTCOME_SHORT, OUTCOME_HELP,
+  type DischargeOutcome, type AdmissionStatusValue,
+} from "@/lib/admission-outcome";
 import { useLive } from "@/lib/realtime/use-live";
 import { TOPICS } from "@/lib/realtime/topics";
 
@@ -41,6 +45,8 @@ interface History {
 type HistoryTarget = { id: string; ipNumber: string; patient: { displayId: string; fullName: string } };
 interface Discharged {
   id: string; ipNumber: string; dischargedAt: string; days: number; ward: string; bedNo: string;
+  /** How the stay ended. Optional so an older cached response still renders. */
+  outcome?: string;
   patient: { id: string; displayId: string; fullName: string };
   doctor: { name: string; department: string };
   invoice: { id: string; receiptNo: string; totalAmount: string; status: string } | null;
@@ -70,6 +76,9 @@ export default function InpatientsPage() {
   const [payments, setPayments] = useState<Tender[]>([]);
   const [payValid, setPayValid] = useState(true);
   const [notes, setNotes] = useState("");
+  /** How the stay ended. Defaults to the ordinary case, so the common discharge
+   *  is still one click and nobody has to answer a question about a death. */
+  const [outcome, setOutcome] = useState<DischargeOutcome>("DISCHARGED");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<{ ipNumber: string; days: number; invoiceId: string; receiptNo: string; total: string } | null>(null);
 
@@ -127,6 +136,9 @@ export default function InpatientsPage() {
           notes: notes || undefined,
           // Only ever sent from the explicit override below - never a default.
           ...(allowOutstanding ? { allowOutstanding: true } : {}),
+          // Only sent when the desk picked something other than an ordinary
+          // discharge, so the common case posts exactly the body it always did.
+          ...(outcome !== "DISCHARGED" ? { outcome } : {}),
         }
       );
       setDone({ ipNumber: res.ipNumber, days: res.days, invoiceId: res.invoice.id, receiptNo: res.invoice.receiptNo, total: res.invoice.totalAmount });
@@ -135,7 +147,7 @@ export default function InpatientsPage() {
     finally { setBusy(false); }
   }
 
-  function closeModal() { setDischargeOf(null); setDisc(0); setPayments([]); setPayValid(true); setNotes(""); setPayNow(true); setDone(null); setError(null); }
+  function closeModal() { setDischargeOf(null); setDisc(0); setPayments([]); setPayValid(true); setNotes(""); setPayNow(true); setDone(null); setError(null); setOutcome("DISCHARGED"); }
 
   const Line = ({ k, v, tone, neg }: { k: string; v: string; tone?: "muted" | "cyan"; neg?: boolean }) => (
     <div className="mt-1 flex justify-between first:mt-0">
@@ -235,9 +247,17 @@ export default function InpatientsPage() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-[14px] font-semibold text-[var(--p-ink)]">{d.patient.fullName}</span>
                     <span className="font-mono text-[12px] text-[var(--p-blue)]">{d.ipNumber}</span>
+                    {/* Only the exceptions are marked. An ordinary discharge needs
+                        no label; a death or an abscond must not be able to pass as
+                        one in a list the desk scans quickly. */}
+                    {d.outcome && d.outcome !== "DISCHARGED" && (
+                      <span className="rounded bg-[var(--p-bg)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
+                        {OUTCOME_SHORT[d.outcome as AdmissionStatusValue] ?? d.outcome}
+                      </span>
+                    )}
                   </div>
                   <div className="mt-1 text-[13px] text-[var(--p-muted)]">
-                    <span className="tabular">{d.patient.displayId}</span> · {d.ward} · {d.days}d · {d.doctor.name} · discharged {prettyDateTime(d.dischargedAt)}
+                    <span className="tabular">{d.patient.displayId}</span> · {d.ward} · {d.days}d · {d.doctor.name} · closed {prettyDateTime(d.dischargedAt)}
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
@@ -370,6 +390,21 @@ export default function InpatientsPage() {
                   {payNow && est > 0 && (
                     <PaymentSection total={est} accent="blue" onChange={(r) => { setPayments(r.payments); setPayValid(r.valid); }} />
                   )}
+
+                  {/* HOW THE STAY ENDED.
+                      A select, not five buttons: an ordinary discharge is the
+                      overwhelming majority and must stay a single click, while the
+                      other four have to be reachable without anyone having to lie
+                      to the software. The bill is raised either way - the bed was
+                      occupied and the medicines were given whatever the ending. */}
+                  <Field label="How the stay ended">
+                    <select className={fld} value={outcome} onChange={(e) => setOutcome(e.target.value as DischargeOutcome)}>
+                      {DISCHARGE_OUTCOMES.map((o) => (
+                        <option key={o} value={o}>{OUTCOME_LABEL[o]}</option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-[12px] text-[var(--p-muted)]">{OUTCOME_HELP[outcome]}</p>
+                  </Field>
 
                   <Field label="Discharge notes"><textarea className={`${fld} min-h-[56px] resize-y`} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Condition on discharge, advice…" /></Field>
                 </div>

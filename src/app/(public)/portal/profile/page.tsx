@@ -120,7 +120,7 @@ export default function PatientPortalPage() {
   const initials = p.fullName.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase();
 
   return (
-    <div className="portal min-h-screen pb-16 pt-[116px]" data-portal="admin">
+    <div className="portal min-h-screen pb-16 below-nav" data-portal="admin">
       <div className="mx-auto max-w-[1120px] px-4 sm:px-6">
         {/* ── patient header ── */}
         <div className="surface flex flex-wrap items-center justify-between gap-4 p-5">
@@ -356,7 +356,7 @@ export default function PatientPortalPage() {
 
 /* ── helpers ───────────────────────────────────────────────────────────── */
 function Screen({ children }: { children: React.ReactNode }) {
-  return <div className="portal flex min-h-screen flex-col items-center justify-center px-5 pt-[116px] text-center" data-portal="admin"><div className="flex flex-col items-center text-[14px] text-[var(--p-muted)]">{children}</div></div>;
+  return <div className="portal flex min-h-screen flex-col items-center justify-center px-5 below-nav text-center" data-portal="admin"><div className="flex flex-col items-center text-[14px] text-[var(--p-muted)]">{children}</div></div>;
 }
 const TINT: Record<string, string> = { teal: "bg-[var(--p-teal-soft)] text-[var(--p-teal-deep)]", cyan: "bg-[var(--p-cyan-soft)] text-[var(--p-cyan-deep)]", amber: "bg-[var(--p-amber-soft)] text-[var(--p-amber)]", rose: "bg-[var(--p-rose-soft)] text-[var(--p-rose)]" };
 function Stat({ icon: I, tint, label, value, sub }: { icon: typeof Calendar; tint: keyof typeof TINT | string; label: string; value: string; sub: string }) {

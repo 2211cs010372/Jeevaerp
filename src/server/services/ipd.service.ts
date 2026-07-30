@@ -11,6 +11,10 @@ import { publishLive } from "@/server/realtime/publish";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, PaymentMode, ChargeCategory } from "@prisma/client";
+import {
+  CLOSED_STATUS_LIST, isClosed, OUTCOME_LABEL,
+  type AdmissionStatusValue, type DischargeOutcome,
+} from "@/lib/admission-outcome";
 
 // ---------------------------------------------------------------------------
 // IPD - inpatient admissions.
@@ -311,21 +315,27 @@ export async function currentInpatients(): Promise<{
   });
 }
 
-/** Recently discharged stays, each with its final IPD invoice - so the desk can
- *  re-print a bill after the patient has left and dropped off the live list. */
+/** Recently closed stays, each with its final IPD invoice - so the desk can
+ *  re-print a bill after the patient has left and dropped off the live list.
+ *
+ *  Matches every closed status, not DISCHARGED alone. A stay that ended as LAMA or
+ *  EXPIRED still produced a bill somebody may need to re-print, and filtering on
+ *  DISCHARGED would have made those stays unreachable from the desk the moment
+ *  they left the live list - the bill would exist with no screen that could find it. */
 export async function recentDischarges(limit = 25): Promise<{
   id: string; ipNumber: string; admittedAt: string; dischargedAt: string; days: number;
-  ward: string; bedNo: string;
+  ward: string; bedNo: string; outcome: string;
   patient: { id: string; displayId: string; fullName: string };
   doctor: { name: string; department: string };
   invoice: { id: string; receiptNo: string; totalAmount: string; status: string } | null;
 }[]> {
   const rows = await prisma.admission.findMany({
-    where: { status: "DISCHARGED" },
+    where: { status: { in: CLOSED_STATUS_LIST } },
     orderBy: { dischargedAt: "desc" },
     take: limit,
     select: {
       id: true, ipNumber: true, admittedAt: true, dischargedAt: true, wardNameAtAdmit: true,
+      status: true,
       bed: { select: { bedNo: true } },
       patient: { select: { id: true, displayId: true, fullName: true } },
       doctor: { select: { name: true, department: true } },
@@ -334,6 +344,7 @@ export async function recentDischarges(limit = 25): Promise<{
   });
   type Row = {
     id: string; ipNumber: string; admittedAt: Date; dischargedAt: Date | null; wardNameAtAdmit: string;
+    status: string;
     bed: { bedNo: string } | null;
     patient: { id: string; displayId: string; fullName: string };
     doctor: { name: string; department: string };
@@ -347,6 +358,9 @@ export async function recentDischarges(limit = 25): Promise<{
       admittedAt: r.admittedAt.toISOString(), dischargedAt: end.toISOString(),
       days: stayDays(r.admittedAt, end),
       ward: r.wardNameAtAdmit, bedNo: r.bed?.bedNo ?? "-",
+      // Carried through so the desk can see at a glance that a row in this list
+      // was a death or an abscond rather than an ordinary discharge.
+      outcome: r.status,
       patient: r.patient, doctor: r.doctor,
       invoice: inv ? { id: inv.id, receiptNo: inv.receiptNo, totalAmount: inv.totalAmount.toString(), status: inv.status } : null,
     };
@@ -427,9 +441,17 @@ export async function dischargePatient(
     notes?: string;
     /** Discharge anyway, leaving pharmacy/lab bills unpaid. Audited. */
     allowOutstanding?: boolean;
+    /**
+     * How the stay ended. Defaults to DISCHARGED, so every existing caller keeps
+     * its current behaviour and only a desk that deliberately picks an outcome
+     * records anything else.
+     */
+    outcome?: DischargeOutcome;
   },
   ctx: { ipAddress?: string; userAgent?: string }
 ) {
+  const outcome: DischargeOutcome = input.outcome ?? "DISCHARGED";
+
   // NOBODY LEAVES OWING THE PHARMACY OR THE LAB.
   //
   // Their bills are separate documents, so the IPD invoice below will not
@@ -472,13 +494,18 @@ export async function dischargePatient(
       },
     });
     if (!a) throw new ApiError(404, "Admission not found");
-    if (a.status === "DISCHARGED") throw new ApiError(400, "Already discharged");
+    // isClosed, not `=== "DISCHARGED"`. The old check let a stay already closed as
+    // LAMA or EXPIRED be closed a second time as a discharge, which would have
+    // overwritten a death with a discharge and billed the stay twice.
+    if (isClosed(a.status)) {
+      throw new ApiError(400, `This stay is already closed (${OUTCOME_LABEL[a.status as AdmissionStatusValue]})`);
+    }
 
     const dischargedAt = new Date();
     await tx.admission.update({
       where: { id: a.id },
       data: {
-        status: "DISCHARGED",
+        status: outcome,
         dischargedAt,
         dischargedById: actor.id,
         ...(input.notes?.trim() ? { notes: [a.notes, input.notes.trim()].filter(Boolean).join("\n") } : {}),
@@ -487,8 +514,12 @@ export async function dischargePatient(
     await tx.bed.update({ where: { id: a.bedId }, data: { status: "AVAILABLE" } });
 
     await logAudit(actor, {
-      action: "PATIENT_DISCHARGED", targetTable: "Admission", targetId: a.id,
+      // The action names the outcome, so a medico-legal reader scanning the audit
+      // log sees ADMISSION_CLOSED_EXPIRED and not a generic discharge that has to
+      // be joined back to the Admission row to be understood.
+      action: `ADMISSION_CLOSED_${outcome}`, targetTable: "Admission", targetId: a.id,
       meta: {
+        outcome,
         ipNumber: a.ipNumber, bed: a.bed.bedNo,
         // If they left owing the pharmacy or the lab, that decision has a name
         // against it and an amount - months later, this is the only record of it.
@@ -621,7 +652,13 @@ export async function ipdStats(): Promise<{ admitted: number; availableBeds: num
     prisma.admission.count({ where: { status: "ADMITTED" } }),
     prisma.bed.count({ where: { status: "AVAILABLE" } }),
     prisma.bed.count(),
-    prisma.admission.count({ where: { status: "DISCHARGED", dischargedAt: { gte: today, lt: tomorrow } } }),
+    // Every closed status, not DISCHARGED alone. This number is how many beds
+    // turned over today, and a bed freed by a death turned over exactly as much
+    // as one freed by a discharge. Counting only discharges would have made the
+    // dashboard disagree with the ward board on the days it mattered most.
+    prisma.admission.count({
+      where: { status: { in: CLOSED_STATUS_LIST }, dischargedAt: { gte: today, lt: tomorrow } },
+    }),
   ]);
   return { admitted, availableBeds, totalBeds, dischargedToday };
 }

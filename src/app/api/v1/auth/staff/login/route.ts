@@ -12,12 +12,16 @@ export const dynamic = "force-dynamic";
 
 export const POST = handler(async (req) => {
   const { username, password } = await parseBody(req, staffLoginSchema);
-  const { tokens, user } = await staffLogin(username, password);
+  const ctx = auditContext(req);
+  // The IP is the second throttle key: it is what stops one attacker spraying a
+  // single password across every username they can guess, which no per-username
+  // limit would ever notice.
+  const { tokens, user } = await staffLogin(username, password, { ipAddress: ctx.ipAddress });
   // Right credentials, wrong portal: refuse before any cookie is set or any
   // successful login is recorded. Checked only AFTER the password verified, so
   // it can't be used to probe which usernames exist or what role they hold.
   assertPortalLogin(req, user.role);
-  await recordStaffLogin(user.id, "PASSWORD", auditContext(req));
+  await recordStaffLogin(user.id, "PASSWORD", ctx);
 
   const redirectTo = destinationFor(user.role, resolveOrigin(req));
 

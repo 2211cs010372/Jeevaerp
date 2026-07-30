@@ -1,6 +1,46 @@
 import { z } from "zod";
 import { isIndianMobile, toE164 } from "@/lib/phone";
 
+/**
+ * A doctor's consulting profile - everything the booking cards and the public
+ * directory render. Optional as a block: only a DOCTOR carries one, and the
+ * refinement below is what makes the clinically-required parts mandatory.
+ *
+ * `photoUrl` takes either a path under /public (the pre-existing avifs) or an
+ * absolute https URL (what a Supabase Storage upload returns). http:// is
+ * refused - a mixed-content image is blocked by the browser anyway, so accepting
+ * it only produces a card with a hole in it.
+ */
+const doctorProfileSchema = z.object({
+  specialization: z.string().trim().min(2, "Specialization is required").max(80),
+  department: z.string().trim().min(2, "Department is required").max(80),
+  consultationFee: z.coerce.number().min(0, "Fee cannot be negative").max(100000),
+  qualification: z.string().trim().max(160).optional().or(z.literal("")),
+  experienceYears: z.coerce.number().int().min(0).max(70).optional(),
+  age: z.coerce.number().int().min(21, "A practising doctor is at least 21").max(100).optional(),
+  languages: z.string().trim().max(160).optional().or(z.literal("")),
+  photoUrl: z.string().trim().max(500)
+    .refine((v) => v === "" || v.startsWith("/") || v.startsWith("https://"), "Photo must be an https URL or a /path")
+    .optional().or(z.literal("")),
+  bio: z.string().trim().max(1000).optional().or(z.literal("")),
+});
+
+export type DoctorProfileInput = z.infer<typeof doctorProfileSchema>;
+
+/** A doctor without a specialization is not bookable - the directory groups on it. */
+const requireDoctorProfile = (
+  v: { role: string; doctor?: DoctorProfileInput },
+  ctx: z.RefinementCtx
+) => {
+  if (v.role === "DOCTOR" && !v.doctor) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["doctor"],
+      message: "A doctor needs a specialization, department and consultation fee",
+    });
+  }
+};
+
 export const createStaffSchema = z.object({
   /** role.name - e.g. reception.ravi */
   username: z.string().trim().toLowerCase()
@@ -11,6 +51,25 @@ export const createStaffSchema = z.object({
   phone: z.string().trim().refine(isIndianMobile, "Enter a valid 10-digit number").transform(toE164),
   role: z.enum(["ADMIN", "RECEPTIONIST", "LAB_TECH", "PHARMACIST", "DOCTOR"]),
   password: z.string().min(8, "Password must be at least 8 characters").max(72),
+  doctor: doctorProfileSchema.optional(),
+}).superRefine(requireDoctorProfile);
+
+/**
+ * Editing an existing account. Every field is optional - the form sends only
+ * what changed - but `role` is NOT here on purpose: moving a receptionist to
+ * DOCTOR would leave a username reading `reception.ravi` on a consulting card,
+ * and moving a doctor out would orphan their appointments. Deactivate and
+ * create the correct account instead.
+ */
+export const updateStaffSchema = z.object({
+  name: z.string().trim().min(2).max(80).optional(),
+  email: z.string().trim().email("Invalid email").optional().or(z.literal("")),
+  phone: z.string().trim().refine(isIndianMobile, "Enter a valid 10-digit number").transform(toE164).optional(),
+  /** Omitted or empty = leave the existing password alone. */
+  password: z.string().min(8, "Password must be at least 8 characters").max(72).optional().or(z.literal("")),
+  isActive: z.boolean().optional(),
+  /** Ignored unless the account already is a doctor. */
+  doctor: doctorProfileSchema.partial().optional(),
 });
 
 export const setStaffActiveSchema = z.object({

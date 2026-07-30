@@ -5,11 +5,26 @@ import { logAudit } from "./audit.service";
 import { DUTY_DOCTOR } from "./appointments.service";
 import { collectionByMode, type ModeTotal } from "./reports.service";
 import { pharmacyProfitSummary } from "./pharmacy.service";
+import { generateSlots, SLOT_HORIZON_DAYS } from "./slots.service";
 import bcrypt from "bcryptjs";
-import type { Role } from "@prisma/client";
+import type { Role, Prisma } from "@prisma/client";
 import type { AuthUser } from "@/lib/auth/types";
+import type { DoctorProfileInput } from "@/server/validators/admin";
+import {
+  buildAuditWhere, clampLimit, clampOffset, type AuditQuery,
+} from "@/lib/audit-query";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * The consulting diary a newly created doctor gets: round the clock, seven days,
+ * 15-minute cadence. It matches what the hospital advertises on every consultant
+ * panel ("Open 24 Hours"); reception re-cuts it to 10 minutes from the booking
+ * screen when the desk wants finer granularity.
+ */
+const DIARY_START = "00:00";
+const DIARY_END = "24:00";
+const DIARY_SLOT_MIN = 15;
 
 /** Top-line numbers for the admin overview. */
 export async function adminOverview(): Promise<{
@@ -186,29 +201,93 @@ export async function adminOverview(): Promise<{
 }
 
 // ---- Staff management ----
+
+/** The consulting-profile half of a DOCTOR account. Null for every other role. */
+export interface StaffDoctorDTO {
+  id: string;
+  specialization: string;
+  department: string;
+  consultationFee: string;
+  qualification: string | null;
+  experienceYears: number | null;
+  age: number | null;
+  languages: string | null;
+  photoUrl: string | null;
+  bio: string | null;
+  active: boolean;
+}
+
 export interface StaffDTO {
   id: string; username: string; name: string; email: string | null; phone: string;
   role: string; isActive: boolean; lastLoginAt: string | null; createdAt: string;
+  doctor: StaffDoctorDTO | null;
+}
+
+/** What every read of a staff row selects, so the DTO can't drift between them. */
+const STAFF_SELECT = {
+  id: true, username: true, name: true, email: true, phone: true, role: true,
+  isActive: true, lastLoginAt: true, createdAt: true,
+  doctorProfile: {
+    select: {
+      id: true, specialization: true, department: true, consultationFee: true,
+      qualification: true, experienceYears: true, age: true, languages: true,
+      photoUrl: true, bio: true, active: true,
+    },
+  },
+} as const;
+
+type StaffRow = {
+  id: string; username: string; name: string; email: string | null; phone: string;
+  role: string; isActive: boolean; lastLoginAt: Date | null; createdAt: Date;
+  doctorProfile: {
+    id: string; specialization: string; department: string; consultationFee: { toString(): string };
+    qualification: string | null; experienceYears: number | null; age: number | null;
+    languages: string | null; photoUrl: string | null; bio: string | null; active: boolean;
+  } | null;
+};
+
+function toStaffDTO(u: StaffRow): StaffDTO {
+  return {
+    id: u.id, username: u.username, name: u.name, email: u.email, phone: u.phone,
+    role: u.role, isActive: u.isActive,
+    lastLoginAt: u.lastLoginAt ? u.lastLoginAt.toISOString() : null,
+    createdAt: u.createdAt.toISOString(),
+    doctor: u.doctorProfile
+      ? { ...u.doctorProfile, consultationFee: u.doctorProfile.consultationFee.toString() }
+      : null,
+  };
 }
 
 export async function listStaff(): Promise<StaffDTO[]> {
   const rows = await prisma.user.findMany({
     where: { role: { not: "PATIENT" } },
     orderBy: [{ isActive: "desc" }, { role: "asc" }, { name: "asc" }],
-    select: { id: true, username: true, name: true, email: true, phone: true, role: true, isActive: true, lastLoginAt: true, createdAt: true },
+    select: STAFF_SELECT,
   });
-  return rows.map((u: { id: string; username: string; name: string; email: string | null; phone: string; role: string; isActive: boolean; lastLoginAt: Date | null; createdAt: Date }) => ({
-    id: u.id, username: u.username, name: u.name, email: u.email, phone: u.phone,
-    role: u.role, isActive: u.isActive,
-    lastLoginAt: u.lastLoginAt ? u.lastLoginAt.toISOString() : null,
-    createdAt: u.createdAt.toISOString(),
-  }));
+  return (rows as StaffRow[]).map(toStaffDTO);
 }
 
-/** Create a staff account. Username must be role.name (enforced by validator). */
+/**
+ * Create a staff account. Username must be role.name (enforced by validator).
+ *
+ * For role DOCTOR this writes THREE things in one transaction - the login, the
+ * consulting profile the public directory renders, and a round-the-clock diary
+ * template. All three or none: a User with no Doctor row is a login that 404s
+ * every clinical screen, and a Doctor with no schedule is a consultant the
+ * booking grid shows as permanently full.
+ *
+ * The bookable slots are generated AFTER the transaction commits. That is tens
+ * of thousands of rows across the horizon, and holding a transaction open for
+ * it would block the whole table; a doctor with a diary but no slots yet is a
+ * recoverable state (reception's "Regenerate" rebuilds them), an aborted
+ * half-created doctor is not.
+ */
 export async function createStaff(
   actor: AuthUser,
-  input: { username: string; name: string; email?: string; phone: string; role: string; password: string },
+  input: {
+    username: string; name: string; email?: string; phone: string; role: string; password: string;
+    doctor?: DoctorProfileInput;
+  },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<StaffDTO> {
   const clash = await prisma.user.findFirst({
@@ -217,21 +296,282 @@ export async function createStaff(
   });
   if (clash) throw new ApiError(409, "That username, phone or email is already in use");
 
-  const user = await prisma.user.create({
-    data: {
-      username: input.username,
-      name: input.name,
-      email: input.email || null,
-      phone: input.phone,
-      // validated upstream against the Role values; narrow for Prisma
-      role: input.role as Role,
-      passwordHash: await bcrypt.hash(input.password, 12),
-      isActive: true,
-    },
-    select: { id: true, username: true, name: true, email: true, phone: true, role: true, isActive: true, lastLoginAt: true, createdAt: true },
+  const isDoctor = input.role === "DOCTOR";
+  const passwordHash = await bcrypt.hash(input.password, 12);
+
+  const created = await prisma.$transaction(async (tx) => {
+    const user = await tx.user.create({
+      data: {
+        username: input.username,
+        name: input.name,
+        email: input.email || null,
+        phone: input.phone,
+        // validated upstream against the Role values; narrow for Prisma
+        role: input.role as Role,
+        passwordHash,
+        isActive: true,
+      },
+      select: { id: true },
+    });
+
+    if (isDoctor && input.doctor) {
+      const doctor = await tx.doctor.create({
+        data: { userId: user.id, name: input.name, ...doctorCreateData(input.doctor) },
+        select: { id: true },
+      });
+      // 00:00-24:00, all seven days, 15-minute cadence - the same diary the
+      // hospital advertises ("Open 24 Hours") on every consultant panel.
+      // Reception can re-cut it to 10 minutes from the booking screen.
+      await tx.doctorSchedule.createMany({
+        data: Array.from({ length: 7 }, (_, dayOfWeek) => ({
+          doctorId: doctor.id, dayOfWeek,
+          startTime: DIARY_START, endTime: DIARY_END, slotDurationMin: DIARY_SLOT_MIN,
+        })),
+      });
+      return { userId: user.id, doctorId: doctor.id };
+    }
+    return { userId: user.id, doctorId: null as string | null };
   });
-  await logAudit(actor, { action: "STAFF_CREATED", targetTable: "User", targetId: user.id, meta: { username: input.username, role: input.role }, ...ctx });
-  return { ...user, lastLoginAt: null, createdAt: user.createdAt.toISOString() };
+
+  if (created.doctorId) {
+    try {
+      await generateSlots(SLOT_HORIZON_DAYS, created.doctorId);
+    } catch (e) {
+      // The doctor exists and is correct; only the grid is missing. Say so in
+      // the log rather than failing a request that already succeeded.
+      console.error("[admin] doctor created but slot generation failed:", e);
+    }
+  }
+
+  await logAudit(actor, { action: "STAFF_CREATED", targetTable: "User", targetId: created.userId, meta: { username: input.username, role: input.role }, ...ctx });
+
+  const row = await prisma.user.findUniqueOrThrow({ where: { id: created.userId }, select: STAFF_SELECT });
+  return toStaffDTO(row as StaffRow);
+}
+
+/**
+ * Edit an existing staff account, and the consulting profile if it has one.
+ *
+ * Role is not editable - see the note on updateStaffSchema. An empty password
+ * means "leave it alone", not "clear it": a User with a null passwordHash can
+ * only get in by OTP, which is a silent lockout for anyone who signs in by
+ * password.
+ */
+export async function updateStaff(
+  actor: AuthUser,
+  userId: string,
+  input: {
+    name?: string; email?: string; phone?: string; password?: string; isActive?: boolean;
+    doctor?: Partial<DoctorProfileInput>;
+  },
+  ctx: { ipAddress?: string; userAgent?: string }
+): Promise<StaffDTO> {
+  const existing = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true, doctorProfile: { select: { id: true } } },
+  });
+  if (!existing) throw new ApiError(404, "Staff member not found");
+  if (existing.role === "PATIENT") throw new ApiError(400, "That is a patient account, not staff");
+  if (existing.id === actor.id && input.isActive === false) {
+    throw new ApiError(400, "You can't deactivate your own account");
+  }
+
+  // Uniqueness is enforced by the database too, but catching it here turns a
+  // raw P2002 into a message that names the field.
+  if (input.phone || input.email) {
+    const clash = await prisma.user.findFirst({
+      where: {
+        id: { not: userId },
+        OR: [...(input.phone ? [{ phone: input.phone }] : []), ...(input.email ? [{ email: input.email }] : [])],
+      },
+      select: { id: true },
+    });
+    if (clash) throw new ApiError(409, "That phone or email is already in use");
+  }
+
+  const data: Prisma.UserUpdateInput = {};
+  if (input.name !== undefined) data.name = input.name;
+  if (input.email !== undefined) data.email = input.email || null;
+  if (input.phone !== undefined) data.phone = input.phone;
+  if (input.isActive !== undefined) data.isActive = input.isActive;
+  if (input.password) data.passwordHash = await bcrypt.hash(input.password, 12);
+
+  await prisma.$transaction(async (tx) => {
+    if (Object.keys(data).length > 0) {
+      await tx.user.update({ where: { id: userId }, data });
+    }
+    if (existing.doctorProfile && input.doctor) {
+      await tx.doctor.update({
+        where: { id: existing.doctorProfile.id },
+        data: {
+          // The display name follows the account name, so a renamed doctor does
+          // not keep the old one on their public card.
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...doctorProfileData(input.doctor),
+          // A disabled login must not stay bookable on the public site.
+          ...(input.isActive !== undefined ? { active: input.isActive } : {}),
+        },
+      });
+    } else if (existing.doctorProfile && input.isActive !== undefined) {
+      await tx.doctor.update({
+        where: { id: existing.doctorProfile.id },
+        data: { active: input.isActive, ...(input.name !== undefined ? { name: input.name } : {}) },
+      });
+    }
+  });
+
+  await logAudit(actor, {
+    action: "STAFF_UPDATED", targetTable: "User", targetId: userId,
+    meta: { fields: Object.keys(data), passwordChanged: Boolean(input.password), doctorProfile: Boolean(input.doctor) },
+    ...ctx,
+  });
+
+  const row = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: STAFF_SELECT });
+  return toStaffDTO(row as StaffRow);
+}
+
+export interface DeleteStaffResult {
+  /** "deleted" = the row is gone. "deactivated" = it had history and was retired instead. */
+  outcome: "deleted" | "deactivated";
+  message: string;
+}
+
+/**
+ * Postgres foreign-key violation, surfaced by Prisma as P2003.
+ *
+ * This is the signal that an account is still referenced somewhere. Deciding by
+ * COUNTING the tables that reference User instead would need all twenty-odd of
+ * them listed here and kept in step with the schema forever - and the first one
+ * anybody forgot would send a delete into a raw constraint error, which reaches
+ * the admin as "Internal server error". The database already knows the answer
+ * exactly; asking it is both shorter and correct as the schema grows.
+ */
+function isForeignKeyViolation(e: unknown): boolean {
+  return (e as { code?: string })?.code === "P2003";
+}
+
+/**
+ * Remove a staff account.
+ *
+ * Deletes outright when nothing references it - a username mistyped on the day
+ * it was created, which is the case an admin actually wants gone.
+ *
+ * When something DOES reference it, the delete is refused by the database, and
+ * the account is deactivated instead. That is not a workaround for the foreign
+ * keys; it is the point of them. An invoice records who took the money and a lab
+ * report records who ran it, and those names are what an audit or a dispute is
+ * settled with. Deleting the user would either destroy that evidence or leave a
+ * bill signed by nobody.
+ */
+export async function deleteStaff(
+  actor: AuthUser,
+  userId: string,
+  ctx: { ipAddress?: string; userAgent?: string }
+): Promise<DeleteStaffResult> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true, name: true, username: true, doctorProfile: { select: { id: true } } },
+  });
+  if (!user) throw new ApiError(404, "Staff member not found");
+  if (user.id === actor.id) throw new ApiError(400, "You can't delete your own account");
+
+  if (user.role === "ADMIN") {
+    const otherAdmins = await prisma.user.count({ where: { role: "ADMIN", isActive: true, id: { not: userId } } });
+    if (otherAdmins === 0) throw new ApiError(400, "This is the last active admin - deleting it would lock everyone out");
+  }
+
+  const doctorId = user.doctorProfile?.id ?? null;
+
+  // ---- The one reference the foreign keys will NOT defend -------------------
+  // Appointment.doctorId is nullable (an emergency gets its OP number before
+  // anyone knows who will see the patient), so Prisma's action for it is SetNull,
+  // not Restrict. Deleting a doctor would therefore SUCCEED and quietly re-file
+  // every visit they ever did as having no consultant - the printed sheet falls
+  // back to the duty-doctor signature block, and the visit history is gone with
+  // no error anywhere. Prescriptions and admissions are required relations and do
+  // refuse; appointments have to be checked here.
+  const orphanableVisits = doctorId
+    ? await prisma.appointment.count({ where: { doctorId } })
+    : 0;
+
+  // ---- Try the real delete -------------------------------------------------
+  // Everything cleared inside belongs to the account alone - its login trail and,
+  // for a doctor, an empty diary. Anything CLINICAL that points here is left for
+  // the foreign keys to object to, which is what routes us to the branch below.
+  // The whole thing is one transaction, so a refusal at the last statement rolls
+  // back the rest and the account is untouched.
+  //
+  // Callback requests are deliberately NOT deleted: their doctorId is nullable
+  // because "any available doctor" is a real answer, so SetNull leaves the
+  // enquiry in reception's queue instead of dropping a patient waiting for a call.
+  if (orphanableVisits === 0) {
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.refreshToken.deleteMany({ where: { userId } });
+        await tx.staffSession.deleteMany({ where: { userId } });
+        await tx.otp.deleteMany({ where: { userId } });
+        await tx.auditLog.deleteMany({ where: { actorUserId: userId } });
+        if (doctorId) {
+          await tx.doctorSlot.deleteMany({ where: { doctorId } });
+          await tx.doctorSchedule.deleteMany({ where: { doctorId } });
+          await tx.doctor.delete({ where: { id: doctorId } });
+        }
+        await tx.user.delete({ where: { id: userId } });
+      });
+
+      // Logged against the actor - the target row no longer exists to point at.
+      await logAudit(actor, { action: "STAFF_DELETED", targetTable: "User", targetId: userId, meta: { username: user.username, name: user.name, role: user.role }, ...ctx });
+      return { outcome: "deleted", message: `${user.name} was deleted. They had no clinical or financial records.` };
+    } catch (e) {
+      if (!isForeignKeyViolation(e)) throw e;
+    }
+  }
+
+  // ---- Referenced somewhere: retire the account instead ---------------------
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: userId }, data: { isActive: false } });
+    // A disabled doctor must also drop off the public directory and the booking
+    // grid, which read Doctor.active - not User.isActive.
+    if (doctorId) await tx.doctor.update({ where: { id: doctorId }, data: { active: false } });
+    // Revoke the way back in - a disabled account holding a live refresh token
+    // keeps working until that token expires.
+    await tx.refreshToken.deleteMany({ where: { userId } });
+    await tx.staffSession.deleteMany({ where: { userId } });
+  });
+
+  // Counted only now, and only to write a message that names what is holding the
+  // account. Not exhaustive, and it does not need to be: the decision was already
+  // made by the database. If none of these match, the generic sentence is used.
+  const [invoices, payments, labTests, appointments, admissions, prescriptions, stock] =
+    await Promise.all([
+      prisma.invoice.count({ where: { createdById: userId } }),
+      prisma.payment.count({ where: { receivedById: userId } }),
+      prisma.labTest.count({ where: { technicianId: userId } }),
+      prisma.appointment.count({ where: { createdById: userId } }),
+      doctorId ? prisma.admission.count({ where: { doctorId } }) : Promise.resolve(0),
+      doctorId ? prisma.prescription.count({ where: { doctorId } }) : Promise.resolve(0),
+      prisma.stockTransaction.count({ where: { performedById: userId } }),
+    ]);
+
+  const parts = [
+    appointments && `${appointments} appointment(s) booked`,
+    orphanableVisits && `${orphanableVisits} appointment(s) as the consultant`,
+    invoices && `${invoices} invoice(s)`,
+    payments && `${payments} payment(s)`,
+    labTests && `${labTests} lab test(s)`,
+    prescriptions && `${prescriptions} prescription(s)`,
+    admissions && `${admissions} admission(s)`,
+    stock && `${stock} stock movement(s)`,
+  ].filter(Boolean).join(", ");
+
+  await logAudit(actor, { action: "STAFF_DEACTIVATED", targetTable: "User", targetId: userId, meta: { reason: "referenced by clinical or financial records", parts }, ...ctx });
+
+  return {
+    outcome: "deactivated",
+    message: parts
+      ? `${user.name} has ${parts} on record, so the account was disabled rather than deleted. Those records stay signed by them, and they can no longer sign in.`
+      : `${user.name} is referenced by records that must keep their author, so the account was disabled rather than deleted. They can no longer sign in.`,
+  };
 }
 
 /** Activate / deactivate a staff account. Never hard-deleted. */
@@ -240,12 +580,76 @@ export async function setStaffActive(
   input: { userId: string; isActive: boolean },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<void> {
-  const u = await prisma.user.findUnique({ where: { id: input.userId }, select: { id: true, role: true } });
+  const u = await prisma.user.findUnique({
+    where: { id: input.userId },
+    select: { id: true, role: true, doctorProfile: { select: { id: true } } },
+  });
   if (!u) throw new ApiError(404, "Staff member not found");
   if (u.id === actor.id) throw new ApiError(400, "You can't deactivate your own account");
 
-  await prisma.user.update({ where: { id: input.userId }, data: { isActive: input.isActive } });
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: input.userId }, data: { isActive: input.isActive } });
+    // A disabled doctor must also drop off the public directory and the booking
+    // grid, which read Doctor.active - not User.isActive.
+    if (u.doctorProfile) {
+      await tx.doctor.update({ where: { id: u.doctorProfile.id }, data: { active: input.isActive } });
+    }
+    if (!input.isActive) {
+      await tx.refreshToken.deleteMany({ where: { userId: input.userId } });
+      await tx.staffSession.deleteMany({ where: { userId: input.userId } });
+    }
+  });
   await logAudit(actor, { action: input.isActive ? "STAFF_ACTIVATED" : "STAFF_DEACTIVATED", targetTable: "User", targetId: input.userId, ...ctx });
+}
+
+/**
+ * Maps validated profile input onto Doctor columns, dropping anything the form
+ * didn't send. Empty strings become null so a cleared field reads as absent
+ * rather than as an empty line on a printed card.
+ *
+ * Plain column values, not Prisma's update-input shape: the result is spread
+ * into both a `create` and an `update`, and DoctorUpdateInput additionally
+ * permits `{ set: … }` wrappers that a create won't take.
+ */
+type DoctorProfileColumns = {
+  specialization?: string;
+  department?: string;
+  consultationFee?: string;
+  qualification?: string | null;
+  experienceYears?: number | null;
+  age?: number | null;
+  languages?: string | null;
+  photoUrl?: string | null;
+  bio?: string | null;
+};
+
+function doctorProfileData(d: Partial<DoctorProfileInput>): DoctorProfileColumns {
+  const out: DoctorProfileColumns = {};
+  if (d.specialization !== undefined) out.specialization = d.specialization;
+  if (d.department !== undefined) out.department = d.department;
+  if (d.consultationFee !== undefined) out.consultationFee = d.consultationFee.toFixed(2);
+  if (d.qualification !== undefined) out.qualification = d.qualification || null;
+  if (d.experienceYears !== undefined) out.experienceYears = d.experienceYears ?? null;
+  if (d.age !== undefined) out.age = d.age ?? null;
+  if (d.languages !== undefined) out.languages = d.languages || null;
+  if (d.photoUrl !== undefined) out.photoUrl = d.photoUrl || null;
+  if (d.bio !== undefined) out.bio = d.bio || null;
+  return out;
+}
+
+/**
+ * Same mapping for a NEW doctor, with the three columns the schema requires
+ * pinned as present. The validator already guarantees them on the create path;
+ * restating them here is what lets the compiler agree.
+ */
+function doctorCreateData(d: DoctorProfileInput): DoctorProfileColumns &
+  { specialization: string; department: string; consultationFee: string } {
+  return {
+    ...doctorProfileData(d),
+    specialization: d.specialization,
+    department: d.department,
+    consultationFee: d.consultationFee.toFixed(2),
+  };
 }
 
 // ---- Lab catalog management (GST rates live here) ----
@@ -456,29 +860,96 @@ export async function updateHospitalConfig(
 }
 
 // ---- Audit log ----
-export async function listAuditLog(limit = 100): Promise<{
-  id: string; action: string; targetTable: string; createdAt: string;
+
+export interface AuditRow {
+  id: string; action: string; targetTable: string; targetId: string; createdAt: string;
   actor: { name: string; role: string } | null;
-}[]> {
-  const rows = await prisma.auditLog.findMany({
-    orderBy: { createdAt: "desc" }, take: limit,
-    select: {
-      id: true, action: true, targetTable: true, createdAt: true,
-      actorUser: { select: { name: true, role: true } },
-      actorPatient: { select: { fullName: true } },
-    },
-  });
-  return rows.map((a: {
-    id: string; action: string; targetTable: string; createdAt: Date;
+  meta: unknown;
+  ipAddress: string | null;
+}
+
+/**
+ * Query the audit trail.
+ *
+ * WHAT CHANGED AND WHY. This took a row limit and nothing else: no actor, no
+ * action, no target, no dates. It also dropped targetId, meta and the IP before
+ * returning, so even the hundred rows it did show could not be tied to the record
+ * they were about. The trail was being written and could not be read.
+ *
+ * The two questions it now answers are the two it exists for: "produce everything
+ * recorded against this patient" (medico-legal) and "what did this member of staff
+ * do that day" (money or medicines going missing).
+ *
+ * META IS RETURNED UNREDACTED, unlike ErrorLog. That is deliberate and it is the
+ * opposite call from the error table. An error's message is incidental and may
+ * leak a UHID by accident, so it is scrubbed. An audit row's meta is the evidence -
+ * the ip number, the amount waived, the dues overridden - and a redacted audit
+ * trail cannot support the decision it was kept for. It is ADMIN-only for exactly
+ * this reason.
+ *
+ * `total` is returned alongside so the page can say "showing 100 of 4,318" rather
+ * than leaving the reader to guess whether they are looking at everything.
+ */
+export async function listAuditLog(
+  query: AuditQuery = {},
+): Promise<{ logs: AuditRow[]; total: number; limit: number; offset: number }> {
+  const where = buildAuditWhere(query) as Prisma.AuditLogWhereInput;
+  const limit = clampLimit(query.limit);
+  const offset = clampOffset(query.offset);
+
+  const [rows, total] = await Promise.all([
+    prisma.auditLog.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: limit,
+      skip: offset,
+      select: {
+        id: true, action: true, targetTable: true, targetId: true, createdAt: true,
+        meta: true, ipAddress: true,
+        actorUser: { select: { name: true, role: true } },
+        actorPatient: { select: { fullName: true } },
+      },
+    }),
+    prisma.auditLog.count({ where }),
+  ]);
+
+  type Row = {
+    id: string; action: string; targetTable: string; targetId: string; createdAt: Date;
+    meta: unknown; ipAddress: string | null;
     actorUser: { name: string; role: string } | null;
     actorPatient: { fullName: string } | null;
-  }) => ({
-    id: a.id, action: a.action, targetTable: a.targetTable,
-    createdAt: a.createdAt.toISOString(),
-    actor: a.actorUser
-      ? { name: a.actorUser.name, role: a.actorUser.role }
-      : a.actorPatient
-        ? { name: a.actorPatient.fullName, role: "PATIENT" }
-        : null,
-  }));
+  };
+
+  return {
+    logs: (rows as Row[]).map((a) => ({
+      id: a.id, action: a.action, targetTable: a.targetTable, targetId: a.targetId,
+      createdAt: a.createdAt.toISOString(),
+      meta: a.meta ?? null,
+      ipAddress: a.ipAddress,
+      actor: a.actorUser
+        ? { name: a.actorUser.name, role: a.actorUser.role }
+        // An anonymous action is recorded with no actor on purpose - see logAudit.
+        : a.actorPatient
+          ? { name: a.actorPatient.fullName, role: "PATIENT" }
+          : null,
+    })),
+    total, limit, offset,
+  };
+}
+
+/**
+ * The distinct values present in the trail, for the filter dropdowns.
+ *
+ * Read from the data rather than from a hardcoded list, so an action added by
+ * future code appears in the filter without anyone remembering to register it.
+ */
+export async function auditFilterOptions(): Promise<{ actions: string[]; tables: string[] }> {
+  const [actions, tables] = await Promise.all([
+    prisma.auditLog.findMany({ distinct: ["action"], select: { action: true }, orderBy: { action: "asc" } }),
+    prisma.auditLog.findMany({ distinct: ["targetTable"], select: { targetTable: true }, orderBy: { targetTable: "asc" } }),
+  ]);
+  return {
+    actions: actions.map((a: { action: string }) => a.action),
+    tables: tables.map((t: { targetTable: string }) => t.targetTable),
+  };
 }

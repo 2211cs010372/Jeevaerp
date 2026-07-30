@@ -13,13 +13,21 @@ export const metadata: Metadata = {
 
 export default function BookPage() {
   return (
-    <div className="pb-24">
+    <div className="bg-[var(--bone)] pb-24">
       <SectionHeading
         index="Book an appointment"
-        title="Pick a doctor. Pick a time."
+        title={"Pick a doctor.\nPick a time."}
         subtitle="Choose your department and a slot that suits you. Walk-ins are always welcome too - but booking ahead means you're not waiting."
+        meta={
+          <>
+            <span className="chip chip-dark">Live slots</span>
+            <span className="chip chip-dark">No account needed</span>
+            <span className="chip chip-dark">Fee shown before you confirm</span>
+          </>
+        }
       />
-      <div className="mx-auto mt-12 max-w-[1200px] px-5 lg:px-8">
+
+      <div className="shell-w pt-14 sm:pt-18">
         {/* BookingForm reads ?doctor= and ?dept= via useSearchParams, which
             defers it to the client on this statically-rendered page. A bare
             <Suspense> with no fallback left an empty <template> in the DOM and
@@ -27,11 +35,11 @@ export default function BookPage() {
             it had no booking form at all. A real fallback also means the box
             reserves its space instead of the page jumping when it arrives. */}
         <Suspense fallback={
-          <div className="rounded-[1.75rem] bg-white p-8 ring-1 ring-black/5">
-            <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--muted)]">
+          <div className="card p-8">
+            <p className="mono text-[11px] uppercase tracking-[0.16em] text-[var(--muted)]">
               Loading the diary…
             </p>
-            <div className="mt-4 h-40 animate-pulse rounded-[1.35rem] bg-[var(--bone)]" />
+            <div className="mt-4 h-40 animate-pulse rounded-[var(--r-md)] bg-[var(--bone)]" />
           </div>
         }>
           <BookingForm />
@@ -39,13 +47,11 @@ export default function BookPage() {
 
         {/* The second door. Plenty of people won't commit to an exact minute
             online - this catches them instead of losing them to the phone. */}
-        <div className="mt-16">
-          <div className="mb-6 flex items-center gap-4">
-            <span className="h-px flex-1 bg-[var(--line)]" />
-            <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--muted)]">
-              Or let us call you
-            </span>
-            <span className="h-px flex-1 bg-[var(--line)]" />
+        <div className="mt-16 lg:mt-20">
+          <div className="rule-row mb-8">
+            <span className="rule-line" />
+            <span className="rule-label">Or let us call you</span>
+            <span className="rule-line" />
           </div>
           <RequestCallbackForm />
         </div>

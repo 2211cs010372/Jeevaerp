@@ -1,11 +1,27 @@
 /* ============================================================================
-   JEEVA - public site design system  ·  v5 "clear sky"
+   JEEVA - public site design system  ·  v6 "editorial clinical"
    ----------------------------------------------------------------------------
-   Direction: the friendly clinical look - a clean white canvas, one sky-blue
-   hero wash, ink-black pill CTAs, a pastel tint family (sky / mint / peach)
-   for the bento cards, neutral grotesque headings, and small editorial
-   touches: mono "(001)" indices and hairline rules. Rounded panels and the
-   scooped-corner utilities carry over from v4.
+   Direction: the porcelain-and-pine palette of v5, given an editorial spine.
+
+   What changed from v5, and why:
+
+   1. TYPE CARRIES THE PAGE.  A real display scale (clamp 2.4rem → 8.6rem)
+      replaces the single friendly heading size. Headlines set tight (-0.045em,
+      line-height 0.92) so a two-word line becomes an image rather than a
+      sentence.
+
+   2. CHAPTERS, NOT SECTIONS.  Every band is a numbered chapter opening on the
+      same rule row - (01) ──────── THE CARE MODEL. Repetition is the
+      navigation: a visitor knows a new chapter has started without reading it.
+
+   3. CONTRAST RHYTHM.  Porcelain is the default; full-bleed pine "rooms"
+      punctuate it. Rooms are reserved for the emotional beats - what we
+      believe, who treats you, what it costs - so the change of light means
+      something.
+
+   4. MOTION IS A LAYER, NOT A PROPERTY.  Reveals, split headlines, parallax
+      and the pinned rail live in motion.tsx and set their own start states in
+      JS. Nothing in this file hides content. The page reads with JS off.
 
    Everything lives in @layer components so Tailwind utilities (layered
    after components) can override theme classes - `hidden`, `rounded-*`,
@@ -25,8 +41,7 @@
   --ink-soft:    #35454a;
   --muted:       #6a787c;
 
-  /* accent - deep pine. CTAs stay ink; pine is the voice.
-     (var stays `--teal` so all 17 sections inherit the change for free) */
+  /* accent - deep pine. CTAs stay ink; pine is the voice. */
   --teal:        #0b544c;
   --teal-deep:   #073d37;
   --teal-lift:   #17705f;
@@ -58,7 +73,7 @@
   --line:        #e2e7e5;
   --line-strong: #cdd6d3;
 
-  /* geometry - the whole redesign lives here */
+  /* geometry */
   --r-sm:        16px;
   --r-md:        22px;
   --r-lg:        26px;
@@ -68,13 +83,222 @@
 
   --shadow-sm:   0 1px 2px rgba(12, 26, 28, 0.05);
   --shadow:      0 24px 60px -28px rgba(11, 32, 29, 0.22);
+  --shadow-lift: 0 40px 90px -40px rgba(11, 32, 29, 0.38);
+
+  /* rhythm - the single source of vertical pace for the whole site */
+  --chapter-y:   clamp(5rem, 10vw, 9.5rem);
+  --shell-max:   1320px;
+  --shell-x:     clamp(1.25rem, 4vw, 3rem);
+
+  /* Height of the fixed header AT REST (status strip + row 1; row 2 appears
+     at lg). Every page that starts under the navbar measures from this rather
+     than from a hand-counted pixel value - the last time those were hardcoded,
+     growing the header by 6px pushed three pages under it. */
+  --nav-h:       92px;
+
+  --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
 
   background: var(--bone);
   color: var(--ink);
   font-feature-settings: "cv01", "cv03", "ss01";
 }
 
-/* --- surfaces -------------------------------------------------------------- */
+/* ============================================================================
+   1 · STRUCTURE - chapters, containers, rooms
+   ========================================================================== */
+
+/* the care-area row appears at lg, and the header grows by its height */
+@media (min-width: 1024px) {
+  .site { --nav-h: 142px; }
+}
+
+/* Anything that begins directly under the fixed header opens with this. */
+.below-nav { padding-top: calc(var(--nav-h) + clamp(2rem, 5vw, 3.25rem)); }
+
+.shell-w {
+  width: 100%;
+  max-width: var(--shell-max);
+  margin-inline: auto;
+  padding-inline: var(--shell-x);
+}
+/* a slightly wider track for full-bleed media rows */
+.shell-wide { max-width: 1560px; }
+
+.chapter { padding-block: var(--chapter-y); }
+.chapter-tight { padding-block: clamp(3.25rem, 6vw, 5.5rem); }
+.chapter-flush-t { padding-top: 0; }
+.chapter-flush-b { padding-bottom: 0; }
+
+/* Dark rooms sit slightly closer together than light ones: the change of
+   material already does the separating, so the padding doesn't need to. */
+.chapter[data-tone="dark"] { padding-block: clamp(5.5rem, 10vw, 9rem); }
+
+/* A room's own light. Keeps a full-bleed pine band from reading as a flat
+   rectangle of paint - there is a centre to it. */
+.chapter[data-tone="dark"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(120% 90% at 50% -10%, rgba(23, 112, 95, 0.28), transparent 62%),
+    radial-gradient(90% 70% at 85% 110%, rgba(11, 84, 76, 0.3), transparent 60%);
+  pointer-events: none;
+}
+
+/* ============================================================================
+   2 · TYPE - the editorial scale
+   ========================================================================== */
+
+/* the hero. One per page, never two. */
+.display-mega {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(2.9rem, 8.4vw, 8.2rem);
+  line-height: 0.9;
+  letter-spacing: -0.05em;
+}
+/* the chapter headline */
+.display-lead {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(2.15rem, 5.4vw, 4.9rem);
+  line-height: 0.94;
+  letter-spacing: -0.042em;
+}
+/* a card or panel title */
+.display-sm {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(1.35rem, 2vw, 1.9rem);
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+}
+/* v5 name, kept so existing markup keeps working */
+.display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.04;
+}
+
+.lede {
+  font-size: clamp(1rem, 0.55vw + 0.88rem, 1.2rem);
+  line-height: 1.6;
+  letter-spacing: -0.005em;
+  max-width: 46ch;
+}
+.body-lg {
+  font-size: clamp(0.95rem, 0.3vw + 0.88rem, 1.05rem);
+  line-height: 1.68;
+  color: var(--ink-soft);
+}
+
+/* the number in a stat plate */
+.stat-num {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(2.6rem, 5.4vw, 4.6rem);
+  line-height: 0.92;
+  letter-spacing: -0.045em;
+  font-variant-numeric: tabular-nums;
+}
+
+.idx {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--teal);
+}
+.tabular { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--font-mono); }
+
+/* ============================================================================
+   3 · THE RULE ROW - the chapter's signature
+   ========================================================================== */
+
+.rule-row {
+  display: flex;
+  align-items: center;
+  gap: clamp(12px, 2vw, 22px);
+}
+.rule-idx {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--teal);
+  flex: none;
+}
+.rule-line {
+  flex: 1;
+  height: 1px;
+  background: var(--line-strong);
+  transform-origin: left;
+}
+.rule-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--muted);
+  flex: none;
+}
+.rule-row-dark .rule-idx   { color: var(--teal-tint); }
+.rule-row-dark .rule-line  { background: rgba(255, 255, 255, 0.16); }
+.rule-row-dark .rule-label { color: rgba(255, 255, 255, 0.5); }
+
+/* v5 name, still used by a few panels */
+.sec-index {
+  display: flex; align-items: center; gap: 14px;
+  font-family: var(--font-mono); font-size: 11px;
+  letter-spacing: 0.16em; color: var(--muted); text-transform: uppercase;
+}
+.sec-index::before { content: ""; width: 8px; height: 8px; border-radius: 999px; background: var(--teal); flex: none; }
+.sec-index::after { content: ""; flex: 1; height: 1px; background: var(--line-strong); }
+.sec-index-dark { color: rgba(255, 255, 255, 0.55); }
+.sec-index-dark::before { background: var(--teal-lift); }
+.sec-index-dark::after { background: rgba(255, 255, 255, 0.14); }
+
+/* ============================================================================
+   4 · SPLIT TEXT - masks for the headline reveal
+   The mask clips descenders, so it carries padding and pulls it back with a
+   matching negative margin. Without that, every "g" in the site loses its tail.
+   ========================================================================== */
+
+.split-line { display: block; }
+.split-mask {
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: top;
+  /* The clip box is the PADDING box, so this padding is what gives descenders
+     - every "g", "y" and "p" on the site - somewhere to live. The matching
+     negative margin keeps the line box the height the line-height asked for. */
+  padding-bottom: 0.16em;
+  margin-bottom: -0.16em;
+}
+/* `vertical-align: top` on BOTH boxes is what keeps this honest. An
+   inline-block sitting on its parent inline-block's baseline makes the parent
+   reserve a second strut's worth of descender underneath it, which silently
+   doubles the height of every headline. Top-aligning collapses the line box
+   back to one line-height - and unlike `display: block`, the word stays inline,
+   so the heading still serialises as one sentence for copy/paste, for a
+   screen reader, and for a crawler. */
+.split-word { display: inline-block; vertical-align: top; will-change: transform; }
+.scrub-word { display: inline; }
+
+/* ============================================================================
+   5 · SURFACES
+   ========================================================================== */
+
 .card {
   background: var(--paper);
   border: 1px solid var(--line);
@@ -82,26 +306,31 @@
   box-shadow: var(--shadow-sm);
 }
 .card-hover {
-  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
-              box-shadow 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform 0.45s var(--ease-out), box-shadow 0.45s var(--ease-out),
+              border-color 0.3s ease;
 }
 .card-hover:hover {
-  transform: translateY(-4px);
+  transform: translateY(-5px);
   box-shadow: var(--shadow);
+  border-color: var(--line-strong);
 }
 
-/* inset section shells - big rounded panels floating on the canvas */
-.shell {
-  border-radius: var(--r-shell);
+/* card on a dark room */
+.card-dark {
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--r-lg);
+  transition: background 0.35s ease, border-color 0.35s ease, transform 0.45s var(--ease-out);
 }
-.shell-dark {
-  border-radius: var(--r-shell);
-  background: var(--pine-ink);
-  color: #fff;
+.card-dark:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-5px);
 }
-@media (max-width: 640px) {
-  .shell, .shell-dark { border-radius: var(--r-xl); }
-}
+
+.shell { border-radius: var(--r-shell); }
+.shell-dark { border-radius: var(--r-shell); background: var(--pine-ink); color: #fff; }
+@media (max-width: 640px) { .shell, .shell-dark { border-radius: var(--r-xl); } }
 
 .glass {
   background: rgba(255, 255, 255, 0.78);
@@ -109,18 +338,22 @@
   -webkit-backdrop-filter: blur(16px) saturate(1.5);
 }
 
+/* hairline grid - the editorial table look, used by wards and packages */
+.grid-lines { border-top: 1px solid var(--line-strong); }
+.grid-lines > * { border-bottom: 1px solid var(--line); }
+.grid-lines-dark { border-top-color: rgba(255, 255, 255, 0.18); }
+.grid-lines-dark > * { border-bottom-color: rgba(255, 255, 255, 0.1); }
+
 /* ============================================================================
-   THE SCOOP - inverted-radius corner notch.
-   A page-coloured bite taken out of a rounded panel; content (a pill button,
-   a chip, an arrow) docks inside the notch. The two pseudo-elements are
-   transparent quarter-rounds whose box-shadow paints the concave curves.
-   Parent must be `relative` with `overflow: visible`.
-   Set --scoop-bg to the colour BEHIND the panel.
+   6 · THE SCOOP - inverted-radius corner notch (carried over from v4/v5)
+   A page-coloured bite out of a rounded panel; content docks inside the notch.
+   Parent must be `relative` with `overflow: visible`. Set --scoop-bg to the
+   colour BEHIND the panel.
    ========================================================================== */
 .scoop {
   --scoop-bg: var(--bone);
-  --scoop-r: 20px;   /* concave curve radius        */
-  --scoop-in: 24px;  /* inner corner of the notch   */
+  --scoop-r: 20px;
+  --scoop-in: 24px;
   position: absolute;
   z-index: 2;
   background: var(--scoop-bg);
@@ -137,91 +370,104 @@
   background: transparent;
   pointer-events: none;
 }
-
-/* bottom-right notch */
 .scoop-br { right: 0; bottom: 0; border-top-left-radius: var(--scoop-in); padding: 10px 0 0 10px; }
 .scoop-br::before { right: 0; top: calc(-1 * var(--scoop-r)); border-bottom-right-radius: 100%; box-shadow: var(--scoop-r) var(--scoop-r) 0 0 var(--scoop-bg); }
 .scoop-br::after  { left: calc(-1 * var(--scoop-r)); bottom: 0; border-bottom-right-radius: 100%; box-shadow: var(--scoop-r) var(--scoop-r) 0 0 var(--scoop-bg); }
-
-/* top-right notch */
 .scoop-tr { right: 0; top: 0; border-bottom-left-radius: var(--scoop-in); padding: 0 0 10px 10px; }
 .scoop-tr::before { right: 0; bottom: calc(-1 * var(--scoop-r)); border-top-right-radius: 100%; box-shadow: var(--scoop-r) calc(-1 * var(--scoop-r)) 0 0 var(--scoop-bg); }
 .scoop-tr::after  { left: calc(-1 * var(--scoop-r)); top: 0; border-top-right-radius: 100%; box-shadow: var(--scoop-r) calc(-1 * var(--scoop-r)) 0 0 var(--scoop-bg); }
-
-/* bottom-left notch */
 .scoop-bl { left: 0; bottom: 0; border-top-right-radius: var(--scoop-in); padding: 10px 10px 0 0; }
 .scoop-bl::before { left: 0; top: calc(-1 * var(--scoop-r)); border-bottom-left-radius: 100%; box-shadow: calc(-1 * var(--scoop-r)) var(--scoop-r) 0 0 var(--scoop-bg); }
 .scoop-bl::after  { right: calc(-1 * var(--scoop-r)); bottom: 0; border-bottom-left-radius: 100%; box-shadow: calc(-1 * var(--scoop-r)) var(--scoop-r) 0 0 var(--scoop-bg); }
-
-/* top-left notch */
 .scoop-tl { left: 0; top: 0; border-bottom-right-radius: var(--scoop-in); padding: 0 10px 10px 0; }
 .scoop-tl::before { left: 0; bottom: calc(-1 * var(--scoop-r)); border-top-left-radius: 100%; box-shadow: calc(-1 * var(--scoop-r)) calc(-1 * var(--scoop-r)) 0 0 var(--scoop-bg); }
 .scoop-tl::after  { right: calc(-1 * var(--scoop-r)); top: 0; border-top-left-radius: 100%; box-shadow: calc(-1 * var(--scoop-r)) calc(-1 * var(--scoop-r)) 0 0 var(--scoop-bg); }
-
-/* scoops sitting on white (inside a paper card) or on dark shells */
 .scoop-on-paper { --scoop-bg: var(--paper); }
 .scoop-on-dark  { --scoop-bg: var(--pine-ink); }
 
-/* --- type ------------------------------------------------------------------ */
-/* v5: headings go neutral grotesque - friendly, not monumental */
-.display {
-  font-family: var(--font-geist), var(--font-sans);
-  font-weight: 600;
-  letter-spacing: -0.035em;
-  line-height: 1.04;
-}
+/* ============================================================================
+   7 · CONTROLS
+   ========================================================================== */
 
-/* editorial index - the "(001)" marks beside section copy */
-.idx {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  color: var(--muted);
-}
-.eyebrow {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--teal);
-}
-.tabular { font-variant-numeric: tabular-nums; }
-
-/* label with a hairline rule - "Departments ----" */
-.sec-index {
-  display: flex;
+.btn {
+  display: inline-flex;
   align-items: center;
-  gap: 14px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  color: var(--muted);
-  text-transform: uppercase;
-}
-.sec-index::before {
-  content: "";
-  width: 8px;
-  height: 8px;
+  justify-content: center;
+  gap: 9px;
   border-radius: 999px;
-  background: var(--teal);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  padding: 15px 30px;
+  transition: transform 0.35s var(--ease-out), background-color 0.2s ease,
+              color 0.2s ease, border-color 0.2s ease, box-shadow 0.35s ease;
+  white-space: nowrap;
+}
+.btn-solid { background: var(--ink); color: #fff; }
+.btn-solid:hover { background: #000409; transform: translateY(-2px); box-shadow: var(--shadow); }
+.btn-pine { background: var(--teal); color: #fff; }
+.btn-pine:hover { background: var(--teal-deep); transform: translateY(-2px); box-shadow: var(--shadow); }
+.btn-ghost { border: 1px solid var(--line-strong); color: var(--ink); background: transparent; }
+.btn-ghost:hover { border-color: var(--teal); color: var(--teal); transform: translateY(-2px); }
+.btn-light { background: #fff; color: var(--ink); }
+.btn-light:hover { background: var(--bone); transform: translateY(-2px); box-shadow: var(--shadow); }
+.btn-ghost-dark { border: 1px solid rgba(255, 255, 255, 0.28); color: #fff; background: transparent; }
+.btn-ghost-dark:hover { border-color: rgba(255, 255, 255, 0.65); background: rgba(255, 255, 255, 0.06); transform: translateY(-2px); }
+.btn-alert { background: var(--alert); color: #fff; }
+.btn-alert:hover { background: var(--alert-deep); transform: translateY(-2px); box-shadow: var(--shadow); }
+
+/* magnetic wrapper - the child is what actually moves */
+.magnetic { display: inline-block; }
+.magnetic > * { will-change: transform; }
+
+/* the text link with a rotating dot */
+.link-arrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 13px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  transition: color 0.25s ease;
+}
+.link-arrow-dot {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
   flex: none;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  transition: transform 0.4s var(--ease-out), background-color 0.25s ease,
+              border-color 0.25s ease, color 0.25s ease;
 }
-.sec-index::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--line-strong);
+.link-arrow:hover { color: var(--teal); }
+.link-arrow:hover .link-arrow-dot {
+  background: var(--teal); border-color: var(--teal); color: #fff;
+  transform: rotate(45deg);
 }
-.sec-index-dark { color: rgba(255, 255, 255, 0.55); }
-.sec-index-dark::before { background: var(--teal-lift); }
-.sec-index-dark::after { background: rgba(255, 255, 255, 0.14); }
+.link-arrow-dark { color: #fff; }
+.link-arrow-dark .link-arrow-dot { border-color: rgba(255, 255, 255, 0.3); color: #fff; }
+.link-arrow-dark:hover { color: var(--teal-tint); }
+.link-arrow-dark:hover .link-arrow-dot { background: #fff; border-color: #fff; color: var(--pine-ink); }
+
+/* circular arrow button - docks into scoops, sits on cards */
+.icon-btn {
+  display: grid; place-items: center;
+  width: 46px; height: 46px; flex: none;
+  border-radius: 999px;
+  background: var(--teal); color: #fff;
+  transition: transform 0.35s var(--ease-out), background-color 0.2s ease;
+}
+.icon-btn:hover { background: var(--teal-deep); transform: rotate(45deg); }
+.icon-btn-ghost { background: transparent; border: 1px solid var(--line-strong); color: var(--ink); }
+.icon-btn-ghost:hover { background: var(--teal); border-color: var(--teal); color: #fff; }
 
 /* mono data chip - hours, phone, counts */
 .chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
+  display: inline-flex; align-items: center; gap: 7px;
   padding: 8px 14px;
   border: 1px solid var(--line-strong);
   border-radius: 999px;
@@ -233,6 +479,7 @@
   white-space: nowrap;
 }
 .chip-solid { background: var(--paper); border-color: transparent; box-shadow: var(--shadow-sm); }
+.chip-dark { border-color: rgba(255, 255, 255, 0.2); color: rgba(255, 255, 255, 0.82); }
 .chip-glass {
   border-color: rgba(255, 255, 255, 0.25);
   background: rgba(12, 26, 28, 0.35);
@@ -241,8 +488,68 @@
   -webkit-backdrop-filter: blur(8px);
 }
 
-/* --- signature: the vitals line --------------------------------------------
-   One calm ECG pulse in a long flat line. Used as the section divider. */
+/* ============================================================================
+   8 · THE PINNED RAIL
+   ========================================================================== */
+
+.rail-shell { overflow: hidden; }
+.rail-track {
+  display: flex;
+  gap: clamp(14px, 1.6vw, 24px);
+  will-change: transform;
+}
+/* Below the pin breakpoint the rail degrades to an honest swipe strip, with
+   scroll-snap so a thumb still lands on a whole card. */
+@media (max-width: 1023.98px) {
+  .rail-shell {
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-inline: var(--shell-x);
+    scroll-padding-inline: var(--shell-x);
+  }
+  .rail-shell::-webkit-scrollbar { display: none; }
+  /* Snap on the CARDS, not on the row wrappers - the rail is laid out as two
+     stacked rows, so `.rail-track > *` would snap a whole row and never a card. */
+  .rail-item { scroll-snap-align: start; }
+}
+
+/* ============================================================================
+   9 · TEXTURE & SIGNATURE
+   ========================================================================== */
+
+/* film grain - a fixed, non-repainting overlay. The single texture that makes
+   flat porcelain read as a printed surface rather than an empty div. */
+.grain::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0.04;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* the reading progress hairline */
+.scroll-progress-track {
+  position: fixed;
+  inset-inline: 0;
+  top: 0;
+  z-index: 70;
+  height: 2px;
+  pointer-events: none;
+}
+.scroll-progress-bar {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  background: linear-gradient(90deg, var(--teal), var(--teal-lift));
+}
+
+/* one calm ECG pulse - the section divider */
 .vitals { display: block; width: 100%; height: 28px; color: var(--teal); opacity: 0.5; }
 .vitals path {
   stroke: currentColor; stroke-width: 1.5; fill: none;
@@ -252,93 +559,115 @@
 [data-reveal].in .vitals path, .vitals.static path { animation: vitals-draw 2.4s cubic-bezier(0.3, 0, 0.2, 1) forwards; }
 @keyframes vitals-draw { to { stroke-dashoffset: 0; } }
 
-/* --- buttons --------------------------------------------------------------- */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  border-radius: 999px;
-  font-size: 14px;
-  font-weight: 600;
-  padding: 14px 28px;
-  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1),
-              background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease,
-              box-shadow 0.25s ease;
-  white-space: nowrap;
-}
-.btn-solid { background: var(--ink); color: #fff; }
-.btn-solid:hover { background: #000409; transform: translateY(-1px); box-shadow: var(--shadow); }
-.btn-ghost { border: 1px solid var(--line-strong); color: var(--ink); background: transparent; }
-.btn-ghost:hover { border-color: var(--teal); color: var(--teal); transform: translateY(-1px); }
-.btn-light { background: #fff; color: var(--ink); }
-.btn-light:hover { background: var(--bone); transform: translateY(-1px); box-shadow: var(--shadow); }
-.btn-ghost-dark { border: 1px solid rgba(255, 255, 255, 0.25); color: #fff; background: transparent; }
-.btn-ghost-dark:hover { border-color: rgba(255, 255, 255, 0.6); transform: translateY(-1px); }
+/* live pulse dot */
+.pulse { position: relative; display: inline-block; width: 7px; height: 7px; border-radius: 999px; background: var(--teal-lift); }
+.pulse::after { content: ""; position: absolute; inset: 0; border-radius: 999px; background: var(--teal-lift); animation: ping 2.2s cubic-bezier(0, 0, 0.2, 1) infinite; }
+.pulse-alert, .pulse-alert::after { background: var(--alert); }
+@keyframes ping { 0% { transform: scale(1); opacity: 0.6 } 75%, 100% { transform: scale(2.6); opacity: 0 } }
 
-/* circular arrow button - docks into scoops, sits on cards */
-.icon-btn {
-  display: grid;
-  place-items: center;
-  width: 46px;
-  height: 46px;
-  flex: none;
-  border-radius: 999px;
-  background: var(--teal);
-  color: #fff;
-  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.2s ease;
+/* giant footer wordmark */
+.wordmark {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.055em;
+  line-height: 0.72;
+  font-size: clamp(5rem, 20vw, 20rem);
+  color: rgba(255, 255, 255, 0.07);
+  user-select: none;
 }
-.icon-btn:hover { background: var(--teal-deep); transform: rotate(45deg); }
-.icon-btn-ghost { background: transparent; border: 1px solid var(--line-strong); color: var(--ink); }
-.icon-btn-ghost:hover { background: var(--teal); border-color: var(--teal); color: #fff; }
 
-/* --- mega menu drop-in --------------------------------------------------------- */
-.mega-in {
-  transform-origin: top center;
-  animation: mega-in 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+/* ============================================================================
+   10 · MEDIA
+   ========================================================================== */
+
+.zoom-media { overflow: hidden; }
+.zoom-media img { transition: transform 0.9s var(--ease-out); }
+.zoom-media:hover img { transform: scale(1.06); }
+
+/* a media frame that lifts its caption in on hover */
+.media-frame { position: relative; overflow: hidden; border-radius: var(--r-lg); }
+.media-frame::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(to top, rgba(7, 24, 22, 0.82) 0%, rgba(7, 24, 22, 0.12) 45%, transparent 72%);
+  opacity: 0.9;
+  transition: opacity 0.45s ease;
+  pointer-events: none;
 }
+.media-frame:hover::after { opacity: 1; }
+
+/* ============================================================================
+   11 · MOVING PARTS
+   ========================================================================== */
+
+.ticker { display: flex; width: max-content; animation: slide 48s linear infinite; }
+.ticker-wrap:hover .ticker { animation-play-state: paused; }
+@keyframes slide { to { transform: translateX(-50%); } }
+
+@keyframes drift { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-12px); } }
+.drift { animation: drift 7s ease-in-out infinite; }
+.drift-slow { animation: drift 11s ease-in-out infinite; }
+.drift-delay { animation-delay: 2.2s; }
+
+.mega-in { transform-origin: top center; animation: mega-in 0.28s var(--ease-out); }
 @keyframes mega-in {
   from { opacity: 0; transform: translateY(-8px) scale(0.99); }
   to   { opacity: 1; transform: none; }
 }
 
-/* --- ambient motion - the layer that makes it feel alive ---------------------- */
-@keyframes drift {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-12px); }
+/* the scroll cue under the hero */
+.scroll-cue {
+  width: 1px; height: 46px;
+  background: linear-gradient(to bottom, var(--line-strong), transparent);
+  position: relative; overflow: hidden;
 }
-.drift { animation: drift 7s ease-in-out infinite; }
-.drift-slow { animation: drift 11s ease-in-out infinite; }
-.drift-delay { animation-delay: 2.2s; }
-
-/* photo tiles breathe on hover */
-.zoom-media { overflow: hidden; }
-.zoom-media img {
-  transition: transform 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+.scroll-cue::after {
+  content: ""; position: absolute; inset-inline: 0; top: 0;
+  height: 40%; background: var(--teal);
+  animation: cue 2.4s ease-in-out infinite;
 }
-.zoom-media:hover img { transform: scale(1.05); }
+@keyframes cue {
+  0% { transform: translateY(-100%); opacity: 0; }
+  35% { opacity: 1; }
+  100% { transform: translateY(260%); opacity: 0; }
+}
 
-/* --- live pulse dot ---------------------------------------------------------- */
-.pulse { position: relative; display: inline-block; width: 7px; height: 7px; border-radius: 999px; background: var(--teal-lift); }
-.pulse::after { content: ""; position: absolute; inset: 0; border-radius: 999px; background: var(--teal-lift); animation: ping 2.2s cubic-bezier(0, 0, 0.2, 1) infinite; }
-@keyframes ping { 0% { transform: scale(1); opacity: 0.6 } 75%, 100% { transform: scale(2.6); opacity: 0 } }
-
-/* --- scroll reveal ----------------------------------------------------------- */
+/* CSS-only fallback reveal, still used by a handful of legacy panels */
 [data-reveal] {
   opacity: 0;
   transform: translateY(18px);
-  transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
-              transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity 0.7s var(--ease-out), transform 0.7s var(--ease-out);
   transition-delay: var(--d, 0ms);
 }
 [data-reveal].in { opacity: 1; transform: none; }
 
-/* --- department marquee ------------------------------------------------------ */
-.ticker { display: flex; width: max-content; animation: slide 48s linear infinite; }
-.ticker-wrap:hover .ticker { animation-play-state: paused; }
-@keyframes slide { to { transform: translateX(-50%); } }
+/* ============================================================================
+   12 · FAQ ACCORDION (native <details>)
+   ========================================================================== */
 
-/* --- FAQ accordion (native <details>) - each question is a rounded card ------- */
+/* The chevron and the open animation are attached to `details` itself, not to
+   a wrapper class, so the same behaviour works whether an accordion is set as
+   a ruled list (homepage) or as separate cards (department pages). */
+.site summary::-webkit-details-marker { display: none; }
+.site summary::marker { content: ""; }
+
+.faq-chev {
+  display: grid; place-items: center;
+  width: 32px; height: 32px; flex: none;
+  border-radius: 999px; border: 1px solid var(--line-strong);
+  color: var(--muted);
+  transition: transform .35s var(--ease-out), background .2s ease, color .2s ease, border-color .2s ease;
+}
+details[open] > summary .faq-chev {
+  transform: rotate(45deg);
+  background: var(--teal); border-color: var(--teal); color: #fff;
+}
+summary:hover .faq-chev { border-color: var(--teal); color: var(--teal); }
+
+.faq-body { animation: faq-in .3s var(--ease-out); }
+@keyframes faq-in { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
+
+/* the carded variant, still used by the department pages */
 .faq {
   background: var(--paper);
   border-radius: var(--r-md);
@@ -347,52 +676,58 @@
   transition: box-shadow 0.25s ease;
 }
 .faq summary { padding-left: 24px; padding-right: 20px; border-radius: var(--r-md); }
-.faq-body { padding-left: 24px; }
+.faq .faq-body { padding-left: 24px; }
 .faq[open] { box-shadow: var(--shadow); }
-.faq summary::-webkit-details-marker { display: none; }
-.faq-chev {
-  display: grid; place-items: center;
-  width: 30px; height: 30px; flex: none;
-  border-radius: 999px; border: 1px solid var(--line-strong);
-  color: var(--muted);
-  transition: transform .28s cubic-bezier(.2,.8,.2,1), background .2s ease, color .2s ease, border-color .2s ease;
-}
-.faq[open] .faq-chev { transform: rotate(45deg); background: var(--teal); border-color: var(--teal); color: #fff; }
-.faq summary:hover .faq-chev { border-color: var(--teal); color: var(--teal); }
 .faq[open] summary h3 { color: var(--teal-deep); }
-.faq-body { animation: faq-in .3s cubic-bezier(.2,.8,.2,1); }
-@keyframes faq-in { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
 
-/* --- giant footer wordmark ----------------------------------------------------- */
-.wordmark {
-  font-family: var(--font-display);
-  font-weight: 700;
-  letter-spacing: -0.05em;
-  line-height: 0.72;
-  font-size: clamp(6rem, 21vw, 21rem);
-  color: rgba(255, 255, 255, 0.07);
-  user-select: none;
-}
+/* ============================================================================
+   13 · ACCESSIBILITY
+   ========================================================================== */
 
-/* --- accessibility ------------------------------------------------------------ */
-.site :is(a, button, summary):focus-visible {
+.site :is(a, button, summary, [tabindex]):focus-visible {
   outline: 2px solid var(--teal);
   outline-offset: 3px;
   border-radius: 8px;
 }
+.chapter[data-tone="dark"] :is(a, button, summary):focus-visible {
+  outline-color: #fff;
+}
+
+.skip-link {
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  z-index: 100;
+  transform: translate(-50%, -220%);
+  background: var(--ink);
+  color: #fff;
+  padding: 11px 20px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: transform 0.25s var(--ease-out);
+}
+.skip-link:focus-visible { transform: translate(-50%, 0); }
+
 @media (prefers-reduced-motion: reduce) {
   [data-reveal] { opacity: 1; transform: none; transition: none; }
   .ticker { animation: none; }
   .pulse::after { animation: none; }
-  .btn:hover, .card-hover:hover, .icon-btn:hover { transform: none; }
+  .scroll-cue::after { animation: none; }
+  .btn:hover, .card-hover:hover, .card-dark:hover, .icon-btn:hover,
+  .link-arrow:hover .link-arrow-dot { transform: none; }
   .vitals path { animation: none; stroke-dashoffset: 0; }
   .faq-body { animation: none; }
   .mega-in { animation: none; }
   .drift, .drift-slow { animation: none; }
   .zoom-media:hover img { transform: none; }
+  .rail-shell { overflow-x: auto; }
 }
 
-/* --- Lenis smooth scroll -------------------------------------------------------- */
+/* ============================================================================
+   14 · LENIS
+   ========================================================================== */
+
 html.lenis, html.lenis body { height: auto; }
 .lenis.lenis-smooth { scroll-behavior: auto !important; }
 .lenis.lenis-smooth [data-lenis-prevent] { overscroll-behavior: contain; }

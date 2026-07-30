@@ -67,19 +67,32 @@ function doctorsListJsonLd() {
 
 export default function DoctorsPage() {
   return (
-    <div className="pb-8">
+    <div className="bg-[var(--bone)] pb-4">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(doctorsListJsonLd()) }}
       />
       <SectionHeading
         index="Our doctors"
-        title="Find the right specialist."
+        title={"Find the right\nspecialist."}
         subtitle="Open a profile to see when a consultant actually sits, what they treat and what the visit costs - then book the slot that suits you."
+        meta={
+          <>
+            <span className="chip chip-dark">{DOCTORS.length} consultants</span>
+            <span className="chip chip-dark">{DEPARTMENTS.length} departments</span>
+            <span className="chip chip-dark">Fees published</span>
+          </>
+        }
       />
-      <div className="mt-10">
+      <div className="chapter chapter-flush-t pt-12 sm:pt-16">
         {/* the directory reads ?q= and ?dept=, so it needs a boundary */}
-        <Suspense fallback={<div className="mx-auto max-w-[1200px] px-5 py-20 text-center text-[14px] text-[var(--muted)] lg:px-8">Loading doctors…</div>}>
+        <Suspense
+          fallback={
+            <div className="shell-w py-20 text-center text-[14px] text-[var(--muted)]">
+              Loading doctors…
+            </div>
+          }
+        >
           <DoctorsDirectory doctors={DOCTORS} />
         </Suspense>
       </div>

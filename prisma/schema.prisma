@@ -174,9 +174,31 @@ enum BedStatus {
   MAINTENANCE
 }
 
+/// How a stay ended.
+///
+/// It was ADMITTED | DISCHARGED, which could not express the ways a 50-bed
+/// hospital's stays actually end. A death was filed as a discharge because the
+/// system offered nothing else, and once staff learn to enter something untrue to
+/// make the software accept reality, every count downstream is fiction.
+///
+/// ONE OPEN STATE, FOUR CLOSED ONES. Every "is this stay live?" check in the code
+/// asks `status === ADMITTED` or `!== ADMITTED`, so adding closed states cannot
+/// silently reopen a closed stay. Anything reporting on CLOSURES has to name all
+/// four - see recentDischarges and ipdStats, which previously matched DISCHARGED
+/// alone and would have dropped these rows on the floor.
 enum AdmissionStatus {
   ADMITTED
+  /// Discharged on medical advice, the ordinary ending.
   DISCHARGED
+  /// Left against medical advice, having signed. LAMA/DAMA on paper.
+  LAMA
+  /// Left without telling anyone and without signing. Medico-legally distinct
+  /// from LAMA: nobody obtained consent, so it cannot be recorded as one.
+  ABSCONDED
+  /// Referred out to another hospital mid-stay.
+  TRANSFERRED_OUT
+  /// Died during the stay.
+  EXPIRED
 }
 
 enum InvoiceStatus {
@@ -1342,6 +1364,14 @@ model AuditLog {
   @@index([targetTable, targetId])
   @@index([actorUserId, createdAt])
   @@index([actorPatientId, createdAt])
+  /// The admin page's default view is ORDER BY createdAt DESC with no filter, and
+  /// the date-range filter reads this column alone. Without an index on it by
+  /// itself, both sort the whole table: fine at 300 rows, several seconds at the
+  /// ~480,000 rows a year that 150 OP visits a day produce.
+  @@index([createdAt])
+  /// Serves the action filter, whose values come from a dropdown of exact action
+  /// names, with createdAt trailing so the ordering comes off the same index.
+  @@index([action, createdAt])
 }
 
 model Otp {
@@ -1785,4 +1815,68 @@ model StaffSession {
 
   @@index([userId, loginAt])
   @@index([loginAt])
+}
+
+/// One FAILED staff password attempt. Successes are not recorded here (they are
+/// StaffSession rows); this table exists only to count failures in a window.
+///
+/// WHY FAILURES AGAINST UNKNOWN USERNAMES ARE RECORDED TOO. If only real accounts
+/// were counted, a 429 would mean "this username exists" and the throttle would
+/// become the account enumeration oracle that staffLogin's constant-time password
+/// check exists to prevent. Counting every attempt keeps the two responses
+/// indistinguishable.
+model LoginAttempt {
+  /// Lowercased, trimmed username as typed - the throttle key, not a foreign key.
+  /// Case variation would otherwise buy an attacker a fresh allowance per casing.
+  username  String
+  ipAddress String?
+  createdAt DateTime @default(now())
+  id        String   @id @default(cuid())
+
+  @@index([username, createdAt])
+  @@index([ipAddress, createdAt])
+  @@index([createdAt])
+}
+
+/// A server-side crash, kept so a 500 at the billing counter is not invisible.
+///
+/// WHY THIS TABLE AND NOT A HOSTED ERROR SERVICE. An unhandled error in this app
+/// carries patient data by construction: the path holds a UHID, a Prisma message
+/// quotes the column value that broke a constraint. Posting that to a third-party
+/// cloud makes every crash a small disclosure of health data, which is a DPDP
+/// question nobody wants to answer for a 50-bed hospital. The hospital already
+/// owns a Postgres; the honest place for its crashes is inside it.
+///
+/// ONE ROW PER DISTINCT BUG, NOT PER OCCURRENCE. `fingerprint` is a hash of the
+/// error's shape, so a crash in a hot loop increments `count` instead of writing
+/// 40,000 rows and turning the incident into a second incident.
+model ErrorLog {
+  id          String    @id @default(cuid())
+  /// Normalized route, e.g. "POST /api/v1/reception/patients/:id". Deliberately
+  /// NOT the raw path - a filled path carries the UHID of a real patient.
+  route       String
+  method      String
+  status      Int       @default(500)
+  /// Error constructor name, e.g. "TypeError", "PrismaClientKnownRequestError".
+  name        String
+  /// Scrubbed: phone numbers, UHIDs and emails are redacted before storage.
+  message     String
+  /// Scrubbed the same way. Absent when the thrown value carried no stack.
+  stack       String?
+  /// Stable hash of name + message shape + route. Groups repeats of one bug.
+  fingerprint String    @unique
+  count       Int       @default(1)
+  /// Who hit it, when that is knowable. Null for unauthenticated routes.
+  actorUserId String?
+  actorRole   String?
+  ipAddress   String?
+  userAgent   String?
+  /// Set when an admin marks it handled. Unresolved count drives the nav badge.
+  resolvedAt  DateTime?
+  resolvedBy  String?
+  firstSeenAt DateTime  @default(now())
+  lastSeenAt  DateTime  @default(now())
+
+  @@index([resolvedAt, lastSeenAt])
+  @@index([lastSeenAt])
 }

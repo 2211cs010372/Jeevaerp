@@ -1,137 +1,142 @@
 "use client";
 
 import Link from "next/link";
-import { Reveal } from "@/components/ui/reveal";
+import { ArrowUpRight } from "lucide-react";
 import { DeptVisual } from "@/components/marketing/dept-visual";
-import { DEPARTMENTS, STATS, HOSPITAL } from "@/lib/data";
-import { ArrowUpRight, Activity, Clock, FlaskConical } from "lucide-react";
+import { DEPARTMENTS, HOSPITAL, type Department } from "@/lib/data";
+import { careHref } from "@/lib/care";
+import { Chapter, ChapterHead } from "./section";
+import { PinnedRail, Reveal } from "./motion";
 
+/**
+ * Chapter 02 - the departments, as a rail.
+ *
+ * The one cinematic move on the page: from 1024px up the section pins itself
+ * and the departments travel sideways as you scroll down. It earns the hijack
+ * because a horizontal rail is genuinely the right shape for sixteen peers of
+ * equal weight - a 4x4 grid silently ranks them by reading order.
+ *
+ * TWO ROWS, not one. Sixteen cards in a single row is 5,500px of horizontal
+ * travel, which is either a pin that lasts six screens or a track that moves
+ * two and a half times faster than the wheel. Splitting the list halves the
+ * distance and, as a bonus, makes the rail read as a dense index rather than
+ * a carousel.
+ *
+ * Below 1024px the pin is off entirely and the same markup becomes a
+ * scroll-snapped swipe strip (see .rail-shell in site-theme.css). Nobody on a
+ * phone has their vertical scroll taken away from them: that is the gesture
+ * they use to reach the emergency number.
+ */
 export function Departments() {
-  const railFacts = [
-    { value: STATS[0].value, label: "Specialties", icon: Activity },
-    { value: STATS[1].value, label: "Top Specialists", icon: ArrowUpRight },
-    { value: "Same-day", label: "OPD Walk-ins", icon: Clock },
-    { value: "In-house", label: "Diagnostics", icon: FlaskConical },
-  ] as const;
+  const half = Math.ceil(DEPARTMENTS.length / 2);
+  const rows = [DEPARTMENTS.slice(0, half), DEPARTMENTS.slice(half)];
 
   return (
-    <section id="departments" className="px-4 py-16 sm:px-6 lg:py-24">
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;600;700&family=Inter:wght@400;500;600&display=swap');
-
-        .nsh-care-root {
-          --font-display: 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
-          --font-body: 'Inter', ui-sans-serif, system-ui, sans-serif;
-          font-family: var(--font-body);
-        }
-      `}</style>
-      <div className="mx-auto max-w-7xl">
-
-        {/* ── 1. The Porcelain Shell (Header) ─────────────────────────────── */}
-        <Reveal>
-          <div className="relative overflow-hidden rounded-[2.5rem] bg-[var(--paper)] ring-1 ring-[var(--line)] shadow-[var(--shadow-lg)] lg:p-3">
-            {/* Ambient Background Glows */}
-            <div aria-hidden className="pointer-events-none absolute -left-20 -top-20 h-96 w-96 rounded-full bg-[radial-gradient(circle,rgba(11,84,76,0.06),transparent_70%)] blur-2xl" />
-
-            <div className="relative flex flex-col lg:flex-row lg:items-stretch lg:gap-3">
-
-              {/* Left: Copy & Context */}
-              <div className="flex flex-1 flex-col justify-center px-8 py-10 lg:px-12 lg:py-16">
-                <span className="mb-5 inline-flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--muted)]" style={{ fontFamily: "var(--font-mono)" }}>
-                  <span className="relative flex h-2 w-2">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--teal)] opacity-50"></span>
-                    <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--teal)]"></span>
-                  </span>
-                  Integrated Care
-                </span>
-
-                <h2 className="display text-[clamp(2.2rem,4vw,3.5rem)] font-bold leading-[1.05] tracking-tight text-[var(--ink)]">
-                  Every specialty,<br />
-                  <span className="text-[var(--teal)]">under one roof.</span>
-                </h2>
-
-                <p className="mt-5 max-w-md text-[15px] leading-relaxed text-[var(--ink-soft)]">
-                  From a racing heart to a child&apos;s fever, most of a family&apos;s care lives here in {HOSPITAL.locality.split(",")[0]}. Consult, test, and collect medicines in a single visit.
-                </p>
-
-                <div className="mt-8 flex flex-wrap items-center gap-4">
-                  <Link href="/doctors" className="inline-flex h-12 items-center justify-center rounded-full bg-[var(--teal)] px-6 text-[14px] font-semibold text-white shadow-md transition-transform hover:scale-105">
-                    Explore specialists
-                  </Link>
-                  <a href={`tel:${HOSPITAL.emergency.replace(/\s/g, "")}`} className="inline-flex h-12 items-center justify-center rounded-full bg-[var(--alert)]/10 px-6 text-[14px] font-bold text-[var(--alert)] transition-colors hover:bg-[var(--alert)] hover:text-white">
-                    Emergency 24×7
-                  </a>
-                </div>
-              </div>
-
-              {/* Right: Architectural Feature & Stats */}
-              <div className="relative flex min-h-[320px] flex-1 flex-col overflow-hidden rounded-[2rem] bg-[var(--pine-ink)] lg:min-h-0">
-                <img
-                  src="/images/hospital_banner.jpeg"
-                  alt={`Inside ${HOSPITAL.name}`}
-                  className="absolute inset-0 h-full w-full object-cover opacity-60 mix-blend-overlay saturate-50 transition-transform duration-1000 hover:scale-105"
-                />
-                <div aria-hidden className="absolute inset-0 bg-gradient-to-t from-[var(--pine-ink)] via-transparent to-transparent opacity-90" />
-
-                <div className="relative mt-auto p-6 sm:p-8">
-                  {/* Inline Stat Rail integrated directly into the image panel */}
-                  <div className="grid grid-cols-2 gap-4 rounded-2xl bg-white/10 p-5 backdrop-blur-md ring-1 ring-white/20 sm:grid-cols-4 sm:gap-2">
-                    {railFacts.map((stat, idx) => {
-                      const Icon = stat.icon;
-                      return (
-                        <div key={idx} className="flex flex-col items-center text-center sm:items-start sm:text-left">
-                          <Icon className="mb-2 h-5 w-5 text-[var(--teal-tint)] opacity-80" />
-                          <span className="font-serif-p text-[18px] font-bold tracking-tight text-white">{stat.value}</span>
-                          <span className="mt-0.5 text-[11px] font-medium text-white/70">{stat.label}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-            </div>
-          </div>
-        </Reveal>
-
-        {/* ── 2. The Compact Directory Grid ───────────────────────────────── */}
-        <div className="mt-6 grid grid-cols-1 gap-3 xs:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-          {DEPARTMENTS.map((d, i) => (
-            <Reveal key={d.name} delay={Math.min(i * 30, 250)}>
-              <Link
-                href={`/book?dept=${encodeURIComponent(d.name)}`}
-                className="group relative flex h-[240px] w-full flex-col justify-end overflow-hidden rounded-[1.25rem] bg-[var(--pine-ink)] shadow-sm ring-1 ring-[var(--line)] transition-all hover:-translate-y-0.5 hover:shadow-md hover:ring-[var(--teal)]/40"
-              >
-                {/* Background Image & Shaders */}
-                <DeptVisual
-                  name={d.name}
-                  src={d.image}
-                  className="absolute inset-0 h-full w-full object-cover opacity-50 transition-all duration-[800ms] ease-out group-hover:scale-110 group-hover:opacity-70"
-                />
-                <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent transition-opacity duration-300 group-hover:opacity-80" />
-
-                {/* Content */}
-                <div className="relative z-10 flex w-full items-end justify-between p-4">
-                  <div>
-                    <span className="mb-1 block text-[9.5px] font-bold uppercase tracking-[0.15em] text-[var(--teal-tint)]" style={{ fontFamily: "var(--font-mono)" }}>
-                      {d.common}
-                    </span>
-                    <h3 className="text-[16px] font-semibold leading-tight text-white tracking-tight">
-                      {d.name}
-                    </h3>
-                  </div>
-
-                  {/* Micro Action Button */}
-                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/20 text-white backdrop-blur-sm transition-all duration-300 group-hover:bg-[var(--teal)] group-hover:text-white">
-                    <ArrowUpRight className="h-3.5 w-3.5 transition-transform duration-300 group-hover:translate-x-[1px] group-hover:-translate-y-[1px]" />
-                  </div>
-                </div>
-              </Link>
-            </Reveal>
-          ))}
-        </div>
-
+    <Chapter id="departments" tone="paper" bleed>
+      <div className="shell-w">
+        <ChapterHead
+          index="02"
+          label="Departments"
+          lines={[{ text: "Every specialty," }, { text: "one corridor apart." }]}
+          lede={`From a racing heart to a child's fever, most of a family's care lives in this one building in ${HOSPITAL.locality.split(",")[0]}. Consult, test and collect medicines in a single visit.`}
+          action={{ href: "/doctors", label: "Browse all consultants" }}
+        />
       </div>
-    </section>
+
+      {/* The pin needs a full-viewport shell to hold still inside. */}
+      <div className="mt-12 sm:mt-16">
+        <PinnedRail
+          ease={1.15}
+          className="rail-shell lg:flex lg:h-[100svh] lg:items-center"
+          trackClassName="rail-track flex-col lg:px-[max(var(--shell-x),calc((100vw-var(--shell-max))/2))]"
+        >
+          {rows.map((row, ri) => (
+            <div key={ri} className="flex gap-[clamp(14px,1.6vw,24px)]">
+              {row.map((d) => (
+                <DeptCard key={d.name} dept={d} />
+              ))}
+
+              {/* the rail ends on the way out, not on a wall */}
+              {ri === rows.length - 1 && <RailEnd />}
+            </div>
+          ))}
+        </PinnedRail>
+      </div>
+
+      <Reveal className="shell-w mt-10 lg:mt-14" y={14}>
+        <p className="mono flex items-center gap-3 text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
+          <span className="hidden h-px w-10 bg-[var(--line-strong)] lg:block" />
+          <span className="lg:hidden">Swipe to browse all {DEPARTMENTS.length}</span>
+          <span className="hidden lg:inline">
+            Keep scrolling to travel the rail · {DEPARTMENTS.length} departments
+          </span>
+        </p>
+      </Reveal>
+    </Chapter>
+  );
+}
+
+const CARD =
+  "rail-item w-[62vw] shrink-0 sm:w-[38vw] lg:h-[clamp(190px,25vh,248px)] lg:w-[clamp(238px,20vw,296px)]";
+
+function DeptCard({ dept }: { dept: Department }) {
+  return (
+    <Link
+      href={careHref(dept.name)}
+      className={`group relative flex h-[188px] flex-col justify-end overflow-hidden rounded-[var(--r-lg)] bg-[var(--pine-ink)] ${CARD}`}
+    >
+      <DeptVisual
+        name={dept.name}
+        src={dept.image}
+        className="absolute inset-0 h-full w-full object-cover opacity-60 transition-transform duration-[900ms] ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.08]"
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[var(--pine-ink)] via-[var(--pine-ink)]/40 to-transparent"
+      />
+
+      <span className="mono absolute left-5 top-5 z-10 text-[10px] uppercase tracking-[0.18em] text-white/55">
+        ({dept.index})
+      </span>
+      <span
+        aria-hidden
+        className="absolute right-4 top-4 z-10 grid h-8 w-8 place-items-center rounded-full bg-white/12 text-white opacity-0 transition-all duration-400 group-hover:rotate-45 group-hover:bg-white group-hover:text-[var(--pine-ink)] group-hover:opacity-100"
+      >
+        <ArrowUpRight className="h-3.5 w-3.5" />
+      </span>
+
+      <div className="relative z-10 p-5">
+        <p className="mono text-[9px] uppercase tracking-[0.16em] text-[var(--teal-tint)]">
+          {dept.common}
+        </p>
+        <h3 className="mt-2 text-[17px] font-semibold leading-tight tracking-[-0.025em] text-white">
+          {dept.name}
+        </h3>
+      </div>
+    </Link>
+  );
+}
+
+function RailEnd() {
+  return (
+    <Link
+      href="/doctors"
+      className={`group flex h-[188px] flex-col justify-between rounded-[var(--r-lg)] border border-[var(--line-strong)] bg-[var(--bone)] p-5 ${CARD}`}
+    >
+      <span className="mono text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">
+        (all)
+      </span>
+      <span>
+        <span className="block text-[17px] font-semibold leading-tight tracking-[-0.025em] text-[var(--ink)]">
+          Who consults in each department
+        </span>
+        <span className="link-arrow mt-4 text-[13px]">
+          Directory
+          <span className="link-arrow-dot !h-8 !w-8">
+            <ArrowUpRight className="h-3.5 w-3.5" />
+          </span>
+        </span>
+      </span>
+    </Link>
   );
 }

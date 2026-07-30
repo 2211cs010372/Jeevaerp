@@ -18,6 +18,7 @@ export const POST = handler(async (req, ctx) => {
     payments: body.payments,
     notes: body.notes || undefined,
     allowOutstanding: body.allowOutstanding,
+    outcome: body.outcome,
   }, auditContext(req));
   return NextResponse.json(result);
 });

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { api, ApiClientError } from "@/lib/api-client";
 import { PRINT_CSS, PrintToolbar } from "@/components/print/stationery";
+import { isClosed, OUTCOME_LABEL, type AdmissionStatusValue } from "@/lib/admission-outcome";
 
 /* ── shape (mirrors dischargeSummaryData) ─────────────────────────────────── */
 interface Data {
@@ -46,7 +47,17 @@ export function DischargeSummary() {
   const a = d.admission;
   const ageSex = [p.age != null ? `${p.age}y` : null, p.gender ? GENDER[p.gender] ?? p.gender : null].filter(Boolean).join(" · ") || "-";
   const hosp = d.hospital;
-  const discharged = a.status === "DISCHARGED";
+  // isClosed, not `=== "DISCHARGED"`. On the old check a stay that ended as LAMA
+  // or EXPIRED printed with the "interim (still admitted)" banner across the top -
+  // a summary that contradicted itself on the one document a relative keeps.
+  const closed = isClosed(a.status);
+  // Only an ordinary discharge is left unlabelled. Anything else has to say what
+  // it was: this is the document that gets read years later, and a death filed as
+  // a plain "Discharge Summary" is exactly the ambiguity to avoid.
+  const outcomeNote =
+    closed && a.status !== "DISCHARGED"
+      ? OUTCOME_LABEL[a.status as AdmissionStatusValue]
+      : null;
 
   return (
     <div className="print-stage">
@@ -68,7 +79,11 @@ export function DischargeSummary() {
             <span className="ds-badge-v">{a.ipNumber}</span>
           </div>
         </header>
-        <div className="ds-titlebar">DISCHARGE SUMMARY{!discharged && <span className="ds-interim"> · interim (still admitted)</span>}</div>
+        <div className="ds-titlebar">
+          DISCHARGE SUMMARY
+          {!closed && <span className="ds-interim"> · interim (still admitted)</span>}
+          {outcomeNote && <span className="ds-interim"> · {outcomeNote.toUpperCase()}</span>}
+        </div>
 
         {/* ── patient / stay grid ── */}
         <section className="ds-info">
@@ -81,7 +96,7 @@ export function DischargeSummary() {
           <Info k="Department" v={d.doctor.department} />
           <Info k="Ward / Bed" v={`${a.wardName} · ${a.bedNo}`} />
           <Info k="Admitted" v={dateTime(a.admittedAt)} />
-          <Info k="Discharged" v={discharged ? dateTime(a.dischargedAt) : "-"} />
+          <Info k={outcomeNote ?? "Discharged"} v={closed ? dateTime(a.dischargedAt) : "-"} />
           <Info k="Length of stay" v={`${a.days} day${a.days === 1 ? "" : "s"}`} />
           {p.address && <Info k="Address" v={[p.address, p.city].filter(Boolean).join(", ")} wide />}
         </section>

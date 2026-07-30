@@ -8,10 +8,23 @@ const schema = z.object({
   ACCESS_TOKEN_TTL: z.string().default("12h"),
   REFRESH_TOKEN_TTL: z.string().default("30d"),
   COOKIE_DOMAIN: z.string().optional(),
-  // Cloud file storage (Cloudinary). All optional - absence => local disk fallback.
-  CLOUDINARY_CLOUD_NAME: z.string().optional(),
-  CLOUDINARY_API_KEY: z.string().optional(),
-  CLOUDINARY_API_SECRET: z.string().optional(),
+  // Cloud file storage (Supabase Storage). All optional - absence => local disk
+  // fallback, which is fine in development and lossy on a serverless host.
+  //
+  // Two accepted credentials, S3 preferred when both are set. Every one of these
+  // is server-side ONLY and must never carry a NEXT_PUBLIC_ prefix: they bypass
+  // row-level security. See src/lib/storage-server.ts.
+  SUPABASE_URL: z.string().optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
+  SUPABASE_S3_ACCESS_KEY_ID: z.string().optional(),
+  SUPABASE_S3_SECRET_ACCESS_KEY: z.string().optional(),
+  SUPABASE_S3_REGION: z.string().default("ap-south-1"),
+  /** Overrides the endpoint derived from SUPABASE_URL. Rarely needed. */
+  SUPABASE_S3_ENDPOINT: z.string().optional(),
+  /** Private bucket holding prescription scans + lab reports. */
+  SUPABASE_PHI_BUCKET: z.string().default("patient-records"),
+  /** Public bucket holding doctor portraits. */
+  SUPABASE_PUBLIC_BUCKET: z.string().default("doctor-photos"),
   // SMS delivery. Optional - absence => dev console log, or a hard failure in
   // production. See lib/sms.ts for how one is chosen.
   //

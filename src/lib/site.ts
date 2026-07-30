@@ -1,4 +1,29 @@
-import { HOSPITAL } from "./data";
+import { HOSPITAL, DEPARTMENTS } from "./data";
+
+/**
+ * schema.org MedicalSpecialty is a controlled vocabulary, so a department name
+ * can't just be passed straight through - "Gynaecology" and "Paediatrics" are
+ * both wrong spellings as far as the vocabulary is concerned, and an unmapped
+ * value is worse than an absent one. Anything not in this table is dropped.
+ */
+const SPECIALTY_BY_DEPT: Record<string, string> = {
+  Cardiology: "Cardiovascular",
+  Orthopaedics: "Musculoskeletal",
+  Gynaecology: "Gynecologic",
+  Paediatrics: "Pediatric",
+  "General Medicine": "PrimaryCare",
+  Neurology: "Neurologic",
+  Dermatology: "Dermatology",
+  ENT: "Otolaryngologic",
+  "General Surgery": "Surgical",
+  "Plastic Surgery": "PlasticSurgery",
+  Urology: "Urologic",
+  Neurosurgery: "Neurologic",
+  Anaesthesiology: "Anesthesia",
+  Pulmonology: "Pulmonary",
+  Psychiatry: "Psychiatric",
+  Physiotherapy: "PhysicalTherapy",
+};
 
 /**
  * Where this site lives, for anything that needs an absolute URL: canonical
@@ -22,8 +47,7 @@ export function hospitalJsonLd() {
     "@id": `${SITE_URL}/#hospital`,
     name: HOSPITAL.name,
     alternateName: HOSPITAL.shortName,
-    description:
-      "Multispeciality hospital in Hanamkonda with 24×7 emergency, eight departments, in-house diagnostics and pharmacy.",
+    description: `Multispeciality hospital in Hanamkonda with 24×7 emergency, ${DEPARTMENTS.length} departments, in-house diagnostics and pharmacy.`,
     url: SITE_URL,
     telephone: HOSPITAL.phone,
     email: HOSPITAL.email,
@@ -49,9 +73,13 @@ export function hospitalJsonLd() {
       },
     ],
     availableService: { "@type": "MedicalProcedure", name: "Emergency care", availableChannel: { "@type": "ServiceChannel", servicePhone: HOSPITAL.emergency } },
+    // Derived from DEPARTMENTS so the structured data can't drift out of step
+    // with the departments the site actually lists. This claimed eight while
+    // the site listed sixteen.
     medicalSpecialty: [
-      "Cardiology", "Orthopedic", "Gynecologic", "Pediatric",
-      "PrimaryCare", "Neurologic", "Dermatology", "Otolaryngologic",
+      ...new Set(
+        DEPARTMENTS.map((d) => SPECIALTY_BY_DEPT[d.name]).filter(Boolean),
+      ),
     ],
   };
 }
