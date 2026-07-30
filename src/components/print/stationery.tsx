@@ -699,7 +699,7 @@ export function FieldGrid({ fields }: {
               holds it with or without ink - so all three rows sit on a common
               baseline and a blank field is a writing space of a known size
               rather than a collapsed row. */}
-          <span className={`min-w-0 truncate text-[13px] font-medium leading-[4.2mm] ${f.mono ? "font-mono tracking-tight" : ""}`}
+          <span className={`min-w-0 truncate text-[13px] font-semibold leading-[4.2mm] ${f.mono ? "font-mono tracking-tight" : ""}`}
             style={{ color: "var(--pr-ink)" }}>
               {f.v?.trim() || " "}
           </span>
