@@ -60,6 +60,9 @@ export const faviconSchema = z
   .max(64 * 1024, "Favicon must be under 64 KB - it is rendered at 16 pixels")
   .regex(FAVICON_DATA_URL, "Upload a PNG, ICO, WEBP or SVG image");
 
+/** A 24-hour wall-clock time, "H:MM" or "HH:MM". Rejects 24:00 and 20:60. */
+const hhmm = /^([01]?\d|2[0-3]):[0-5]\d$/;
+
 export const hospitalConfigSchema = z.object({
   legalName: z.string().trim().min(2).max(120),
   addressLine: z.string().trim().min(2).max(200),
@@ -85,4 +88,13 @@ export const hospitalConfigSchema = z.object({
   onlineBookingEnabled: z.boolean().optional(),
   callbackRequestsEnabled: z.boolean().optional(),
   accountsTabEnabled: z.boolean().optional(),
+
+  // After-hours OP pricing. The times are "HH:MM" on a 24-hour clock; end may be
+  // earlier than start, which means the window crosses midnight.
+  afterHoursOpEnabled: z.boolean().optional(),
+  afterHoursOpStart: z.string().trim().regex(hhmm, "Use a 24-hour time like 20:00").optional(),
+  afterHoursOpEnd: z.string().trim().regex(hhmm, "Use a 24-hour time like 06:00").optional(),
+  // Floor of 1 and not 0: this is a surcharge, and a multiplier below 1 would
+  // quietly turn the night shift into a discount.
+  afterHoursOpMultiplier: z.coerce.number().min(1).max(10).optional(),
 });

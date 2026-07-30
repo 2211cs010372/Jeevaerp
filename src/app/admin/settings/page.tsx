@@ -33,6 +33,10 @@ interface Config {
   onlineBookingEnabled: boolean;
   callbackRequestsEnabled: boolean;
   accountsTabEnabled: boolean;
+  afterHoursOpEnabled: boolean;
+  afterHoursOpStart: string;
+  afterHoursOpEnd: string;
+  afterHoursOpMultiplier: number;
 }
 
 const blank: Config = {
@@ -44,6 +48,10 @@ const blank: Config = {
   onlineBookingEnabled: true,
   callbackRequestsEnabled: true,
   accountsTabEnabled: true,
+  afterHoursOpEnabled: true,
+  afterHoursOpStart: "20:00",
+  afterHoursOpEnd: "06:00",
+  afterHoursOpMultiplier: 2,
 };
 
 /** Matches the server's cap. Rejected here too so a 3 MB photo fails instantly. */
@@ -77,6 +85,9 @@ export default function SettingsPage() {
           gstin: r.config.gstin ?? "", phone: r.config.phone ?? "", email: r.config.email ?? "",
           tagline: r.config.tagline ?? "", invoiceFooterNote: r.config.invoiceFooterNote ?? "",
           brandName: r.config.brandName || "Jeeva",
+          // A Prisma Decimal arrives over JSON as a string ("2"), and the number
+          // input plus the min/max check both want a real number.
+          afterHoursOpMultiplier: Number(r.config.afterHoursOpMultiplier ?? blank.afterHoursOpMultiplier),
         });
       })
       .catch(() => {}).finally(() => setLoading(false));
@@ -297,6 +308,47 @@ export default function SettingsPage() {
             off="Discharges go through with money still owed. The bills stay open and visible, but nobody is stopped on the way out. Only turn this off if you collect dues after the patient has left."
             risky
           />
+        </Card>
+
+        {/* ── AFTER-HOURS OP ─────────────────────────────────────────────── */}
+        <Card title="After-hours OP charges" sub="What a consultation costs once the OP clinic has closed for the day.">
+          <Toggle
+            checked={f.afterHoursOpEnabled}
+            onChange={(v) => set("afterHoursOpEnabled")(v)}
+            label="Charge the emergency rate outside clinic hours"
+            on="Inside the window below, reception books the visit as an emergency and the consultation is charged at the multiplier. The desk can still change the amount if a different fee was agreed, and the change is recorded with their name."
+            off="The clock never changes what an OP visit costs. Every consultation is charged the doctor's day fee, whatever the hour."
+          />
+          {f.afterHoursOpEnabled && (
+            <div className="mt-4 grid gap-4 sm:grid-cols-3">
+              <Field label="Window starts">
+                <input type="time" className={fld} value={f.afterHoursOpStart}
+                  onChange={(e) => set("afterHoursOpStart")(e.target.value)} />
+              </Field>
+              <Field label="Window ends">
+                <input type="time" className={fld} value={f.afterHoursOpEnd}
+                  onChange={(e) => set("afterHoursOpEnd")(e.target.value)} />
+              </Field>
+              <Field label="Multiply the day fee by">
+                <div className="flex items-center gap-2">
+                  <input type="number" min={1} max={10} step={0.25} className={`${fld} max-w-[110px]`}
+                    value={f.afterHoursOpMultiplier}
+                    onChange={(e) => set("afterHoursOpMultiplier")(Number(e.target.value))} />
+                  <span className="text-[12.5px] text-[var(--p-muted)]">×</span>
+                </div>
+              </Field>
+            </div>
+          )}
+          {f.afterHoursOpEnabled && (
+            <p className="mt-3 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+              An end time <b>earlier</b> than the start means the window crosses midnight — 20:00 to 06:00
+              covers the 2 AM call-in, which is the visit that should never go out at a day fee.
+              The multiplier scales <b>each doctor&apos;s own</b> fee, so a ₹500 physician and a ₹900
+              specialist both double instead of both landing on one flat figure.
+              A visit is priced by <b>its own</b> time: an 8:30 PM slot is after-hours whenever it was
+              booked, and tomorrow&apos;s 9 AM slot is not, even if booked at midnight.
+            </p>
+          )}
         </Card>
 
         {/* ── PUBLIC WEBSITE ─────────────────────────────────────────────── */}

@@ -195,18 +195,21 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
     [age != null ? `${age} y` : null, gender ?? null].filter(Boolean).join(" / ");
 
   // The visit classification, set at the right end of the masthead rule rather
-  // than on a band of its own. A casualty case still gets solid red - that is
-  // the first thing a medico-legal reader looks for and it must survive a mono
-  // laser - but a routine OP no longer spends a whole line saying "routine".
+  // than on a band of its own, and set in TYPE rather than in a filled pill.
+  //
+  // The pill was there so a casualty sheet couldn't be mistaken for a routine
+  // one, and that requirement hasn't gone away - it just doesn't need a
+  // background to meet it. An emergency prints as the only red word on a sheet
+  // that is otherwise teal, muted and ink, one weight heavier and wider tracked
+  // than any other label; on a mono laser it comes out the darkest, widest thing
+  // in the masthead, which is the same tell. A routine OP stays quiet.
   const visitType = (isBlank ? (headed ? headedType : "OP") : a!.type).toUpperCase();
   const isEmergency = visitType === "EMERGENCY" || visitType === "CASUALTY";
-  const classification = isEmergency ? (
-    <span className="shrink-0 rounded-sm px-2 py-[2px] text-[8.5px] font-medium text-white"
-      style={{ background: "#c8211b", WebkitPrintColorAdjust: "exact", printColorAdjust: "exact" }}>
-      {visitType === "CASUALTY" ? "Casualty OP" : "Emergency OP"}
+  const classification = (
+    <span className={`shrink-0 uppercase ${isEmergency ? "text-[9.5px] font-bold tracking-[0.3em]" : "text-[9px] font-semibold tracking-[0.2em]"}`}
+      style={{ color: isEmergency ? "#c8211b" : "var(--pr-muted)" }}>
+      {visitType === "CASUALTY" ? "Casualty" : isEmergency ? "Emergency" : "Out-patient"}
     </span>
-  ) : (
-    <span className="shrink-0 text-[8.5px] font-bold uppercase tracking-[0.16em] text-[#7c8a85]">Out-patient</span>
   );
 
   /** Name / Age / Date · Phone / UHID / OP No · Address - the client's own grid. */
@@ -263,8 +266,11 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
         )}
       </div>
 
+      {/* Notices are set as a marginal rule and a line of text, not as a filled
+          card: they sit directly above a sheet that carries no tint anywhere, and
+          a tinted panel there read like part of the stationery. */}
       {overflowMm > 0 && (
-        <p className="mx-auto mb-3 w-full max-w-[210mm] rounded-lg border border-[#e0c9a6] bg-[#fdf6e9] px-4 py-2.5 text-[13px] text-[#8a6414] print:hidden">
+        <p className="mx-auto mb-3 w-full max-w-[210mm] border-l-2 border-[#d8b878] pl-3 text-[12.5px] leading-snug text-[#8a6414] print:hidden">
           This visit&apos;s notes run about {overflowMm}mm past the printable area - that much will be cut off at the
           bottom of the sheet. Shorten the case history or advice, or hand the rest on a second sheet.
         </p>
@@ -272,7 +278,7 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
 
       {/* Screen only - the pad below still prints, just without the name block. */}
       {headedFailed && (
-        <p className="mx-auto mb-3 w-full max-w-[210mm] rounded-lg border border-[#e0c9a6] bg-[#fdf6e9] px-4 py-2.5 text-[13px] text-[#8a6414] print:hidden">
+        <p className="mx-auto mb-3 w-full max-w-[210mm] border-l-2 border-[#d8b878] pl-3 text-[12.5px] leading-snug text-[#8a6414] print:hidden">
           Couldn&apos;t load that patient&apos;s details - printing an unheaded blank pad instead.
         </p>
       )}
@@ -294,26 +300,32 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
           <SheetTitle right={classification} />
         </div>
 
-        <div className="mt-2.5">
+        <div className="mt-[7px]">
           <FieldGrid fields={patientFields} />
         </div>
 
-        <div className="mt-1.5">
+        {/* Fixed gaps, not vw: a viewport unit is a share of the WINDOW on
+            screen and of the 210mm page in print, so the two never matched and
+            the overflow warning above was measuring a layout the printer
+            wouldn't get.
+
+            6px rather than the grids' own 3px: the two blocks share a voice on
+            purpose, and this is the one gap that says where the patient ends
+            and the triage numbers begin. */}
+        <div className="mt-[6px]">
           <VitalsGrid items={vitalsBoxes(isBlank ? null : v)} />
         </div>
 
-        <div className="mt-[0.5vw]" >
-          <OpenBlock label="Case history" value={isBlank ? null : clin?.caseHistory} minHeight="10mm" />
-        </div>
+        {/* grow: history and investigation share the sheet's leftover height
+            with the ℞ pad, so a light visit turns into writing room under these
+            two headings instead of eight over-stretched prescription lines. */}
+        <OpenBlock label="Case history" value={isBlank ? null : clin?.caseHistory} minHeight="10mm" grow />
         {/* Diagnosis is not one of the client's printed headings, but reception
             can type one - so it prints as a line under the history when it
-            exists and costs the sheet nothing when it doesn't. */}
-        {clin?.diagnosis?.trim() && (
-          <p className="mt-1 text-[12px]">
-            <span className="text-[9px] font-bold uppercase tracking-[0.16em]" style={{ color: "var(--pr-primary)" }}>Diagnosis </span>
-            <span className="font-semibold" style={{ color: "var(--pr-ink)" }}>{clin.diagnosis}</span>
-          </p>
-        )}
+            exists and costs the sheet nothing when it doesn't. Rendered through
+            the same inline block as Tests and Advice rather than hand-set, so
+            the four clinical lines can't drift into four different looks. */}
+        {clin?.diagnosis?.trim() && <OpenBlock label="Diagnosis" inline value={clin.diagnosis} />}
 
         {/* The lab's own words on the tests it finished for this visit. Printed
             as "Test - impression" under the lab's name, never merged into the
@@ -324,19 +336,23 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
             ? labImpressions.map((l) => `${l.testName} — ${l.impression}`).join("\n")
             : null}
           minHeight="10mm"
+          grow
           footnote={labImpressions.length ? "Laboratory impression on the specimen - not a clinical diagnosis." : undefined}
         />
 
         <RxPad items={isBlank ? [] : rxItems} slots={8} />
 
-        <div className="mt-[0.5vw]">
-          <OpenBlock label="Tests prescribed" value={clin?.labs?.length ? clin.labs.join("\n") : null} minHeight="12mm" />
-        </div>
-        <OpenBlock label="Advice" value={clin?.advice} minHeight="12mm" />
+        {/* Both set on their heading's line when they're filled - a prescribed
+            test list and a line of advice are short, and a block each cost the
+            sheet the room Next visit needs to stay on page one. Blank, they go
+            back to being writing space. */}
+        <OpenBlock label="Tests prescribed" inline
+          value={clin?.labs?.length ? clin.labs.join(" · ") : null} minHeight="12mm" />
+        <OpenBlock label="Advice" inline value={clin?.advice} minHeight="12mm" />
 
-        <div className="  ">
+        <div className="mt-[7px]">
           <SectionHead label="Next visit" trailing={
-            <span className="shrink-0 pl-2 text-[12px] font-semibold" style={{ color: "var(--pr-ink)" }}>
+            <span className="shrink-0 pl-2.5 text-[12px] font-medium" style={{ color: "var(--pr-ink)" }}>
               {clin?.nextVisit?.trim() || ""}
             </span>
           } />

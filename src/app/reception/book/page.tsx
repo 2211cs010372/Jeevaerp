@@ -10,10 +10,13 @@ import { DiscountInput, PaymentSection, type Tender } from "@/components/portal/
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 import PortalDatePicker from "@/components/portal/ui/datepicker";
+import { isAfterHours, minutesOfDay, opFeeFor, prettyTime, type AfterHoursPolicy } from "@/lib/after-hours";
 
 interface Patient { id: string; displayId: string; fullName: string; age: number | null; phone: string; gender?: string | null; bloodGroup?: string | null; }
 interface Doctor { id: string; name: string; specialization: string; department: string; fee: string; qualification: string | null; experienceYears: number | null; age: number | null; languages: string | null; photoUrl: string | null; bio: string | null; }
 interface Slot { id: string; startTime: string; endTime: string; }
+/** The after-hours policy, plus the clock the SERVER will price against. */
+interface OpPricing extends AfterHoursPolicy { serverTime: string; }
 interface Booked {
   id: string; opNumber: string; time: string; price: string;
   patient: { name: string; displayId: string };
@@ -25,6 +28,10 @@ interface Booked {
 // LOCAL calendar date (not UTC) - `toISOString()` would roll to yesterday during
 // the early hours in a +offset timezone (e.g. IST 00:00-05:30), defaulting the
 // booking grid to the wrong day.
+/** 1230 -> "20:30". Wraps within the day; the caller does the modulo. */
+const hhmmFromMinutes = (m: number) =>
+  `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+
 const todayISO = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -99,6 +106,13 @@ export default function BookAppointmentPage() {
   const [referredBy, setReferredBy] = useState("");
   const [referralSource, setReferralSource] = useState("");
 
+  const [opPricing, setOpPricing] = useState<OpPricing | null>(null);
+  /** Server-anchored wall clock, advanced locally - see the ticker below. */
+  const [nowHHMM, setNowHHMM] = useState<string | null>(null);
+  /** Set only when a human typed a different fee; null = charge the policy figure. */
+  const [feeEdit, setFeeEdit] = useState<number | null>(null);
+  const [editingFee, setEditingFee] = useState(false);
+
   const [booking, setBooking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [booked, setBooked] = useState<Booked | null>(null);
@@ -107,9 +121,29 @@ export default function BookAppointmentPage() {
   const [requestId, setRequestId] = useState<string | null>(null);
 
   useEffect(() => {
-    api.get<{ doctors: Doctor[] }>("/reception/doctors").then((r) => setDoctors(r.doctors)).catch(() => { });
+    api.get<{ doctors: Doctor[]; opPricing?: OpPricing }>("/reception/doctors")
+      .then((r) => { setDoctors(r.doctors); if (r.opPricing) setOpPricing(r.opPricing); })
+      .catch(() => { });
     api.get<{ patients: Patient[] }>("/reception/patients/recent").then((r) => setRecent(r.patients)).catch(() => { });
   }, []);
+
+  // Tick a clock so a desk left open across the cutoff starts quoting the
+  // emergency fee on its own. Anchored to the SERVER's minute, not the PC's:
+  // the server is what prices the booking, and a desk clock twenty minutes slow
+  // would otherwise quote ₹600 and hand over a ₹1,200 bill.
+  useEffect(() => {
+    if (!opPricing) return;
+    const anchor = minutesOfDay(opPricing.serverTime);
+    if (anchor === null) return;
+    const loadedAt = Date.now();
+    const tick = () => {
+      const elapsed = Math.floor((Date.now() - loadedAt) / 60_000);
+      setNowHHMM(hhmmFromMinutes((anchor + elapsed) % 1440));
+    };
+    tick();
+    const iv = setInterval(tick, 30_000);
+    return () => clearInterval(iv);
+  }, [opPricing]);
 
   useEffect(() => {
     if (patient || !query.trim()) { setResults([]); return; }
@@ -142,6 +176,8 @@ export default function BookAppointmentPage() {
   }
 
   const [visitType, setVisitType] = useState<"WALKIN" | "EMERGENCY" | "CASUALTY">("WALKIN");
+  /** Set the moment the desk picks a visit type, so the cutoff stops choosing for them. */
+  const [typeTouched, setTypeTouched] = useState(false);
   const [billNow, setBillNow] = useState(true);
   const [bookDisc, setBookDisc] = useState(0);
   const [payments, setPayments] = useState<Tender[]>([]);
@@ -160,6 +196,9 @@ export default function BookAppointmentPage() {
         slotId: unscheduled ? undefined : slotId,
         doctorId: doctorId || undefined,
         type: visitType,
+        // Only sent when a human actually changed the figure. Absent means
+        // "charge the policy fee", which the server recomputes for itself.
+        ...(feeEdit !== null && doctorId ? { feeOverride: feeEdit } : {}),
         referredByName: referredBy || undefined, referralSource: referralSource || undefined,
         ...(canBill && billNow ? { billNow: { discountAmount: bookDisc || undefined, payments: payments.length ? payments : undefined } } : {}),
       });
@@ -212,17 +251,48 @@ export default function BookAppointmentPage() {
 
   function reset() {
     setBooked(null); setPatient(null); setPatientMode("existing"); setVisitType("WALKIN"); setQuery(""); setResults([]); setDoctorId(""); setSlotId(""); setSlots([]); setError(null); setReferredBy(""); setReferralSource(""); setBookDisc(0); setPayments([]); setPayValid(true);
+    // Back to a clean slate for the next patient: the previous one's negotiated
+    // fee must not carry over, and the cutoff gets to pick the visit type again.
+    setFeeEdit(null); setEditingFee(false); setTypeTouched(false);
     setNp({ ...emptyNp }); setNpError(null); setNpFieldErr({});
   }
 
   const doctor = doctors.find((d) => d.id === doctorId);
   const slot = slots.find((s) => s.id === slotId);
-  const bookFee = Number(doctor?.fee ?? 0);
-  const bookTotal = Math.max(0, bookFee - bookDisc);
+  const dayFee = Number(doctor?.fee ?? 0);
   /** No slot, no mandatory doctor - emergency and casualty only. */
   const unscheduled = visitType !== "WALKIN";
+
+  // The clock this visit is priced against. A booked slot carries its own time -
+  // an 8:30 PM slot is an after-hours visit whenever it was booked, and a slot
+  // for tomorrow morning is a daytime one even if booked at midnight. Only a
+  // walk-in or emergency, which happens now, is priced off the current time.
+  const priceTime = !unscheduled && slot ? slot.startTime : nowHHMM;
+  const policyFee = opPricing && priceTime
+    ? opFeeFor(dayFee, priceTime, opPricing)
+    : { fee: Math.round(dayFee), afterHours: false };
+  /** The doubled/emergency rate is in force for this visit's time. */
+  const afterHours = policyFee.afterHours;
+  const bookFee = feeEdit ?? policyFee.fee;
+  const bookTotal = Math.max(0, bookFee - bookDisc);
   /** Nothing is billable until a consultant (and therefore a fee) is named. */
   const canBill = bookFee > 0;
+  /** True once the clinic day has closed, whatever visit is being booked. */
+  const nowAfterHours = !!(opPricing && nowHHMM && isAfterHours(nowHHMM, opPricing));
+
+  // After the cutoff the clinic isn't running an OP list any more - a doctor who
+  // sees this patient is being called in, so the visit is an emergency. Selected
+  // for the desk rather than left as a walk-in they must remember to change, but
+  // only until they pick a type themselves: once they have, the clock stops
+  // overruling them.
+  useEffect(() => {
+    if (nowAfterHours && !typeTouched && visitType === "WALKIN") setVisitType("EMERGENCY");
+  }, [nowAfterHours, typeTouched, visitType]);
+
+  // A typed-in fee belongs to the doctor and time it was typed for. Leaving it in
+  // place while either changes is how a ₹1,200 night fee ends up on a ₹400
+  // morning slot.
+  useEffect(() => { setFeeEdit(null); setEditingFee(false); }, [doctorId, slotId, visitType, afterHours]);
   const fld = "w-full rounded-lg border border-[var(--p-border)] bg-white px-3.5 py-2.5 text-sm text-[var(--p-ink)] ring";
   const npCls = (e?: string) => `w-full rounded-lg border bg-white px-3 py-2 text-sm text-[var(--p-ink)] outline-none transition-all duration-200 focus:ring-2 focus:ring-[var(--p-teal)]/15 ${e ? "border-[var(--p-rose)] focus:border-[var(--p-rose)]" : "border-[var(--p-border)] focus:border-[var(--p-teal)]"}`;
   const seg = (on: boolean) => `inline-flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${on ? "bg-[var(--p-teal)] text-white shadow-sm" : "text-[var(--p-muted)] hover:text-[var(--p-ink)]"}`;
@@ -415,16 +485,29 @@ export default function BookAppointmentPage() {
               <div className="mb-5">
                 <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.05em] text-[var(--p-muted)]">Visit Type / Category</label>
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={() => { setVisitType("WALKIN"); }} className={`rounded-lg border px-3.5 py-2 text-[13px] font-semibold transition-colors ${visitType === "WALKIN" ? "border-[#0b5f55] bg-[#0b5f55] text-white shadow-sm" : "border-[var(--p-border)] text-[var(--p-ink)] hover:border-[#0b5f55]"}`}>
+                  <button type="button" onClick={() => { setTypeTouched(true); setVisitType("WALKIN"); }} className={`rounded-lg border px-3.5 py-2 text-[13px] font-semibold transition-colors ${visitType === "WALKIN" ? "border-[#0b5f55] bg-[#0b5f55] text-white shadow-sm" : "border-[var(--p-border)] text-[var(--p-ink)] hover:border-[#0b5f55]"}`}>
                     Regular OP (Walk-in)
                   </button>
-                  <button type="button" onClick={() => { setVisitType("EMERGENCY"); setSlotId(""); }} className={`rounded-lg  border px-3.5 py-2 text-[13px] font-semibold transition-colors ${visitType === "EMERGENCY" ? "border-[#dc2626] bg-[#dc2626] text-white shadow-sm" : "border-[var(--p-border)] text-[#dc2626] hover:border-[#dc2626]"}`}>
+                  <button type="button" onClick={() => { setTypeTouched(true); setVisitType("EMERGENCY"); setSlotId(""); }} className={`rounded-lg  border px-3.5 py-2 text-[13px] font-semibold transition-colors ${visitType === "EMERGENCY" ? "border-[#dc2626] bg-[#dc2626] text-white shadow-sm" : "border-[var(--p-border)] text-[#dc2626] hover:border-[#dc2626]"}`}>
                     <Icon name="alert" size={13} className="inline mr-1" /> Emergency OP
                   </button>
-                  <button type="button" onClick={() => { setVisitType("CASUALTY"); setSlotId(""); }} className={`rounded-lg border px-3.5 py-2 text-[13px] font-semibold transition-colors ${visitType === "CASUALTY" ? "border-[#9333ea] bg-[#9333ea] text-white shadow-sm" : "border-[var(--p-border)] text-[#9333ea] hover:border-[#9333ea]"}`}>
+                  <button type="button" onClick={() => { setTypeTouched(true); setVisitType("CASUALTY"); setSlotId(""); }} className={`rounded-lg border px-3.5 py-2 text-[13px] font-semibold transition-colors ${visitType === "CASUALTY" ? "border-[#9333ea] bg-[#9333ea] text-white shadow-sm" : "border-[var(--p-border)] text-[#9333ea] hover:border-[#9333ea]"}`}>
                     Casualty OP
                   </button>
                 </div>
+
+                {/* The clinic day is over: say so, and say what it does to the fee. */}
+                {nowAfterHours && opPricing && (
+                  <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-[12.5px] leading-relaxed text-amber-900">
+                    <Icon name="alert" size={14} className="mt-0.5 shrink-0" />
+                    <span>
+                      <b>After hours</b> ({prettyTime(opPricing.start)}&ndash;{prettyTime(opPricing.end)}).
+                      OP is taken as an <b>emergency</b> and the consultation is charged at{" "}
+                      <b>{opPricing.multiplier}&times; the day fee</b>. You can change the amount below if a
+                      different fee was agreed.
+                    </span>
+                  </div>
+                )}
                 {visitType !== "WALKIN" && (
                   <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-[12.5px] leading-relaxed text-red-800">
                     <span className="font-bold">{visitType === "CASUALTY" ? "Casualty" : "Emergency"} visit:</span> no slot is taken and a doctor is optional.
@@ -488,8 +571,21 @@ export default function BookAppointmentPage() {
                       </div>
                     </div>
                     <div className="shrink-0 text-right">
-                      <div className="font-mono text-[15px] font-semibold text-[var(--p-ink)]">₹{doctor.fee}</div>
-                      <div className="text-[11px] uppercase tracking-wide text-[var(--p-muted)]">consultation</div>
+                      {afterHours ? (
+                        <>
+                          {/* Both figures, because "why is it 1200" is the first
+                              thing the patient asks and the desk needs the answer
+                              on screen, not in a policy document. */}
+                          <div className="font-mono text-[13px] text-[var(--p-muted)] line-through">₹{doctor.fee}</div>
+                          <div className="font-mono text-[15px] font-semibold text-amber-700">₹{policyFee.fee}</div>
+                          <div className="text-[11px] uppercase tracking-wide text-amber-700">after hours ×{opPricing?.multiplier}</div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="font-mono text-[15px] font-semibold text-[var(--p-ink)]">₹{doctor.fee}</div>
+                          <div className="text-[11px] uppercase tracking-wide text-[var(--p-muted)]">consultation</div>
+                        </>
+                      )}
                     </div>
                   </div>
                   {doctor.bio && <p className="mt-3 border-t border-[var(--p-border)] pt-3 text-[12px] leading-relaxed text-[var(--p-muted)]">{doctor.bio}</p>}
@@ -569,9 +665,62 @@ export default function BookAppointmentPage() {
               <SumRow k="Department" v={doctor?.department ?? (unscheduled ? "Emergency & Casualty" : undefined)} />
               <SumRow k="Date" v={prettyDate(unscheduled ? todayISO() : date)} />
               <SumRow k="Time" v={slot?.startTime ?? (unscheduled ? "Now" : undefined)} mono />
-              <div className="flex items-center justify-between px-5 py-3.5">
-                <span className="text-[14px] font-semibold text-[var(--p-ink)]">Fee</span>
-                <span className="font-mono text-[15px] font-semibold text-[var(--p-teal)]">{doctor ? `₹${doctor.fee}` : "₹0"}</span>
+              <div className="px-5 py-3.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[14px] font-semibold text-[var(--p-ink)]">
+                    Fee
+                    {afterHours && (
+                      <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800">
+                        after hours ×{opPricing?.multiplier}
+                      </span>
+                    )}
+                  </span>
+                  {editingFee ? (
+                    <span className="flex items-center gap-1.5">
+                      <span className="font-mono text-[14px] text-[var(--p-muted)]">₹</span>
+                      <input
+                        autoFocus inputMode="numeric" aria-label="Consultation fee"
+                        value={feeEdit ?? policyFee.fee}
+                        onChange={(e) => setFeeEdit(Number(e.target.value.replace(/\D/g, "") || 0))}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setEditingFee(false); }}
+                        className="w-24 rounded-lg border border-[var(--p-blue)] bg-white px-2 py-1 text-right font-mono text-[15px] font-semibold text-[var(--p-ink)] outline-none"
+                      />
+                      <button type="button" onClick={() => setEditingFee(false)}
+                        className="rounded-md px-1.5 py-1 text-[12px] font-semibold text-[var(--p-blue)] hover:underline">Done</button>
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-2">
+                      <span className={`font-mono text-[15px] font-semibold ${afterHours ? "text-amber-700" : "text-[var(--p-teal)]"}`}>
+                        ₹{doctor || feeEdit !== null ? bookFee : 0}
+                      </span>
+                      {/* Editable whatever the hour: a daytime fee gets negotiated
+                          too, and a control that only appears after 8 PM is one
+                          the desk has to relearn every night.
+
+                          Only once a doctor is named, though - the server ignores
+                          an override on a doctorless casualty case, whose charges
+                          are raised from Billing later. Offering the control there
+                          would let the desk type a fee that silently vanished. */}
+                      {doctor && (
+                        <button type="button" onClick={() => setEditingFee(true)}
+                          className="rounded-md border border-[var(--p-border)] px-2 py-0.5 text-[11px] font-semibold text-[var(--p-blue)] hover:border-[var(--p-blue)]">
+                          Edit
+                        </button>
+                      )}
+                    </span>
+                  )}
+                </div>
+                {/* What the policy would have charged, kept visible so an override
+                    is never mistaken for the standard rate. */}
+                {feeEdit !== null && feeEdit !== policyFee.fee && (
+                  <p className="mt-1.5 text-right text-[11px] text-[var(--p-muted)]">
+                    edited · {afterHours ? "after-hours rate" : "standard fee"} was ₹{policyFee.fee}
+                    <button type="button" onClick={() => setFeeEdit(null)} className="ml-2 font-semibold text-[var(--p-blue)] hover:underline">reset</button>
+                  </p>
+                )}
+                {afterHours && feeEdit === null && dayFee > 0 && (
+                  <p className="mt-1.5 text-right text-[11px] text-[var(--p-muted)]">day fee ₹{Math.round(dayFee)} ×{opPricing?.multiplier}</p>
+                )}
               </div>
             </div>
             <div className="space-y-3 border-t border-[var(--p-border)] px-5 pt-4">

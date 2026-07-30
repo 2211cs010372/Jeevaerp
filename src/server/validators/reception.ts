@@ -104,6 +104,16 @@ export const bookAppointmentSchema = z.object({
   type: z.enum(["WALKIN", "ONLINE", "EMERGENCY", "CASUALTY"]).optional().default("WALKIN"),
   referredByName: optStr(120),
   referralSource: optStr(80),
+  /**
+   * What the desk actually agreed to charge, overriding both the doctor's day
+   * fee and the after-hours multiplier. Sent only when a human edited the amount
+   * on the booking screen; absent means "use the policy figure".
+   *
+   * Capped, and ₹0 is allowed - a doctor waiving the fee for a colleague's child
+   * at 11 PM is a real thing the desk has to be able to record honestly. Every
+   * override is audited with the figure it replaced.
+   */
+  feeOverride: z.coerce.number().min(0).max(100000).optional(),
   billNow: z
     .object({
       discountAmount: z.coerce.number().min(0).optional(),

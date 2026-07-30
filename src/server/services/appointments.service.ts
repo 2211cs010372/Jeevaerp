@@ -2,8 +2,10 @@ import { prisma } from "@/lib/prisma";
 import { nextId } from "@/lib/ids";
 import { ApiError } from "@/lib/api";
 import { localDateISO, parseDateOnly } from "@/lib/date";
+import { opFeeFor } from "@/lib/after-hours";
 import { logAudit } from "./audit.service";
 import { createInvoice } from "./billing.service";
+import { getAfterHoursOpPolicy } from "./op-pricing.service";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma } from "@prisma/client";
 
@@ -109,6 +111,8 @@ export async function bookAppointment(
   input: {
     patientId: string; slotId?: string; doctorId?: string; type: AppointmentTypeT;
     referredByName?: string; referralSource?: string;
+    /** What the desk agreed to charge, overriding the day fee / after-hours rate. */
+    feeOverride?: number;
     /** Reception can bill the consultation in the same motion, so the patient
      *  leaves the desk with an OP number AND a receipt - one queue, not two. */
     billNow?: {
@@ -127,6 +131,10 @@ export async function bookAppointment(
   // A scheduled visit without a slot would land nowhere on any doctor's day.
   // Catch it here rather than silently writing a doctorless WALKIN row.
   if (!unscheduled && !requestedSlotId) throw new ApiError(400, "Pick a time slot for this visit");
+
+  // Read outside the transaction: it's one small row, it isn't written here, and
+  // holding the booking's lock open for a settings lookup buys nothing.
+  const policy = await getAfterHoursOpPolicy();
 
   const appt = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const patient = await tx.patient.findUnique({
@@ -169,6 +177,8 @@ export async function bookAppointment(
     // Fee is snapshotted from the named doctor. An unscheduled visit with nobody
     // named carries ₹0 - casualty charges are raised afterwards, per procedure.
     let consultationFee = 0;
+    let dayFee = 0;
+    let afterHours = false;
     if (targetDoctorId) {
       const doctor = await tx.doctor.findUnique({
         where: { id: targetDoctorId }, select: { id: true, active: true, consultationFee: true },
@@ -177,8 +187,30 @@ export async function bookAppointment(
       // 404, and reception can act on a 404.
       if (!doctor) throw new ApiError(404, "That doctor no longer exists");
       if (!doctor.active && !slot) throw new ApiError(409, "That doctor is no longer in practice here");
-      consultationFee = Number(doctor.consultationFee);
+      dayFee = Number(doctor.consultationFee);
+
+      // Once the OP clinic has closed, the doctor is being called in and the
+      // visit is priced as an emergency. Keyed off timeAtBooking, NOT the
+      // wall clock: a slot booked this evening for tomorrow 9 AM is a daytime
+      // visit, and an 8:30 PM slot is an after-hours one whenever it was booked.
+      const priced = opFeeFor(dayFee, timeAtBooking, policy);
+      consultationFee = priced.fee;
+      afterHours = priced.afterHours;
     }
+
+    // What the desk agreed, overriding the policy figure. Kept separate from the
+    // computation above so the audit trail can still say what the policy WOULD
+    // have charged - "₹800 instead of ₹1,200" is the reviewable fact, and
+    // storing only the final number throws it away.
+    //
+    // Ignored when no doctor was named, which preserves the rule above: a
+    // casualty case taken with no consultant carries ₹0 and its charges are
+    // raised from Billing once the procedures are known. Without this guard an
+    // override would be the one way to put a consultation fee on a visit that
+    // has nobody to attribute it to.
+    const canOverride = input.feeOverride !== undefined && targetDoctorId !== null;
+    const overridden = canOverride && input.feeOverride !== consultationFee;
+    if (canOverride) consultationFee = Math.round(input.feeOverride as number);
 
     const opNumber = await nextId("OP", { tx });
     const created = await tx.appointment.create({
@@ -213,7 +245,13 @@ export async function bookAppointment(
       {
         action: unscheduled ? "EMERGENCY_OP_ISSUED" : "APPOINTMENT_BOOKED",
         targetTable: "Appointment", targetId: created.id,
-        meta: { opNumber, patientId: patient.displayId, type: input.type, doctorId: targetDoctorId },
+        meta: {
+          opNumber, patientId: patient.displayId, type: input.type, doctorId: targetDoctorId,
+          // Only recorded when the clock or a human changed the price, so an
+          // ordinary daytime booking's audit row stays as small as it was.
+          ...(afterHours ? { afterHours: true, dayFee, multiplier: policy.multiplier } : {}),
+          ...(overridden ? { feeOverride: consultationFee, policyFee: afterHours ? Math.round(dayFee * policy.multiplier) : dayFee } : {}),
+        },
         ...ctx,
       },
       tx

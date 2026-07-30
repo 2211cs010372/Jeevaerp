@@ -26,7 +26,8 @@ export interface HospitalInfo {
 }
 
 export const PRINT_CSS = `
-  .print-stage { --pr-primary: #0b5f55; --pr-accent: #c77d33; --pr-ink: #17211e; --pr-line: #b9c4c0; }
+  .print-stage { --pr-primary: #0b5f55; --pr-accent: #c77d33; --pr-ink: #17211e; --pr-line: #b9c4c0;
+    --pr-muted: #7d8b86; --pr-hair: #dfe6e3; }
   .print-stage { background: #e8e6e1; min-height: 100vh; padding: 24px 12px 64px; }
   #print-sheet { width: 210mm; min-height: 296mm; margin: 0 auto; background: #fff; color: var(--pr-ink);
     box-shadow: 0 8px 40px rgba(0,0,0,.18); padding: 10mm 11mm 0; display: flex; flex-direction: column;
@@ -65,7 +66,8 @@ export const PRINT_CSS = `
  * whole sheet down into the doctor's writing space.
  */
 export const STATIONERY_PRINT_CSS = `
-  .print-stage { --pr-primary: #0b5f55; --pr-accent: #c77d33; --pr-ink: #17211e; --pr-line: #b9c4c0; }
+  .print-stage { --pr-primary: #0b5f55; --pr-accent: #c77d33; --pr-ink: #17211e; --pr-line: #b9c4c0;
+    --pr-muted: #7d8b86; --pr-hair: #dfe6e3; }
   .print-stage { background: #e8e6e1; min-height: 100vh; padding: 24px 12px 64px; }
   #print-sheet { position: relative; width: 210mm; min-height: 297mm; margin: 0 auto; background: #fff;
     color: var(--pr-ink); box-shadow: 0 8px 40px rgba(0,0,0,.18); padding: 40mm 13mm 46mm;
@@ -451,35 +453,55 @@ export function RxTable({ items, blankRows = 0, note }: {
 // ─────────────────────────────────────────────────────────────────────────────
 // PRE-PRINTED STATIONERY BLOCKS
 //
-// The rule the client set: no writing rules. Every field used to sit on an
-// underline, and on paper that already carries a logo, a wordmark, a watermark
-// and a footer band, that grid of lines read as a form to be argued with rather
-// than a sheet to be written on.
+// The rule the client set: no writing rules, no filled boxes, no stamps. Every
+// field used to sit on an underline and the loud things sat in tinted cells and
+// coloured pills - and on paper that already carries a logo, a wordmark, a
+// watermark and a footer band, all of that read as a form to be argued with
+// rather than a sheet to be written on.
 //
-// Losing the lines lost the structure with them, so the structure is rebuilt
-// out of type and space instead: labels in letterspaced small caps above the
-// ink, a titled masthead rule, tinted vitals cells, and a teal tick before
-// every section heading. The ONE place ruling earns its keep is the ℞ table -
-// four columns of different things (name, dosage pattern, timing) can't be told
-// apart by whitespace alone, and the pharmacy counter reads that block fastest
-// when it looks like the table it has always been.
+// So the sheet carries no ink of its own beyond type, one hairline weight and
+// space. What replaces the boxes is a three-voice hierarchy, held to by every
+// block below:
+//
+//   CAPS + teal   structure - the masthead and the section headings
+//   CAPS + muted  metadata  - field and vitals labels
+//   ink           content   - everything a person actually reads
+//
+// The ONE place ruling still earns its keep is the ℞ table - four columns of
+// different things (serial, name, dosage pattern, timing) can't be told apart
+// by whitespace alone, and the pharmacy counter reads that block fastest when
+// it looks like the table it has always been. Even there the rules are down to
+// a hairline.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * The sheet's two label voices. Same letterform, different ink: teal marks
+ * structure, muted marks metadata. Kept as constants so a heading and a field
+ * label can never quietly drift apart - the whole minimal look rests on those
+ * two being the only two.
+ */
+const CAPS_HEAD = "text-[9px] font-semibold uppercase tracking-[0.2em]";
+const CAPS_LABEL = "text-[8.5px] font-semibold uppercase tracking-[0.16em]";
+
+/**
  * The sheet's own masthead - a title on the left, the visit classification on
- * the right, closed by the one heavy rule on the page.
+ * the right, closed by the one teal rule on the page.
  *
  * It exists because the pre-printed paper says who the HOSPITAL is but never
  * what the sheet IS, and a page that opens straight into "Name" reads like a
  * fragment. The rule under it also gives the patient block a top edge, which is
  * what stops the identity strip from floating in the middle of the letterhead.
+ *
+ * That rule is a hairline, not the 2px band it used to be: it is the only teal
+ * rule on the sheet, so it reads as the masthead on weight alone and doesn't
+ * need to shout to do it.
  */
 export function SheetTitle({ title = "Out-patient case sheet", right }: {
   title?: string; right?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-end justify-between gap-4 border-b-2 py-[1px]" style={{ borderColor: "var(--pr-primary)" }}>
-      <span className="text-[10.5px] font-bold uppercase " style={{ color: "var(--pr-primary)" }}>
+    <div className="flex items-baseline justify-between gap-4 border-b pb-[3px]" style={{ borderColor: "var(--pr-primary)" }}>
+      <span className={CAPS_HEAD} style={{ color: "var(--pr-primary)" }}>
         {title}
       </span>
       {right}
@@ -488,20 +510,22 @@ export function SheetTitle({ title = "Out-patient case sheet", right }: {
 }
 
 /**
- * A section heading: a short teal tick, the label in letterspaced small caps,
- * and a hairline running out to the right margin.
+ * A section heading: the label in letterspaced teal caps, and a hairline
+ * running out to the right margin.
  *
  * The hairline is a heading underline, not a writing line - it sits ABOVE the
  * space the doctor writes in, so it organises the page without inviting anyone
- * to write on it.
+ * to write on it. It is also the sheet's only structural device now that the
+ * tinted cells are gone, which is why it runs the full measure: at this weight
+ * a short tick would read as a stray mark rather than a rule.
  */
 export function SectionHead({ label, trailing }: { label: string; trailing?: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-2">
-      <h3 className="shrink-0 text-[10.5px] font-bold uppercase " style={{ color: "var(--pr-primary)" }}>
+    <div className="flex items-center gap-2.5">
+      <h3 className={`shrink-0 ${CAPS_HEAD}`} style={{ color: "var(--pr-primary)" }}>
         {label}
       </h3>
-      <span className="h-px flex-1" style={{ background: "#d7e2df", WebkitPrintColorAdjust: "exact", printColorAdjust: "exact" }} />
+      <span className="h-px flex-1" style={{ background: "var(--pr-hair)", WebkitPrintColorAdjust: "exact", printColorAdjust: "exact" }} />
       {trailing}
     </div>
   );
@@ -524,12 +548,15 @@ export function DoctorHead({ doctor, inset = false }: {
   // back to the specialization so the sheet never prints a nameless credential
   // gap for a doctor whose profile has no qualification typed in yet.
   const credentials = doctor.qualification?.trim() || doctor.specialization;
+  // Name in ink, degrees in the metadata voice - the same pairing the patient
+  // block uses, so the consultant reads as the sheet's first field rather than
+  // as a second letterhead competing with the printed one above it.
   const body = (
     <div className="text-center leading-tight">
-      <div className="text-[18px] font-medium tracking-tight" style={{ color: "var(--pr-ink)" }}>
+      <div className="text-[17px] font-medium tracking-[-0.01em]" style={{ color: "var(--pr-ink)" }}>
         {doctor.name}
       </div>
-      <div className="mt-0.5 text-[11.5px] font-semibold" style={{ color: "var(--pr-primary)" }}>
+      <div className={`mt-[3px] ${CAPS_LABEL}`} style={{ color: "var(--pr-muted)" }}>
         {credentials}
       </div>
     </div>
@@ -558,8 +585,11 @@ export function PreprintedGuide() {
   // drawn rather than photographed, because the only header asset in the repo
   // is the one-line version used for blank stock and its address sits at the
   // TOP, which is exactly the opposite of where the printed paper carries it.
+  // Outlines, not fills: the guide sits on the same page as the sheet it is
+  // guiding, and a block of tinted paper next to a sheet that now has no tint
+  // anywhere read as part of the design rather than as a note about the tray.
   const zone = (label: string, s: React.CSSProperties) => (
-    <div className="absolute flex items-center justify-center rounded-[2px] border border-dashed border-[#b9a06a] bg-[#f6efdd] text-center text-[8px] font-semibold uppercase tracking-wide text-[#8a6414]"
+    <div className="absolute flex items-center justify-center border border-dashed border-[#d3c8ab] text-center text-[7.5px] font-medium uppercase tracking-[0.14em] text-[#a38f60]"
       style={s}>
       {label}
     </div>
@@ -589,20 +619,28 @@ export function PreprintedGuide() {
 export function FieldGrid({ fields }: {
   fields: { k: string; v?: string | null; span?: 1 | 2 | 3; mono?: boolean }[];
 }) {
+  // Not equal thirds, and the tracks are set by what each column actually
+  // holds. Column one takes Name, Phone and Address, so it needs the most;
+  // column three takes the full visit stamp ("30 Jul 2026 · 11:20 AM") and
+  // needs nearly as much; column two only ever holds an age or a UHID. On even
+  // thirds this grid truncated the patient's surname - the one field on the
+  // sheet that must never print with an ellipsis.
   return (
-    <div className="grid grid-cols-3 gap-x-8 gap-y-0.5">
+    <div className="grid grid-cols-[1.15fr_0.85fr_1fr] gap-x-5 gap-y-[3px]">
       {fields.map((f, i) => (
-        <div key={i} className={`min-w-0 ${f.span === 3 ? "col-span-3 flex items-center" : f.span === 2 ? "col-span-2 flex items-center " : ""}`}>
-          <div className="flex items-center gap-2">
-            <div className="text-[10.5px] font-medium uppercase leading-none tracking-[0.1em] " style={{ color: "var(--pr-primary)" }} >{f.k}: </div>
-            {/* Held to a fixed height with or without ink, so all three rows sit
-              on a common baseline and a blank field is a writing space of a
-              known size rather than a collapsed row. */}
-            <div className={`mt-[3px] min-w-0 truncate text-[12.5px] font-semibold leading-[1.15] ${f.mono ? "font-mono tracking-tight" : ""}`}
-              style={{ color: "var(--pr-ink)", minHeight: "4.4mm" }}>
+        <div key={i} className={`flex min-w-0 items-baseline gap-2 ${f.span === 3 ? "col-span-3" : f.span === 2 ? "col-span-2" : ""}`}>
+          {/* No colon after the label: caps against ink already separate the two,
+              and a column of colons was punctuation doing a job space does more
+              quietly. */}
+          <span className={`shrink-0 ${CAPS_LABEL}`} style={{ color: "var(--pr-muted)" }}>{f.k}: </span>
+          {/* The line-height is the row height, and the non-breaking space below
+              holds it with or without ink - so all three rows sit on a common
+              baseline and a blank field is a writing space of a known size
+              rather than a collapsed row. */}
+          <span className={`min-w-0 truncate text-[12px] font-medium leading-[4.2mm] ${f.mono ? "font-mono tracking-tight" : ""}`}
+            style={{ color: "var(--pr-ink)" }}>
               {f.v?.trim() || " "}
-            </div>
-          </div>
+          </span>
         </div>
       ))}
     </div>
@@ -612,25 +650,28 @@ export function FieldGrid({ fields }: {
 /**
  * Vitals as the pre-printed sheet lists them: three across, two down.
  *
- * These six are the only boxed cells on the page, and deliberately so. They are
- * numbers read at a glance - by a nurse mid-round, not by anyone reading prose
- * - and a tint with a hairline finds them far faster than six labels floating
- * in open space. The border carries the box on its own if a printer drops the
- * background tint.
+ * They used to be the only boxed cells on the page - a tint plus a hairline, on
+ * the argument that a nurse mid-round finds numbers faster in a box. What the
+ * printed sheet showed is that they don't need one: these are the only MONO
+ * figures above the ℞ table, and set in the same label-and-ink voice as the
+ * patient block they read as one identity strip continuing - which is what they
+ * are - while six tinted cells read as a second table competing with it.
+ *
+ * Three across rather than two also buys back a row of vertical space, and this
+ * sheet is fighting for the bottom of page one.
  */
 export function VitalsGrid({ items }: { items: { label: string; value: string | null }[] }) {
+  // Same tracks and gutter as FieldGrid above it, so the six vitals land on the
+  // patient block's own columns rather than on a second grid of their own -
+  // which is the whole reason they no longer need a box.
   return (
-    <div className="grid grid-cols-2 mt-2 gap-y-1.5">
+    <div className="grid grid-cols-[1.15fr_0.85fr_1fr] gap-x-5 gap-y-[3px]">
       {items.map((b) => (
-        <div key={b.label} className=" px-2.5 ">
-          <div className="flex  items-center gap-0.5">
-            <div className="text-[9.5px] font-medium uppercase leading-none tracking-[0.14em] text-[#7c8a85]" style={{ color: "var(--pr-primary)" }}>
-              {b.label}:
-            </div>
-            <div className="mt-[3px] font-mono text-[13px] font-bold leading-none">
+        <div key={b.label} className="flex min-w-0 items-baseline gap-2">
+          <span className={`shrink-0 ${CAPS_LABEL}`} style={{ color: "var(--pr-muted)" }}>{b.label}: </span>
+          <span className="font-mono text-[12px] font-semibold leading-[4.2mm]" style={{ color: "var(--pr-ink)" }}>
               {b.value || " "}
-            </div>
-          </div>
+          </span>
         </div>
       ))}
     </div>
@@ -643,21 +684,64 @@ export function VitalsGrid({ items }: { items: { label: string; value: string | 
  * `minHeight` is the writing space kept below the heading when nothing was
  * typed. It is reserved space, not a box: no border, no baseline, because the
  * doctor writes prose here and a ruled box would fight the handwriting.
+ *
+ * That reservation is dropped the moment there IS a value: the ink is then the
+ * content, and holding the blank minimum under it as well was spending 12mm a
+ * block on nothing - which is what pushed Next visit off the bottom of the
+ * sheet onto a second page.
+ *
+ * `inline` prints a filled value beside the heading instead of under it, the
+ * same treatment the Diagnosis line gets. Use it for the short one-liners
+ * (tests prescribed, advice); prose that runs to several lines still reads
+ * better in a block of its own.
  */
-export function OpenBlock({ label, value, minHeight = "14mm", footnote }: {
+export function OpenBlock({ label, value, minHeight = "14mm", footnote, inline = false, grow = false }: {
   label: string; value?: string | null; minHeight?: string;
   /** Small print under the block - only rendered when there is a value. */
   footnote?: string;
+  /** Set a filled value on the heading's own line. */
+  inline?: boolean;
+  /**
+   * Take a share of the sheet's leftover height.
+   *
+   * The sheet is pinned to one page, so on a light visit there is slack, and it
+   * has to land somewhere. Left to the ℞ pad alone it stretched those eight
+   * ruled lines to 14mm each and the typed medicines floated in the middle of
+   * them. Shared with the prose blocks it becomes what it should be: blank paper
+   * under Case history and Investigation, where the pen goes.
+   *
+   * It costs nothing when the visit is heavy - there is no slack to take, and a
+   * grown block never shrinks the text it already holds.
+   */
+  grow?: boolean;
 }) {
   const text = value?.trim();
+
+  if (text && inline) {
+    return (
+      <section className="mt-[7px]">
+        <div className="flex items-baseline gap-2.5">
+          <h3 className={`shrink-0 ${CAPS_HEAD}`} style={{ color: "var(--pr-primary)" }}>
+            {label}: 
+          </h3>
+          <p className="min-w-0 flex-1 whitespace-pre-line text-[12px] font-medium leading-snug"
+            style={{ color: "var(--pr-ink)" }}>
+            {text}
+          </p>
+        </div>
+        {footnote && <p className="mt-[2px] text-[8px] italic" style={{ color: "var(--pr-muted)" }}>{footnote}</p>}
+      </section>
+    );
+  }
+
   return (
-    <section className="mt-[9px]">
+    <section className={`mt-[7px] ${grow ? "flex flex-1 flex-col" : ""}`}>
       <SectionHead label={label} />
-      <div className="mt-1.5 whitespace-pre-line text-[12px] font-medium leading-relaxed"
-        style={{ minHeight, color: "var(--pr-ink)" }}>
+      <div className="mt-[3px] whitespace-pre-line text-[12px] font-medium leading-snug"
+        style={{ minHeight: text ? undefined : minHeight, color: "var(--pr-ink)" }}>
         {text || ""}
       </div>
-      {text && footnote && <p className="text-[8px] italic text-[#7c8a85]">{footnote}</p>}
+      {text && footnote && <p className="mt-[2px] text-[8px] italic" style={{ color: "var(--pr-muted)" }}>{footnote}</p>}
     </section>
   );
 }
@@ -668,9 +752,14 @@ export function OpenBlock({ label, value, minHeight = "14mm", footnote }: {
  * This is the one block on the sheet that keeps its rules. Four columns of
  * different kinds of thing - the serial, the medicine, the ఉ-మ-రా dosage
  * pattern and the timing - cannot be told apart by whitespace alone, and the
- * pharmacy counter has read this exact table for years: the ℞ mark, the two
- * heavy teal rules around the header, and the Telugu hints under the English
- * column names, which are what the patient actually reads back at home.
+ * pharmacy counter has read this exact table for years: the ℞ mark, a teal rule
+ * closing the header, and the Telugu hints under the English column names,
+ * which are what the patient actually reads back at home.
+ *
+ * What it no longer keeps is WEIGHT. The header used to sit between two 2px
+ * teal bands, which made this block the loudest thing on a sheet whose masthead
+ * is a hairline. One rule under the header does the same work, and the ℞ is set
+ * light rather than black - it is a mark, not a headline.
  *
  * Always `slots` rows deep whether or not medicines were typed in, so the sheet
  * keeps one shape: reception's typed medicines print into the top rows and the
@@ -685,17 +774,28 @@ export function RxPad({ items, slots = 9 }: {
 }) {
   const rows = Math.max(slots, items.length);
   return (
-    <section className="mt-[9px] flex-1">
-      <table className="w-full border-collapse text-[12px]">
+    <section className="mt-[7px] flex flex-1 flex-col">
+      {/* This is the sheet's flex-1 block: whatever height the clinical sections
+          above and below don't use lands here, and the table takes it so the
+          slack is spread across the writing lines instead of sitting as one dead
+          gap between the last medicine and Tests prescribed. Row `height` is a
+          minimum, so a full sheet still prints 8.5mm lines.
+
+          The table has to GROW rather than be sized `h-full`: a percentage
+          height resolves against the section's specified height, which is `auto`
+          under flex-grow, so `h-full` measured out at the table's content height
+          and left ~43mm of blank paper under row 8. As a flex item it is handed
+          the section's real height, and table layout hands that on to the rows. */}
+      <table className="w-full flex-1 border-collapse text-[12px]">
         <thead>
-          <tr className="text-left align-bottom text-[9px] uppercase tracking-[0.12em]" style={{ color: "var(--pr-primary)" }}>
-            <th className="w-[46px] border-y-2 pb-1 pr-1 text-[27px] font-bold leading-none" style={{ borderColor: "var(--pr-primary)" }}>℞</th>
-            <th className="border-y-2 pb-1.5 pr-2 font-bold" style={{ borderColor: "var(--pr-primary)" }}>Medicine</th>
-            <th className="w-[78px] border-y-2 pb-1.5 pr-2 font-bold" style={{ borderColor: "var(--pr-primary)" }}>
-              Dosage<br /><span className="font-medium normal-case tracking-normal text-[#57655f]">ఉ – మ – రా</span>
+          <tr className={`text-left align-bottom ${CAPS_HEAD}`} style={{ color: "var(--pr-primary)" }}>
+            <th className="w-[42px] border-b pb-1 pr-1 text-[23px] font-normal leading-none" style={{ borderColor: "var(--pr-primary)" }}>℞</th>
+            <th className="border-b pb-1.5 pr-2" style={{ borderColor: "var(--pr-primary)" }}>Medicine</th>
+            <th className="w-[78px] border-b pb-1.5 pr-2" style={{ borderColor: "var(--pr-primary)" }}>
+              Dosage<br /><span className="text-[8px] font-medium normal-case tracking-normal" style={{ color: "var(--pr-muted)" }}>ఉ – మ – రా</span>
             </th>
-            <th className="w-[168px] border-y-2 pb-1.5 font-bold" style={{ borderColor: "var(--pr-primary)" }}>
-              Timing &amp; duration<br /><span className="font-medium normal-case tracking-normal text-[#57655f]">భోజనం ముందు / తర్వాత</span>
+            <th className="w-[168px] border-b pb-1.5" style={{ borderColor: "var(--pr-primary)" }}>
+              Timing &amp; duration<br /><span className="text-[8px] font-medium normal-case tracking-normal" style={{ color: "var(--pr-muted)" }}>భోజనం ముందు / తర్వాత</span>
             </th>
           </tr>
         </thead>
@@ -710,13 +810,14 @@ export function RxPad({ items, slots = 9 }: {
             return (
               /* 6.9mm: a comfortable handwriting line, and nine of them plus
                  the header is what fits between the pre-printed bands. */
-              <tr key={i} className="border-b border-dotted align-baseline" style={{ borderColor: "#cfdad6", height: "8.5mm" }}>
-                <td className="pr-1 font-mono text-[10.5px] text-[#8b9691]">{i + 1}.</td>
-                <td className="pr-2 font-bold" style={{ color: "var(--pr-ink)" }}>
+              <tr key={i} className="border-b border-dotted align-baseline" style={{ borderColor: "var(--pr-hair)", height: "8.5mm" }}>
+                {/* No full stop after the serial - it is a tally, not a sentence. */}
+                <td className="pr-1 font-mono text-[10px]" style={{ color: "var(--pr-muted)" }}>{i + 1}</td>
+                <td className="pr-2 font-semibold" style={{ color: "var(--pr-ink)" }}>
                   {it ? <>{it.medicineName}{it.qty > 1 ? <span className="ml-1 font-normal text-[#57655f]">× {it.qty}</span> : null}</> : " "}
                 </td>
                 <td className="pr-2 font-mono text-[11.5px] font-semibold" style={{ color: "var(--pr-primary)" }}>{pattern}</td>
-                <td className="text-[11.5px] font-medium text-[#3c4a45]">{timing}</td>
+                <td className="text-[11.5px] font-medium" style={{ color: "#3c4a45" }}>{timing}</td>
               </tr>
             );
           })}

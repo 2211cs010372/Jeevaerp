@@ -7,12 +7,21 @@ import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 
-interface Bed { id: string; bedNo: string; status: string; patient: { displayId: string; fullName: string; ipNumber: string; admissionId: string } | null; }
+interface Bed {
+  id: string; bedNo: string; status: string;
+  /** `days` counts started days from admission, minimum 1 - what the bill charges. */
+  patient: {
+    displayId: string; fullName: string; ipNumber: string; admissionId: string;
+    admittedAt: string; days: number;
+  } | null;
+}
 interface Ward { id: string; name: string; category: string; floor: string | null; dailyCharge: string; gstRatePct: string; available: number; total: number; beds: Bed[]; }
 interface Board { summary: { total: number; available: number; occupied: number; maintenance: number }; wards: Ward[]; }
 
 const CATEGORIES = ["GENERAL", "SEMI_PRIVATE", "PRIVATE", "ICU"];
 const emptyWard = { id: "", name: "", category: "GENERAL", floor: "", dailyCharge: "", gstRatePct: "0" };
+/** "12 Aug" - the admission date, short enough to sit inside a bed tile. */
+const sinceDay = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
 
 function BedIcon({ tone }: { tone: string }) {
   return (
@@ -185,6 +194,15 @@ export default function WardsPage() {
                           <div className="mt-auto pt-2">
                             <div className="truncate text-[12px] font-semibold text-[var(--p-ink)]">{b.patient.fullName}</div>
                             <div className="truncate font-mono text-[10px] text-[var(--p-muted)]">{b.patient.ipNumber} · {b.patient.displayId}</div>
+                            {/* How long the bed has been held - the same started-day
+                                count the running bill charges, so the board and the
+                                bill can never read differently. */}
+                            <div className="mt-1 flex items-center gap-1.5 text-[10px]">
+                              <span className="rounded-full bg-white/70 px-1.5 py-[1px] font-bold text-[var(--p-blue-deep)]">
+                                Day {b.patient.days}
+                              </span>
+                              <span className="truncate text-[var(--p-muted)]">since {sinceDay(b.patient.admittedAt)}</span>
+                            </div>
                           </div>
                         ) : (
                           <div className="mt-auto pt-2 text-[11px] font-semibold" style={{ color: tone }}>

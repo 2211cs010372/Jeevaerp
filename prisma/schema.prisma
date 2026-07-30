@@ -1607,6 +1607,24 @@ model HospitalConfig {
   /// but it should be a decision somebody made, not an accident.
   blockDischargeOnDues Boolean @default(true)
 
+  // ── AFTER-HOURS OP (EMERGENCY PRICING) ────────────────────────────────────
+  //
+  // Once the evening OP clinic closes, a doctor who comes in is being called in
+  // - so the visit is an EMERGENCY and it carries a higher consultation fee.
+  // The multiplier is stored, not the doubled amount, because the day fee lives
+  // on each Doctor and differs between them: a ₹500 physician and a ₹900
+  // specialist must both become "double", not both become one flat number.
+  /// Master switch. Off = the clock never changes what an OP visit costs.
+  afterHoursOpEnabled    Boolean @default(true)
+  /// Window start, local wall clock "HH:MM" (24h). Inclusive.
+  afterHoursOpStart      String  @default("20:00")
+  /// Window end, local "HH:MM" (24h). Exclusive. May be EARLIER than the start,
+  /// which means the window crosses midnight - 20:00→06:00 covers the 2 AM
+  /// visit, which is precisely the one nobody should be charging a day fee for.
+  afterHoursOpEnd        String  @default("06:00")
+  /// What the day fee is multiplied by inside the window. 2 = double.
+  afterHoursOpMultiplier Decimal @default(2) @db.Decimal(4, 2)
+
   // ── WHAT THE PUBLIC SITE CAN DO ───────────────────────────────────────────
   /// Master switch for online appointment booking.
   onlineBookingEnabled     Boolean @default(true)

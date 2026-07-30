@@ -10,7 +10,11 @@ import { api, ApiClientError } from "@/lib/api-client";
 
 interface Bed {
   id: string; bedNo: string; status: string;
-  patient: { displayId: string; fullName: string; ipNumber: string; admissionId: string } | null;
+  /** `days` counts started days from admission, minimum 1 - what the bill charges. */
+  patient: {
+    displayId: string; fullName: string; ipNumber: string; admissionId: string;
+    admittedAt: string; days: number;
+  } | null;
 }
 interface Ward {
   id: string; name: string; category: string; floor: string | null;
@@ -39,6 +43,8 @@ interface Sheet {
 
 const blank = { reason: "", attendantName: "", attendantPhone: "", attendantRelation: "", notes: "" };
 const money = (v: string | number) => Number(v).toLocaleString("en-IN", { maximumFractionDigits: 0 });
+/** "12 Aug" - the admission date, short enough to sit inside a bed tile. */
+const sinceDay = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
 
 function PatientFromUrl({ onFound }: { onFound: (p: Patient) => void }) {
   const params = useSearchParams();
@@ -282,6 +288,13 @@ export default function BedBoardPage() {
                             <>
                               <span className="bed-who">{b.patient.fullName}</span>
                               <span className="bed-ip">{b.patient.ipNumber}</span>
+                              {/* How long this bed has been held. The desk's most
+                                  asked question at the board, and the same count
+                                  the running bill uses. */}
+                              <span className="bed-days">
+                                Day {b.patient.days}
+                                <span className="bed-days-since"> · since {sinceDay(b.patient.admittedAt)}</span>
+                              </span>
                             </>
                           ) : (
                             <span className="bed-free">{b.status === "MAINTENANCE" ? "Out of service" : "Empty"}</span>
@@ -519,6 +532,9 @@ const CSS = `
   font-size: 12px; font-weight: 600; color: var(--p-ink); }
 .bed-ip { font-family: var(--font-mono); font-size: 10px; color: var(--p-muted); }
 .bed-free { font-size: 11px; color: var(--p-muted); }
+.bed-days { margin-top: 3px; border-radius: 999px; background: var(--p-blue-soft); padding: 1px 7px;
+  font-size: 10px; font-weight: 700; color: var(--p-blue-deep); }
+.bed-days-since { font-weight: 500; opacity: .8; }
 
 /* the bed itself */
 .bd-frame    { fill: var(--p-border-strong); }

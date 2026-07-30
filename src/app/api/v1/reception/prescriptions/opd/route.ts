@@ -21,6 +21,10 @@ export const POST = handler(async (req) => {
       appointmentId: i.appointmentId, items: i.items, title: i.title || undefined, sendNow: i.sendNow,
       diagnosis: i.diagnosis || undefined, advice: i.advice || undefined,
       nextVisit: i.nextVisit || undefined, labs: i.labs,
+      // Must be forwarded like every other clinical field: it was being parsed
+      // and then dropped here, so a typed case history was accepted by the form
+      // and never reached the row the OPD sheet reads back.
+      caseHistory: i.caseHistory || undefined,
     },
     auditContext(req)
   );

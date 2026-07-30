@@ -370,6 +370,8 @@ export async function updateHospitalConfig(
     expiryAlertDays?: number; blockDischargeOnDues?: boolean;
     onlineBookingEnabled?: boolean; callbackRequestsEnabled?: boolean;
     accountsTabEnabled?: boolean;
+    afterHoursOpEnabled?: boolean; afterHoursOpStart?: string;
+    afterHoursOpEnd?: string; afterHoursOpMultiplier?: number;
   },
   ctx: { ipAddress?: string; userAgent?: string }
 ) {
@@ -378,6 +380,8 @@ export async function updateHospitalConfig(
       id: true, logoDataUrl: true, faviconDataUrl: true, blockDischargeOnDues: true,
       onlineBookingEnabled: true, callbackRequestsEnabled: true, expiryAlertDays: true,
       accountsTabEnabled: true,
+      afterHoursOpEnabled: true, afterHoursOpStart: true,
+      afterHoursOpEnd: true, afterHoursOpMultiplier: true,
     },
   });
 
@@ -418,6 +422,22 @@ export async function updateHospitalConfig(
     }
     if (input.accountsTabEnabled !== undefined && input.accountsTabEnabled !== existing.accountsTabEnabled) {
       changes.accountsTabEnabled = `${existing.accountsTabEnabled} -> ${input.accountsTabEnabled}`;
+    }
+    // After-hours pricing changes what a patient is charged, so each part of it
+    // is named individually. "The night rate went from 2x to 3x on the 14th, by
+    // whom" is a question somebody will eventually have to answer.
+    if (input.afterHoursOpEnabled !== undefined && input.afterHoursOpEnabled !== existing.afterHoursOpEnabled) {
+      changes.afterHoursOpEnabled = `${existing.afterHoursOpEnabled} -> ${input.afterHoursOpEnabled}`;
+    }
+    if (input.afterHoursOpStart !== undefined && input.afterHoursOpStart !== existing.afterHoursOpStart) {
+      changes.afterHoursOpStart = `${existing.afterHoursOpStart} -> ${input.afterHoursOpStart}`;
+    }
+    if (input.afterHoursOpEnd !== undefined && input.afterHoursOpEnd !== existing.afterHoursOpEnd) {
+      changes.afterHoursOpEnd = `${existing.afterHoursOpEnd} -> ${input.afterHoursOpEnd}`;
+    }
+    if (input.afterHoursOpMultiplier !== undefined
+        && input.afterHoursOpMultiplier !== Number(existing.afterHoursOpMultiplier)) {
+      changes.afterHoursOpMultiplier = `${Number(existing.afterHoursOpMultiplier)}x -> ${input.afterHoursOpMultiplier}x`;
     }
     if (logoDataUrl !== undefined && (logoDataUrl || null) !== (existing.logoDataUrl || null)) {
       changes.logo = logoDataUrl ? "replaced" : "removed";

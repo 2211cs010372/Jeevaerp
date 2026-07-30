@@ -1,4 +1,5 @@
 import type { Role } from "@/lib/auth/types";
+import { classifyHost } from "@/lib/auth/host";
 
 /**
  * The ONE place that maps a role to where it lives. Used by:
@@ -31,7 +32,14 @@ export const ROLE_HOME_PATH: Record<Role, string> = {
 const PORTAL_SUBDOMAINS = ["admin", "reception", "doctor", "labs", "pharmacy"] as const;
 export type PortalSubdomain = (typeof PORTAL_SUBDOMAINS)[number];
 
-/** Which roles are permitted on a given portal subdomain. */
+/**
+ * Which roles are permitted on a given portal.
+ *
+ * ADMIN is on every list and every other role appears on exactly one: the
+ * proprietor oversees the whole hospital from any desk, while a receptionist,
+ * doctor, technician or pharmacist only ever belongs in their own portal. That
+ * asymmetry is the whole access model - keep it here and nowhere else.
+ */
 export const SUBDOMAIN_ALLOWED_ROLES: Record<PortalSubdomain, Role[]> = {
   admin: ["ADMIN"],
   reception: ["RECEPTIONIST", "ADMIN"], // admin can oversee the front desk
@@ -42,6 +50,57 @@ export const SUBDOMAIN_ALLOWED_ROLES: Record<PortalSubdomain, Role[]> = {
 
 export function isPortalSubdomain(sub: string): sub is PortalSubdomain {
   return (PORTAL_SUBDOMAINS as readonly string[]).includes(sub);
+}
+
+/** May this role work in this portal? The one predicate every gate asks. */
+export function roleAllowedOnPortal(role: Role, portal: PortalSubdomain): boolean {
+  return SUBDOMAIN_ALLOWED_ROLES[portal].includes(role);
+}
+
+/** Human name for a portal, for messages staff actually read. */
+export const PORTAL_LABEL: Record<PortalSubdomain, string> = {
+  admin: "Admin",
+  reception: "Reception",
+  doctor: "Doctor",
+  labs: "Labs",
+  pharmacy: "Pharmacy",
+};
+
+/**
+ * Which portal a request came from, so a sign-in can be judged against it.
+ *
+ * Two shapes, matching classifyHost:
+ *   • subdomain mode - the portal IS the host's first label (doctor.jeeva.com),
+ *     and the API is same-origin on each portal, so the host is authoritative.
+ *   • path mode      - one host serves every portal, so the only signal is the
+ *     page the form was served from: the referer's first path segment.
+ *
+ * Returns null when neither says a portal (a direct API call, a stripped
+ * referer). Callers must treat null as "no portal context" and fall back to the
+ * role's own portal - this resolves where a login was ATTEMPTED, which is a
+ * question about intent, not a security boundary. What actually confines a
+ * session is the middleware plus each portal layout, both of which re-check the
+ * role against the portal being loaded.
+ *
+ * Takes plain header values rather than a NextRequest so it stays pure and
+ * edge-safe, like everything else in this file.
+ */
+export function portalFromRequest(
+  h: { host?: string | null; referer?: string | null },
+  cookieDomain?: string,
+): PortalSubdomain | null {
+  const { subdomainMode, sub } = classifyHost(h.host ?? "", cookieDomain);
+  if (subdomainMode && isPortalSubdomain(sub)) return sub;
+
+  if (!h.referer) return null;
+  let path: string;
+  try {
+    path = new URL(h.referer).pathname;
+  } catch {
+    return null;
+  }
+  const first = path.split("/").filter(Boolean)[0];
+  return first && isPortalSubdomain(first) ? first : null;
 }
 
 /**

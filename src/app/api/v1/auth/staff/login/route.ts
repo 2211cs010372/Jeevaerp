@@ -5,6 +5,7 @@ import { staffLogin, recordStaffLogin } from "@/server/services/auth.service";
 import { auditContext } from "@/server/services/audit.service";
 import { setSessionCookies } from "@/lib/auth/session";
 import { destinationFor } from "@/lib/auth/portals";
+import { assertPortalLogin } from "@/lib/auth/guard";
 import { resolveOrigin } from "@/lib/auth/origin";
 
 export const dynamic = "force-dynamic";
@@ -12,6 +13,10 @@ export const dynamic = "force-dynamic";
 export const POST = handler(async (req) => {
   const { username, password } = await parseBody(req, staffLoginSchema);
   const { tokens, user } = await staffLogin(username, password);
+  // Right credentials, wrong portal: refuse before any cookie is set or any
+  // successful login is recorded. Checked only AFTER the password verified, so
+  // it can't be used to probe which usernames exist or what role they hold.
+  assertPortalLogin(req, user.role);
   await recordStaffLogin(user.id, "PASSWORD", auditContext(req));
 
   const redirectTo = destinationFor(user.role, resolveOrigin(req));

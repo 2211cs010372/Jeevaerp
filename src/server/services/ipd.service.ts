@@ -103,7 +103,15 @@ export async function bedBoard(): Promise<{
     dailyCharge: string; gstRatePct: string; available: number; total: number;
     beds: {
       id: string; bedNo: string; status: string;
-      patient: { displayId: string; fullName: string; ipNumber: string; admissionId: string } | null;
+      /**
+       * `days` is the stay so far, counted the way the bill counts it
+       * (stayDays - per started day, minimum 1), so the number on the board is
+       * the number the family is being charged for and the two can't disagree.
+       */
+      patient: {
+        displayId: string; fullName: string; ipNumber: string; admissionId: string;
+        admittedAt: string; days: number;
+      } | null;
     }[];
   }[];
 }> {
@@ -119,7 +127,7 @@ export async function bedBoard(): Promise<{
           admissions: {
             where: { status: "ADMITTED" },
             take: 1,
-            select: { id: true, ipNumber: true, patient: { select: { displayId: true, fullName: true } } },
+            select: { id: true, ipNumber: true, admittedAt: true, patient: { select: { displayId: true, fullName: true } } },
           },
         },
       },
@@ -129,9 +137,12 @@ export async function bedBoard(): Promise<{
   type WardRow = {
     id: string; name: string; category: string; floor: string | null;
     dailyCharge: { toString(): string }; gstRatePct: { toString(): string };
-    beds: { id: string; bedNo: string; status: string; admissions: { id: string; ipNumber: string; patient: { displayId: string; fullName: string } }[] }[];
+    beds: { id: string; bedNo: string; status: string; admissions: { id: string; ipNumber: string; admittedAt: Date; patient: { displayId: string; fullName: string } }[] }[];
   };
 
+  // One clock for the whole board: computing "now" per bed would let two beds
+  // admitted in the same minute tick over to a new day at different moments.
+  const now = new Date();
   let total = 0, available = 0, occupied = 0, maintenance = 0;
   const mapped = (wards as WardRow[]).map((w) => {
     const beds = w.beds.map((b) => {
@@ -142,7 +153,13 @@ export async function bedBoard(): Promise<{
       const adm = b.admissions[0];
       return {
         id: b.id, bedNo: b.bedNo, status: b.status,
-        patient: adm ? { displayId: adm.patient.displayId, fullName: adm.patient.fullName, ipNumber: adm.ipNumber, admissionId: adm.id } : null,
+        patient: adm
+          ? {
+              displayId: adm.patient.displayId, fullName: adm.patient.fullName,
+              ipNumber: adm.ipNumber, admissionId: adm.id,
+              admittedAt: adm.admittedAt.toISOString(), days: stayDays(adm.admittedAt, now),
+            }
+          : null,
       };
     });
     return {
