@@ -5,7 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { api, ApiClientError } from "@/lib/api-client";
 import {
   PRINT_CSS, STATIONERY_PRINT_CSS, PrintToolbar, LetterHead, DoctorHead, PreprintedGuide,
-  SheetTitle, SectionHead, FieldGrid, VitalsGrid, OpenBlock, RxPad,
+  SheetTitle, FieldGrid, VitalsGrid, OpenBlock, RxPad, SheetFoot,
   type HospitalInfo,
 } from "@/components/print/stationery";
 
@@ -296,7 +296,7 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
           </>
         )}
 
-        <div className={onStationery ? "mt-0" : "mt-4"}>
+        <div className={onStationery ? "mt-2" : "mt-4"}>
           <SheetTitle right={classification} />
         </div>
 
@@ -312,10 +312,11 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
             6px rather than the grids' own 3px: the two blocks share a voice on
             purpose, and this is the one gap that says where the patient ends
             and the triage numbers begin. */}
-        <div className="mt-[6px]">
+        <div className="mt-[16px] ">
           <VitalsGrid items={vitalsBoxes(isBlank ? null : v)} />
         </div>
 
+        <div className="mt-[16px]" />
         {/* grow: history and investigation share the sheet's leftover height
             with the ℞ pad, so a light visit turns into writing room under these
             two headings instead of eight over-stretched prescription lines. */}
@@ -342,21 +343,20 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
 
         <RxPad items={isBlank ? [] : rxItems} slots={8} />
 
-        {/* Both set on their heading's line when they're filled - a prescribed
-            test list and a line of advice are short, and a block each cost the
-            sheet the room Next visit needs to stay on page one. Blank, they go
-            back to being writing space. */}
-        <OpenBlock label="Tests prescribed" inline
-          value={clin?.labs?.length ? clin.labs.join(" · ") : null} minHeight="12mm" />
-        <OpenBlock label="Advice" inline value={clin?.advice} minHeight="12mm" />
+        {/* Set on its heading's line when it's filled - a line of advice is
+            short, and a block of its own cost the sheet the room the foot needs
+            to stay on page one. Blank, it goes back to being writing space. */}
+        <OpenBlock label="Advice" inline value={clin?.advice} minHeight="15mm" />
 
-        <div className="mt-[7px]">
-          <SectionHead label="Next visit" trailing={
-            <span className="shrink-0 pl-2.5 text-[12px] font-medium" style={{ color: "var(--pr-ink)" }}>
-              {clin?.nextVisit?.trim() || ""}
-            </span>
-          } />
-        </div>
+        {/* The two lines the patient leaves holding. On pre-printed stock they
+            leave the flow together and sit in the band beside the QR - tests on
+            the left margin, the date in the corner under it. */}
+        <SheetFoot
+          tests={clin?.labs?.length ? clin.labs.join(" · ") : null}
+          nextVisit={clin?.nextVisit}
+          inset={onStationery}
+        />
+
       </div>
     </div>
   );

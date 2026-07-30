@@ -480,8 +480,8 @@ export function RxTable({ items, blankRows = 0, note }: {
  * label can never quietly drift apart - the whole minimal look rests on those
  * two being the only two.
  */
-const CAPS_HEAD = "text-[9px] font-semibold uppercase tracking-[0.2em]";
-const CAPS_LABEL = "text-[8.5px] font-semibold uppercase tracking-[0.16em]";
+const CAPS_HEAD = "text-[12.5px] uppercase font-semibold";
+const CAPS_LABEL = "text-[10.5px] uppercase font-semibold tracking-[0.09em]";
 
 /**
  * The sheet's own masthead - a title on the left, the visit classification on
@@ -552,8 +552,8 @@ export function DoctorHead({ doctor, inset = false }: {
   // block uses, so the consultant reads as the sheet's first field rather than
   // as a second letterhead competing with the printed one above it.
   const body = (
-    <div className="text-center leading-tight">
-      <div className="text-[17px] font-medium tracking-[-0.01em]" style={{ color: "var(--pr-ink)" }}>
+    <div className="flex flex-col items-center  h-[100px] justify-end leading-tight">
+      <div className="text-[24px] font-medium tracking-[-0.01em]" style={{ color: "var(--pr-ink)" }}>
         {doctor.name}
       </div>
       <div className={`mt-[3px] ${CAPS_LABEL}`} style={{ color: "var(--pr-muted)" }}>
@@ -566,6 +566,68 @@ export function DoctorHead({ doctor, inset = false }: {
     /* 38-142mm: clear of the printed logo (ends ~37mm) and the wordmark
        (starts ~143mm), so a long name still lands in the gap. */
     <div className="absolute" style={{ top: "8mm", left: "38mm", width: "104mm" }}>
+      {body}
+    </div>
+  );
+}
+
+/**
+ * Next visit - the one line the patient leaves holding, and the only thing on
+ * the sheet that belongs to the visit AFTER this one.
+ *
+ * It used to be a full-width heading closing the clinical body, which gave the
+ * shortest value on the page the widest rule on it. Set on one line and pushed
+ * right it takes about a third of that width and reads as a stamp on the
+ * sheet's corner.
+ *
+ * Where that corner IS depends on the paper, and that is SheetFoot's problem,
+ * not this component's - here it is simply an in-flow line that right-aligns.
+ */
+export function NextVisitNote({ value }: { value?: string | null }) {
+  const body = (
+    <div className="text-right flex items-center gap-2 justify-center leading-tight">
+      <div className={CAPS_HEAD} style={{ color: "var(--pr-primary)" }}>Next visit: </div>
+      {/* Non-breaking space so a blank pad keeps the line's height as writing
+          space instead of collapsing to the label alone. */}
+      <div className="mt-[3px] text-[12px] font-medium leading-[4.2mm]" style={{ color: "var(--pr-ink)" }}>
+        {value?.trim() || " "}
+      </div>
+    </div>
+  );
+  return <div className="mt-[7px] flex justify-end">{body}</div>;
+}
+
+/**
+ * The sheet's foot - the two things the patient walks out with: the tests to go
+ * and get, and the date to come back on.
+ *
+ * `inset` lifts the pair off the end of the clinical body and into the bottom
+ * band of the pre-printed paper, in the strip beside the printed QR:
+ *
+ *   left   13mm  the sheet's own margin, so Tests prescribed starts on the same
+ *                line as Case history and every other heading above it
+ *   right  27mm  from the paper's edge - the QR's left edge is at 24mm, so the
+ *                strip stops 3mm clear of the code and never prints over it
+ *   bottom 22mm  above the printed address band (which ends at 15mm) and inside
+ *                the QR's own 19-46mm band, so the two read as one row
+ *
+ * On blank stock there is no QR and no reserved band, so the pair just closes
+ * the clinical body in normal flow.
+ */
+export function SheetFoot({ tests, nextVisit, inset = false }: {
+  tests?: string | null; nextVisit?: string | null; inset?: boolean;
+}) {
+  const body = (
+    <>
+      {/* Blank, this reserves less room inset than it does in the body: the band
+          beside the QR is 27mm tall in total and the date has to fit under it. */}
+      <OpenBlock label="Tests prescribed" inline value={tests} minHeight={inset ? "6mm" : "12mm"} />
+      <NextVisitNote value={nextVisit} />
+    </>
+  );
+  if (!inset) return body;
+  return (
+    <div className="absolute" style={{ left: "13mm", right: "27mm", bottom: "22mm" }}>
       {body}
     </div>
   );
@@ -626,7 +688,7 @@ export function FieldGrid({ fields }: {
   // thirds this grid truncated the patient's surname - the one field on the
   // sheet that must never print with an ellipsis.
   return (
-    <div className="grid grid-cols-[1.15fr_0.85fr_1fr] gap-x-5 gap-y-[3px]">
+    <div className="grid grid-cols-[1.15fr_0.85fr_1fr] gap-x-5 gap-y-[5px]">
       {fields.map((f, i) => (
         <div key={i} className={`flex min-w-0 items-baseline gap-2 ${f.span === 3 ? "col-span-3" : f.span === 2 ? "col-span-2" : ""}`}>
           {/* No colon after the label: caps against ink already separate the two,
@@ -637,7 +699,7 @@ export function FieldGrid({ fields }: {
               holds it with or without ink - so all three rows sit on a common
               baseline and a blank field is a writing space of a known size
               rather than a collapsed row. */}
-          <span className={`min-w-0 truncate text-[12px] font-medium leading-[4.2mm] ${f.mono ? "font-mono tracking-tight" : ""}`}
+          <span className={`min-w-0 truncate text-[13px] font-medium leading-[4.2mm] ${f.mono ? "font-mono tracking-tight" : ""}`}
             style={{ color: "var(--pr-ink)" }}>
               {f.v?.trim() || " "}
           </span>
@@ -665,7 +727,7 @@ export function VitalsGrid({ items }: { items: { label: string; value: string | 
   // patient block's own columns rather than on a second grid of their own -
   // which is the whole reason they no longer need a box.
   return (
-    <div className="grid grid-cols-[1.15fr_0.85fr_1fr] gap-x-5 gap-y-[3px]">
+    <div className="grid grid-cols-[1.15fr_0.85fr_1fr]  gap-x-5 gap-y-[5px]">
       {items.map((b) => (
         <div key={b.label} className="flex min-w-0 items-baseline gap-2">
           <span className={`shrink-0 ${CAPS_LABEL}`} style={{ color: "var(--pr-muted)" }}>{b.label}: </span>
@@ -724,12 +786,12 @@ export function OpenBlock({ label, value, minHeight = "14mm", footnote, inline =
           <h3 className={`shrink-0 ${CAPS_HEAD}`} style={{ color: "var(--pr-primary)" }}>
             {label}: 
           </h3>
-          <p className="min-w-0 flex-1 whitespace-pre-line text-[12px] font-medium leading-snug"
+          <p className="min-w-0 flex-1 whitespace-pre-line text-[14.5px]  font-medium leading-snug"
             style={{ color: "var(--pr-ink)" }}>
             {text}
           </p>
         </div>
-        {footnote && <p className="mt-[2px] text-[8px] italic" style={{ color: "var(--pr-muted)" }}>{footnote}</p>}
+        {footnote && <p className="mt-[2px] text-[12px] italic" style={{ color: "var(--pr-muted)" }}>{footnote}</p>}
       </section>
     );
   }
@@ -810,10 +872,10 @@ export function RxPad({ items, slots = 9 }: {
             return (
               /* 6.9mm: a comfortable handwriting line, and nine of them plus
                  the header is what fits between the pre-printed bands. */
-              <tr key={i} className="border-b border-dotted align-baseline" style={{ borderColor: "var(--pr-hair)", height: "8.5mm" }}>
+              <tr key={i} className="border-b border-dotted pt-1 align-baseline" style={{ borderColor: "var(--pr-hair)", height: "8.5mm" }}>
                 {/* No full stop after the serial - it is a tally, not a sentence. */}
-                <td className="pr-1 font-mono text-[10px]" style={{ color: "var(--pr-muted)" }}>{i + 1}</td>
-                <td className="pr-2 font-semibold" style={{ color: "var(--pr-ink)" }}>
+                <td className="pr-1 font-mono  text-[10px]" style={{ color: "var(--pr-muted)" }}>{i + 1}</td>
+                <td className="pr-2 pt-2 text-[14.5px] font-semibold" style={{ color: "var(--pr-ink)" }}>
                   {it ? <>{it.medicineName}{it.qty > 1 ? <span className="ml-1 font-normal text-[#57655f]">× {it.qty}</span> : null}</> : " "}
                 </td>
                 <td className="pr-2 font-mono text-[11.5px] font-semibold" style={{ color: "var(--pr-primary)" }}>{pattern}</td>
@@ -832,7 +894,7 @@ export function FooterBand({ hospital }: { hospital: HospitalInfo | null }) {
   return (
     <div className="mt-auto">
       <div style={{ background: "var(--pr-accent)", height: 3 }} />
-      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-0.5 px-4 py-2 text-[10px] font-medium text-white"
+      <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-0.5 px-4 py-2 text-[10px] font-medium text-white"
         style={{ background: "var(--pr-primary)", margin: "0 -11mm" }}>
         <span>For Appointments: <span className="font-bold">{hospital?.phone ?? "-"}</span></span>
         <span>{hospital ? `${hospital.addressLine}, ${hospital.city} – ${hospital.pincode}` : ""}</span>
