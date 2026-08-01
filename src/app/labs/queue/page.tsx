@@ -6,6 +6,7 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { analyteDescription } from "@/lib/lab-reference";
 import { useLive } from "@/lib/realtime/use-live";
 import { TOPICS } from "@/lib/realtime/topics";
 
@@ -75,9 +76,26 @@ export default function LabQueuePage() {
   const [rows, setRows] = useState<ResultRow[]>([]);
   const [impression, setImpression] = useState("");
   const [savingSheet, setSavingSheet] = useState(false);
+  /**
+   * The test whose results were just saved. Kept so the banner can offer the
+   * printed report in the same breath - entering results and handing the
+   * patient the sheet is ONE job at the counter, and making the technician hunt
+   * their own row back out of the list to print it is how reports end up not
+   * being printed at all. This is the trace left on the list AFTER the sheet is
+   * closed; the sheet's own footer offers the same report while it is still up.
+   */
+  const [justSaved, setJustSaved] = useState<{ id: string; testName: string; patientName: string } | null>(null);
+  /**
+   * This sheet has been saved during this sitting. Distinct from a status of
+   * COMPLETED, which is also true of a test opened days later for a reprint:
+   * only a save made just now earns the confirmation line and the promoted
+   * Print button, because only then is somebody standing there waiting for the
+   * paper.
+   */
+  const [savedNow, setSavedNow] = useState(false);
 
   async function openSheet(t: Test) {
-    setSheetFor(t); setSheet(null); setRows([]); setImpression(""); setError(null);
+    setSheetFor(t); setSheet(null); setRows([]); setImpression(""); setError(null); setJustSaved(null); setSavedNow(false);
     try {
       const s = await api.get<Sheet>(`/labs/tests/${t.id}/results`);
       setSheet(s); setRows(s.results); setImpression(s.test.impression ?? "");
@@ -97,6 +115,10 @@ export default function LabQueuePage() {
         refLow: r.refLow != null ? Number(r.refLow) : null,
         refHigh: r.refHigh != null ? Number(r.refHigh) : null,
         refText: r.refText,
+        // Only the lab can say whether "Positive" or "Growth seen" is abnormal -
+        // no range can. Sent for every line; the server ignores it on a value
+        // it can grade against a range itself.
+        abnormal: r.flag === "ABNORMAL",
       }));
     if (items.length === 0) { setError("Enter a value for at least one analyte."); return; }
     setSavingSheet(true); setError(null);
@@ -104,8 +126,20 @@ export default function LabQueuePage() {
       // Always sent, even when empty: on this screen a cleared box means the
       // technician deleted what they had written, not "leave it as it was".
       await api.put(`/labs/tests/${sheetFor.id}/results`, { items, impression: impression.trim() });
-      setSheetFor(null); setSheet(null); setRows([]); setImpression("");
-      await load();
+      setJustSaved({
+        id: sheetFor.id,
+        testName: sheetFor.testName,
+        patientName: sheetFor.patient?.fullName ?? "this patient",
+      });
+      // The sheet STAYS OPEN. Closing it on save put the only Print button
+      // behind a status the test had not visibly reached yet, and dropped the
+      // technician back on a list they then had to search to print the report
+      // they were seconds away from. The test is now completed, so the footer's
+      // Print button applies to it; the values remain on screen and editable if
+      // a digit was mistyped.
+      setSheetFor({ ...sheetFor, status: "COMPLETED" });
+      setSavedNow(true);
+      await load(true);
     } catch (e) { setError(e instanceof ApiClientError ? e.message : "Could not save the results."); }
     finally { setSavingSheet(false); }
   }
@@ -176,6 +210,27 @@ export default function LabQueuePage() {
         </div>
       )}
 
+      {/* Saved, and the report is one click away. Not auto-opened: a popup fired
+          from a save is the first thing a browser blocks, and a technician who
+          gets nothing when they expected a report assumes the save failed. */}
+      {justSaved && (
+        <div data-rise className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--p-teal)]/25 bg-[var(--p-teal-soft)] px-4 py-3 text-[13px] text-[var(--p-teal-deep)]">
+          <span className="flex items-center gap-2">
+            <Icon name="check" size={15} />
+            Results saved for {justSaved.testName} · {justSaved.patientName}.
+          </span>
+          <span className="flex items-center gap-2">
+            <a href={`/labs/print/lab/${justSaved.id}`} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--p-teal)] px-3 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-[var(--p-teal-deep)]">
+              <Icon name="file" size={13} /> Print report
+            </a>
+            <button onClick={() => setJustSaved(null)} className="text-[12px] font-medium text-[var(--p-teal-deep)]/70 hover:text-[var(--p-teal-deep)]">
+              Dismiss
+            </button>
+          </span>
+        </div>
+      )}
+
       <section data-rise className="surface overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-20 text-[13px] text-[var(--p-muted)]"><Spinner /> Loading tests…</div>
@@ -228,6 +283,13 @@ export default function LabQueuePage() {
 
                   {t.status === "COMPLETED" && (
                     <>
+                      {/* The hospital's own report sheet, built from the values
+                          on file - not the uploaded file, which is whatever an
+                          outside lab happened to send. */}
+                      <a href={`/labs/print/lab/${t.id}`} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
+                        <Icon name="file" size={13} /> Print report
+                      </a>
                       <input
                         ref={(el) => { fileRefs.current[t.id] = el; }}
                         type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" className="hidden"
@@ -311,6 +373,15 @@ export default function LabQueuePage() {
                           <td className="py-2 pr-2">
                             <input value={r.name} onChange={(e) => setRow(i, { name: e.target.value })}
                               className="w-full bg-transparent text-[13px] font-medium text-[var(--p-ink)] outline-none" />
+                            {/* The same reference note the printed report carries,
+                                shown at the bench: it is worth most to whoever is
+                                deciding whether a value they just typed looks
+                                plausible for the analyte in front of them. */}
+                            {analyteDescription(r.name) && (
+                              <span className="mt-0.5 block text-[10.5px] italic leading-snug text-[var(--p-muted)]">
+                                {analyteDescription(r.name)}
+                              </span>
+                            )}
                           </td>
                           <td className="py-2 pr-2">
                             <input value={r.value} onChange={(e) => setRow(i, { value: e.target.value })}
@@ -324,6 +395,16 @@ export default function LabQueuePage() {
                               <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${FLAG_STYLE[f]}`}>{f}</span>
                             ) : f === "NORMAL" ? (
                               <span className="text-[11px] text-[var(--p-muted)]">normal</span>
+                            ) : r.value.trim() ? (
+                              /* A value no range can grade - "Positive", "Growth
+                                 seen", "Nil". Only the lab can say whether it is
+                                 abnormal, and until it could, every one of these
+                                 was stored as NORMAL and printed as if it were. */
+                              <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-[var(--p-muted)]">
+                                <input type="checkbox" checked={r.flag === "ABNORMAL"}
+                                  onChange={(e) => setRow(i, { flag: e.target.checked ? "ABNORMAL" : "NORMAL" })} />
+                                abnormal
+                              </label>
                             ) : null}
                           </td>
                         </tr>
@@ -370,11 +451,45 @@ export default function LabQueuePage() {
               alongside each value, so a later change to the catalogue can&apos;t re-grade a report already given out.
             </p>
 
-            <div className="flex items-center justify-end gap-3 border-t border-[var(--p-border)] p-5">
-              <button onClick={() => setSheetFor(null)} className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm text-[var(--p-text)]">Cancel</button>
-              <PrimaryButton onClick={saveSheet} disabled={savingSheet || !sheet}>
-                {savingSheet ? <><Spinner /> Saving…</> : <><Icon name="check" size={15} /> Save results</>}
-              </PrimaryButton>
+            <div className="flex flex-wrap items-center justify-end gap-3 border-t border-[var(--p-border)] p-5">
+              {savedNow ? (
+                /* Straight after a save, printing IS the next step - the patient
+                   is usually still at the counter - so Print is the filled
+                   button on the right and Save steps back to a quiet "Save
+                   changes" for a mistyped digit. */
+                <>
+                  <span className="mr-auto inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--p-teal-deep)]">
+                    <Icon name="check" size={15} /> Results saved. This test is marked completed.
+                  </span>
+                  <button onClick={saveSheet} disabled={savingSheet || !sheet}
+                    className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm text-[var(--p-text)] transition-colors hover:border-[var(--p-teal)] disabled:opacity-50">
+                    {savingSheet ? "Saving…" : "Save changes"}
+                  </button>
+                  <button onClick={() => setSheetFor(null)}
+                    className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm text-[var(--p-text)]">
+                    Close
+                  </button>
+                  <a href={`/labs/print/lab/${sheetFor.id}`} target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--p-teal)] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[var(--p-teal-deep)]">
+                    <Icon name="file" size={14} /> Print report
+                  </a>
+                </>
+              ) : (
+                <>
+                  {/* Reprinting a report already on file needs no save - the sheet
+                      is a live view of the stored values, not a snapshot taken here. */}
+                  {sheetFor.status === "COMPLETED" && (
+                    <a href={`/labs/print/lab/${sheetFor.id}`} target="_blank" rel="noopener noreferrer"
+                      className="mr-auto inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
+                      <Icon name="file" size={14} /> Print report
+                    </a>
+                  )}
+                  <button onClick={() => setSheetFor(null)} className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm text-[var(--p-text)]">Cancel</button>
+                  <PrimaryButton onClick={saveSheet} disabled={savingSheet || !sheet}>
+                    {savingSheet ? <><Spinner /> Saving…</> : <><Icon name="check" size={15} /> Save results</>}
+                  </PrimaryButton>
+                </>
+              )}
             </div>
           </div>
         </div>

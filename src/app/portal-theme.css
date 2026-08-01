@@ -1268,3 +1268,190 @@
         animation: none;
     }
 }
+
+/* ============================================================================
+   AUTH SCREEN - "the board"
+
+   Every other portal screen is a workspace: light, flat, data-first. The sign-in
+   screen is the one screen that holds no patient data, so it is the one screen
+   that can carry the brand. It is built as the board bolted above a nurses'
+   station - the thing that is on the wall whether or not anyone is looking.
+
+   Two halves, edge to edge, no floating card:
+     LEFT  - the board. Pine driven to near-black, porcelain type, one jade
+             accent, the five desks listed as real links.
+     RIGHT - porcelain. The form, in the app's own UI face, so the person is
+             already inside the software before they have signed in.
+
+   Scoped to .authx so nothing here can reach a workspace page. The palette is
+   derived from the pine already in every portal (--p-blue 0b544c), not invented
+   next to it - the board is the same green with the lights off.
+   ========================================================================== */
+
+.portal.authx {
+    /* the board - pine taken down to near-black, then one step back up */
+    --a-board: #06211d;
+    --a-board-lift: #0a2f28;
+    /* hairlines and type ON the board */
+    --a-hair: rgba(209, 226, 220, 0.13);
+    --a-hair-lit: rgba(116, 198, 174, 0.42);
+    --a-chalk: #d7e5e0;
+    --a-chalk-dim: rgba(215, 229, 224, 0.5);
+    /* THE accent. Desaturated jade, not a neon - it marks the lit desk and
+       draws the trace, and it is the only bright thing on the dark half. */
+    --a-lit: #74c6ae;
+    min-height: 100dvh;
+    background: var(--a-board);
+}
+
+/* The workspace bloom is a canvas effect for scrollable pages; this screen
+   paints its own light, on the porcelain side only. */
+.portal.authx::before {
+    display: none;
+}
+
+/* --- the board ----------------------------------------------------------- */
+
+.authx-board {
+    background: var(--a-board);
+    color: var(--a-chalk);
+    /* a single low light source, top-left, as if the board were lit from the
+       corridor - replaces the two competing radial blooms */
+    background-image:
+        radial-gradient(900px 520px at 6% -10%, rgba(116, 198, 174, 0.11), transparent 64%),
+        radial-gradient(700px 700px at 96% 108%, rgba(11, 84, 76, 0.5), transparent 62%);
+}
+
+/* Desk rows. A rule that lights up rather than a box that fills in - the board
+   should read as engraved, not as a list of buttons. */
+.authx-desk {
+    position: relative;
+    display: grid;
+    grid-template-columns: 3.25rem 1fr auto;
+    align-items: baseline;
+    gap: 0.875rem;
+    padding: 0.875rem 0.25rem 0.875rem 0;
+    border-top: 1px solid var(--a-hair);
+    transition: color 0.2s ease, padding-left 0.24s cubic-bezier(0.22, 0.61, 0.24, 1);
+}
+
+.authx-desk:last-child {
+    border-bottom: 1px solid var(--a-hair);
+}
+
+/* The lit rule: a 2px jade edge that grows from the left on hover, and sits
+   permanently under the desk you are actually signing in to. */
+.authx-desk::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: -1px;
+    height: 2px;
+    width: 0;
+    background: var(--a-lit);
+    transition: width 0.34s cubic-bezier(0.22, 0.61, 0.24, 1);
+}
+
+.authx-desk:hover,
+.authx-desk:focus-visible {
+    color: #fff;
+    padding-left: 0.625rem;
+}
+
+/* The board is the one place in the app where content sits on near-black, and
+   the shared focus ring (.portal a:focus-visible) is pine on pine there -
+   #0b544c on #06211d, which is a ring you cannot see. Keyboard focus gets the
+   jade instead. Specificity has to clear .portal a:focus-visible, hence the
+   full path rather than a bare .authx-desk. */
+.portal.authx .authx-board a:focus-visible {
+    outline: 2px solid var(--a-lit);
+    outline-offset: 3px;
+    border-radius: 2px;
+}
+
+.authx-desk:hover::before,
+.authx-desk:focus-visible::before {
+    width: 100%;
+}
+
+.authx-desk[data-here="true"] {
+    color: #fff;
+}
+
+.authx-desk[data-here="true"]::before {
+    width: 100%;
+    background: var(--a-hair-lit);
+}
+
+.authx-desk[data-here="true"]:hover::before {
+    background: var(--a-lit);
+}
+
+.authx-code {
+    font-family: var(--font-geist-mono), ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    color: var(--a-chalk-dim);
+    transition: color 0.2s ease;
+}
+
+.authx-desk[data-here="true"] .authx-code,
+.authx-desk:hover .authx-code {
+    color: var(--a-lit);
+}
+
+/* --- the porcelain half --------------------------------------------------- */
+
+.authx-form-side {
+    background: var(--p-bg);
+    /* the faintest lift under the form, so the column is not a flat slab */
+    background-image: radial-gradient(680px 460px at 68% 0%, rgba(255, 255, 255, 0.9), transparent 70%);
+}
+
+/* --- motion: ONE orchestrated load, then stillness ------------------------ */
+
+.authx [data-lift] {
+    opacity: 0;
+    transform: translateY(12px);
+    animation: authxLift 0.62s cubic-bezier(0.22, 0.61, 0.24, 1) forwards;
+    animation-delay: calc(var(--i, 0) * 65ms);
+}
+
+@keyframes authxLift {
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+/* The trace draws itself once on load and then holds. No looping pulse - the
+   board is calm, and a login screen that keeps moving is a login screen that
+   keeps asking to be looked at. */
+.authx-trace {
+    stroke-dasharray: 2400;
+    stroke-dashoffset: 2400;
+    animation: authxTrace 2.4s cubic-bezier(0.36, 0.1, 0.2, 1) 0.35s forwards;
+}
+
+@keyframes authxTrace {
+    to {
+        stroke-dashoffset: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .authx [data-lift] {
+        opacity: 1;
+        transform: none;
+        animation: none;
+    }
+    .authx-trace {
+        stroke-dashoffset: 0;
+        animation: none;
+    }
+    .authx-desk,
+    .authx-desk::before {
+        transition: none;
+    }
+}

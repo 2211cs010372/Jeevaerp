@@ -1,165 +1,227 @@
 "use client";
 
-import { Icon, type IconName } from "@/components/portal/ui/icons";
+import { useEffect, useState } from "react";
+import { classifyHost } from "@/lib/auth/host";
 import { StaffLogin } from "@/components/portal/staff-login";
 
-const FEATURES: { icon: IconName; title: string; desc: string }[] = [
-  { icon: "calendar", title: "One connected system", desc: "OPD, IPD, pharmacy and labs share a single patient record." },
-  { icon: "rupee", title: "Live money view", desc: "Billing, collections, beds and stock update as they happen." },
-  { icon: "check", title: "Secure sign-in", desc: "One-time email codes or passwords, with full audit trails." },
-  { icon: "users", title: "A desk for every role", desc: "Reception, doctors, labs, pharmacy and admin each see their own tools." },
-];
+/**
+ * The staff sign-in screen.
+ *
+ * Full-bleed, two halves, no floating card. The left half is "the board" - the
+ * roster bolted above a nurses' station, listing every desk in the building
+ * with the one you are signing in to lit. The right half is porcelain and holds
+ * nothing but the form.
+ *
+ * The board is not decoration. Staff bookmark the wrong portal constantly (a
+ * lab tech lands on /reception/login and has no way out but the URL bar), so
+ * every row is a real link to that desk's sign-in. The list doubles as the
+ * product's one-line pitch: five desks, one patient record.
+ *
+ * Skin lives in portal-theme.css under "AUTH SCREEN"; the tokens there are the
+ * portals' own pine with the lights off, so this reads as the same product.
+ */
+
+/** Every desk in the building, in the order a patient passes through them -
+ *  admin last, because it is the only one that is not on that path. The codes
+ *  are what staff already say out loud ("send it to LAB"), not invented IDs. */
+const DESKS = [
+  { key: "reception", code: "OPD", name: "Front desk", does: "Registration, appointments, billing" },
+  { key: "doctor", code: "CON", name: "Consulting room", does: "Consultations and prescriptions" },
+  { key: "pharmacy", code: "PHR", name: "Pharmacy", does: "Dispensing and stock" },
+  { key: "labs", code: "LAB", name: "Laboratory", does: "Samples, results, reports" },
+  { key: "admin", code: "ADM", name: "Administration", does: "Staff, beds, settings" },
+] as const;
+
+/**
+ * Where a desk's sign-in actually lives, for the host we are being served from.
+ *
+ * The portals route two ways (see lib/auth/host.ts): as subdomains on a real
+ * domain and on localhost, and as path prefixes on *.vercel.app. A hardcoded
+ * "/labs/login" is only correct in the second shape - in the first, the
+ * middleware would read it as a path UNDER the current portal and rewrite it
+ * to /reception/labs/login, i.e. a 404. So the board asks the same classifier
+ * the middleware uses, and builds an absolute cross-subdomain URL when that is
+ * the shape in play.
+ *
+ * Host is a browser-only fact, so until mount every row falls back to the path
+ * form. That is a valid link in path mode and is corrected on hydration, long
+ * before anyone can aim at a 15px row.
+ */
+function useDeskHref() {
+  const [loc, setLoc] = useState<{ host: string; protocol: string } | null>(null);
+  useEffect(() => setLoc({ host: window.location.host, protocol: window.location.protocol }), []);
+
+  return (portal: string) => {
+    if (!loc) return `/${portal}/login`;
+    const { subdomainMode, rootDomain, port } = classifyHost(loc.host);
+    if (!subdomainMode || !rootDomain) return `/${portal}/login`;
+    return `${loc.protocol}//${portal}.${rootDomain}${port ? `:${port}` : ""}/login`;
+  };
+}
+
+/** One sinus beat, drawn relative so it tiles seamlessly. 300 units wide,
+ *  returning to the baseline exactly - flat, P bump, QRS spike, flat, T wave. */
+const BEAT = "h58 c6 -7 18 -7 24 0 h16 l10 6 l8 -34 l8 62 l8 -34 h18 c10 -12 26 -12 36 0 h114";
+const TRACE = `M0 40 ${BEAT.repeat(4)}`;
+
+/** The mark: the same trace at 20px. The glyph at the top of the board and the
+ *  line at the bottom of it are the same object, which is the whole idea. */
+function Mark({ className = "" }: { className?: string }) {
+  return (
+    <span
+      className={`flex h-9 w-9 flex-none items-center justify-center rounded-[10px] border border-[var(--a-hair)] bg-[var(--a-board-lift)] ${className}`}
+    >
+      <svg width="19" height="12" viewBox="0 0 26 16" fill="none" aria-hidden>
+        <path
+          d="M1 8h6l2 4 3-11 3 14 2-7h8"
+          stroke="var(--a-lit)"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </span>
+  );
+}
+
+/** Date and time, client-only. The board has a clock because a real one does;
+ *  it is also the honest version of the "SYSTEM_GATEWAY_ONLINE" line it
+ *  replaces - something that is actually true and actually changes. */
+function Clock() {
+  const [now, setNow] = useState<Date | null>(null);
+
+  useEffect(() => {
+    setNow(new Date());
+    const id = setInterval(() => setNow(new Date()), 1000 * 30);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <div
+      className="font-mono text-[11px] tracking-[0.1em] text-[var(--a-chalk-dim)] transition-opacity duration-500"
+      style={{ opacity: now ? 1 : 0 }}
+    >
+      {now ? (
+        <>
+          <span className="text-[var(--a-chalk)]">
+            {now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false })}
+          </span>
+          <span className="mx-2 opacity-40">/</span>
+          {now.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short" })}
+        </>
+      ) : (
+        <span aria-hidden>&nbsp;</span>
+      )}
+    </div>
+  );
+}
 
 export function AuthScreen({ portalName, portalKey = "reception" }: { portalName: string; portalKey?: string }) {
+  const deskHref = useDeskHref();
+
   return (
-    <div className="portal min-h-screen relative overflow-hidden flex items-center justify-center p-4 sm:p-6 lg:p-8" data-portal={portalKey}>
-
-
-
-      {/* Main Container Card: Strict Alignment Geometry */}
-      <div className="relative z-10 w-full max-w-[1280px] min-h-[720px] grid lg:grid-cols-[1.05fr_1fr] bg-[var(--p-surface)] rounded-[24px] border border-[var(--p-border-strong)] shadow-[var(--p-shadow-lg)] overflow-hidden">
-
-        {/* ==================== LEFT SIDE: DIGITAL ENGINE & FEATURES ==================== */}
-        <div
-          className="relative flex flex-col justify-between p-6 sm:p-10 xl:p-12 border-b lg:border-b-0 lg:border-r border-[var(--p-border)]"
-          style={{ background: "linear-gradient(165deg, rgba(255,255,255,0.92), var(--p-bg))" }}
-        >
-          {/* Internal Graphic Element: Abstract Node Cross-hair */}
-          <div className="absolute top-10 right-10 z-0 w-20 h-20 text-[var(--p-border-strong)] pointer-events-none hidden sm:block">
-            <svg width="100%" height="100%" viewBox="0 0 100 100" fill="none">
-              <line x1="0" y1="50" x2="100" y2="50" stroke="currentColor" strokeWidth="1" />
-              <line x1="50" y1="0" x2="50" y2="100" stroke="currentColor" strokeWidth="1" />
-              <circle cx="50" cy="50" r="12" stroke="currentColor" strokeWidth="1" strokeDasharray="3 3" />
-              <circle cx="50" cy="50" r="4" fill="var(--p-cyan)" />
-            </svg>
-          </div>
-          {/* Background Decorative Element 1: Dynamic Structural Grid Pattern */}
-          <div className="absolute inset-0 dotgrid opacity-30 pointer-events-none z-0" />
-
-          {/* Background Decorative Element 2: Architectural Wave Lines */}
-          <div className="absolute top-0 right-0 w-[50vw] h-full opacity-[0.12] text-[var(--p-blue)] pointer-events-none hidden lg:block z-0">
-            <svg width="100%" height="100%" viewBox="0 0 800 800" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M100 800C300 700 400 400 800 300M200 800C400 710 500 450 800 380M50 800C200 680 300 350 800 220" stroke="currentColor" strokeWidth="1.5" strokeDasharray="6 6" />
-              <circle cx="400" cy="400" r="6" fill="currentColor" />
-              <circle cx="500" cy="450" r="4" fill="currentColor" />
-              <circle cx="300" cy="350" r="5" fill="currentColor" />
-            </svg>
-          </div>
-
-          {/* Background Decorative Element 3: Ambient Radial Glow Blooms */}
-          <div className="absolute -top-40 -left-40 w-[600px] h-[600px] rounded-full bg-[var(--p-blue-soft)] opacity-50 blur-[140px] pointer-events-none z-0" />
-          <div className="absolute -bottom-20 right-10 w-[500px] h-[500px] rounded-full bg-[var(--p-cyan-soft)] opacity-35 blur-[120px] pointer-events-none z-0" />
-
-          {/* Top Panel: Header */}
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--p-blue)] text-white shadow-md shadow-[var(--p-blue-soft)]">
-              <Icon name="stethoscope" size={18} />
-            </span>
-            <div>
-              <span className="font-serif-p text-xl font-bold tracking-tight text-[var(--p-ink)]">Jeeva</span>
-              <span className="ml-2 font-mono text-[10px] bg-[var(--p-blue-soft)] text-[var(--p-blue)] border border-[var(--p-blue-glow)] px-2 py-0.5 rounded-md uppercase tracking-wider font-semibold">
-                {portalName}
-              </span>
+    <div className="portal authx min-h-[100dvh] lg:grid lg:grid-cols-[1.05fr_1fr]" data-portal={portalKey}>
+      {/* ==================== THE BOARD ==================== */}
+      <aside className="authx-board relative flex flex-col justify-between overflow-hidden px-6 py-8 sm:px-10 lg:px-14 lg:py-12 xl:px-20">
+        {/* brand */}
+        <div className="flex items-center gap-3" data-lift style={{ "--i": 0 } as React.CSSProperties}>
+          <Mark />
+          <div className="leading-none">
+            <div className="text-[19px] font-semibold tracking-[-0.02em] text-white" style={{ fontFamily: "var(--font-bricolage)" }}>
+              Jeeva
             </div>
-          </div>
-
-          {/* Center Panel: Typography Copy & Feature Grid */}
-          <div className="my-auto py-8">
-            <div className="max-w-lg">
-              <h1 className="font-serif-p text-[32px] sm:text-[38px] font-semibold text-[var(--p-ink)] leading-[1.12] tracking-tight">
-                The enterprise core<br />for clinical sync.
-              </h1>
-              <p className="mt-3.5 text-[14px] leading-relaxed text-[var(--p-text)] opacity-90">
-                A unified database engine mapping point-of-care operations directly to active inventory, ledger books, and cross-departmental patient queues.
-              </p>
-            </div>
-
-            <div className="mt-8 grid gap-3.5 sm:grid-cols-2">
-              {FEATURES.map((f) => (
-                <div key={f.title} className="surface surface-hover p-4.5 z-10 rounded-xl flex flex-col justify-between min-h-[130px]">
-                  <div>
-                    <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--p-bg)] text-[var(--p-blue)] border border-[var(--p-border)]">
-                      <Icon name={f.icon} size={14} />
-                    </span>
-                    <p className="mt-3 text-[15px] font-semibold text-[var(--p-ink)] tracking-tight">{f.title}</p>
-                    <p className="mt-1 text-[12px] font-normal leading-relaxed text-[var(--p-muted)]">{f.desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Bottom Panel: Micro Diagnostics Array Footer */}
-          <div className="pt-5 border-t border-[var(--p-border)] flex items-center justify-between gap-4 font-mono text-[11px] text-[var(--p-muted)]">
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-[var(--p-cyan)] animate-pulse" />
-                <span className="font-medium text-[var(--p-ink)]">SYSTEM_GATEWAY_ONLINE</span>
-              </div>
-              <span className="hidden sm:inline opacity-30">|</span>
-              <span className="hidden sm:inline">SECURE_SSL_TLS_1.3</span>
-            </div>
-            <div className="text-[10px] tracking-wider uppercase bg-[var(--p-border)] px-2 py-0.5 rounded text-[var(--p-text)]">
-              Node // ERP_V2.4
-            </div>
+            <div className="authx-code mt-1.5">HOSPITAL SYSTEM</div>
           </div>
         </div>
 
-        {/* ==================== RIGHT SIDE: AUTHENTICATION INTERFACE ==================== */}
-        <div className="relative flex flex-col justify-between p-6 sm:p-10 xl:p-12 bg-[var(--p-surface)]">
+        {/* thesis + the board itself */}
+        <div className="hidden lg:block">
+          <h1
+            className="max-w-[15ch] text-[clamp(2.6rem,4.1vw,3.9rem)] font-semibold leading-[0.98] tracking-[-0.035em] text-white"
+            style={{ fontFamily: "var(--font-bricolage)" }}
+            data-lift
+          >
+            One record.
+            <br />
+            Every desk.
+          </h1>
+          <p
+            className="mt-5 max-w-[46ch] text-[14.5px] leading-[1.65] text-[var(--a-chalk-dim)]"
+            data-lift
+            style={{ "--i": 1 } as React.CSSProperties}
+          >
+            Reception, consulting rooms, pharmacy, labs and administration all write to the same
+            patient file. What one desk enters, the next desk already has.
+          </p>
 
-          {/* Subtle Structural Matrix Decorator */}
-          <div className="absolute bottom-0 right-0 w-32 h-32 opacity-[0.04] text-[var(--p-ink)] pointer-events-none">
-            <svg width="100%" height="100%" viewBox="0 0 100 100">
-              <pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse">
-                <circle cx="2" cy="2" r="1" fill="currentColor" />
-              </pattern>
-              <rect width="100%" height="100%" fill="url(#grid)" />
-            </svg>
-          </div>
+          <nav className="mt-11" aria-label="Sign in at another desk">
+            <div className="authx-code mb-1 block">DESKS</div>
+            {DESKS.map((d, i) => (
+              <a
+                key={d.key}
+                href={deskHref(d.key)}
+                className="authx-desk"
+                data-here={d.key === portalKey}
+                aria-current={d.key === portalKey ? "page" : undefined}
+                data-lift
+                style={{ "--i": i + 2 } as React.CSSProperties}
+              >
+                <span className="authx-code">{d.code}</span>
+                <span className="text-[15px] font-medium tracking-[-0.01em]">{d.name}</span>
+                <span className="hidden text-[12.5px] text-[var(--a-chalk-dim)] sm:block">{d.does}</span>
+              </a>
+            ))}
+          </nav>
+        </div>
 
-          {/* Top Panel: System Heartbeat Telemetry */}
-          <div className="flex items-center justify-between border-b border-[var(--p-border)] pb-5">
-            <div className="flex items-center gap-4">
-              <svg width="110" height="20" viewBox="0 0 120 24" className="text-[var(--p-cyan)] opacity-85" aria-hidden>
-                <path
-                  d="M0 12 H40 l4 -6 4 6 6 0 3 -8 4 16 3 -8 3 0 H120"
-                  stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"
-                />
-              </svg>
-              <span className="font-mono text-[10px] tracking-widest text-[var(--p-muted)] uppercase hidden sm:inline"></span>
-            </div>
-
-            <span className="flex items-center gap-2 rounded-full border border-[var(--p-border)] bg-[var(--p-bg)] px-3 py-1 shadow-sm">
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--p-cyan)] opacity-70" />
-                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[var(--p-cyan)]" />
-              </span>
-              <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-[var(--p-ink)]">Live Cluster</span>
-            </span>
-          </div>
-
-          {/* Center Panel: Form Identity Interface */}
-          <div className="my-auto dotgrid py-8 max-w-md w-full mx-auto" data-enter>
-            <div className="mb-6">
-              <h2 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)] tracking-tight">Staff Authentication</h2>
-              <p className="text-[13px] text-[var(--p-muted)] mt-1">Provide signed authorization credentials to initialize your role session desktop.</p>
-            </div>
-
-            <div className="surface p-5 sm:p-2 rounded-xl bg-[#f0eee9] border border-[#f0eee9] ">
-              <StaffLogin portalName={portalName} />
-            </div>
-          </div>
-
-          {/* Bottom Panel: Verification Support Prompt */}
-          <div className="border-t border-[var(--p-border)] pt-5">
-            <p className="text-[12px] leading-relaxed text-[var(--p-muted)]">
-              Authorized personnel access node only. Accounts and system access desks are initialized and audited at the central administrative unit terminal.
-            </p>
+        {/* trace + clock */}
+        <div className="mt-8 lg:mt-0" data-lift style={{ "--i": 7 } as React.CSSProperties}>
+          <svg
+            viewBox="0 0 1200 80"
+            className="h-9 w-full text-[var(--a-lit)] opacity-60"
+            fill="none"
+            preserveAspectRatio="none"
+            aria-hidden
+          >
+            <path d={TRACE} stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" className="authx-trace" vectorEffect="non-scaling-stroke" />
+          </svg>
+          <div className="mt-4 flex items-center justify-between border-t border-[var(--a-hair)] pt-4">
+            <Clock />
+            <span className="authx-code">HANAMKONDA</span>
           </div>
         </div>
 
-      </div>
+        {/* Below lg the board collapses to this strip: the desks stay reachable
+            as codes, because landing on the wrong portal on a phone is worse. */}
+        <nav className="mt-7 flex flex-wrap gap-2 lg:hidden" aria-label="Sign in at another desk">
+          {DESKS.map((d) => (
+            <a
+              key={d.key}
+              href={deskHref(d.key)}
+              aria-current={d.key === portalKey ? "page" : undefined}
+              className={`rounded-full border px-3 py-1.5 font-mono text-[11px] tracking-[0.12em] transition-colors ${
+                d.key === portalKey
+                  ? "border-[var(--a-hair-lit)] bg-[var(--a-board-lift)] text-[var(--a-lit)]"
+                  : "border-[var(--a-hair)] text-[var(--a-chalk-dim)]"
+              }`}
+            >
+              {d.code}
+            </a>
+          ))}
+        </nav>
+      </aside>
+
+      {/* ==================== THE FORM ==================== */}
+      <main className="authx-form-side flex min-h-[62dvh] flex-col justify-center px-6 py-12 sm:px-10 lg:min-h-[100dvh] lg:px-14 xl:px-20">
+        <div className="mx-auto w-full max-w-[380px]">
+          <StaffLogin portalName={portalName} />
+
+          <p className="mt-10 border-t border-[var(--p-border)] pt-5 text-[12.5px] leading-relaxed text-[var(--p-muted)]">
+            Accounts are created by the hospital administrator. If your username is not recognised,
+            ask the front office to check your desk access.
+          </p>
+        </div>
+      </main>
     </div>
   );
 }

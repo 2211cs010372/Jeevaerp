@@ -427,6 +427,121 @@ export function abnormalCount(results: LabResultDTO[]): number {
 }
 
 /**
+ * Everything the PRINTED lab report needs, in one call.
+ *
+ * The same relationship the OPD sheet has to a visit: this is not a generated
+ * document stored anywhere, it is the live view of the LabResultItem rows the
+ * bench saved. Reprint it a year later and it prints what was measured, with
+ * the range it was judged against, because both were snapshot onto the row at
+ * save time.
+ *
+ * Everything a report has to carry to be a valid document is here in one
+ * payload - who the patient is, who asked for the test, what was measured,
+ * against what range, who signed it off and when - so the sheet renders in one
+ * pass and can't half-load into a report that looks complete but isn't.
+ */
+export interface LabReportDTO {
+  hospital: {
+    legalName: string; addressLine: string; city: string; state: string; stateCode: string;
+    pincode: string; gstin: string | null; phone: string | null;
+    logoDataUrl?: string | null;
+  } | null;
+  test: {
+    id: string; testName: string;
+    /** Catalogue code - drives the specimen line, and prints as the test code. */
+    code: string | null;
+    status: string;
+    /** When the sample was registered, i.e. when the test was ordered. */
+    orderedAt: string;
+    completedAt: string | null;
+    impression: string | null;
+    technicianName: string | null;
+    reportFileUrl: string | null;
+  };
+  patient: {
+    displayId: string; fullName: string; age: number | null; gender: string | null;
+    bloodGroup: string | null; phone: string; address: string | null; city: string | null;
+  } | null;
+  /** The visit that asked for it - a walk-in has none. */
+  referral: { opNumber: string; doctorName: string; visitDate: string } | null;
+  /** Set when the test belongs to a stay rather than to a visit. */
+  admission: { ipNumber: string } | null;
+  results: LabResultDTO[];
+  abnormal: number;
+}
+
+export async function labReportData(labTestId: string): Promise<LabReportDTO> {
+  const t = await prisma.labTest.findUnique({
+    where: { id: labTestId },
+    select: {
+      id: true, testName: true, status: true, createdAt: true, completedAt: true,
+      impression: true, reportFileUrl: true,
+      catalog: { select: { code: true } },
+      technician: { select: { name: true } },
+      patient: {
+        select: {
+          displayId: true, fullName: true, age: true, gender: true,
+          bloodGroup: true, phone: true, address: true, city: true,
+        },
+      },
+      appointment: {
+        select: {
+          opNumber: true, visitDate: true,
+          doctor: { select: { name: true } },
+          patient: {
+            select: {
+              displayId: true, fullName: true, age: true, gender: true,
+              bloodGroup: true, phone: true, address: true, city: true,
+            },
+          },
+        },
+      },
+      admission: { select: { ipNumber: true } },
+      results: { orderBy: { sortOrder: "asc" } },
+    },
+  });
+  if (!t) throw new ApiError(404, "Test not found");
+
+  const hospital = await prisma.hospitalConfig.findFirst();
+
+  type Row = {
+    name: string; unit: string | null; value: string; refLow: unknown; refHigh: unknown;
+    refText: string | null; flag: string; sortOrder: number;
+  };
+  const results: LabResultDTO[] = (t.results as Row[]).map((r) => ({
+    name: r.name, unit: r.unit, value: r.value,
+    refLow: dec(r.refLow as { toString(): string } | null),
+    refHigh: dec(r.refHigh as { toString(): string } | null),
+    refText: r.refText, flag: r.flag as LabResultFlagT, sortOrder: r.sortOrder,
+  }));
+
+  return {
+    hospital,
+    test: {
+      id: t.id, testName: t.testName, code: t.catalog?.code ?? null, status: t.status,
+      orderedAt: t.createdAt.toISOString(),
+      completedAt: t.completedAt ? t.completedAt.toISOString() : null,
+      impression: t.impression,
+      technicianName: t.technician?.name ?? null,
+      reportFileUrl: t.reportFileUrl,
+    },
+    // Walk-in tests carry the patient directly; a test ordered off a chit
+    // reaches them through the visit. Same fallback as the queue rows.
+    patient: t.patient ?? t.appointment?.patient ?? null,
+    referral: t.appointment
+      ? {
+          opNumber: t.appointment.opNumber,
+          doctorName: t.appointment.doctor?.name ?? DUTY_DOCTOR.name,
+          visitDate: t.appointment.visitDate.toISOString().slice(0, 10),
+        }
+      : null,
+    admission: t.admission ? { ipNumber: t.admission.ipNumber } : null,
+    results,
+    abnormal: abnormalCount(results),
+  };
+}
+
+/**
  * Save the measured values. Replaces the whole sheet - editing a result is
  * re-entering the sheet, and a half-updated report is worse than none. The
  * range is snapshot onto each line so a later catalog edit can't silently

@@ -99,9 +99,18 @@ export default function LabPatientsPage() {
                         <div className="flex shrink-0 items-center gap-2">
                           {t.price && <span className="font-mono text-[12px] text-[var(--p-muted)]">₹{t.price}</span>}
                           <Pill tone={statusTone(t.status === "PENDING" ? "Waiting" : "Completed")}>{t.status === "PENDING" ? "Pending" : "Completed"}</Pill>
+                          {/* The hospital's own sheet, printed from the values on
+                              file. Offered wherever there ARE values - a patient
+                              asking for a duplicate at the counter shouldn't send
+                              anyone back to the work queue to find the test. */}
+                          {results.length > 0 && (
+                            <a href={`/labs/print/lab/${t.id}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[11px] font-medium text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
+                              <Icon name="file" size={12} /> Print
+                            </a>
+                          )}
                           {t.reportFileUrl && (
                             <a href={t.reportFileUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[11px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
-                              <Icon name="file" size={12} /> Report
+                              <Icon name="file" size={12} /> Uploaded file
                             </a>
                           )}
                         </div>

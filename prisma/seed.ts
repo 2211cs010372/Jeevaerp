@@ -59,25 +59,51 @@ async function main() {
   // in Admin -> Catalog; they are seeded because a lab cannot open without one.
   const labTests = [
     { name: "Complete Blood Picture (CBP)", code: "CBP", price: 300 },
-    { name: "Blood Sugar - Fasting", code: "FBS", price: 120 },
-    { name: "Blood Sugar - Postprandial", code: "PPBS", price: 120 },
+
+    // Blood Sugar
+    { name: "Blood Sugar - Fasting (FBS)", code: "FBS", price: 120 },
+    { name: "Blood Sugar - Postprandial (PPBS)", code: "PPBS", price: 120 },
+    { name: "Random Blood Sugar (RBS)", code: "RBS", price: 120 },
     { name: "HbA1c", code: "HBA1C", price: 600 },
+
+    // Lipid
     { name: "Lipid Profile", code: "LIPID", price: 800 },
+
+    // Liver
     { name: "Liver Function Test (LFT)", code: "LFT", price: 900 },
+    { name: "Bilirubin Test", code: "BILIRUBIN", price: 250 },
+
+    // Kidney
     { name: "Kidney Function Test (KFT)", code: "KFT", price: 900 },
-    { name: "Thyroid Profile (T3 T4 TSH)", code: "THYROID", price: 700 },
-    { name: "Urine Routine", code: "URINE", price: 150 },
     { name: "Serum Creatinine", code: "CREAT", price: 200 },
+    { name: "Uric Acid", code: "URIC", price: 250 },
+
+    // Pancreas
+    { name: "Serum Amylase", code: "AMYLASE", price: 350 },
+
+    // Thyroid
+    { name: "Thyroid Profile (T3, T4, TSH)", code: "THYROID", price: 700 },
+
+    // Vitamins
     { name: "Vitamin D (25-OH)", code: "VITD", price: 1400 },
     { name: "Vitamin B12", code: "VITB12", price: 1100 },
-    { name: "CRP (C-Reactive Protein)", code: "CRP", price: 500 },
+
+    // Inflammatory Markers
+    { name: "C-Reactive Protein (CRP)", code: "CRP", price: 500 },
+    { name: "ESR (Erythrocyte Sedimentation Rate)", code: "ESR", price: 150 },
     { name: "RA Factor", code: "RAF", price: 450 },
-    { name: "ESR", code: "ESR", price: 150 },
+
+    // Urine
+    { name: "Urine Routine Examination", code: "URINE", price: 150 },
+
+    // Infectious Diseases
     { name: "Dengue NS1 Antigen", code: "DENGUE", price: 800 },
     { name: "Widal Test", code: "WIDAL", price: 300 },
-    { name: "X-Ray Chest PA", code: "XRAYCHEST", price: 350 },
-    { name: "ECG", code: "ECG", price: 250 },
-    { name: "2D Echo", code: "ECHO", price: 1500 },
+
+    // Imaging
+    { name: "Chest X-Ray (PA View)", code: "XRAYCHEST", price: 350 },
+    { name: "ECG (Electrocardiogram)", code: "ECG", price: 250 },
+    { name: "2D Echocardiography (2D Echo)", code: "ECHO", price: 1500 },
   ];
   for (const t of labTests) {
     // Matched by `code`, not `name`: a prior seed/manual entry may already
@@ -100,10 +126,10 @@ async function main() {
   // GST on room rent: exempt below ₹5,000/day (non-ICU). ICU is exempt regardless.
   // So only the ₹5,500 Private ward carries 5%. Confirm with the CA before go-live.
   const wards = [
-    { name: "General Ward",   category: "GENERAL",      floor: "1st Floor", dailyCharge: 1500, gstRatePct: 0, beds: 10, prefix: "GW" },
-    { name: "Semi-Private",   category: "SEMI_PRIVATE", floor: "2nd Floor", dailyCharge: 3000, gstRatePct: 0, beds: 6,  prefix: "SP" },
-    { name: "Private Room",   category: "PRIVATE",      floor: "2nd Floor", dailyCharge: 5500, gstRatePct: 5, beds: 4,  prefix: "PR" },
-    { name: "ICU",            category: "ICU",          floor: "3rd Floor", dailyCharge: 8000, gstRatePct: 0, beds: 4,  prefix: "ICU" },
+    { name: "General Ward", category: "GENERAL", floor: "1st Floor", dailyCharge: 1500, gstRatePct: 0, beds: 10, prefix: "GW" },
+    { name: "Semi-Private", category: "SEMI_PRIVATE", floor: "2nd Floor", dailyCharge: 3000, gstRatePct: 0, beds: 6, prefix: "SP" },
+    { name: "Private Room", category: "PRIVATE", floor: "2nd Floor", dailyCharge: 5500, gstRatePct: 5, beds: 4, prefix: "PR" },
+    { name: "ICU", category: "ICU", floor: "3rd Floor", dailyCharge: 8000, gstRatePct: 0, beds: 4, prefix: "ICU" },
   ];
 
   for (const w of wards) {
@@ -138,4 +164,3 @@ async function main() {
 }
 
 main().catch((e) => { console.error(e); process.exit(1); }).finally(() => prisma.$disconnect());
-    
