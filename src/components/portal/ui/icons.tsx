@@ -2,7 +2,7 @@ export type IconName =
   | "grid" | "users" | "calendar" | "stethoscope" | "building" | "pill"
   | "flask" | "receipt" | "rupee" | "trend" | "bed" | "search" | "plus"
   | "check" | "logout" | "chevron" | "activity" | "clock" | "alert" | "file" | "printer" | "shield"
-  | "truck" | "box" | "inbox" | "undo" | "x";
+  | "truck" | "box" | "inbox" | "undo" | "x" | "settings" | "palette";
 
 const paths: Record<IconName, React.ReactNode> = {
   grid: <><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></>,
@@ -35,6 +35,11 @@ const paths: Record<IconName, React.ReactNode> = {
   /* stock going back the way it came */
   undo: <><path d="M3 7v6h6"/><path d="M3.5 13a9 9 0 1 0 2.1-9.4L3 7"/></>,
   x: <><path d="M18 6 6 18M6 6l12 12"/></>,
+  /* the gear - settings, and nothing else. Kept to 8 teeth so it still reads
+     as a gear at the 15px the topbar renders it at. */
+  settings: <><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5v.2a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1h.2a2 2 0 1 1 0 4H21a1.6 1.6 0 0 0-1.5 1z"/></>,
+  /* the swatch - appearance. A painter's palette, thumb-hole and all. */
+  palette: <><circle cx="13.5" cy="6.5" r="1.2"/><circle cx="17.5" cy="10.5" r="1.2"/><circle cx="8.5" cy="7.5" r="1.2"/><circle cx="6.5" cy="12.5" r="1.2"/><path d="M12 2a10 10 0 1 0 0 20 2.5 2.5 0 0 0 1.8-4.2 2.5 2.5 0 0 1 1.8-4.3H19a3 3 0 0 0 3-3 10 10 0 0 0-10-8.5z"/></>,
 };
 
 export function Icon({ name, size = 18, className = "" }: { name: IconName; size?: number; className?: string }) {

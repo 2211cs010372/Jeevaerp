@@ -8,6 +8,7 @@ import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
 import { OpdBand } from "@/components/marketing/opd-band";
 import { DoctorSlots } from "@/components/marketing/doctor-slots";
 import { DEPARTMENTS, DOCTORS, type Doctor } from "@/lib/data";
+import { doctorHref } from "@/lib/doctors";
 
 /**
  * The booking page: department -> doctor -> a real time.
@@ -148,7 +149,7 @@ function DoctorRail({ doctor }: { doctor?: Doctor }) {
               <h3 className="truncate text-[16px] font-semibold text-[var(--ink)]">{doctor.name}</h3>
               <p className="mt-0.5 text-[12.5px] font-medium text-[var(--teal)]">{doctor.specialization}</p>
               <p className="mt-0.5 truncate text-[11.5px] text-[var(--muted)]">{doctor.qualification}</p>
-              <Link href={`/doctors/${doctor.id}`}
+              <Link href={doctorHref(doctor)}
                 className="mt-1.5 inline-flex items-center gap-1 text-[11.5px] font-semibold text-[var(--teal)] hover:underline">
                 Full profile <ArrowUpRight className="h-3 w-3" />
               </Link>

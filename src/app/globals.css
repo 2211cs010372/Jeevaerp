@@ -1,7 +1,13 @@
 @import "tailwindcss";
 @import "./portal-theme.css";
+/* Red Hat Display, self-hosted from /public/fonts.
+   One family name across all four weights: the Regular used to be declared as
+   "RedHatDisplay" while the others were "Red Hat Display", so the browser saw
+   two families and could never synthesise the range. The Medium also pointed at
+   RedHatDisplay_Medium.ttf, which does not exist - the file on disk is
+   hyphenated - so weight 500 silently fell back to a faux-bold Regular. */
 @font-face {
-    font-family: "RedHatDisplay";
+    font-family: "Red Hat Display";
     src: url("/fonts/RedHatDisplay-Regular.ttf") format("truetype");
     font-weight: 400;
     font-style: normal;
@@ -10,8 +16,16 @@
 
 @font-face {
     font-family: "Red Hat Display";
-    src: url("/fonts/RedHatDisplay_Medium.ttf") format("truetype");
+    src: url("/fonts/RedHatDisplay-Medium.ttf") format("truetype");
     font-weight: 500;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Red Hat Display";
+    src: url("/fonts/RedHatDisplay-SemiBold.ttf") format("truetype");
+    font-weight: 600;
     font-style: normal;
     font-display: swap;
 }

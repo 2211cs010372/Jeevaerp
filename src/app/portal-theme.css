@@ -1269,189 +1269,205 @@
     }
 }
 
+
 /* ============================================================================
-   AUTH SCREEN - "the board"
+   AUTH SCREEN
 
-   Every other portal screen is a workspace: light, flat, data-first. The sign-in
-   screen is the one screen that holds no patient data, so it is the one screen
-   that can carry the brand. It is built as the board bolted above a nurses'
-   station - the thing that is on the wall whether or not anyone is looking.
-
-   Two halves, edge to edge, no floating card:
-     LEFT  - the board. Pine driven to near-black, porcelain type, one jade
-             accent, the five desks listed as real links.
-     RIGHT - porcelain. The form, in the app's own UI face, so the person is
-             already inside the software before they have signed in.
-
-   Scoped to .authx so nothing here can reach a workspace page. The palette is
-   derived from the pine already in every portal (--p-blue 0b544c), not invented
-   next to it - the board is the same green with the lights off.
+   One centred column on the portal's own canvas. No second colour system, no
+   dark half: the sign-in screen is the first thing a person sees of the
+   workspace behind it, and the two should look like one product. Everything
+   below is backdrop and card geometry - all colour comes from the portal
+   tokens above, so each desk's login is already tinted like its own portal.
    ========================================================================== */
 
 .portal.authx {
-    /* the board - pine taken down to near-black, then one step back up */
-    --a-board: #06211d;
-    --a-board-lift: #0a2f28;
-    /* hairlines and type ON the board */
-    --a-hair: rgba(209, 226, 220, 0.13);
-    --a-hair-lit: rgba(116, 198, 174, 0.42);
-    --a-chalk: #d7e5e0;
-    --a-chalk-dim: rgba(215, 229, 224, 0.5);
-    /* THE accent. Desaturated jade, not a neon - it marks the lit desk and
-       draws the trace, and it is the only bright thing on the dark half. */
-    --a-lit: #74c6ae;
     min-height: 100dvh;
-    background: var(--a-board);
+    background: var(--p-bg);
 }
 
-/* The workspace bloom is a canvas effect for scrollable pages; this screen
-   paints its own light, on the porcelain side only. */
+/* The workspace bloom is sized for a scrolling page; this screen paints its
+   own, centred behind the card. */
 .portal.authx::before {
     display: none;
 }
 
-/* --- the board ----------------------------------------------------------- */
-
-.authx-board {
-    background: var(--a-board);
-    color: var(--a-chalk);
-    /* a single low light source, top-left, as if the board were lit from the
-       corridor - replaces the two competing radial blooms */
-    background-image:
-        radial-gradient(900px 520px at 6% -10%, rgba(116, 198, 174, 0.11), transparent 64%),
-        radial-gradient(700px 700px at 96% 108%, rgba(11, 84, 76, 0.5), transparent 62%);
+/* One soft light source, up and behind the card. */
+/* The form column sits on the same full-bleed photograph as the hero, so this
+   layer does two jobs: it is the accent glow, and it is the SCRIM that makes
+   text on this half readable.
+   
+   The card itself is opaque and never needed help - but the label, the desk
+   chips and the help line beneath it are --p-muted on whatever happens to be
+   in the photo behind them, which is a contrast failure that moves around as
+   the picture does. A flat veil, strongest through the middle where the column
+   content sits and easing off at the edges, keeps the building visible while
+   putting every piece of type back on a known surface. */
+.authx-bloom {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+        radial-gradient(680px 420px at 50% -8%, var(--p-blue-soft), transparent 68%),
+        radial-gradient(520px 360px at 88% 104%, var(--p-cyan-soft), transparent 64%),
+        linear-gradient(90deg,
+            color-mix(in srgb, var(--p-bg) 82%, transparent) 0%,
+            color-mix(in srgb, var(--p-bg) 94%, transparent) 22%,
+            color-mix(in srgb, var(--p-bg) 94%, transparent) 100%);
 }
 
-/* Desk rows. A rule that lights up rather than a box that fills in - the board
-   should read as engraved, not as a list of buttons. */
-.authx-desk {
-    position: relative;
-    display: grid;
-    grid-template-columns: 3.25rem 1fr auto;
-    align-items: baseline;
-    gap: 0.875rem;
-    padding: 0.875rem 0.25rem 0.875rem 0;
-    border-top: 1px solid var(--a-hair);
-    transition: color 0.2s ease, padding-left 0.24s cubic-bezier(0.22, 0.61, 0.24, 1);
+/* ---- hero panel ----------------------------------------------------------
+   The photograph carries type, so it is pushed down far enough that white
+   text clears contrast on it WITHOUT a plate behind the words. Two washes:
+   a diagonal ink gradient for the body, and a heavier foot so the bottom
+   line never lands on a bright patch of sky. */
+
+/* Transparent on purpose. The photograph is a full-bleed layer on the grid
+   ROOT, painted underneath both columns; an opaque background here would sit
+   on top of it and turn this panel into a flat dark rectangle. The form column
+   stays opaque, which is what confines the photo to this half. */
+.authx-hero {
+    background: transparent;
 }
 
-.authx-desk:last-child {
-    border-bottom: 1px solid var(--a-hair);
-}
-
-/* The lit rule: a 2px jade edge that grows from the left on hover, and sits
-   permanently under the desk you are actually signing in to. */
-.authx-desk::before {
+/* The ink wash, drawn by the panel itself rather than by a spare div.
+   
+   brightness() on the photograph darkens it evenly, which is the one thing a
+   backdrop for type must not be: the headline needs a deep, settled ground
+   while the middle of the frame stays bright enough to still read as a
+   building. So this is a diagonal gradient, heaviest at the two corners the
+   type actually sits in - top-left for the brand, bottom for the headline and
+   the location line - and lightest across the middle. */
+.authx-hero::before {
     content: "";
     position: absolute;
-    left: 0;
-    top: -1px;
-    height: 2px;
-    width: 0;
-    background: var(--a-lit);
-    transition: width 0.34s cubic-bezier(0.22, 0.61, 0.24, 1);
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background:
+        linear-gradient(158deg,
+            rgba(5, 22, 19, 0.88) 0%,
+            rgba(5, 22, 19, 0.42) 42%,
+            rgba(5, 22, 19, 0.30) 58%,
+            rgba(5, 22, 19, 0.82) 100%),
+        radial-gradient(120% 80% at 50% 120%, rgba(5, 22, 19, 0.6), transparent 62%);
 }
 
-.authx-desk:hover,
-.authx-desk:focus-visible {
-    color: #fff;
-    padding-left: 0.625rem;
-}
-
-/* The board is the one place in the app where content sits on near-black, and
-   the shared focus ring (.portal a:focus-visible) is pine on pine there -
-   #0b544c on #06211d, which is a ring you cannot see. Keyboard focus gets the
-   jade instead. Specificity has to clear .portal a:focus-visible, hence the
-   full path rather than a bare .authx-desk. */
-.portal.authx .authx-board a:focus-visible {
-    outline: 2px solid var(--a-lit);
-    outline-offset: 3px;
-    border-radius: 2px;
-}
-
-.authx-desk:hover::before,
-.authx-desk:focus-visible::before {
-    width: 100%;
-}
-
-.authx-desk[data-here="true"] {
-    color: #fff;
-}
-
-.authx-desk[data-here="true"]::before {
-    width: 100%;
-    background: var(--a-hair-lit);
-}
-
-.authx-desk[data-here="true"]:hover::before {
-    background: var(--a-lit);
-}
-
-.authx-code {
-    font-family: var(--font-geist-mono), ui-monospace, monospace;
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.14em;
-    color: var(--a-chalk-dim);
-    transition: color 0.2s ease;
-}
-
-.authx-desk[data-here="true"] .authx-code,
-.authx-desk:hover .authx-code {
-    color: var(--a-lit);
-}
-
-/* --- the porcelain half --------------------------------------------------- */
-
-.authx-form-side {
-    background: var(--p-bg);
-    /* the faintest lift under the form, so the column is not a flat slab */
-    background-image: radial-gradient(680px 460px at 68% 0%, rgba(255, 255, 255, 0.9), transparent 70%);
-}
-
-/* --- motion: ONE orchestrated load, then stillness ------------------------ */
-
-.authx [data-lift] {
-    opacity: 0;
-    transform: translateY(12px);
-    animation: authxLift 0.62s cubic-bezier(0.22, 0.61, 0.24, 1) forwards;
-    animation-delay: calc(var(--i, 0) * 65ms);
-}
-
-@keyframes authxLift {
-    to {
-        opacity: 1;
-        transform: none;
+/* The seam. The two halves meet on a continuous photograph, so without this
+   the split is only implied by where the glass happens to start. A hairline of
+   light down the join says the layout meant it. */
+@media (min-width: 1024px) {
+    .authx-hero::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 2;
+        width: 1px;
+        pointer-events: none;
+        background: linear-gradient(180deg,
+            transparent 0%,
+            rgba(255, 255, 255, 0.28) 18%,
+            rgba(255, 255, 255, 0.28) 82%,
+            transparent 100%);
     }
 }
 
-/* The trace draws itself once on load and then holds. No looping pulse - the
-   board is calm, and a login screen that keeps moving is a login screen that
-   keeps asking to be looked at. */
-.authx-trace {
-    stroke-dasharray: 2400;
-    stroke-dashoffset: 2400;
-    animation: authxTrace 2.4s cubic-bezier(0.36, 0.1, 0.2, 1) 0.35s forwards;
+/* A hairline grid that fades out before it reaches the form. Texture, not
+   pattern - at 3% it is felt rather than seen, and it never sits behind text. */
+.authx-grid {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background-image:
+        linear-gradient(var(--p-ink) 1px, transparent 1px),
+        linear-gradient(90deg, var(--p-ink) 1px, transparent 1px);
+    background-size: 56px 56px;
+    opacity: 0.03;
+    mask-image: radial-gradient(circle at 50% 42%, transparent 34%, #000 78%);
+    -webkit-mask-image: radial-gradient(circle at 50% 42%, transparent 34%, #000 78%);
 }
 
-@keyframes authxTrace {
+/* ---- the glass panel -----------------------------------------------------
+   The one surface on the form side. Frosted rather than solid so the building
+   stays present behind the sign-in, but weighted towards white so the dark ink
+   inside it keeps its contrast - see the note in auth-screen.tsx.
+
+   saturate() on the backdrop is what stops the blurred photograph going grey
+   and muddy; the inset top highlight is the light catching the top edge, which
+   is most of what makes a pane read as glass rather than as a translucent box. */
+.authx-glass {
+    /* --p-muted is tuned for opaque white. On a pane sitting over a photograph
+       the effective surface lands around #dbdcdb, where that grey measures
+       3.58:1 - under the 4.5:1 AA needs for the label and help text. Darkened
+       here ONLY, which fixes every muted string inside the panel at once and
+       leaves the workspace palette untouched. Measured 4.99:1. */
+    --p-muted: #4f5b60;
+    background: color-mix(in srgb, var(--p-surface) 82%, transparent);
+    -webkit-backdrop-filter: blur(28px) saturate(1.6);
+    backdrop-filter: blur(28px) saturate(1.6);
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.9),
+        0 2px 6px rgba(9, 26, 52, 0.06),
+        0 30px 64px -28px rgba(9, 26, 52, 0.45);
+}
+
+/* Where the browser cannot blur, the pane would be a flat 78% wash over a
+   photograph - busy behind small type. Go nearly opaque instead. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .authx-glass {
+        background: color-mix(in srgb, var(--p-surface) 96%, transparent);
+    }
+}
+
+/* Someone who has asked the OS for less transparency should not get a pane of
+   frosted glass between them and a login form. */
+@media (prefers-reduced-transparency: reduce) {
+    .authx-glass {
+        background: var(--p-surface);
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+    }
+}
+
+/* The card is now the glass panel itself. This stays as a hook so the markup
+   reads the same, but it draws nothing - a bordered white box inside a pane of
+   glass is two surfaces doing one surface's job. */
+.authx-card {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    box-shadow: none;
+}
+
+/* Inputs on this screen are taller than the workspace default - a login is
+   typed once, in a hurry, often on a shared machine, and 46px is a target
+   nobody misses. Radius matches the app's fields so it still reads as Jeeva. */
+.portal.authx :is(input) {
+    border-radius: 8px;
+}
+
+/* The one entrance. The card arrives; nothing else moves. */
+.portal.authx main {
+    animation: authxIn 0.5s cubic-bezier(0.22, 0.61, 0.24, 1) both;
+}
+
+@keyframes authxIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
     to {
-        stroke-dashoffset: 0;
+        opacity: 1;
+        transform: none;
     }
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .authx [data-lift] {
-        opacity: 1;
-        transform: none;
+    .portal.authx main {
         animation: none;
-    }
-    .authx-trace {
-        stroke-dashoffset: 0;
-        animation: none;
-    }
-    .authx-desk,
-    .authx-desk::before {
-        transition: none;
     }
 }

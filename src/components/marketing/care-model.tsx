@@ -1,31 +1,62 @@
 import Link from "next/link";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Phone } from "lucide-react";
 import { CARE_MODEL, HOSPITAL } from "@/lib/data";
 import { Chapter } from "./section";
 import { Reveal, ScrubText, SplitLead, Stagger } from "./motion";
 
 /**
- * Chapter 03 - the first dark room.
+ * Chapter 03 - what the hospital actually believes, as a bento.
  *
- * The page changes material here. This is the section that says what the
- * hospital actually believes, so it gets the whole viewport width in pine and
- * the one scrub-linked paragraph on the site: the sentence lights up word by
- * word as you scroll through it, which slows a reader down to roughly the
- * speed the sentence deserves.
+ * REBUILT FROM RULED ROWS TO CARDS. Six hairline-separated rows is the right
+ * shape for a list you scan and the wrong one for six claims you are meant to
+ * weigh: every row got identical visual weight, so the promise that matters
+ * most - the emergency door - arrived last and quietest. Cards let the grid say
+ * which of these is the big one, and a card is also the idiom the rest of this
+ * site is built from, so the chapter stops being the odd one out.
  *
- * Used exactly once. A second scrubbed paragraph would turn a device into a
- * mannerism.
+ * THE PALETTE IS "WHY JEEVA'S", DELIBERATELY. White cells on porcelain, 16px
+ * corners, no borders and no shadows, counted teal numerals, and the accent
+ * spent in exactly one filled cell. A visitor has already learnt to read that
+ * shape two chapters ago; reusing it here means the care model reads as more of
+ * the same argument rather than as a different page.
+ *
+ * THE PINE ROOM SURVIVES AS A CARD. This was the site's one full-bleed dark
+ * band, and losing it entirely would flatten the contrast rhythm the homepage
+ * is built on - so the manifesto keeps its pine, as a panel at the head of the
+ * chapter, and the six pillars come out into the light beneath it. That also
+ * keeps the site's ONE scrub-linked paragraph exactly where it was: the
+ * sentence still lights up word by word, still only happens once.
  */
+
+/** How much of the row each claim is worth. The two widest are the two a
+ *  family actually chooses a hospital on: the record, and the open door. */
+const SPAN: Record<string, string> = {
+  "01": "lg:col-span-2",
+  "04": "lg:col-span-2",
+  "06": "lg:col-span-2",
+};
+
 export function CareModel() {
+  const emergency = HOSPITAL.emergency.replace(/\s/g, "");
+
   return (
-    <Chapter id="care" tone="dark">
-      <div className="rule-row rule-row-dark">
+    <Chapter id="care" tone="light">
+      <div className="rule-row">
         <span className="rule-idx">(03)</span>
         <span className="rule-line" />
         <span className="rule-label">The care model</span>
       </div>
 
-      <div className="mt-12 sm:mt-16">
+      {/* ── the manifesto, still in pine ─────────────────────────────────── */}
+      <Reveal
+        className="relative isolate mt-9 overflow-hidden rounded-[var(--r-xl)] bg-[var(--pine-ink)] px-6 py-14 text-white sm:mt-12 sm:px-12 sm:py-20"
+        y={26}
+      >
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(120%_90%_at_15%_-10%,rgba(23,112,95,0.34),transparent_62%),radial-gradient(90%_70%_at_90%_110%,rgba(11,84,76,0.34),transparent_60%)]"
+        />
+
         <SplitLead
           as="h2"
           className="display-lead max-w-4xl text-white"
@@ -36,32 +67,65 @@ export function CareModel() {
           className="mt-10 max-w-4xl text-[clamp(1.05rem,1.9vw,1.65rem)] font-medium leading-[1.5] tracking-[-0.02em] text-white sm:mt-14"
           text="Most of what goes wrong in a hospital goes wrong in the gaps: a file that did not follow you from one department to the next, a test repeated because nobody could find the first result, a bill nobody could explain. We built the software this hospital runs on before we built this page, and we built it to close those gaps."
         />
-      </div>
+      </Reveal>
 
-      {/* the three pillars, ruled */}
-      <Stagger each={0.12} y={26} className="grid-lines grid-lines-dark mt-16 sm:mt-20">
-        {CARE_MODEL.map((c) => (
-          <article key={c.index} className="grid gap-5 py-9 lg:grid-cols-12 lg:gap-10">
-            <p className="mono text-[11px] uppercase tracking-[0.2em] text-[var(--teal-tint)] lg:col-span-2">
-              ({c.index})
-            </p>
-            <h3 className="display-sm text-white lg:col-span-4">{c.title}</h3>
-            <p className="max-w-[62ch] text-[14.5px] leading-[1.7] text-white/65 lg:col-span-6">
-              {c.text}
-            </p>
-          </article>
-        ))}
+      {/* ── the six pillars, as cells ────────────────────────────────────── */}
+      <Stagger each={0.07} y={24} className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {CARE_MODEL.map((c) =>
+          c.index === "06" ? (
+            /* the one filled cell - the only place the accent is spent, and it
+               goes to the promise that has to survive being read in a panic */
+            <article
+              key={c.index}
+              className={`flex flex-col justify-between rounded-[16px] bg-[var(--teal)] p-6 sm:p-7 ${SPAN[c.index] ?? ""}`}
+            >
+              <p className="mono text-[10px] uppercase tracking-[0.18em] text-white/55">
+                ({c.index}) · Always open
+              </p>
+              <div className="mt-10">
+                <h3 className="display-sm max-w-[24ch] text-white">{c.title}</h3>
+                <p className="mt-3.5 max-w-[62ch] text-[13.5px] leading-[1.7] text-white/75">
+                  {c.text}
+                </p>
+                <a
+                  href={`tel:${emergency}`}
+                  className="mono mt-7 inline-flex items-center gap-2.5 rounded-full bg-white/10 px-4 py-2.5 text-[12px] tracking-[0.04em] text-white transition-colors hover:bg-white/20"
+                >
+                  <Phone className="h-3.5 w-3.5" /> {HOSPITAL.emergency} · 24×7
+                </a>
+              </div>
+            </article>
+          ) : (
+            <article
+              key={c.index}
+              className={`flex flex-col justify-between rounded-[16px] bg-[var(--paper)] p-6 sm:p-7 ${SPAN[c.index] ?? ""}`}
+            >
+              <p className="mono text-[10px] uppercase tracking-[0.18em] text-[var(--teal)]">
+                ({c.index})
+              </p>
+              <div className="mt-10">
+                <h3 className="display-sm max-w-[24ch] text-[var(--ink)]">{c.title}</h3>
+                <p className="mt-3.5 max-w-[62ch] text-[13.5px] leading-[1.7] text-[var(--ink-soft)]">
+                  {c.text}
+                </p>
+              </div>
+            </article>
+          ),
+        )}
       </Stagger>
 
-      <Reveal className="mt-12 flex flex-wrap items-center gap-x-8 gap-y-4" y={16}>
-        <Link href="/book" className="link-arrow link-arrow-dark">
+      <Reveal className="mt-10 flex flex-wrap items-center gap-x-8 gap-y-4" y={16}>
+        <Link href="/book" className="link-arrow">
           Register and book
           <span className="link-arrow-dot">
             <ArrowUpRight className="h-3.5 w-3.5" />
           </span>
         </Link>
-        <p className="mono text-[10.5px] uppercase tracking-[0.16em] text-white/40">
-          OPD {HOSPITAL.opdHours} · seven days · emergency never closes
+        {/* read from HOSPITAL rather than typed: this line used to claim
+            "seven days" while the data said Monday to Saturday, so the site
+            contradicted its own opening hours two chapters apart */}
+        <p className="mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--muted)]">
+          OPD {HOSPITAL.opdHours} · {HOSPITAL.opdDays} · emergency never closes
         </p>
       </Reveal>
     </Chapter>

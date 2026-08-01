@@ -7,6 +7,7 @@ import { Search, ArrowRight, CornerDownLeft } from "lucide-react";
 import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
 import { searchDoctors } from "@/lib/doctor-search";
 import { DOCTORS } from "@/lib/data";
+import { doctorHref } from "@/lib/doctors";
 
 /**
  * The header search, with live results.
@@ -75,7 +76,7 @@ export function DoctorSearchBox({
   /** A highlighted consultant wins over the general search - if someone has
    *  arrowed down to a name, that name is what they meant. */
   function commit() {
-    if (active >= 0 && matches[active]) return go(`/doctors/${matches[active].doctor.id}`);
+    if (active >= 0 && matches[active]) return go(doctorHref(matches[active].doctor));
     go(q.trim() ? `/doctors?q=${encodeURIComponent(q.trim())}` : "/doctors");
   }
 
@@ -149,8 +150,8 @@ export function DoctorSearchBox({
                 {matches.map((m, i) => (
                   <li key={m.doctor.id} role="option" id={`${listId}-opt-${i}`} aria-selected={i === active}>
                     <Link
-                      href={`/doctors/${m.doctor.id}`}
-                      onClick={(e) => { e.preventDefault(); go(`/doctors/${m.doctor.id}`); }}
+                      href={doctorHref(m.doctor)}
+                      onClick={(e) => { e.preventDefault(); go(doctorHref(m.doctor)); }}
                       onMouseEnter={() => setActive(i)}
                       className={`flex items-center gap-3 px-3 py-2.5 transition-colors ${i === active ? "bg-[var(--teal-soft)]" : "hover:bg-[var(--bone)]"}`}
                     >

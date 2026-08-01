@@ -2,6 +2,7 @@ import type { MetadataRoute } from "next";
 import { DOCTORS } from "@/lib/data";
 import { departmentSlugs } from "@/lib/care";
 import { SITE_URL } from "@/lib/site";
+import { doctorHref } from "@/lib/doctors";
 
 /**
  * Every public page, so the doctor profiles and department pages are
@@ -32,7 +33,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.8,
     })),
     ...DOCTORS.map((d) => ({
-      url: `${SITE_URL}/doctors/${d.id}`,
+      url: `${SITE_URL}${doctorHref(d)}`,
       lastModified: now,
       changeFrequency: "monthly" as const,
       priority: 0.7,

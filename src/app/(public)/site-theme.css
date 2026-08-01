@@ -98,6 +98,12 @@
 
   --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
 
+  /* Red Hat Display is the public site's display face, set here rather than in
+     each section: every display rule below reads --font-display, so overriding
+     the token once re-fonts the whole site and nothing in the portals moves.
+     Self-hosted from /public/fonts at 400/500/600/700 - see globals.css. */
+  --font-display: "Red Hat Display", var(--font-bricolage), system-ui, sans-serif;
+
   background: var(--bone);
   color: var(--ink);
   font-feature-settings: "cv01", "cv03", "ss01";
@@ -492,6 +498,14 @@
    8 · THE PINNED RAIL
    ========================================================================== */
 
+/* The navbar's care-area row. It scrolls sideways rather than overflowing the
+   document when the ten items do not fit - which is every width from lg up to
+   about 1240px. The scrollbar itself is hidden: a 15px trough under the nav
+   links would read as a broken layout rather than as an affordance, and the
+   row is reachable by trackpad, wheel-tilt, touch and keyboard regardless. */
+.nav-rail { scrollbar-width: none; -ms-overflow-style: none; }
+.nav-rail::-webkit-scrollbar { display: none; }
+
 .rail-shell { overflow: hidden; }
 .rail-track {
   display: flex;
@@ -725,7 +739,62 @@ summary:hover .faq-chev { border-color: var(--teal); color: var(--teal); }
 }
 
 /* ============================================================================
-   14 · LENIS
+   14 · THE MENU ICON & THE MOBILE DRAWER
+   ========================================================================== */
+
+/* Three strokes that fold into a cross. See menu-icon.tsx for why this is one
+   moving control rather than two swapped glyphs.
+
+   `transform-box: view-box` is what makes the geometry legible: it puts every
+   line's transform origin at the centre of the 24x24 box (12, 12) rather than
+   at the centre of its own zero-height bounding box, so "rotate 45 degrees"
+   means about the middle of the icon, which is the only place it could
+   sensibly mean. Read each transform right to left: shorten about the centre,
+   slide to the middle line's row, then rotate in place. */
+.menu-icon {
+  width: 20px;
+  height: 20px;
+  overflow: visible;
+}
+.menu-icon line {
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  transform-box: view-box;
+  transform-origin: center;
+  transition: transform 0.5s var(--ease-out), opacity 0.22s ease;
+}
+
+/* Opening, the top line leads and the bottom follows a frame later; closing,
+   they swap, so the burger reassembles from the top down. A 60ms offset - just
+   enough to be felt rather than seen. */
+.menu-icon .m-top { transition-delay: 0.06s; }
+.menu-icon .m-bot { transition-delay: 0s; }
+
+.menu-icon[data-open="true"] .m-top {
+  transform: rotate(45deg) translateY(5px) scaleX(0.86);
+  transition-delay: 0s;
+}
+.menu-icon[data-open="true"] .m-mid {
+  transform: scaleX(0);
+  opacity: 0;
+}
+.menu-icon[data-open="true"] .m-bot {
+  transform: rotate(-45deg) translateY(-5px) scaleX(0.86);
+  transition-delay: 0.06s;
+}
+
+/* The drawer's own scroll area must not hand its overscroll to the page
+   underneath - a thumb that reaches the end of the menu should stop, not start
+   scrolling the homepage behind the panel. */
+.drawer-scroll { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-icon line { transition: none; }
+}
+
+/* ============================================================================
+   15 · LENIS
    ========================================================================== */
 
 html.lenis, html.lenis body { height: auto; }

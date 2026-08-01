@@ -11,9 +11,13 @@ import { Stagger } from "./motion";
  * a phone call. It sits directly under the marquee so none of those four ever
  * needs a scroll.
  *
- * Built as one hairline-divided row rather than four floating cards. Cards with
- * gradients and shadows read as advertising; a ruled row reads as a directory,
- * which is what it is.
+ * NOW CARDS, AND WHY THAT IS NOT A REVERSAL. The old note here argued for a
+ * hairline row over cards, on the grounds that "cards with gradients and
+ * shadows read as advertising". The objection was to the gradients and the
+ * shadows, not to the card - and the reference site's cards have neither. These
+ * are flat panels separated by a value step, with 10px corners and no border at
+ * all, which still reads as a directory rather than a billboard while giving
+ * each lane a tap target with an actual edge to it.
  */
 const LANES = [
   {
@@ -39,16 +43,22 @@ const LANES = [
   },
 ] as const;
 
+/* One padding scale for all four lanes. The emergency lane used to run px-4
+   against the others' px-1, so on a phone the red card's text sat on a
+   different left edge to everything above it. */
+const CARD =
+  "group relative flex min-h-[9.5rem] flex-col justify-between gap-7 rounded-[10px] p-5 transition-colors duration-250 sm:p-6";
+
 export function ActionBar() {
   const emergency = HOSPITAL.emergency.replace(/\s/g, "");
 
   return (
     <section className="bg-[var(--paper)]" aria-label="Quick actions">
-      <div className="shell-w">
+      <div className="shell-w py-6 sm:py-8">
         <Stagger
           each={0.07}
           y={20}
-          className="grid grid-cols-1 border-b border-[var(--line)] sm:grid-cols-2 lg:grid-cols-4"
+          className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4"
         >
           {LANES.map((l) => {
             const Icon = l.icon;
@@ -56,19 +66,27 @@ export function ActionBar() {
               <Link
                 key={l.title}
                 href={l.href}
-                className="group relative flex flex-col justify-between gap-7 border-t border-[var(--line)] px-1 py-7 transition-colors hover:bg-[var(--bone)] sm:px-6 sm:py-8 lg:border-l lg:first:border-l-0"
+                className={`${CARD} bg-[var(--bone)] hover:bg-[var(--bone-deep)]`}
               >
                 <div className="flex items-start justify-between gap-4">
-                  <Icon className="h-5 w-5 text-[var(--teal)]" strokeWidth={1.6} />
-                  <span className="mono text-[9.5px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                  <Icon
+                    aria-hidden
+                    className="h-5 w-5 text-[var(--teal)]"
+                    strokeWidth={1.6}
+                  />
+                  {/* 10.5px, not 9.5px - the old size put --muted on white
+                      under the contrast floor for text that small */}
+                  <span className="mono text-[10.5px] uppercase tracking-[0.14em] text-[var(--muted)]">
                     {l.meta}
                   </span>
                 </div>
+
                 <div>
                   <h3 className="flex items-center gap-2 text-[16.5px] font-semibold tracking-[-0.02em] text-[var(--ink)]">
                     {l.title}
                     <ArrowUpRight
-                      className="h-4 w-4 shrink-0 text-[var(--muted)] transition-all duration-400 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-[var(--teal)]"
+                      aria-hidden
+                      className="h-4 w-4 shrink-0 text-[var(--muted)] transition-transform duration-400 group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-[var(--teal)]"
                     />
                   </h3>
                   <p className="mt-1.5 text-[13px] leading-snug text-[var(--ink-soft)]">
@@ -79,23 +97,34 @@ export function ActionBar() {
             );
           })}
 
-          {/* the fourth lane is a phone call, and it is the only red one */}
+          {/* The fourth lane is a phone call, and it is the only red one.
+              Hover deepens the tint rather than flooding the card in alarm
+              red: the flood repainted four things at once, and left the pulse
+              ring drawing red-on-red because .pulse-alert::after has no hover
+              state to invert with it. */}
           <a
             href={`tel:${emergency}`}
-            className="group relative flex flex-col justify-between gap-7 border-t border-[var(--line)] bg-[var(--alert-soft)] px-4 py-7 transition-colors hover:bg-[var(--alert)] sm:px-6 sm:py-8 lg:border-l"
+            className={`${CARD} bg-[var(--alert-soft)] hover:bg-[var(--alert)]/15`}
           >
             <div className="flex items-start justify-between gap-4">
-              <PhoneCall className="h-5 w-5 text-[var(--alert)] transition-colors group-hover:text-white" strokeWidth={1.6} />
-              <span className="mono flex items-center gap-2 text-[9.5px] uppercase tracking-[0.16em] text-[var(--alert)] transition-colors group-hover:text-white/80">
-                <span className="pulse pulse-alert group-hover:!bg-white" />
+              <PhoneCall
+                aria-hidden
+                className="h-5 w-5 text-[var(--alert)]"
+                strokeWidth={1.6}
+              />
+              <span className="mono flex items-center gap-2 text-[10.5px] uppercase tracking-[0.14em] text-[var(--alert)]">
+                <span className="pulse pulse-alert" />
                 Always open
               </span>
             </div>
+
             <div>
-              <h3 className="text-[16.5px] font-semibold tracking-[-0.02em] text-[var(--alert)] transition-colors group-hover:text-white">
+              <h3 className="text-[16.5px] font-semibold tracking-[-0.02em] text-[var(--alert)]">
                 Emergency 24×7
               </h3>
-              <p className="mono mt-1.5 text-[13px] font-semibold text-[var(--alert-deep)] transition-colors group-hover:text-white">
+              {/* the number itself, not just a label - somebody reading this on
+                  a desktop needs to be able to copy it, not tap it */}
+              <p className="mono mt-1.5 text-[13px] font-semibold text-[var(--alert-deep)]">
                 {HOSPITAL.emergency}
               </p>
             </div>

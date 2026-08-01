@@ -5,6 +5,8 @@ import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/portal/ui/icons";
 import { CommandBar } from "@/components/portal/shell/command-bar";
+import { SettingsPanel, type Me } from "@/components/portal/shell/settings-panel";
+import { themeBootScript } from "@/lib/portal/theme";
 import type { NavItem } from "@/lib/portal/nav";
 import { PORTALS } from "@/lib/portal/nav";
 import { api } from "@/lib/api-client";
@@ -57,11 +59,13 @@ export function PortalShell({
   // pathname arrives rewritten as /reception/... - strip the portal prefix to match nav hrefs.
   const localPath = pathname.replace(new RegExp(`^/${portalKey}`), "") || "/";
 
-  const [me, setMe] = useState<{ name: string; role: string } | null>(null);
+  const [me, setMe] = useState<Me | null>(null);
   useEffect(() => {
     if (localPath === "/login") return;
-    api.get<{ name: string; role: string }>("/auth/me").then(setMe).catch(() => {});
+    api.get<Me>("/auth/me").then(setMe).catch(() => {});
   }, [localPath]);
+
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // The hospital's own logo and name, set by an admin under Settings. Falls back
   // to the built-in mark, so a hospital that never uploads one sees no gap.
@@ -199,6 +203,10 @@ export function PortalShell({
     /* data-portal lets one portal carry its own skin without leaking into the
        others - the pharmacy's glass theme is scoped to [data-portal="pharmacy"]. */
     <div className="portal min-h-screen" data-portal={meta.key}>
+      {/* Paints the saved accent while this element is still being parsed, so a
+          themed portal never flashes the hospital palette for a frame first.
+          Reads only its own parent - see lib/portal/theme.ts. */}
+      <script dangerouslySetInnerHTML={{ __html: themeBootScript(meta.key) }} />
       <div className="flex min-h-screen">
         {/* ---- Sidebar: frosted glass, light ---- */}
         <aside className="glass sticky top-0 hidden h-screen w-[336px] shrink-0 flex-col border-r border-[var(--p-border)] md:flex">
@@ -226,12 +234,20 @@ export function PortalShell({
                 <div className="text-[11px] text-[var(--p-muted)]">{meta.roleLabel}</div>
               </div>
             </div>
-            <button
-              onClick={logout}
-              className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--p-border)] py-1.5 text-[13px] font-medium text-[var(--p-muted)] transition-colors hover:border-[var(--p-rose)]/40 hover:text-[var(--p-rose)]"
-            >
-              <Icon name="logout" size={13} /> Sign out
-            </button>
+            <div className="mt-2.5 flex gap-2">
+              <button
+                onClick={() => setSettingsOpen(true)}
+                className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-[var(--p-border)] py-1.5 text-[13px] font-medium text-[var(--p-muted)] transition-colors hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]"
+              >
+                <Icon name="settings" size={13} /> Settings
+              </button>
+              <button
+                onClick={logout}
+                className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-[var(--p-border)] py-1.5 text-[13px] font-medium text-[var(--p-muted)] transition-colors hover:border-[var(--p-rose)]/40 hover:text-[var(--p-rose)]"
+              >
+                <Icon name="logout" size={13} /> Sign out
+              </button>
+            </div>
           </div>
         </aside>
 
@@ -257,6 +273,14 @@ export function PortalShell({
                 <span className="h-1.5 w-1.5 rounded-full bg-[var(--p-cyan)]" />
                 Live
               </span>
+              <button
+                onClick={() => setSettingsOpen(true)}
+                aria-label="Settings"
+                title="Settings - your account and the accent colour"
+                className="rounded-lg border border-[var(--p-border)] bg-white/60 p-1.5 text-[var(--p-muted)] transition-colors hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]"
+              >
+                <Icon name="settings" size={16} />
+              </button>
               <div className="hidden text-right sm:block">
                 <div className="text-[13px] font-semibold leading-tight text-[var(--p-ink)]">{displayName}</div>
                 <div className="text-[11px] text-[var(--p-muted)]">{meta.roleLabel}</div>
@@ -272,6 +296,12 @@ export function PortalShell({
             <div className="glass border-b border-[var(--p-border)] py-3 md:hidden">
               <NavLinks />
               <div className="mt-2 border-t border-[var(--p-border)] px-3 pt-2">
+                <button
+                  onClick={() => { setOpen(false); setSettingsOpen(true); }}
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-[14px] text-[var(--p-muted)] hover:text-[var(--p-blue)]"
+                >
+                  <Icon name="settings" size={16} /> Settings
+                </button>
                 <button onClick={logout} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-[14px] text-[var(--p-muted)] hover:text-[var(--p-rose)]">
                   <Icon name="logout" size={16} /> Sign out
                 </button>
@@ -282,6 +312,14 @@ export function PortalShell({
           <main className="flex-1 px-5 py-6 md:px-8 md:py-8">{children}</main>
         </div>
       </div>
+
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        portalKey={meta.key}
+        roleLabel={meta.roleLabel}
+        me={me}
+      />
     </div>
   );
 }

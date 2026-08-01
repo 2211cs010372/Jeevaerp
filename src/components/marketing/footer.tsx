@@ -45,6 +45,7 @@ export function Footer() {
             <p className="mono text-[10px] uppercase tracking-[0.2em] text-white/35">Discover</p>
             <ul className="mt-5 space-y-3 text-[13.5px]">
               {[
+                { href: "/about", label: "About the hospital" },
                 { href: "/doctors", label: "Doctors" },
                 { href: "/#departments", label: "Departments" },
                 { href: "/health-checks", label: "Health checks" },

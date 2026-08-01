@@ -52,19 +52,16 @@ export default function HomePage() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(hospitalJsonLd()) }}
       />
-
       <Hero />
       <Ticker />
       <ActionBar />
-
       <Trust />
+      <SpecializedDoctors />
       <Departments />
       <CareModel />
       <NumbersBand />
-      <SpecializedDoctors />
       <Journey />
       <Facilities />
-      <Wards />
       <Testimonials />
       <Visit />
       <Faq />

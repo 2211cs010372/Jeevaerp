@@ -2,6 +2,7 @@ import "./site-theme.css";
 import { Navbar } from "@/components/marketing/navbar";
 import { SmoothScroll, ScrollProgress } from "@/components/marketing/smooth-scroll";
 import { Footer } from "@/components/marketing/footer";
+import { siteThemeBootScript } from "@/lib/site/theme";
 
 /**
  * The public shell.
@@ -18,8 +19,17 @@ import { Footer } from "@/components/marketing/footer";
 export default function PublicLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  // suppressHydrationWarning because the boot script below writes inline custom
+  // properties onto the site root before React hydrates. React would otherwise
+  // report the style attribute as a mismatch on every visit by somebody who has
+  // chosen a theme - which is every returning visitor.
   return (
-    <div className="site grain relative">
+    <div className="site grain relative" suppressHydrationWarning>
+      {/* Paints the saved accent while this element is still being parsed, so
+          a themed site never flashes the hospital teal for a frame first.
+          Reads only its own parent - see lib/site/theme.ts. A script element
+          is not focusable, so sitting ahead of the skip link costs nothing. */}
+      <script dangerouslySetInnerHTML={{ __html: siteThemeBootScript() }} />
       <a href="#main" className="skip-link">
         Skip to content
       </a>

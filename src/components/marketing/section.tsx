@@ -118,9 +118,9 @@ export function ChapterHead({
       >
         <SplitLead
           id={id}
-          as="h2"
+          as="h3"
           lines={lines}
-          className={`display-lead ${dark ? "text-white" : "text-[var(--ink)]"}`}
+          className={`display-lead md:text-[5vw] text-[7vw] ${dark ? "text-white" : "text-[var(--ink)]"}`}
         />
 
         {(lede || action) && (

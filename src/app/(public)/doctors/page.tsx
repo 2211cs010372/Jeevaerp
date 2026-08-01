@@ -4,6 +4,7 @@ import { SectionHeading } from "@/components/ui/section-heading";
 import { DoctorsDirectory } from "@/components/marketing/doctors-directory";
 import { DOCTORS, DEPARTMENTS, HOSPITAL } from "@/lib/data";
 import { SITE_URL, abs } from "@/lib/site";
+import { doctorHref } from "@/lib/doctors";
 
 const TITLE = "Our doctors";
 const DESCRIPTION =
@@ -50,14 +51,14 @@ function doctorsListJsonLd() {
     itemListElement: DOCTORS.map((d, i) => ({
       "@type": "ListItem",
       position: i + 1,
-      url: abs(`/doctors/${d.id}`),
+      url: abs(doctorHref(d)),
       item: {
         "@type": "Physician",
-        "@id": abs(`/doctors/${d.id}#physician`),
+        "@id": abs(`${doctorHref(d)}#physician`),
         name: d.name,
         medicalSpecialty: d.specialization,
         image: abs(d.image),
-        url: abs(`/doctors/${d.id}`),
+        url: abs(doctorHref(d)),
         knowsLanguage: d.languages.split(",").map((l) => l.trim()),
         worksFor: { "@type": "Hospital", name: HOSPITAL.name, url: SITE_URL },
       },

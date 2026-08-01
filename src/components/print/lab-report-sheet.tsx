@@ -396,13 +396,24 @@ function LabReportSheetInner() {
           </tbody>
         </table>
 
+        {/* grow: whatever height the sheet doesn't use lands BETWEEN the table
+            and the comments, so the gap on a two-analyte report opens in the
+            middle of the page instead of under the signature. */}
+        <div className="flex-1" />
+
         {/* ── COMMENTS ──
             The bench's read of its OWN numbers, in the technician's words, under
             the heading the hospital's report uses. Set apart from the table and
             never merged into it: a lab reports on a specimen, a doctor diagnoses
-            the person. */}
+            the person.
+
+            Placed AFTER the grow spacer so it sits hard against the footer rule
+            rather than floating directly under the last analyte with a page of
+            white beneath it. The foot itself is lifted out of flow on
+            stationery (bottom: 20mm, inside the 46mm bottom padding), so this
+            block still ends clear of it - the padding is the margin they share. */}
         {test.impression?.trim() && (
-          <div className="mt-[10px]">
+          <div className="mb-[4px] border-t pt-[6px]" style={{ borderColor: "var(--pr-hair)" }}>
             <div className="text-[10.5px] font-bold" style={{ color: "var(--pr-ink)" }}>Comments</div>
             <p className="mt-[2px] whitespace-pre-line text-[10.5px] leading-[1.45]" style={{ color: "var(--pr-ink)" }}>
               {test.impression}
@@ -412,11 +423,6 @@ function LabReportSheetInner() {
             </p>
           </div>
         )}
-
-        {/* grow: whatever height the sheet doesn't use lands here rather than as
-            one dead gap above the signature, so a two-analyte report doesn't
-            print its footer halfway up the page. */}
-        <div className="flex-1" />
 
         <ReportFoot
           withNotes={withNotes && entered}

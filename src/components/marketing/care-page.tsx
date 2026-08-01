@@ -18,6 +18,7 @@ import { Parallax, Reveal, SplitLead, Stagger } from "@/components/marketing/mot
 import { DEPARTMENTS, HOSPITAL, type CareArea, type Department, type Doctor } from "@/lib/data";
 import { careHref, slugify } from "@/lib/care";
 import { daysInWords } from "@/lib/opd";
+import { doctorHref } from "@/lib/doctors";
 
 /**
  * A department page.
@@ -171,7 +172,7 @@ export function CarePage({
                   </p>
                   <p className="mt-2 text-[10.5px] text-white/45">paid at the hospital</p>
 
-                  <Link href={`/doctors/${doc.id}`} className="btn btn-light mt-4 w-full !px-4 !py-2.5 !text-[13px]">
+                  <Link href={doctorHref(doc)} className="btn btn-light mt-4 w-full !px-4 !py-2.5 !text-[13px]">
                     See times &amp; book
                   </Link>
                   <a

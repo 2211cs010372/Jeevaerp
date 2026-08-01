@@ -154,8 +154,8 @@ export function DoctorSlots({
   if (byAppointment) {
     const tel = HOSPITAL.phone.replace(/\s/g, "");
     return (
-      <div className="rounded-[1.75rem] bg-[var(--peach-soft)] p-1.5 ring-1 ring-black/5">
-        <div className="glass rounded-[1.35rem] p-6 text-center">
+      <div className="rounded-[16px] bg-[var(--paper)]">
+        <div className="p-6 text-center">
           <span className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-[var(--teal-soft)] text-[var(--teal)]">
             <Phone className="h-5 w-5" />
           </span>
@@ -179,8 +179,8 @@ export function DoctorSlots({
   // ── booked ───────────────────────────────────────────────────────────────
   if (step === "done" && booking) {
     return (
-      <div className="rounded-[1.75rem] bg-[var(--peach-soft)] p-1.5 ring-1 ring-black/5">
-        <div className="glass rounded-[1.35rem] p-7 text-center">
+      <div className="rounded-[16px] bg-[var(--paper)]">
+        <div className="p-7 text-center">
           <span className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-[var(--teal)] text-white">
             <Check className="h-6 w-6" />
           </span>
@@ -218,8 +218,8 @@ export function DoctorSlots({
   // ── verify the number ────────────────────────────────────────────────────
   if (step === "code" && picked) {
     return (
-      <div className="rounded-[1.75rem] bg-[var(--peach-soft)] p-1.5 ring-1 ring-black/5">
-        <div className="glass rounded-[1.35rem] p-6">
+      <div className="rounded-[16px] bg-[var(--paper)]">
+        <div className="p-6">
           <button onClick={() => { setStep("details"); setOtpCode(""); setErr(null); }}
             className="font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--muted)] hover:text-[var(--teal)]">
             ← Change details
@@ -259,8 +259,8 @@ export function DoctorSlots({
     /* min-w-0 twice over: a grid/flex item defaults to min-width:auto, which
        lets the day strip's fixed-width buttons force the whole PAGE wider
        instead of scrolling inside their own overflow-x-auto box. */
-    <div className="flex h-full min-w-0 flex-col rounded-[1.75rem] bg-[var(--peach-soft)] p-1.5 ring-1 ring-black/5">
-      <div className="glass flex h-full min-w-0 flex-col rounded-[1.35rem] p-5 sm:p-6">
+    <div className="flex h-full min-w-0 flex-col rounded-[16px] bg-[var(--paper)]">
+      <div className="flex h-full min-w-0 flex-col p-5 sm:p-6">
         <div className="flex items-baseline justify-between gap-3">
           <h2 className="display text-[20px] text-[var(--ink)]">Pick a time</h2>
           <span className="font-mono text-[12px] text-[var(--muted)]">₹{fee} at the desk</span>

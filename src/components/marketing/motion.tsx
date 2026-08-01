@@ -122,6 +122,8 @@ export function Stagger({
   className,
   each = 0.08,
   y = 30,
+  /** Entry scale. 1 keeps the plain rise; below 1 blooms the child open. */
+  scaleFrom = 1,
   start = "top 85%",
   style,
 }: {
@@ -130,6 +132,7 @@ export function Stagger({
   className?: string;
   each?: number;
   y?: number;
+  scaleFrom?: number;
   start?: string;
   style?: CSSProperties;
 }) {
@@ -143,10 +146,11 @@ export function Stagger({
     if (!kids.length) return;
 
     const ctx = gsap.context(() => {
-      gsap.set(kids, { opacity: 0, y });
+      gsap.set(kids, { opacity: 0, y, scale: scaleFrom });
       gsap.to(kids, {
         opacity: 1,
         y: 0,
+        scale: 1,
         duration: 0.9,
         ease: EASE,
         stagger: each,
@@ -155,7 +159,7 @@ export function Stagger({
     }, el);
 
     return () => ctx.revert();
-  }, [each, y, start]);
+  }, [each, y, scaleFrom, start]);
 
   return (
     <Tag ref={ref} className={className} style={style}>
@@ -359,11 +363,19 @@ export function Counter({
   suffix = "",
   className,
   duration = 1.9,
+  /**
+   * Fire on mount instead of on scroll. Required above the fold: a counter
+   * that starts the page already past `top 92%` never gets an onEnter, so the
+   * tween writes its opening 0 over the server-rendered value and stops there.
+   * Same escape hatch SplitLead has, for the same reason.
+   */
+  immediate = false,
 }: {
   value: number;
   suffix?: string;
   className?: string;
   duration?: number;
+  immediate?: boolean;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
 
@@ -380,12 +392,14 @@ export function Counter({
         onUpdate: () => {
           el.textContent = String(Math.round(box.n));
         },
-        scrollTrigger: { trigger: el, start: "top 92%", once: true },
+        ...(immediate
+          ? {}
+          : { scrollTrigger: { trigger: el, start: "top 92%", once: true } }),
       });
     }, el);
 
     return () => ctx.revert();
-  }, [value, duration]);
+  }, [value, duration, immediate]);
 
   return (
     <span className={className}>
@@ -467,11 +481,22 @@ export function PinnedRail({
   trackClassName,
   /** Extra scroll distance, as a multiple of the horizontal overflow. */
   ease = 1,
+  /**
+   * Turn on the depth choreography: the focus lens, the row weave, the media
+   * parallax and the velocity skew described below. Off by default so a plain
+   * rail stays a plain rail.
+   */
+  cinematic = false,
+  /** Rendered inside the pinned shell but OUTSIDE the moving track - for a
+   *  progress bar or a legend that should hold still while the cards travel. */
+  overlay,
 }: {
   children: ReactNode;
   className?: string;
   trackClassName?: string;
   ease?: number;
+  cinematic?: boolean;
+  overlay?: ReactNode;
 }) {
   const shell = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLDivElement>(null);
@@ -486,6 +511,116 @@ export function PinnedRail({
       const distance = () => trackEl.scrollWidth - shellEl.clientWidth;
       if (distance() <= 0) return;
 
+      /* ── the choreography ──────────────────────────────────────────────
+       *
+       * FOUR MOVES, all driven off one number: where a card currently sits
+       * across the screen. Nothing here reads the DOM per frame - every
+       * element's position inside the track is measured once on setup and on
+       * refresh, and the rest is arithmetic. Twenty-three cards updating on
+       * every scrub frame is only cheap if it never touches layout.
+       *
+       *   LENS      a card at the centre of the screen is at full size and
+       *             full contrast; one at either edge has receded. The rail
+       *             gets a focal plane, so the eye is told where to look
+       *             without anything being made louder.
+       *   WEAVE     the two rows travel at slightly different rates, so they
+       *             slide against each other instead of marching in lockstep.
+       *             That is the difference between a rail and a conveyor.
+       *   PARALLAX  each photograph drifts against its own frame as the card
+       *             crosses the screen, which turns a square crop into a
+       *             window with something behind it.
+       *   SKEW      the whole track leans a degree or so into the scroll and
+       *             springs back when it stops. Borrowed from the smooth-
+       *             scroll idiom the rest of the site already uses.
+       */
+      /** One card, with everything needed to move it already resolved. */
+      interface Cell {
+        setScale: (v: number) => void;
+        setFade: (v: number) => void;
+        setMedia: (v: number) => void;
+        /** Centre of the card, measured from the track's own left edge. */
+        base: number;
+        /** Which row it rides, so it can be given that row's drift. */
+        row: number;
+        el: HTMLElement;
+        media: HTMLElement | null;
+      }
+
+      let cells: Cell[] = [];
+      let rows: HTMLElement[] = [];
+      let setRow: ((v: number) => void)[] = [];
+      let setSkew: ((v: number) => void) | null = null;
+      let trackOrigin = 0;
+      let half = 1;
+      let settle = 0;
+
+      /** How far a row leans against its neighbour, at full travel. */
+      const WEAVE = 70;
+      const rowDrift = (row: number, progress: number) =>
+        (row % 2 === 0 ? 1 : -1) * WEAVE * progress;
+
+      const measure = () => {
+        if (!cinematic) return;
+        rows = Array.from(trackEl.children) as HTMLElement[];
+
+        // Measure from a clean slate: the drift and the lean are transforms
+        // this function's own output depends on, so leaving last frame's
+        // values on the elements would fold them into the new baseline.
+        gsap.set(trackEl, { skewX: 0 });
+        rows.forEach((row) => gsap.set(row, { x: 0 }));
+
+        const x = Number(gsap.getProperty(trackEl, "x")) || 0;
+        // Where the track's left edge sits with x = 0, in screen space. The
+        // shell is pinned, so this holds for the whole travel.
+        const trackLeft = trackEl.getBoundingClientRect().left;
+        trackOrigin = trackLeft - x;
+        half = Math.max(1, window.innerWidth / 2);
+
+        setRow = rows.map((row) => gsap.quickSetter(row, "x", "px") as (v: number) => void);
+        setSkew = gsap.quickSetter(trackEl, "skewX", "deg") as (v: number) => void;
+
+        cells = [];
+        rows.forEach((row, ri) => {
+          row.querySelectorAll<HTMLElement>(".rail-item").forEach((el) => {
+            const r = el.getBoundingClientRect();
+            const media = el.querySelector<HTMLElement>("[data-rail-media]");
+            cells.push({
+              el,
+              media,
+              row: ri,
+              base: r.left - trackLeft + r.width / 2,
+              setScale: gsap.quickSetter(el, "scale") as (v: number) => void,
+              setFade: gsap.quickSetter(el, "opacity") as (v: number) => void,
+              setMedia: media
+                ? (gsap.quickSetter(media, "xPercent") as (v: number) => void)
+                : () => {},
+            });
+          });
+        });
+      };
+
+      const paint = (x: number, progress: number) => {
+        if (!cinematic) return;
+
+        // The weave. Small numbers on purpose - this is a shear between two
+        // rows, not a second animation competing with the travel.
+        for (let i = 0; i < rows.length; i++) setRow[i]?.(rowDrift(i, progress));
+
+        for (const c of cells) {
+          const centre = trackOrigin + x + c.base + rowDrift(c.row, progress);
+          // -1 at the left edge of the screen, 0 dead centre, +1 at the right
+          const off = (centre - half) / half;
+          const away = Math.min(1, Math.abs(off));
+          c.setScale(1 - 0.11 * away);
+          c.setFade(1 - 0.42 * away);
+          // Kept under the 6% of slack the overscaled picture has on each side
+          // - any more and the drift would slide a hard edge into frame.
+          c.setMedia(off * -4);
+        }
+      };
+
+      measure();
+
       const tween = gsap.to(trackEl, {
         x: () => -distance(),
         ease: "none",
@@ -497,19 +632,48 @@ export function PinnedRail({
           scrub: 0.8,
           anticipatePin: 1,
           invalidateOnRefresh: true,
+          onRefresh: (self) => {
+            measure();
+            paint(Number(gsap.getProperty(trackEl, "x")) || 0, self.progress);
+          },
+          onUpdate: (self) => {
+            shellEl.style.setProperty("--rail-progress", String(self.progress));
+            paint(Number(gsap.getProperty(trackEl, "x")) || 0, self.progress);
+
+            if (!setSkew) return;
+            // getVelocity is the page scroll in px/second. A degree per
+            // 1200px/s leans into the movement without reading as a glitch.
+            setSkew(gsap.utils.clamp(-2.4, 2.4, self.getVelocity() / -1200));
+            clearTimeout(settle);
+            settle = window.setTimeout(() => {
+              gsap.to(trackEl, { skewX: 0, duration: 0.7, ease: "elastic.out(1, 0.5)" });
+            }, 90);
+          },
         },
       });
-      return () => tween.kill();
+
+      return () => {
+        clearTimeout(settle);
+        tween.kill();
+        if (!cinematic) return;
+        gsap.set(trackEl, { clearProps: "skewX" });
+        rows.forEach((row) => gsap.set(row, { clearProps: "x" }));
+        cells.forEach((c) => {
+          gsap.set(c.el, { clearProps: "scale,opacity" });
+          if (c.media) gsap.set(c.media, { clearProps: "xPercent" });
+        });
+      };
     });
 
     return () => mm.revert();
-  }, [ease]);
+  }, [ease, cinematic]);
 
   return (
     <div ref={shell} className={className}>
       <div ref={track} className={trackClassName}>
         {children}
       </div>
+      {overlay}
     </div>
   );
 }
