@@ -8,7 +8,7 @@ import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
-import { TOPICS } from "@/lib/realtime/topics";
+import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 
 interface Alerts {
   expiring: { batchId: string; medicine: string; batchNo: string; expiryDate: string; quantity: number; daysLeft: number }[];
@@ -25,7 +25,9 @@ export default function AlertsPage() {
 
   // Every dispense and every delivery moves these numbers. A "low stock" list
   // that is an hour stale sends someone to reorder what already arrived.
-  useLive([TOPICS.PHARMACY], load);
+  useLive([TOPICS.PHARMACY], load, {
+    events: [EVENTS.PRESCRIPTION_DISPENSED, EVENTS.STOCK_RECEIVED, EVENTS.STOCK_CHANGED],
+  });
 
   return (
     <PortalScroll>

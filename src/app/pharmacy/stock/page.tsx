@@ -8,7 +8,7 @@ import { PortalScroll } from "@/components/portal/portal-scroll";
 import { BatchImport } from "@/components/portal/pharmacy/batch-import";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
-import { TOPICS } from "@/lib/realtime/topics";
+import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 
 interface Med {
   id: string; name: string; genericName: string | null; manufacturer: string | null;
@@ -108,7 +108,9 @@ export default function StockPage() {
   // Quantities on this list move with every dispense at the counter and every
   // delivery booked in. A shelf figure that is an hour old is the one somebody
   // promises a patient against.
-  useLive([TOPICS.PHARMACY], load);
+  useLive([TOPICS.PHARMACY], load, {
+    events: [EVENTS.PRESCRIPTION_DISPENSED, EVENTS.STOCK_RECEIVED, EVENTS.STOCK_CHANGED],
+  });
 
   // "/" focuses search - hands stay on the keyboard during a rush
   useEffect(() => {

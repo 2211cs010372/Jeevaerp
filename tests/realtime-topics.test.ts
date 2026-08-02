@@ -112,6 +112,30 @@ describe("publishers and subscribers agree", () => {
     }
   });
 
+  it("does not wake a money screen on every check-in", () => {
+    // The cost trap. APPOINTMENT_CHANGED fires roughly four times per patient
+    // and rides the RECEPTION topic, which several screens subscribe to. A
+    // day-close or billing screen that reacts to EVERY event on that topic
+    // re-reads the whole day's takings a few hundred times to redisplay the
+    // same number - a real bill on Vercel and Supabase for nothing.
+    //
+    // So: any screen whose job is money must name its events.
+    const moneyScreens = [
+      path.join("day-close", "day-close-statement.tsx"),
+      path.join("reception", "billing", "page.tsx"),
+      path.join("admin", "bills", "page.tsx"),
+      path.join("admin", "day-close", "page.tsx"),
+      path.join("labs", "invoices", "page.tsx"),
+    ];
+    for (const suffix of moneyScreens) {
+      const f = files.find((x) => x.path.endsWith(suffix));
+      expect(f, suffix).toBeDefined();
+      const call = f!.text.match(/useLive\(([\s\S]*?)\}\s*\)/);
+      expect(call, `${suffix} has no useLive with options`).not.toBeNull();
+      expect(call![1], `${suffix} reacts to every event on its topic`).toContain("events:");
+    }
+  });
+
   it("tells the consulting room when a patient is checked in", () => {
     // Reception checking someone in has to put them on the doctor's queue
     // before they finish walking down the corridor.

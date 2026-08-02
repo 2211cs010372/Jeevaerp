@@ -6,7 +6,7 @@ import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
-import type { Topic } from "@/lib/realtime/topics";
+import { EVENTS, type Topic } from "@/lib/realtime/topics";
 
 /**
  * DAY CLOSE - the shift handover, for ANY counter.
@@ -97,7 +97,14 @@ export function DayCloseStatement({
   // NOT suspended while `counted` has a value: what the user typed is their own
   // state and a reload never touches it - only the expected figure moves, which
   // is exactly what they need to see move.
-  useLive(topics, load, { enabled: topics.length > 0 });
+  // Money events ONLY. A drawer does not move because a patient was checked in,
+  // and the reception topic now carries an appointment event roughly four times
+  // per patient - reacting to all of them would re-read the whole day's takings
+  // a few hundred times to redisplay the same number.
+  useLive(topics, load, {
+    events: [EVENTS.INVOICE_RAISED, EVENTS.PAYMENT_TAKEN],
+    enabled: topics.length > 0,
+  });
 
   // Counting resets when the day changes - yesterday's count is not this day's.
   useEffect(() => { setCounted(""); }, [date]);

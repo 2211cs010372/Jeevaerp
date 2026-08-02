@@ -6,7 +6,7 @@ import { Icon } from "@/components/portal/ui/icons";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
-import { TOPICS } from "@/lib/realtime/topics";
+import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 
 interface Bill {
   id: string; receiptNo: string; source: string; status: string;
@@ -65,7 +65,9 @@ export default function AdminBillsPage() {
 
   // Bills are raised at four counters. This is the one screen that sees all of
   // them, so it is the one that most needs to not be stale.
-  useLive([TOPICS.ADMIN], load);
+  useLive([TOPICS.ADMIN], load, {
+    events: [EVENTS.INVOICE_RAISED, EVENTS.PAYMENT_TAKEN],
+  });
 
   const matchPay = (b: Bill) => {
     if (pay === "ALL") return true;

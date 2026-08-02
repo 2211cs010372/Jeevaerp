@@ -6,7 +6,7 @@ import { Icon } from "@/components/portal/ui/icons";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
-import { TOPICS } from "@/lib/realtime/topics";
+import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 
 interface ModeTotal { mode: string; collected: number; refunded: number; net: number; count: number; }
 interface Close {
@@ -82,7 +82,9 @@ export default function AdminDayClosePage() {
 
   // The owner watching the day's takings should see them move as they are taken,
   // at whichever counter took them.
-  useLive([TOPICS.ADMIN], load);
+  useLive([TOPICS.ADMIN], load, {
+    events: [EVENTS.INVOICE_RAISED, EVENTS.PAYMENT_TAKEN],
+  });
 
   /**
    * Excel is built from the data ALREADY on screen - not re-fetched - so the

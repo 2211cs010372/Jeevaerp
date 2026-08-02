@@ -44,6 +44,64 @@ export interface AnalyteNote {
 const key = (name: string): string => name.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 /**
+ * Old analyte name -> the note key it still belongs to.
+ *
+ * The catalogue was rewritten from the hospital's own 52 report forms, which
+ * name things the way the bench says them: "S.G.O.T", not "SGOT (AST)". The
+ * notes below were keyed to the previous spellings, and a note that no longer
+ * matches does not error - it silently prints a blanker report, which is the
+ * failure mode nobody notices.
+ *
+ * BOTH spellings have to resolve, permanently. Results already reported are
+ * stored on LabResultItem with the name as it was THEN, and re-opening a March
+ * report re-renders from those rows. Dropping the old keys would quietly strip
+ * the explanations off every report printed before the rewrite.
+ */
+const ALIASES: Record<string, string> = {
+  // ── haematology ──
+  totalrbccount: "rbccount",
+  haematocritpcv: "pcvhaematocrit",
+  // ── liver ──
+  sgot: "sgotast",
+  sgpt: "sgptalt",
+  serumalkalinephosphatase: "alkalinephosphatase",
+  totalbilirubinadults: "totalbilirubinadult",
+  // ── renal ──
+  serumuricacidmale: "uricacidmale",
+  serumuricacidfemale: "uricacidfemale",
+  serumuricacid: "uricacid",
+  // ── lipids ──
+  cholesterol: "totalcholesterol",
+  hdlcholesterolmale: "hdlcholesterol",
+  hdlcholesterolfemale: "hdlcholesterol",
+  vldl: "vldlcholesterol",
+  // ── sugars ──
+  fastingbloodsugar: "glucosefasting",
+  fastingplasmaglucose: "glucosefasting",
+  postlunchbloodsugar: "glucosepostprandial",
+  // ── serology ──
+  denguecheckns1: "denguens1antigen",
+  denguecheckigm: "dengueigm",
+  denguecheckigg: "dengueigg",
+  rheumatoidfactor: "rafactor",
+  salmonellatyphioagglutination: "styphio",
+  salmonellatyphihagglutination: "styphih",
+  salmonellaparatyphiahagglutination: "sparatyphiah",
+  salmonellaparatyphibhagglutination: "sparatyphibh",
+  // ── urine ──
+  rbc: "rbcs",
+  spgravity: "specificgravity",
+  sugar: "glucose",
+  albumin: "proteinalbumin",
+};
+
+/** Normalise, then follow an alias if the name was spelled the older way. */
+const resolve = (name: string): string => {
+  const k = key(name);
+  return ALIASES[k] ?? k;
+};
+
+/**
  * Keyed by analyte name as the templates and the bench actually type it.
  * Grouped by the panel they belong to, in the order seed-lab-analytes.ts lists
  * them - so adding an analyte to a template and adding its note here is one
@@ -367,10 +425,10 @@ const NOTES: Record<string, AnalyteNote> = {
  * missing note is a silently blanker report.
  */
 export function analyteNote(name: string): AnalyteNote | null {
-  const direct = NOTES[key(name)];
+  const direct = NOTES[resolve(name)];
   if (direct) return direct;
   const stripped = name.replace(/\([^)]*\)/g, " ").trim();
-  return (stripped && NOTES[key(stripped)]) || null;
+  return (stripped && NOTES[resolve(stripped)]) || null;
 }
 
 /** The description line alone - what the report prints under most analytes. */
@@ -421,6 +479,53 @@ const SPECIMENS: Record<string, string> = {
   DENGUE: "Serum",
   WIDAL: "Serum",
   URINE: "Urine (mid-stream)",
+
+  // ── codes introduced with the hospital's own catalogue (lab-catalog.ts) ──
+  // Kept in the same map rather than a second one: two lookups for the same
+  // question is how a report ends up with a specimen line on some tests and a
+  // blank on others, for no reason a technician can see.
+  "CBP-M": "Whole blood (EDTA)",
+  "CBP-F": "Whole blood (EDTA)",
+  "CBP-F-AEC": "Whole blood (EDTA)",
+  "HAEMOGRAM-F": "Whole blood (EDTA)",
+  "HAEMOGRAM-PED": "Whole blood (EDTA)",
+  "HB-M": "Whole blood (EDTA)",
+  "HB-F": "Whole blood (EDTA)",
+  "HB-PED": "Whole blood (EDTA)",
+  BTCT: "Capillary blood (finger prick)",
+  PS: "Whole blood (EDTA)",
+  BG: "Whole blood (EDTA)",
+  "BG-DU": "Whole blood (EDTA)",
+  PLBS: "Plasma (post lunch)",
+  "FBS-PLBS": "Plasma (fasting & post lunch)",
+  GTT: "Plasma (serial)",
+  UREA: "Serum",
+  "CREAT-RBS": "Serum & plasma",
+  RFT: "Serum",
+  CALCIUM: "Serum",
+  PROTEIN: "Serum",
+  ELECTROLYTES: "Serum",
+  HIV: "Serum",
+  HBSAG: "Serum",
+  "HIV-VDRL": "Serum",
+  "HIV-BG": "Serum & whole blood (EDTA)",
+  "HIV-HBSAG": "Serum",
+  "HBSAG-BG": "Serum & whole blood (EDTA)",
+  "HBSAG-VDRL": "Serum",
+  "HIV-VDRL-BG": "Serum & whole blood (EDTA)",
+  "HIV-HBSAG-BG": "Serum & whole blood (EDTA)",
+  "HBSAG-VDRL-BG": "Serum & whole blood (EDTA)",
+  "HIV-HBSAG-VDRL": "Serum",
+  "HIV-HBSAG-VDRL-BG": "Serum & whole blood (EDTA)",
+  "HIV-HBSAG-VDRL-HCV": "Serum",
+  "MP-PF-PV": "Whole blood (EDTA)",
+  "MP-PF-PAN": "Whole blood (EDTA)",
+  // Not a specimen at all - the reading is taken off the patient's forearm.
+  MONTOUX: "Intradermal (forearm)",
+  CUE: "Urine (mid-stream)",
+  FLUID: "Body fluid (as collected)",
+  SEMEN: "Semen",
+  ANTENATAL: "Serum & whole blood (EDTA)",
 };
 
 /** The specimen line for a test, or null when the catalogue code is unknown. */
@@ -462,6 +567,52 @@ const DEPARTMENTS: Record<string, string> = {
   ECG: "CARDIOLOGY",
   ECHO: "CARDIOLOGY",
   XRAYCHEST: "RADIOLOGY",
+
+  // ── codes introduced with the hospital's own catalogue (lab-catalog.ts) ──
+  // The `group` on each CatalogSpec is the same division and exists for the
+  // ordering screen; this map is what prints. They are kept in step by hand -
+  // if that ever stops being true, this should read from the spec instead.
+  "CBP-M": "HAEMATOLOGY",
+  "CBP-F": "HAEMATOLOGY",
+  "CBP-F-AEC": "HAEMATOLOGY",
+  "HAEMOGRAM-F": "HAEMATOLOGY",
+  "HAEMOGRAM-PED": "HAEMATOLOGY",
+  "HB-M": "HAEMATOLOGY",
+  "HB-F": "HAEMATOLOGY",
+  "HB-PED": "HAEMATOLOGY",
+  BTCT: "HAEMATOLOGY",
+  PS: "HAEMATOLOGY",
+  BG: "BLOOD BANKING",
+  "BG-DU": "BLOOD BANKING",
+  PLBS: "BIOCHEMISTRY",
+  "FBS-PLBS": "BIOCHEMISTRY",
+  GTT: "BIOCHEMISTRY",
+  UREA: "BIOCHEMISTRY",
+  "CREAT-RBS": "BIOCHEMISTRY",
+  RFT: "BIOCHEMISTRY",
+  CALCIUM: "BIOCHEMISTRY",
+  PROTEIN: "BIOCHEMISTRY",
+  ELECTROLYTES: "BIOCHEMISTRY",
+  HIV: "SEROLOGY",
+  HBSAG: "SEROLOGY",
+  "HIV-VDRL": "SEROLOGY",
+  "HIV-BG": "SEROLOGY",
+  "HIV-HBSAG": "SEROLOGY",
+  "HBSAG-BG": "SEROLOGY",
+  "HBSAG-VDRL": "SEROLOGY",
+  "HIV-VDRL-BG": "SEROLOGY",
+  "HIV-HBSAG-BG": "SEROLOGY",
+  "HBSAG-VDRL-BG": "SEROLOGY",
+  "HIV-HBSAG-VDRL": "SEROLOGY",
+  "HIV-HBSAG-VDRL-BG": "SEROLOGY",
+  "HIV-HBSAG-VDRL-HCV": "SEROLOGY",
+  "MP-PF-PV": "SEROLOGY",
+  "MP-PF-PAN": "SEROLOGY",
+  MONTOUX: "SEROLOGY",
+  CUE: "CLINICAL PATHOLOGY",
+  FLUID: "CLINICAL PATHOLOGY",
+  SEMEN: "CLINICAL PATHOLOGY",
+  ANTENATAL: "PROFILES",
 };
 
 /** The department band for a test, or null when the code is unknown. */
@@ -504,5 +655,5 @@ const METHODS: Record<string, string> = {
 
 /** The method line for an analyte, or null when this lab has not stated one. */
 export function methodFor(name: string): string | null {
-  return METHODS[key(name)] ?? null;
+  return METHODS[resolve(name)] ?? null;
 }

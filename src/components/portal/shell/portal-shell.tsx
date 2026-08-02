@@ -105,6 +105,24 @@ export function PortalShell({
     return Array.from(new Set(items.map((i) => i.badge?.path).filter((p): p is string => !!p)));
   }, [meta]);
 
+  /**
+   * The union of what actually moves this portal's badges.
+   *
+   * Empty means "no badge declared events" - then we fall back to reacting to
+   * everything, which is the old behaviour and correct for a badge whose author
+   * has not thought about it yet.
+   */
+  const badgeEvents = useMemo(() => {
+    const items = meta.groups ? meta.groups.flatMap((g) => g.items) : meta.nav;
+    const declared = items.flatMap((i) => i.badge?.events ?? []);
+    const everyBadgeNamedItsEvents = items
+      .filter((i) => i.badge)
+      .every((i) => (i.badge?.events?.length ?? 0) > 0);
+    return everyBadgeNamedItsEvents && declared.length > 0
+      ? Array.from(new Set(declared))
+      : undefined;
+  }, [meta]);
+
   const [badgeData, setBadgeData] = useState<Record<string, Record<string, unknown>>>({});
 
   const pullBadges = useCallback(async () => {
@@ -131,7 +149,10 @@ export function PortalShell({
   //
   // meta.key is the portal slug, which is deliberately identical to its topic.
   const portalTopic = isTopic(meta.key) ? [meta.key] : [];
-  useLive(portalTopic, pullBadges, { enabled: portalTopic.length > 0 && localPath !== "/login" });
+  useLive(portalTopic, pullBadges, {
+    events: badgeEvents,
+    enabled: portalTopic.length > 0 && localPath !== "/login" && badgePaths.length > 0,
+  });
 
   const badgeCount = (item: NavItem): number => {
     if (!item.badge) return 0;

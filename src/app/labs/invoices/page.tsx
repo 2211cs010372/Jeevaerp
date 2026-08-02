@@ -8,7 +8,7 @@ import { DiscountInput } from "@/components/portal/ui/bill-fields";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
-import { TOPICS } from "@/lib/realtime/topics";
+import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 
 interface Row {
   id: string; receiptNo: string; source: string; status: string;
@@ -41,7 +41,10 @@ export default function InvoicesPage() {
 
   // Suspended while an invoice is open for editing - reloading the list under
   // an open dialog is how somebody's half-typed correction disappears.
-  useLive([TOPICS.LABS], load, { enabled: !editing });
+  useLive([TOPICS.LABS], load, {
+    events: [EVENTS.INVOICE_RAISED, EVENTS.PAYMENT_TAKEN],
+    enabled: !editing,
+  });
 
   async function openEdit(r: Row) {
     setError(null);

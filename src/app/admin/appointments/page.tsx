@@ -6,7 +6,7 @@ import { Icon } from "@/components/portal/ui/icons";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
-import { TOPICS } from "@/lib/realtime/topics";
+import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 
 interface Row {
   id: string; opNumber: string; time: string; status: string; price: string; visitDate: string;
@@ -67,7 +67,9 @@ export default function AdminAppointmentsPage() {
 
   useEffect(() => { load().catch(() => {}).finally(() => setLoading(false)); }, [load]);
 
-  useLive([TOPICS.ADMIN], load);
+  useLive([TOPICS.ADMIN], load, {
+    events: [EVENTS.APPOINTMENT_CHANGED, EVENTS.CONSULTATION_COMPLETED],
+  });
 
   // Referred count by person - ranked.
   const referrers = useMemo(() => {

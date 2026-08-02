@@ -8,7 +8,7 @@ import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
-import { TOPICS } from "@/lib/realtime/topics";
+import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import { AdmissionBanner, useAdmission } from "@/components/portal/reception/admission-banner";
 import { InpatientPicker } from "@/components/portal/reception/inpatient-picker";
 import { PRINT_CSS, RxTable } from "@/components/print/stationery";
@@ -126,7 +126,10 @@ export default function UploadPrescriptionPage() {
   useLive(
     [TOPICS.RECEPTION],
     () => { if (patient) return loadExisting(patient.displayId); },
-    { enabled: !!patient }
+    {
+      events: [EVENTS.PRESCRIPTION_QUEUED, EVENTS.PRESCRIPTION_DISPENSED],
+      enabled: !!patient,
+    }
   );
 
   // vitals belong to the OP visit, not the stay - reload whatever's typed

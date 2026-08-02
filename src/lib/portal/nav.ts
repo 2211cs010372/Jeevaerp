@@ -1,4 +1,5 @@
 import type { IconName } from "@/components/portal/ui/icons";
+import { EVENTS, type LiveEvent } from "@/lib/realtime/topics";
 
 export interface NavItem {
   label: string;
@@ -12,7 +13,19 @@ export interface NavItem {
    * Use it only for work that ROTS if unseen - money not collected, a patient
    * waiting. A badge on everything is a badge on nothing.
    */
-  badge?: { path: string; field: string; tone?: "amber" | "rose" };
+  badge?: {
+    path: string;
+    field: string;
+    tone?: "amber" | "rose";
+    /**
+     * Which events actually move this number. Without it the shell re-pulls
+     * every badge on EVERY signal for the portal - and since the reception
+     * topic carries an appointment event four times per patient, a badge
+     * counting money would be re-fetched a few hundred times a day to display
+     * the same figure. Name the events and the request stops happening.
+     */
+    events?: LiveEvent[];
+  };
 }
 
 /**
@@ -54,7 +67,11 @@ export const PORTALS: Record<string, PortalMeta> = {
         // unseen - exactly what this badge is reserved for. The doctor assumes
         // it was done and waits for a result that is never coming.
         label: "Lab tests", href: "/labs", icon: "flask",
-        badge: { path: "/reception/advised-labs?limit=1", field: "count", tone: "amber" },
+        badge: {
+          path: "/reception/advised-labs?limit=1", field: "count", tone: "amber",
+          // Only ordering or declining a test moves this. Check-ins do not.
+          events: [EVENTS.LAB_ORDERED],
+        },
       },
       { label: "Billing", href: "/billing", icon: "receipt" },
       { label: "Day close", href: "/day-close", icon: "trend" },
@@ -139,7 +156,12 @@ export const PORTALS: Record<string, PortalMeta> = {
             // sitting in the sidebar, nobody remembers to go and collect it.
             label: "Dues to collect", href: "/dues", icon: "rupee",
 
-            badge: { path: "/pharmacy/dues", field: "count", tone: "amber" },
+            badge: {
+              path: "/pharmacy/dues", field: "count", tone: "amber",
+              // A due appears when a ward bill is raised and clears when it is
+              // paid. Nothing else on this topic changes the number.
+              events: [EVENTS.INVOICE_RAISED, EVENTS.PAYMENT_TAKEN],
+            },
           },
           {
             label: "Day close", href: "/day-close", icon: "trend",

@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { LAB_CATALOG } from "./lab-catalog";
 
 const prisma = new PrismaClient();
 
@@ -55,72 +56,47 @@ async function main() {
 
   // ---- Lab test catalog. gstRatePct = 0 (EXEMPT) by default. ----
   // Most diagnostic services are GST-exempt in India. The hospital's CA should
-  // confirm and override any test that is actually taxable. Prices are editable
-  // in Admin -> Catalog; they are seeded because a lab cannot open without one.
-  const labTests = [
-    { name: "Complete Blood Picture (CBP)", code: "CBP", price: 300 },
-
-    // Blood Sugar
-    { name: "Blood Sugar - Fasting (FBS)", code: "FBS", price: 120 },
-    { name: "Blood Sugar - Postprandial (PPBS)", code: "PPBS", price: 120 },
-    { name: "Random Blood Sugar (RBS)", code: "RBS", price: 120 },
-    { name: "HbA1c", code: "HBA1C", price: 600 },
-
-    // Lipid
-    { name: "Lipid Profile", code: "LIPID", price: 800 },
-
-    // Liver
-    { name: "Liver Function Test (LFT)", code: "LFT", price: 900 },
-    { name: "Bilirubin Test", code: "BILIRUBIN", price: 250 },
-
-    // Kidney
-    { name: "Kidney Function Test (KFT)", code: "KFT", price: 900 },
-    { name: "Serum Creatinine", code: "CREAT", price: 200 },
-    { name: "Uric Acid", code: "URIC", price: 250 },
-
-    // Pancreas
-    { name: "Serum Amylase", code: "AMYLASE", price: 350 },
-
-    // Thyroid
-    { name: "Thyroid Profile (T3, T4, TSH)", code: "THYROID", price: 700 },
-
-    // Vitamins
-    { name: "Vitamin D (25-OH)", code: "VITD", price: 1400 },
-    { name: "Vitamin B12", code: "VITB12", price: 1100 },
-
-    // Inflammatory Markers
-    { name: "C-Reactive Protein (CRP)", code: "CRP", price: 500 },
-    { name: "ESR (Erythrocyte Sedimentation Rate)", code: "ESR", price: 150 },
-    { name: "RA Factor", code: "RAF", price: 450 },
-
-    // Urine
-    { name: "Urine Routine Examination", code: "URINE", price: 150 },
-
-    // Infectious Diseases
-    { name: "Dengue NS1 Antigen", code: "DENGUE", price: 800 },
-    { name: "Widal Test", code: "WIDAL", price: 300 },
-
-    // Imaging
-    { name: "Chest X-Ray (PA View)", code: "XRAYCHEST", price: 350 },
-    { name: "ECG (Electrocardiogram)", code: "ECG", price: 250 },
-    { name: "2D Echocardiography (2D Echo)", code: "ECHO", price: 1500 },
-  ];
-  for (const t of labTests) {
+  // confirm and override any test that is actually taxable.
+  //
+  // The menu itself lives in ./lab-catalog.ts, transcribed from the 52 report
+  // forms this lab actually prints. ONE source, imported here and by
+  // seed-lab-catalog.ts, because a catalogue defined in two files ends up
+  // meaning two different things - and the half that disagrees is the half a
+  // result gets flagged against.
+  //
+  // PRICES ARE ZERO for anything the old catalogue had no equivalent of: a
+  // report form does not carry a rate, so there was nothing to transcribe and a
+  // guess would be billed to a patient as though it were real. Set them in
+  // Admin -> Catalog, or run:  npx tsx prisma/seed-lab-catalog.ts
+  for (const t of LAB_CATALOG) {
     // Matched by `code`, not `name`: a prior seed/manual entry may already
     // hold this code under a different display name, and matching on `name`
     // would miss it, then collide on the unique `code` when trying to create.
-    // `update` repairs the name on that existing row instead of skipping it.
     //
     // The PRICE is deliberately not re-asserted. Once the hospital has set its
     // own rate in Admin -> Catalog, a re-run of this seed must not quietly put
     // it back to the number in this file.
-    await prisma.labTestCatalog.upsert({
+    const row = await prisma.labTestCatalog.upsert({
       where: { code: t.code },
-      update: { name: t.name },
-      create: { name: t.name, code: t.code, price: t.price, gstRatePct: 0, active: true },
+      update: { name: t.name, active: true },
+      create: { name: t.name, code: t.code, price: 0, gstRatePct: 0, active: true },
+      select: { id: true },
+    });
+    await prisma.labAnalyte.deleteMany({ where: { catalogId: row.id } });
+    await prisma.labAnalyte.createMany({
+      data: t.analytes.map((a, i) => ({
+        catalogId: row.id,
+        name: a.name,
+        unit: a.unit ?? null,
+        refLow: a.refLow == null ? null : a.refLow.toFixed(4),
+        refHigh: a.refHigh == null ? null : a.refHigh.toFixed(4),
+        refText: a.refText ?? null,
+        sortOrder: i,
+      })),
     });
   }
-  console.log(`  ✓ ${labTests.length} lab tests in the catalogue (GST 0% = exempt by default)`);
+  const analyteCount = LAB_CATALOG.reduce((n, c) => n + c.analytes.length, 0);
+  console.log(`  ✓ ${LAB_CATALOG.length} lab tests, ${analyteCount} analytes (GST 0% = exempt by default)`);
 
   // ---- IPD: wards + beds --------------------------------------------------
   // GST on room rent: exempt below ₹5,000/day (non-ICU). ICU is exempt regardless.

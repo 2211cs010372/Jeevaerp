@@ -10,7 +10,7 @@ import { AdmissionBanner, useAdmission } from "@/components/portal/reception/adm
 import { InpatientPicker } from "@/components/portal/reception/inpatient-picker";
 import { DiscountInput, PaymentSection, type Tender } from "@/components/portal/ui/bill-fields";
 import { useLive } from "@/lib/realtime/use-live";
-import { TOPICS } from "@/lib/realtime/topics";
+import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 
 interface Patient { id: string; displayId: string; fullName: string; age: number | null; gender: string | null; phone: string; }
 interface CatalogItem { id: string; name: string; code: string | null; price: string; gstRatePct: string; }
@@ -101,7 +101,10 @@ export default function LabOrderPage() {
   // If the doctor advises another test mid-visit, or a second desk orders one of
   // these, this panel has to agree - otherwise two people order the same blood
   // draw. Only the advice list reloads; the test picks below are the user's.
-  useLive([TOPICS.RECEPTION], loadAdvised, { enabled: !!visitId && !decliningId });
+  useLive([TOPICS.RECEPTION], loadAdvised, {
+    events: [EVENTS.LAB_ORDERED],
+    enabled: !!visitId && !decliningId,
+  });
 
   // Pre-tick the outstanding advice that the catalog can actually price.
   useEffect(() => {
