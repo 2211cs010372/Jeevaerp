@@ -157,3 +157,12 @@ export const hospitalConfigSchema = z.object({
   // quietly turn the night shift into a discount.
   afterHoursOpMultiplier: z.coerce.number().min(1).max(10).optional(),
 });
+
+/**
+ * Archive or restore a patient. Deliberately a boolean rather than a DELETE
+ * verb: the record is hidden, never removed (see setPatientArchived), and the
+ * same endpoint puts it back.
+ */
+export const archivePatientSchema = z.object({
+  archived: z.boolean(),
+});

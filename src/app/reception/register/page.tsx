@@ -34,7 +34,7 @@ function EmergencyFromUrl({ onSet }: { onSet: () => void }) {
 
 const empty = {
   firstName: "", middleName: "", lastName: "", dob: "", age: "", gender: "FEMALE",
-  blood: "O+", maritalStatus: "", phone: "", altPhone: "", email: "",
+  blood: "", maritalStatus: "", phone: "", altPhone: "", email: "",
   address: "", city: "", state: "", country: "India", postalCode: "",
   occupation: "", nationality: "", preferredLanguage: "",
   emergencyName: "", emergencyRelation: "", emergencyPhone: "", allergies: "", govtId: "",
@@ -107,7 +107,9 @@ export default function RegisterPage() {
       const { patient } = await api.post<{ patient: Registered }>("/reception/patients", {
         firstName: f.firstName.trim(), middleName: f.middleName || undefined, lastName: f.lastName || undefined,
         dob: f.dob || undefined, age: f.age ? Number(f.age) : undefined,
-        gender: f.gender, bloodGroup: f.blood, maritalStatus: f.maritalStatus || undefined,
+        // Empty means "not recorded" - the enum has no member for it, so the
+        // field is left off the payload entirely rather than sent blank.
+        gender: f.gender, bloodGroup: f.blood || undefined, maritalStatus: f.maritalStatus || undefined,
         phone: f.phone, alternatePhone: f.altPhone || undefined, email: f.email || undefined,
         address: f.address || undefined, city: f.city || undefined, state: f.state || undefined,
         country: f.country || undefined, postalCode: f.postalCode || undefined,
@@ -277,7 +279,10 @@ export default function RegisterPage() {
           <Field label="Date of birth"><input type="date" className={cls(false)} value={f.dob} onChange={(e) => onDobChange(e.target.value)} /></Field>
           <Field label="Age" error={errors.age}><input className={cls(errors.age)} value={f.age} onChange={(e) => onAgeChange(e.target.value)} inputMode="numeric" placeholder="29" /></Field>
           <Field label="Gender"><select className={cls(false)} value={f.gender} onChange={(e) => set("gender")(e.target.value)}><option value="FEMALE">Female</option><option value="MALE">Male</option><option value="OTHER">Other</option></select></Field>
-          <Field label="Blood group"><select className={cls(false)} value={f.blood} onChange={(e) => set("blood")(e.target.value)}>{BLOODS.map((b) => <option key={b} value={b}>{b}</option>)}</select></Field>
+          {/* Blank first, and blank by default. A blood group nobody stated is
+              not O+ - and a wrong one on the record is read as fact by whoever
+              needs it in a hurry. Left empty it simply isn't recorded. */}
+          <Field label="Blood group"><select className={cls(false)} value={f.blood} onChange={(e) => set("blood")(e.target.value)}><option value="">Not recorded</option>{BLOODS.map((b) => <option key={b} value={b}>{b}</option>)}</select></Field>
           <Field label="Marital status"><select className={cls(false)} value={f.maritalStatus} onChange={(e) => set("maritalStatus")(e.target.value)}><option value="">-</option><option value="SINGLE">Single</option><option value="MARRIED">Married</option><option value="DIVORCED">Divorced</option><option value="WIDOWED">Widowed</option><option value="OTHER">Other</option></select></Field>
         </div>
 

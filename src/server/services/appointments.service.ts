@@ -422,7 +422,11 @@ export async function opdPrintData(appointmentId: string): Promise<{
    *  the doctor's name ("MBBS, M.D Paediatrics") - null for the duty block. */
   doctor: { name: string; specialization: string; department: string; qualification: string | null; named: boolean };
   patient: { displayId: string; fullName: string; age: number | null; gender: string | null; bloodGroup: string | null; phone: string; address: string | null; city: string | null };
-  rxItems: { medicineName: string; qty: number; dosage: string | null }[];
+  /** `medicineId` is carried for the READERS of this bundle, not the printed
+   *  sheet: reception's prescription form loads a visit back into its fields,
+   *  and a medicine that arrives without its catalog id degrades to free text
+   *  the pharmacist has to match by hand a second time. */
+  rxItems: { medicineName: string; medicineId: string | null; qty: number; dosage: string | null }[];
   vitals: VitalsDTO | null;
   clinical: {
     diagnosis: string | null; advice: string | null;
@@ -457,7 +461,7 @@ export async function opdPrintData(appointmentId: string): Promise<{
       where: { appointmentId: a.id },
       orderBy: { createdAt: "desc" },
       select: {
-        items: { select: { medicineName: true, qty: true, dosage: true }, orderBy: { id: "asc" } },
+        items: { select: { medicineName: true, medicineId: true, qty: true, dosage: true }, orderBy: { id: "asc" } },
         diagnosis: true, advice: true, nextVisit: true, caseHistory: true,
         advisedLabs: { select: { testName: true, labTestId: true, declinedAt: true }, orderBy: { createdAt: "asc" } },
       },

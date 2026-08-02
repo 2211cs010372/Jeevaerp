@@ -87,6 +87,7 @@ export const PORTALS: Record<string, PortalMeta> = {
     roleLabel: "Admin Console",
     nav: [
       { label: "Overview", href: "/", icon: "grid" },
+      { label: "Patients", href: "/patients", icon: "users" },
       { label: "Appointments", href: "/appointments", icon: "calendar" },
       { label: "All bills", href: "/bills", icon: "receipt" },
       { label: "Insurance claims", href: "/insurance", icon: "shield" },

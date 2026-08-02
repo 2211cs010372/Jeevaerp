@@ -23,6 +23,10 @@ gap, not a safety gap. The system is safe without it. The ward is just on paper.
 is yes.** If nurses share the reception login instead, the audit trail added in
 PR 3 is void for every ward action, which defeats the point of adding it.
 
+**Answered 2026-08-02: no nurse logins at go-live.** Stays deferred, not a
+blocker. The condition above is unchanged and still live - the day the hospital
+puts nurses on the system, this comes back before they get a shared login.
+
 Shape when it lands: `NURSE` in `Role`, ward-scoped guard in
 `src/lib/auth/portal-guard.tsx`, a nursing portal with three screens only
 (my ward's beds, record vitals, drug administration log). No more.
@@ -50,6 +54,10 @@ scheduling, no OT consumables tracking.
 Deferred because it is unknown whether the target hospital operates. If they are
 medical-only this is dead scope. If they do surgery it is a real gap and moves up.
 **Open question for the customer, not an engineering decision.**
+
+**Answered 2026-08-02: OT was not in scope at the client meeting.** Dead scope
+for this hospital, so nothing to build. Left in this file rather than deleted
+because "they did not ask for it" is not the same as "they will never operate".
 
 ### MRD with ICD-10 coding
 No diagnosis coding anywhere. Fine while insurance is out of scope.

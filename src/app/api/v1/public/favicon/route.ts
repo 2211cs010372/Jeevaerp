@@ -22,19 +22,31 @@ export const dynamic = "force-dynamic";
  * fixed URL keeps the layout static and moves the lookup to the one request
  * that actually needs it - which the browser then caches and stops asking for.
  *
- * A 404 when nothing has been uploaded is deliberate and correct: the browser
- * falls back to its own default mark, which is exactly what happened before
- * this feature existed.
+ * WHEN NOTHING HAS BEEN UPLOADED
+ * ------------------------------
+ * Falls back to the shipped Jeeva mark rather than a 404. The precedence is
+ * admin upload first, shipped mark second, and the browser's default never -
+ * a hospital tab should carry the hospital's logo out of the box, before
+ * anybody has been through Settings.
+ *
+ * The fallback is a redirect to the file rather than the bytes, because
+ * /public is served by the CDN on a serverless host and is not reliably on the
+ * lambda's filesystem. Redirecting also keeps this the ONLY <link rel="icon">
+ * in the app: declaring the static file alongside this route in the layout's
+ * `icons` array would leave the browser to pick between them by `sizes`, which
+ * would silently beat an admin's uploaded icon.
  */
-/** 404 with a short cache - the browser falls back to its own default mark. */
-const noIcon = () =>
-  new NextResponse(null, {
-    status: 404,
-    // Without this, every tab of every page re-asks for an icon that isn't there.
+const FALLBACK_ICON = "/images/JEEVA%20LOGO%20ICON.png";
+
+/** The shipped mark, with the same short cache the uploaded icon gets. */
+const noIcon = (req: Request) =>
+  NextResponse.redirect(new URL(FALLBACK_ICON, req.url), {
+    status: 302,
+    // Without this, every tab of every page re-asks where the icon lives.
     headers: { "Cache-Control": "public, max-age=300" },
   });
 
-export async function GET() {
+export async function GET(req: Request) {
   let dataUrl: string | null | undefined;
   try {
     const config = await prisma.hospitalConfig.findFirst({ select: { faviconDataUrl: true } });
@@ -43,12 +55,12 @@ export async function GET() {
     // A tab icon is decorative. Every page in the app references this URL, so a
     // database that is unreachable - or a schema that hasn't been migrated yet -
     // must degrade to "no icon" rather than serving a 500 on every page load.
-    return noIcon();
+    return noIcon(req);
   }
-  if (!dataUrl) return noIcon();
+  if (!dataUrl) return noIcon(req);
 
   const decoded = decodeBase64DataUrl(dataUrl);
-  if (!decoded) return noIcon();
+  if (!decoded) return noIcon(req);
   const { mime, bytes } = decoded;
 
   return new NextResponse(new Uint8Array(bytes), {

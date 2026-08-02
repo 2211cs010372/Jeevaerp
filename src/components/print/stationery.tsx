@@ -836,19 +836,23 @@ export function RxPad({ items, slots = 9 }: {
 }) {
   const rows = Math.max(slots, items.length);
   return (
-    <section className="mt-[7px] flex flex-1 flex-col">
-      {/* This is the sheet's flex-1 block: whatever height the clinical sections
-          above and below don't use lands here, and the table takes it so the
-          slack is spread across the writing lines instead of sitting as one dead
-          gap between the last medicine and Tests prescribed. Row `height` is a
-          minimum, so a full sheet still prints 8.5mm lines.
+    /* THE PAD TAKES THE SHEET'S SLACK, FIVE PARTS TO ONE.
 
-          The table has to GROW rather than be sized `h-full`: a percentage
-          height resolves against the section's specified height, which is `auto`
-          under flex-grow, so `h-full` measured out at the table's content height
-          and left ~43mm of blank paper under row 8. As a flex item it is handed
-          the section's real height, and table layout hands that on to the rows. */}
-      <table className="w-full flex-1 border-collapse text-[12px]">
+       Case history, Investigation and this pad all used to grow equally, so the
+       prescription - the thing an OPD sheet exists to carry - got a third of
+       whatever was left. On the hospital's pre-printed stock there is barely
+       any left to get: the logo band and the QR/address band are already in ink
+       on the paper, so 86mm of the 297 is reserved and 211mm holds the whole
+       consultation. The pad came out at its bare eight rows. Weighted 5-to-1
+       against the two prose blocks, the writing room lands where the pen goes;
+       the prose blocks keep their 10mm floors, so neither collapses. */
+    <section className="mt-[7px] flex flex-col" style={{ flex: "5 1 0%" }}>
+      {/* Row `height` is a minimum and the table is now sized by its CONTENT,
+          not stretched: slack turns into more lines below rather than eight
+          over-tall ones here. A doctor writing a fourth medicine needs a fourth
+          line, not a taller third one - and a typed medicine floating in the
+          middle of a 14mm row read like a mistake. */}
+      <table className="w-full border-collapse text-[12px]">
         <thead>
           <tr className={`text-left align-bottom ${CAPS_HEAD}`} style={{ color: "var(--pr-primary)" }}>
             <th className="w-[42px] border-b pb-1 pr-1 text-[23px] font-normal leading-none" style={{ borderColor: "var(--pr-primary)" }}>℞</th>
@@ -885,6 +889,26 @@ export function RxPad({ items, slots = 9 }: {
           })}
         </tbody>
       </table>
+
+      {/* CONTINUATION LINES - the leftover height, ruled at the same pitch.
+
+          More rules than any sheet can show, clipped by the flex box that holds
+          them: a light visit reveals eight or ten, a heavy one reveals none,
+          and neither case needs the height measured first. They carry no serial
+          because they are not slots the desk typed into - they are the rest of
+          the page, ruled, which is what a prescription pad has always been. */}
+      <div className="relative min-h-0 flex-1 overflow-hidden" aria-hidden="true">
+        {/* Absolutely positioned, and that is the whole trick: in flow these
+            rules are content, so the sheet grew to fit all sixteen of them
+            instead of the box shrinking to the space left - a 397mm "A4" page.
+            Out of flow they measure nothing, so this div contributes no height
+            of its own, takes exactly the leftover, and clips the rest. */}
+        <div className="absolute inset-x-0 top-0">
+          {Array.from({ length: 16 }).map((_, i) => (
+            <div key={i} className="border-b border-dotted" style={{ height: "8.5mm", borderColor: "var(--pr-hair)" }} />
+          ))}
+        </div>
+      </div>
     </section>
   );
 }
