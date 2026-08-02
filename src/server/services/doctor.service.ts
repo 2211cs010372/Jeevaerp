@@ -2,6 +2,8 @@ import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
 import { DUTY_DOCTOR } from "./appointments.service";
 import { abnormalCount, resultsForTests, type LabResultDTO } from "./labs.service";
+import { publishLive } from "@/server/realtime/publish";
+import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import type { AuthUser } from "@/lib/auth/types";
 
 // ---------------------------------------------------------------------------
@@ -195,6 +197,13 @@ export async function completeConsultation(actor: AuthUser, appointmentId: strin
     where: { id: appointmentId },
     data: { status: "COMPLETED", completedAt: new Date() },
   });
+
+  // The desk is waiting on exactly this to close billing on the visit, and the
+  // doctor's own queue has to drop the row without them refreshing it.
+  await publishLive(
+    [TOPICS.RECEPTION, TOPICS.DOCTOR, TOPICS.ADMIN],
+    EVENTS.CONSULTATION_COMPLETED
+  );
 }
 
 /**

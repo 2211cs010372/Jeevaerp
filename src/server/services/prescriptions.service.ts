@@ -440,6 +440,10 @@ export async function declineAdvisedLab(
     meta: { testName: existing.testName, reason }, ...ctx,
   });
 
+  // The outstanding count in the sidebar just dropped - every desk showing it
+  // has to agree, or two receptionists chase the same test.
+  await publishLive([TOPICS.RECEPTION, TOPICS.ADMIN], EVENTS.LAB_ORDERED);
+
   return toAdvisedDTO(row as AdvisedRow);
 }
 

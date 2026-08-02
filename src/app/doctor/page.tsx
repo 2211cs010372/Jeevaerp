@@ -8,6 +8,8 @@ import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { AbnormalPill, LabResultTable, type LabResultRow } from "@/components/portal/ui/lab-results";
 import { api, ApiClientError } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import { TOPICS } from "@/lib/realtime/topics";
 
 interface Q {
   appointmentId: string; opNumber: string; time: string; status: string;
@@ -57,6 +59,13 @@ export default function DoctorToday() {
     finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // The consulting room now hears the hospital. Reception checking a patient in
+  // puts them on this queue before they finish walking down the corridor, and a
+  // result entered at the bench lands here without anybody refreshing - which is
+  // the whole point, because this is the screen the person who ACTS on a result
+  // is looking at.
+  useLive([TOPICS.DOCTOR], load);
 
   async function complete(id: string) {
     setBusy(id); setError(null);

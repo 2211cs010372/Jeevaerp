@@ -5,6 +5,8 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import type { Topic } from "@/lib/realtime/topics";
 
 /**
  * DAY CLOSE - the shift handover, for ANY counter.
@@ -53,12 +55,19 @@ export function DayCloseStatement({
   title = "Day close",
   subtitle = "What should be in the drawer, and whether it is.",
   accent = "teal",
+  topics = [],
 }: {
   /** API path, without the date query - e.g. "/pharmacy/day-close". */
   endpoint: string;
   title?: string;
   subtitle?: string;
   accent?: "teal" | "blue";
+  /**
+   * Which counter's takings this drawer shows. Passed in rather than guessed
+   * from the endpoint, because the caller is the only one that knows: reception
+   * pins itself to `till=RECEPTION` even when an admin is looking.
+   */
+  topics?: Topic[];
 }) {
   const [date, setDate] = useState(today());
   const [data, setData] = useState<Close | null>(null);
@@ -79,6 +88,16 @@ export function DayCloseStatement({
     finally { setLoading(false); }
   }, [date, endpoint]);
   useEffect(() => { load(); }, [load]);
+
+  // A drawer being counted is a MOVING number until the counter closes. A
+  // payment taken at the window while somebody is standing here counting cash
+  // has to appear, or the count is compared against a figure that was already
+  // out of date when it rendered.
+  //
+  // NOT suspended while `counted` has a value: what the user typed is their own
+  // state and a reload never touches it - only the expected figure moves, which
+  // is exactly what they need to see move.
+  useLive(topics, load, { enabled: topics.length > 0 });
 
   // Counting resets when the day changes - yesterday's count is not this day's.
   useEffect(() => { setCounted(""); }, [date]);

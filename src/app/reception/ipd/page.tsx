@@ -7,6 +7,8 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import { TOPICS } from "@/lib/realtime/topics";
 
 interface Bed {
   id: string; bedNo: string; status: string;
@@ -136,6 +138,11 @@ export default function BedBoardPage() {
     finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // Beds free up and fill from the ward, not from this screen. An admission
+  // list showing a bed that was vacated at noon is how two patients get sent to
+  // the same bed.
+  useLive([TOPICS.IPD], load);
 
   useEffect(() => {
     api.get<{ doctors: Doctor[] }>("/reception/doctors").then((r) => setDoctors(r.doctors)).catch(() => {});

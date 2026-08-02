@@ -6,6 +6,8 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import { TOPICS } from "@/lib/realtime/topics";
 
 interface Inv {
   id: string; receiptNo: string; source: string; status: string;
@@ -77,6 +79,11 @@ export default function BillingPage() {
     finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // Every till in the hospital raises bills against this list - the pharmacy
+  // counter, the lab, the ward. Without this the desk chases a due that another
+  // counter collected ten minutes ago.
+  useLive([TOPICS.RECEPTION], load);
 
   const filtered = useMemo(() => {
     let rows = invs;

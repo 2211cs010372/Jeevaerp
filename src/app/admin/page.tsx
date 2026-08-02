@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import Link from "next/link";
 import { Icon, type IconName } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import { TOPICS } from "@/lib/realtime/topics";
 import { type CollectionMode } from "@/components/portal/ui/collections-card";
 
 interface Overview {
@@ -312,9 +314,16 @@ export default function AdminOverview() {
   const [loading, setLoading] = useState(true);
   const [range, setRange] = useState<"daily" | "monthly">("daily");
 
-  useEffect(() => {
-    api.get<{ overview: Overview }>("/admin/overview").then((r) => setO(r.overview)).catch(() => { }).finally(() => setLoading(false));
+  const load = useCallback(async () => {
+    const r = await api.get<{ overview: Overview }>("/admin/overview");
+    setO(r.overview);
   }, []);
+
+  useEffect(() => { load().catch(() => { }).finally(() => setLoading(false)); }, [load]);
+
+  // The header below promises "every number updates as bills post and patients
+  // move". Until this line existed that was only true if you pressed F5.
+  useLive([TOPICS.ADMIN], load);
 
   return (
     <PortalScroll>

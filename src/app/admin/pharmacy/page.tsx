@@ -5,6 +5,8 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import { TOPICS } from "@/lib/realtime/topics";
 
 /**
  * THE PHARMACY, FROM THE OWNER'S CHAIR.
@@ -98,6 +100,8 @@ export default function AdminPharmacyPage() {
     finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  useLive([TOPICS.ADMIN], load);
 
   // Counts that belong ON the tab, so a problem is visible before it's opened.
   const stockCount = (d?.counter.expired ?? 0) + (d?.counter.expiringSoon ?? 0) + (d?.counter.lowStock ?? 0);

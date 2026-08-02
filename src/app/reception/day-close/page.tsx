@@ -1,6 +1,7 @@
 "use client";
 
 import { DayCloseStatement } from "@/components/portal/day-close/day-close-statement";
+import { TOPICS } from "@/lib/realtime/topics";
 
 /**
  * Reception's own drawer. Explicitly `till=RECEPTION` rather than relying on the
@@ -13,6 +14,7 @@ export default function DayClosePage() {
       endpoint="/reception/day-close?till=RECEPTION"
       subtitle="What should be in the front desk drawer, and whether it is."
       accent="teal"
+      topics={[TOPICS.RECEPTION]}
     />
   );
 }

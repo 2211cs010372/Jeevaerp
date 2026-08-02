@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/portal/ui/icons";
 import { CommandBar } from "@/components/portal/shell/command-bar";
 import { SettingsPanel, type Me } from "@/components/portal/shell/settings-panel";
@@ -10,6 +10,8 @@ import { themeBootScript } from "@/lib/portal/theme";
 import type { NavItem } from "@/lib/portal/nav";
 import { PORTALS } from "@/lib/portal/nav";
 import { api } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import { isTopic } from "@/lib/realtime/topics";
 
 /**
  * The hospital's logo, or the built-in stethoscope mark when none is set.
@@ -104,23 +106,32 @@ export function PortalShell({
   }, [meta]);
 
   const [badgeData, setBadgeData] = useState<Record<string, Record<string, unknown>>>({});
-  useEffect(() => {
+
+  const pullBadges = useCallback(async () => {
     if (localPath === "/login" || badgePaths.length === 0) return;
-    let alive = true;
-    const pull = () => {
-      for (const path of badgePaths) {
-        api.get<Record<string, unknown>>(path)
-          .then((r) => { if (alive) setBadgeData((d) => ({ ...d, [path]: r })); })
-          .catch(() => { /* a badge is never worth an error on screen */ });
-      }
-    };
-    pull();
-    const timer = setInterval(pull, 60_000);
-    const onFocus = () => pull();
-    window.addEventListener("focus", onFocus);
-    return () => { alive = false; clearInterval(timer); window.removeEventListener("focus", onFocus); };
-    // badgePaths is derived from a module constant - stable across renders.
+    await Promise.all(badgePaths.map((path) =>
+      api.get<Record<string, unknown>>(path)
+        .then((r) => setBadgeData((d) => ({ ...d, [path]: r })))
+        .catch(() => { /* a badge is never worth an error on screen */ })
+    ));
   }, [localPath, badgePaths]);
+
+  useEffect(() => {
+    pullBadges();
+    // The slow timer stays as the floor. useLive below makes it immediate when
+    // the socket is up; this keeps the number honest when it is not.
+    const timer = setInterval(pullBadges, 60_000);
+    return () => clearInterval(timer);
+  }, [pullBadges]);
+
+  // A badge is the one thing on screen a member of staff is meant to ACT on -
+  // money not collected, a patient waiting, a test nobody ordered. Up to a
+  // minute stale was tolerable when nothing else moved; now that every screen
+  // updates live, a lagging badge is the thing that looks broken.
+  //
+  // meta.key is the portal slug, which is deliberately identical to its topic.
+  const portalTopic = isTopic(meta.key) ? [meta.key] : [];
+  useLive(portalTopic, pullBadges, { enabled: portalTopic.length > 0 && localPath !== "/login" });
 
   const badgeCount = (item: NavItem): number => {
     if (!item.badge) return 0;

@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Pill } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import { TOPICS } from "@/lib/realtime/topics";
 
 interface Alerts {
   expiring: { batchId: string; medicine: string; batchNo: string; expiryDate: string; quantity: number; daysLeft: number }[];
@@ -17,9 +19,13 @@ export default function AlertsPage() {
   const [a, setA] = useState<Alerts | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    api.get<Alerts>("/pharmacy/alerts").then(setA).catch(() => {}).finally(() => setLoading(false));
-  }, []);
+  const load = useCallback(async () => { setA(await api.get<Alerts>("/pharmacy/alerts")); }, []);
+
+  useEffect(() => { load().catch(() => {}).finally(() => setLoading(false)); }, [load]);
+
+  // Every dispense and every delivery moves these numbers. A "low stock" list
+  // that is an hour stale sends someone to reorder what already arrived.
+  useLive([TOPICS.PHARMACY], load);
 
   return (
     <PortalScroll>

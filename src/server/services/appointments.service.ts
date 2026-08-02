@@ -6,8 +6,25 @@ import { opFeeFor } from "@/lib/after-hours";
 import { logAudit } from "./audit.service";
 import { createInvoice } from "./billing.service";
 import { getAfterHoursOpPolicy } from "./op-pricing.service";
+import { publishLive } from "@/server/realtime/publish";
+import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma } from "@prisma/client";
+
+/**
+ * Tell every screen that watches the day's movement.
+ *
+ * The desk's Today board, the consulting room's queue and the owner's overview
+ * are three views of ONE list, so they move together or they disagree. A patient
+ * checked in at the counter has to appear in the doctor's queue without anybody
+ * pressing anything - that walk down the corridor is the entire window in which
+ * a stale screen is wrong.
+ *
+ * Fire-and-forget by contract: publishLive swallows its own failures, so a
+ * booking never fails because a notification did.
+ */
+const announceVisitChange = () =>
+  publishLive([TOPICS.RECEPTION, TOPICS.DOCTOR, TOPICS.ADMIN], EVENTS.APPOINTMENT_CHANGED);
 
 export interface DoctorDTO {
   id: string; name: string; specialization: string; department: string; fee: string;
@@ -297,9 +314,11 @@ export async function bookAppointment(
       },
       ctx
     );
+    await announceVisitChange();
     return { ...dto, invoice: { id: invoice.id, receiptNo: invoice.receiptNo, totalAmount: invoice.totalAmount, status: invoice.status } };
   }
 
+  await announceVisitChange();
   return dto;
 }
 
@@ -563,6 +582,8 @@ export async function recordVitals(
     ...ctx,
   });
 
+  // Vitals are taken at triage and read in the consulting room minutes later.
+  await announceVisitChange();
   return toVitalsDTO(row);
 }
 
@@ -597,6 +618,9 @@ export async function checkInAppointment(
     action: "APPOINTMENT_CHECKED_IN", targetTable: "Appointment", targetId: appointmentId,
     meta: { opNumber: appt.opNumber }, ...ctx,
   });
+  // THE one that matters most: the patient is now walking to the consulting
+  // room, and the doctor's queue has to know before they get there.
+  await announceVisitChange();
   return { id: appointmentId, status: "CHECKED_IN", checkedInAt: now.toISOString() };
 }
 
@@ -623,7 +647,10 @@ export async function assignAppointmentDoctor(
   input: { appointmentId: string; doctorId: string },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<{ id: string; doctor: { id: string; name: string; department: string }; price: string }> {
-  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  // Announced after the commit, never inside it - a signal sent from within a
+  // transaction that then rolls back tells every screen to go and re-read a
+  // change that never happened.
+  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const appt = await tx.appointment.findUnique({
       where: { id: input.appointmentId },
       select: {
@@ -663,6 +690,9 @@ export async function assignAppointmentDoctor(
       price: updated.priceAtBooking.toString(),
     };
   });
+
+  await announceVisitChange();
+  return result;
 }
 
 /** Undo a mis-click. CHECKED_IN -> BOOKED. Refused once the doctor has seen them. */
@@ -689,6 +719,7 @@ export async function undoCheckIn(
     action: "APPOINTMENT_CHECKIN_UNDONE", targetTable: "Appointment", targetId: appointmentId,
     meta: { opNumber: appt.opNumber }, ...ctx,
   });
+  await announceVisitChange();
 }
 
 /**
@@ -710,7 +741,7 @@ export async function cancelAppointment(
 ): Promise<{ id: string; opNumber: string; paidInvoice: { receiptNo: string; amountPaid: string } | null }> {
   if (!input.reason?.trim()) throw new ApiError(400, "A cancellation reason is required");
 
-  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const appt = await tx.appointment.findUnique({
       where: { id: input.appointmentId },
       select: {
@@ -759,6 +790,11 @@ export async function cancelAppointment(
       paidInvoice: paid ? { receiptNo: paid.receiptNo, amountPaid: paid.amountPaid.toFixed(2) } : null,
     };
   });
+
+  // A cancelled visit has to leave the doctor's queue too, or they call for a
+  // patient who went home.
+  await announceVisitChange();
+  return result;
 }
 
 /**
@@ -777,7 +813,7 @@ export async function rescheduleAppointment(
   input: { appointmentId: string; newSlotId: string },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<{ id: string; opNumber: string; visitDate: string; time: string }> {
-  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const appt = await tx.appointment.findUnique({
       where: { id: input.appointmentId },
       select: { id: true, opNumber: true, status: true, slotId: true, doctorId: true },
@@ -833,6 +869,9 @@ export async function rescheduleAppointment(
       visitDate: slot.date.toISOString().slice(0, 10), time: slot.startTime,
     };
   });
+
+  await announceVisitChange();
+  return result;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

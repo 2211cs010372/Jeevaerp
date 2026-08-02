@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { Icon } from "@/components/portal/ui/icons";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import { TOPICS } from "@/lib/realtime/topics";
 
 interface Bill {
   id: string; receiptNo: string; source: string; status: string;
@@ -54,9 +56,16 @@ export default function AdminBillsPage() {
   const [pay, setPay] = useState<(typeof PAY_FILTERS)[number]>("ALL");
   const [q, setQ] = useState("");
 
-  useEffect(() => {
-    api.get<{ invoices: Bill[] }>("/admin/bills").then((r) => setBills(r.invoices)).catch(() => {}).finally(() => setLoading(false));
+  const load = useCallback(async () => {
+    const r = await api.get<{ invoices: Bill[] }>("/admin/bills");
+    setBills(r.invoices);
   }, []);
+
+  useEffect(() => { load().catch(() => {}).finally(() => setLoading(false)); }, [load]);
+
+  // Bills are raised at four counters. This is the one screen that sees all of
+  // them, so it is the one that most needs to not be stale.
+  useLive([TOPICS.ADMIN], load);
 
   const matchPay = (b: Bill) => {
     if (pay === "ALL") return true;

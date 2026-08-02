@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Kpi, Pill, statusTone } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
@@ -9,6 +9,8 @@ import { FlowRail } from "@/components/portal/shell/flow-rail";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, ApiClientError } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import { TOPICS } from "@/lib/realtime/topics";
 
 interface Appt {
   id: string; opNumber: string; time: string; status: string; type: string; price: string;
@@ -54,33 +56,27 @@ export default function ReceptionTodayPage() {
   const [assignDocId, setAssignDocId] = useState("");
   const [doctors, setDoctors] = useState<DoctorOption[]>([]);
 
-  useEffect(() => {
-    let active = true;
-    Promise.all([
+  const refresh = useCallback(async () => {
+    const [s, a, b] = await Promise.all([
       api.get<{ stats: Stats }>("/reception/stats"),
       api.get<{ appointments: Appt[] }>("/reception/appointments"),
       // how much money is still owed - step 6 of the rail needs to be honest
       api.get<{ invoices: { totalAmount: string; amountPaid: string; status: string }[] }>("/reception/billing")
         .catch(() => ({ invoices: [] })),
-    ]).then(([s, a, b]) => {
-      if (!active) return;
-      setStats(s.stats);
-      setAppts(a.appointments);
-      setUnpaid(b.invoices.filter((i) =>
-        i.status !== "CANCELLED" && Number(i.totalAmount) - Number(i.amountPaid) > 0).length);
-    }).catch(() => { }).finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+    ]);
+    setStats(s.stats);
+    setAppts(a.appointments);
+    setUnpaid(b.invoices.filter((i) =>
+      i.status !== "CANCELLED" && Number(i.totalAmount) - Number(i.amountPaid) > 0).length);
   }, []);
 
-  // revenue booked today (sum of appointment fees)
+  useEffect(() => { refresh().catch(() => { }).finally(() => setLoading(false)); }, [refresh]);
 
-  const refresh = async () => {
-    const [s2, a2] = await Promise.all([
-      api.get<{ stats: Stats }>("/reception/stats"),
-      api.get<{ appointments: Appt[] }>("/reception/appointments"),
-    ]);
-    setStats(s2.stats); setAppts(a2.appointments);
-  };
+  // The desk's board follows the whole hospital: a doctor finishing a
+  // consultation, the lab resulting a test, the pharmacy dispensing, a bill
+  // being paid. Suspended while the assign-doctor dialog is open, because
+  // reloading the list under an open form swaps the row out from under it.
+  useLive([TOPICS.RECEPTION], refresh, { enabled: !assigning });
 
   /** The core front-desk verb: the patient physically walked in. */
   async function checkIn(a: Appt, undo = false) {

@@ -7,6 +7,8 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import { TOPICS } from "@/lib/realtime/topics";
 import { AdmissionBanner, useAdmission } from "@/components/portal/reception/admission-banner";
 import { InpatientPicker } from "@/components/portal/reception/inpatient-picker";
 import { PRINT_CSS, RxTable } from "@/components/print/stationery";
@@ -116,6 +118,16 @@ export default function UploadPrescriptionPage() {
       .catch(() => setVisits([]));
     loadExisting(patient.displayId);
   }, [patient, loadExisting]);
+
+  // Only the PAST prescriptions list follows the hospital - never the form the
+  // user is filling in. The pharmacy dispensing a chit changes its status here,
+  // and that status is why somebody would otherwise send it twice. Everything
+  // typed above is local state and is deliberately left alone.
+  useLive(
+    [TOPICS.RECEPTION],
+    () => { if (patient) return loadExisting(patient.displayId); },
+    { enabled: !!patient }
+  );
 
   // vitals belong to the OP visit, not the stay - reload whatever's typed
   // in already whenever the picked consultation changes.

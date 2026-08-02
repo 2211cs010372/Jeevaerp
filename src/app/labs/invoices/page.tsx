@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Pill, statusTone, PrimaryButton } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { DiscountInput } from "@/components/portal/ui/bill-fields";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import { TOPICS } from "@/lib/realtime/topics";
 
 interface Row {
   id: string; receiptNo: string; source: string; status: string;
@@ -29,13 +31,17 @@ export default function InvoicesPage() {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     try { const { invoices } = await api.get<{ invoices: Row[] }>("/billing/invoices?source=LAB"); setRows(invoices); }
     catch (e) { setError(e instanceof ApiClientError ? e.message : "Couldn't load invoices."); }
     finally { setLoading(false); }
-  }
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  // Suspended while an invoice is open for editing - reloading the list under
+  // an open dialog is how somebody's half-typed correction disappears.
+  useLive([TOPICS.LABS], load, { enabled: !editing });
 
   async function openEdit(r: Row) {
     setError(null);

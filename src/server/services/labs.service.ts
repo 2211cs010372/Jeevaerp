@@ -274,7 +274,7 @@ export async function uploadReport(
   await logAudit(actor, { action: "LAB_REPORT_UPLOADED", targetTable: "LabTest", targetId: input.labTestId, ...ctx });
 
   // A report on the file is what reception hands the patient.
-  await publishLive([TOPICS.LABS, TOPICS.RECEPTION], EVENTS.LAB_RESULTED);
+  await publishLive([TOPICS.LABS, TOPICS.RECEPTION, TOPICS.DOCTOR, TOPICS.ADMIN], EVENTS.LAB_RESULTED);
 
   const row: TestRow | null = await prisma.labTest.findUnique({ where: { id: input.labTestId }, select: testSelect });
   if (!row) throw new ApiError(404, "Test not found");
@@ -294,7 +294,7 @@ export async function completeTest(actor: AuthUser, labTestId: string, ctx: { ip
   await logAudit(actor, { action: "LAB_TEST_COMPLETED", targetTable: "LabTest", targetId: labTestId, ...ctx });
 
   // A finished result is something reception is actively waiting on.
-  await publishLive([TOPICS.LABS, TOPICS.RECEPTION, TOPICS.ADMIN], EVENTS.LAB_RESULTED);
+  await publishLive([TOPICS.LABS, TOPICS.RECEPTION, TOPICS.DOCTOR, TOPICS.ADMIN], EVENTS.LAB_RESULTED);
 
   const row: TestRow | null = await prisma.labTest.findUnique({ where: { id: labTestId }, select: testSelect });
   if (!row) throw new ApiError(404, "Test not found");
@@ -639,7 +639,7 @@ export async function saveLabResults(
   // Reception and the doctor's queue both watch this: an impression written at
   // the bench is only useful if it reaches the consulting room before the
   // patient does.
-  await publishLive([TOPICS.LABS, TOPICS.RECEPTION], EVENTS.LAB_RESULTED);
+  await publishLive([TOPICS.LABS, TOPICS.RECEPTION, TOPICS.DOCTOR, TOPICS.ADMIN], EVENTS.LAB_RESULTED);
   return { results: sheet.results, abnormal, impression: sheet.test.impression };
 }
 

@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Kpi, Pill, statusTone } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import { TOPICS } from "@/lib/realtime/topics";
 import { CollectionsCard, type CollectionMode } from "@/components/portal/ui/collections-card";
 
 interface Stats {
@@ -30,18 +32,20 @@ export default function LabsDashboard() {
   const [completed, setCompleted] = useState<Test[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    let active = true;
-    Promise.all([
+  const load = useCallback(async () => {
+    const [s, t, c] = await Promise.all([
       api.get<{ stats: Stats }>("/labs/stats"),
       api.get<{ tests: Test[] }>("/labs/tests?status=PENDING"),
       api.get<{ tests: Test[] }>("/labs/tests?status=COMPLETED").catch(() => ({ tests: [] as Test[] })),
-    ]).then(([s, t, c]) => {
-      if (!active) return;
-      setStats(s.stats); setTests(t.tests.slice(0, 8)); setCompleted(c.tests);
-    }).catch(() => {}).finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+    ]);
+    setStats(s.stats); setTests(t.tests.slice(0, 8)); setCompleted(c.tests);
   }, []);
+
+  useEffect(() => { load().catch(() => {}).finally(() => setLoading(false)); }, [load]);
+
+  // An order raised at the front desk lands on this dashboard immediately - the
+  // bench can start collecting without anyone walking over to say so.
+  useLive([TOPICS.LABS], load);
 
   // Finished on the bench but the report file never got attached - the loose ends.
   const awaitingReport = completed.filter((t) => !t.reportFileUrl).slice(0, 6);

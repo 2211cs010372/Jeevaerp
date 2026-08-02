@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { Icon } from "@/components/portal/ui/icons";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api } from "@/lib/api-client";
+import { useLive } from "@/lib/realtime/use-live";
+import { TOPICS } from "@/lib/realtime/topics";
 
 interface Row {
   id: string; opNumber: string; time: string; status: string; price: string; visitDate: string;
@@ -58,10 +60,14 @@ export default function AdminAppointmentsPage() {
   const [q, setQ] = useState("");
   const [referrer, setReferrer] = useState<string | null>(null);
 
-  useEffect(() => {
-    api.get<{ appointments: Row[] }>("/admin/appointments")
-      .then((r) => setRows(r.appointments)).catch(() => {}).finally(() => setLoading(false));
+  const load = useCallback(async () => {
+    const r = await api.get<{ appointments: Row[] }>("/admin/appointments");
+    setRows(r.appointments);
   }, []);
+
+  useEffect(() => { load().catch(() => {}).finally(() => setLoading(false)); }, [load]);
+
+  useLive([TOPICS.ADMIN], load);
 
   // Referred count by person - ranked.
   const referrers = useMemo(() => {

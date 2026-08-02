@@ -37,9 +37,27 @@ export const TOPICS = {
   LABS: "labs",
   IPD: "ipd",
   ADMIN: "admin",
+  /**
+   * The consulting room. Added late, and its absence was a real hole: the doctor
+   * is the person who ACTS on a lab result, and theirs was the one screen with
+   * no way to hear that one had come back. They waited on a result that had been
+   * sitting in the building since eleven o'clock, or refreshed out of habit.
+   */
+  DOCTOR: "doctor",
 } as const;
 
 export type Topic = (typeof TOPICS)[keyof typeof TOPICS];
+
+/**
+ * Is this string one of our topics?
+ *
+ * Exists because a portal's slug and its topic are deliberately the same word
+ * ("reception", "pharmacy", …), which lets the shell subscribe to whichever
+ * portal it is rendering without a second lookup table to keep in step.
+ */
+export function isTopic(s: string): s is Topic {
+  return (Object.values(TOPICS) as string[]).includes(s);
+}
 
 /**
  * What happened. Named for the real-world event, not the table that changed -
@@ -69,6 +87,18 @@ export const EVENTS = {
   STOCK_RECEIVED: "stock.received",
   /** Stock adjusted or written off. */
   STOCK_CHANGED: "stock.changed",
+  /**
+   * A visit was booked, checked in, cancelled, rescheduled, or had its doctor
+   * changed - anything that moves a patient through the day.
+   *
+   * One event rather than five, because every screen that cares re-fetches the
+   * same list either way. The desk's Today board and the doctor's queue are two
+   * views of one thing; a patient arriving at the counter has to appear in the
+   * consulting room without anybody pressing anything.
+   */
+  APPOINTMENT_CHANGED: "appointment.changed",
+  /** A consultation was marked done - the desk can close billing on it. */
+  CONSULTATION_COMPLETED: "consultation.completed",
 } as const;
 
 export type LiveEvent = (typeof EVENTS)[keyof typeof EVENTS];
