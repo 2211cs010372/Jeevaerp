@@ -9,6 +9,7 @@ import { r2 as round2 } from "@/server/billing/calc";
 import { getSettings } from "./admin.service";
 import { publishLive } from "@/server/realtime/publish";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
+import { mergeAdvice } from "@/lib/advised-lab";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, PaymentMode, ChargeCategory } from "@prisma/client";
 import {
@@ -240,7 +241,6 @@ export async function admitPatient(
         attendantName: nn(input.attendantName),
         attendantPhone: nn(input.attendantPhone),
         attendantRelation: nn(input.attendantRelation),
-        notes: nn(input.notes),
         dailyChargeAtAdmit: bed.ward.dailyCharge,
         wardNameAtAdmit: bed.ward.name,
         gstRatePctAtAdmit: bed.ward.gstRatePct,
@@ -248,6 +248,15 @@ export async function admitPatient(
       },
       select: { id: true },
     });
+
+    // An admission note opens the chronology like any other entry, with the
+    // admitting user's name on it - not as a string on the stay that the next
+    // shift would overwrite.
+    if (nn(input.notes)) {
+      await tx.admissionNote.create({
+        data: { admissionId: adm.id, body: input.notes!.trim(), kind: "NURSING", authorId: actor.id },
+      });
+    }
 
     await logAudit(actor, {
       action: "PATIENT_ADMITTED", targetTable: "Admission", targetId: adm.id,
@@ -490,7 +499,6 @@ export async function dischargePatient(
         },
         patientId: true, patient: { select: { displayId: true } },
         bed: { select: { bedNo: true } },
-        notes: true,
       },
     });
     if (!a) throw new ApiError(404, "Admission not found");
@@ -504,13 +512,23 @@ export async function dischargePatient(
     const dischargedAt = new Date();
     await tx.admission.update({
       where: { id: a.id },
-      data: {
-        status: outcome,
-        dischargedAt,
-        dischargedById: actor.id,
-        ...(input.notes?.trim() ? { notes: [a.notes, input.notes.trim()].filter(Boolean).join("\n") } : {}),
-      },
+      data: { status: outcome, dischargedAt, dischargedById: actor.id },
     });
+
+    // The closing note joins the same chronology as every ward entry rather than
+    // being concatenated onto a blob. It carries the discharging user's name and
+    // the moment the stay closed, which is exactly what a summary has to show.
+    if (input.notes?.trim()) {
+      await tx.admissionNote.create({
+        data: {
+          admissionId: a.id,
+          body: input.notes.trim(),
+          kind: "DISCHARGE",
+          authorId: actor.id,
+        },
+      });
+    }
+
     await tx.bed.update({ where: { id: a.bedId }, data: { status: "AVAILABLE" } });
 
     await logAudit(actor, {
@@ -793,15 +811,62 @@ export async function removeAdmissionCharge(
 
 /**
  * Nursing / observation notes for the stay - shift-handover text, not billed.
- * Kept in the same Admission.notes the discharge step already appends to, so the
- * discharge summary and the running sheet read one source of truth.
+ *
+ * APPEND-ONLY. There is deliberately no update and no delete here, and adding
+ * one would undo the point of the table: the previous shape was a single
+ * mutable string, so the evening shift's entry silently destroyed the morning's
+ * and neither carried an author or a time. A ward record that can be quietly
+ * rewritten is worth very little the day somebody questions the stay.
+ *
+ * A correction is a NEW entry saying what it corrects - the same thing you do
+ * on paper, and the only version that survives being challenged.
  */
-export async function updateAdmissionNotes(
+export interface AdmissionNoteDTO {
+  id: string;
+  body: string;
+  kind: "NURSING" | "DISCHARGE";
+  /** Null only on entries migrated from the old column - never a guess. */
+  authorName: string | null;
+  createdAt: string;
+}
+
+const noteSelect = {
+  id: true, body: true, kind: true, createdAt: true,
+  author: { select: { name: true } },
+} as const;
+
+type NoteRow = {
+  id: string; body: string; kind: string; createdAt: Date;
+  author: { name: string } | null;
+};
+
+function toNoteDTO(n: NoteRow): AdmissionNoteDTO {
+  return {
+    id: n.id,
+    body: n.body,
+    kind: n.kind as "NURSING" | "DISCHARGE",
+    authorName: n.author?.name ?? null,
+    createdAt: n.createdAt.toISOString(),
+  };
+}
+
+/** Every entry against a stay, oldest first - it reads as a chronology. */
+export async function listAdmissionNotes(admissionId: string): Promise<AdmissionNoteDTO[]> {
+  const rows = await prisma.admissionNote.findMany({
+    where: { admissionId },
+    orderBy: { createdAt: "asc" },
+    select: noteSelect,
+  });
+  return (rows as NoteRow[]).map(toNoteDTO);
+}
+
+/** Add one entry. The only write path - see the note above about corrections. */
+export async function addAdmissionNote(
   actor: AuthUser,
   admissionId: string,
-  notes: string,
+  body: string,
   ctx: { ipAddress?: string; userAgent?: string }
-): Promise<{ notes: string | null }> {
+): Promise<AdmissionNoteDTO> {
   const adm = await prisma.admission.findUnique({
     where: { id: admissionId },
     select: { id: true, status: true, ipNumber: true },
@@ -809,13 +874,20 @@ export async function updateAdmissionNotes(
   if (!adm) throw new ApiError(404, "Admission not found");
   if (adm.status !== "ADMITTED") throw new ApiError(409, "This stay is closed - its notes are final");
 
-  const clean = notes.trim() || null;
-  await prisma.admission.update({ where: { id: admissionId }, data: { notes: clean } });
-  await logAudit(actor, {
-    action: "IPD_NOTES_UPDATED", targetTable: "Admission", targetId: admissionId,
-    meta: { ipNumber: adm.ipNumber }, ...ctx,
+  const clean = body.trim();
+  if (!clean) throw new ApiError(400, "Write something before saving the note");
+
+  const row = await prisma.admissionNote.create({
+    data: { admissionId, body: clean, kind: "NURSING", authorId: actor.id },
+    select: noteSelect,
   });
-  return { notes: clean };
+
+  await logAudit(actor, {
+    action: "IPD_NOTE_ADDED", targetTable: "AdmissionNote", targetId: row.id,
+    meta: { ipNumber: adm.ipNumber, admissionId }, ...ctx,
+  });
+
+  return toNoteDTO(row as NoteRow);
 }
 
 /**
@@ -875,7 +947,7 @@ export async function dischargeSummaryData(admissionId: string) {
   const adm = await prisma.admission.findUnique({
     where: { id: admissionId },
     select: {
-      ipNumber: true, status: true, admittedAt: true, dischargedAt: true, reason: true, notes: true,
+      ipNumber: true, status: true, admittedAt: true, dischargedAt: true, reason: true,
       patient: {
         select: {
           displayId: true, fullName: true, age: true, gender: true, phone: true,
@@ -886,7 +958,8 @@ export async function dischargeSummaryData(admissionId: string) {
       prescriptionUploads: {
         orderBy: { createdAt: "asc" },
         select: {
-          diagnosis: true, advice: true, labsAdvised: true, nextVisit: true,
+          diagnosis: true, advice: true, nextVisit: true,
+          advisedLabs: { select: { testName: true, labTestId: true, declinedAt: true }, orderBy: { createdAt: "asc" } },
           items: { select: { medicineName: true, qty: true, dosage: true }, orderBy: { id: "asc" } },
         },
       },
@@ -905,13 +978,24 @@ export async function dischargeSummaryData(admissionId: string) {
   });
 
   // ── Clinical narrative, derived (never typed twice) ──
-  type Rx = { diagnosis: string | null; advice: string | null; labsAdvised: string | null; nextVisit: string | null; items: { medicineName: string; qty: number; dosage: string | null }[] };
+  type AdvisedRow = { testName: string; labTestId: string | null; declinedAt: Date | null };
+  type Rx = {
+    diagnosis: string | null; advice: string | null; nextVisit: string | null;
+    advisedLabs: AdvisedRow[];
+    items: { medicineName: string; qty: number; dosage: string | null }[];
+  };
   const rxs = adm.prescriptionUploads as Rx[];
   const firstOf = (pick: (r: Rx) => string | null) => rxs.map(pick).map((v) => v?.trim()).filter(Boolean) as string[];
   const diagnosis = firstOf((r) => r.diagnosis)[0] ?? null;
   const advice = [...new Set(firstOf((r) => r.advice))].join(" ") || null;
   const nextVisit = firstOf((r) => r.nextVisit).slice(-1)[0] ?? null;
-  const labsAdvised = [...new Set(rxs.flatMap((r) => (r.labsAdvised ?? "").split("\n")).map((s) => s.trim()).filter(Boolean))];
+
+  // Advised tests now carry whether they were actually ordered. The summary says
+  // so: a test the doctor asked for that never happened is precisely the thing a
+  // reader of this document needs to see, and the old free-text version could
+  // not distinguish it from one that was done. mergeAdvice collapses the same
+  // test advised on several days of the stay into one honest line.
+  const labsAdvised = mergeAdvice(rxs.flatMap((r) => r.advisedLabs));
 
   // Medicines on discharge - one row per drug, dosage from its latest mention.
   const medMap = new Map<string, { name: string; qty: number; dosage: string | null }>();
@@ -937,7 +1021,8 @@ export async function dischargeSummaryData(admissionId: string) {
       wardName: sheet.admission.wardName,
       bedNo: sheet.admission.bedNo,
       reason: adm.reason,
-      observations: adm.notes,
+      /** The full chronology, each entry with its author and time. */
+      observations: sheet.notes,
     },
     patient: {
       displayId: adm.patient.displayId, fullName: adm.patient.fullName, age: adm.patient.age,
@@ -982,7 +1067,8 @@ export async function admissionSheet(admissionId: string): Promise<{
   /** Assigned nursing care, days × NURSE_FEE_PER_DAY. Derived, not a stored line. */
   nurseTotal: string;
   nursePerDay: string;
-  notes: string | null;
+  /** The stay's chronology, oldest first. Append-only - see AdmissionNote. */
+  notes: AdmissionNoteDTO[];
   charges: ChargeDTO[];
   chargesTotal: string;
   grandTotal: string;
@@ -1004,7 +1090,8 @@ export async function admissionSheet(admissionId: string): Promise<{
   const a = await prisma.admission.findUnique({
     where: { id: admissionId },
     select: {
-      id: true, ipNumber: true, status: true, admittedAt: true, dischargedAt: true, reason: true, notes: true,
+      id: true, ipNumber: true, status: true, admittedAt: true, dischargedAt: true, reason: true,
+      noteEntries: { orderBy: { createdAt: "asc" }, select: noteSelect },
       wardNameAtAdmit: true, dailyChargeAtAdmit: true, gstRatePctAtAdmit: true,
       attendantName: true, attendantPhone: true, attendantRelation: true,
       bed: { select: { bedNo: true } },
@@ -1112,7 +1199,7 @@ export async function admissionSheet(admissionId: string): Promise<{
     bedTotal: bedTotal.toFixed(2),
     nurseTotal: nurseTotal.toFixed(2),
     nursePerDay: NURSE_FEE_PER_DAY.toFixed(2),
-    notes: a.notes,
+    notes: (a.noteEntries as NoteRow[]).map(toNoteDTO),
     chargesTotal: chargesTotal.toFixed(2),
     grandTotal: grandTotal.toFixed(2),
     charges,

@@ -315,7 +315,7 @@ export function Navbar() {
             open ? "translate-x-0" : "translate-x-full"
           }`}
         >
-          <div className="flex flex-none items-center justify-between gap-3 border-b border-[var(--line)] px-4 py-3.5">
+          <div className="flex flex-none w-full items-center justify-between gap-3 border-b border-[var(--line)] px-4 py-3.5">
             <span className="min-w-0">
               <span className="display block text-[17px] leading-none text-[var(--ink)]">
                 {HOSPITAL.shortName}

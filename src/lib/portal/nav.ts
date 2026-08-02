@@ -49,7 +49,13 @@ export const PORTALS: Record<string, PortalMeta> = {
       { label: "Register patient", href: "/register", icon: "users" },
       { label: "Book appointment", href: "/book", icon: "calendar" },
       { label: "Prescriptions", href: "/prescriptions", icon: "file" },
-      { label: "Lab tests", href: "/labs", icon: "flask" },
+      {
+        // A test the doctor advised that nobody ordered is work that ROTS if
+        // unseen - exactly what this badge is reserved for. The doctor assumes
+        // it was done and waits for a result that is never coming.
+        label: "Lab tests", href: "/labs", icon: "flask",
+        badge: { path: "/reception/advised-labs?limit=1", field: "count", tone: "amber" },
+      },
       { label: "Billing", href: "/billing", icon: "receipt" },
       { label: "Day close", href: "/day-close", icon: "trend" },
       { label: "Admissions", href: "/ipd", icon: "bed" },

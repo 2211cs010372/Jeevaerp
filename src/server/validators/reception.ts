@@ -219,3 +219,12 @@ export const recordVitalsSchema = z.object({
   heightCm: z.coerce.number().min(20).max(250).optional(),
   weightKg: z.coerce.number().min(0.5).max(400).optional(),
 });
+/**
+ * Marking an advised test as not needed. The reason is mandatory and matches
+ * the merge-patients rule above: an action that erases a doctor's instruction
+ * from the outstanding list has to say why, or the list becomes something staff
+ * clear rather than something they act on.
+ */
+export const declineAdvisedLabSchema = z.object({
+  reason: z.string().trim().min(3, "Say why the test isn't being done"),
+});

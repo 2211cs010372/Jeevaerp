@@ -6,6 +6,7 @@ import { logAudit } from "./audit.service";
 import { publishLive } from "@/server/realtime/publish";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import type { AuthUser } from "@/lib/auth/types";
+import { advisedStatus, dedupeAdvisedNames, type AdvisedStatus } from "@/lib/advised-lab";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 const ALLOWED = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
@@ -210,7 +211,20 @@ export async function sendOpdSheetToPharmacy(
     }))
     .filter((it) => it.medicineName.length > 0);
 
-  const labs = (input.labs ?? []).map((s) => s.trim()).filter(Boolean);
+  const labs = dedupeAdvisedNames(input.labs ?? []);
+
+  // Resolve each against the lab master so reception can order it in one click.
+  // An unmatched name is kept anyway with catalogId null: the doctor wrote it,
+  // so it prints and it stays on the outstanding list - the catalog not
+  // stocking a test is not a reason to lose the instruction.
+  const matched = labs.length
+    ? await prisma.labTestCatalog.findMany({
+        where: { active: true, name: { in: labs, mode: "insensitive" } },
+        select: { id: true, name: true },
+      })
+    : [];
+  const catalogByName = new Map(matched.map((c) => [c.name.trim().toLowerCase(), c.id]));
+
   const clinical = {
     diagnosis: input.diagnosis?.trim() || null,
     advice: input.advice?.trim() || null,
@@ -231,11 +245,23 @@ export async function sendOpdSheetToPharmacy(
       doctorName: appt.doctor?.name ?? DUTY_DOCTOR.name,
       diagnosis: clinical.diagnosis,
       advice: clinical.advice,
-      labsAdvised: labs.length ? labs.join("\n") : null,
       nextVisit: clinical.nextVisit,
       caseHistory: clinical.caseHistory,
       ...(input.sendNow ? { status: "SENT_TO_PHARMACY", sentToPharmacyAt: new Date() } : {}),
       ...(cleanItems.length ? { items: { create: cleanItems } } : {}),
+      // Advised tests are ROWS now, not newline text. That is what lets
+      // reception order them in one click and lets any screen answer "which of
+      // these was never ordered" - a question the old column could not be asked.
+      ...(labs.length
+        ? {
+            advisedLabs: {
+              create: labs.map((name) => ({
+                testName: name,
+                catalogId: catalogByName.get(name.toLowerCase()) ?? null,
+              })),
+            },
+          }
+        : {}),
     },
     select: {
       id: true, appointmentId: true, fileUrl: true, fileName: true, mimeType: true, fileSize: true,
@@ -253,6 +279,196 @@ export async function sendOpdSheetToPharmacy(
   });
 
   return toDTO(row);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADVISED TESTS - closing the loop between what the doctor asked for and what
+// was actually ordered.
+//
+// The advice used to be newline text nobody could act on: if the tests were
+// never re-typed into the lab screen, they simply did not happen, and there was
+// no list anywhere showing the difference. In a hospital this size nobody
+// downstream catches that - the doctor assumes it was done, and the result they
+// are waiting on never arrives.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface AdvisedLabDTO {
+  id: string;
+  testName: string;
+  /** Null when the lab master has no matching test - it cannot be one-click ordered. */
+  catalogId: string | null;
+  price: string | null;
+  /** The order raised against this advice, if any. */
+  labTestId: string | null;
+  status: AdvisedStatus;
+  declinedReason: string | null;
+}
+
+const advisedSelect = {
+  id: true, testName: true, catalogId: true, labTestId: true,
+  declinedAt: true, declinedReason: true,
+  catalog: { select: { price: true } },
+} as const;
+
+type AdvisedRow = {
+  id: string; testName: string; catalogId: string | null; labTestId: string | null;
+  declinedAt: Date | null; declinedReason: string | null;
+  catalog: { price: { toString(): string } } | null;
+};
+
+function toAdvisedDTO(r: AdvisedRow): AdvisedLabDTO {
+  return {
+    id: r.id,
+    testName: r.testName,
+    catalogId: r.catalogId,
+    price: r.catalog ? r.catalog.price.toString() : null,
+    labTestId: r.labTestId,
+    status: advisedStatus(r),
+    declinedReason: r.declinedReason,
+  };
+}
+
+/** What the doctor advised on this visit, and what became of each line. */
+export async function advisedLabsForAppointment(appointmentId: string): Promise<AdvisedLabDTO[]> {
+  const rows = await prisma.prescriptionUploadLab.findMany({
+    where: { upload: { appointmentId } },
+    orderBy: { createdAt: "asc" },
+    select: advisedSelect,
+  });
+  return (rows as AdvisedRow[]).map(toAdvisedDTO);
+}
+
+/**
+ * Every advised test still waiting on someone, across the whole desk.
+ *
+ * This is the safety net the gap was really about. A per-visit list only helps
+ * the person who happens to reopen that visit; the reason a test gets missed is
+ * that nobody goes looking. Reception sees this on the prescriptions screen.
+ */
+export async function outstandingAdvisedLabs(limit = 50): Promise<{
+  rows: {
+    id: string; testName: string; catalogId: string | null; price: string | null;
+    advisedAt: string;
+    patient: { id: string; displayId: string; fullName: string };
+    appointmentId: string | null;
+    opNumber: string | null;
+    doctorName: string | null;
+  }[];
+  count: number;
+}> {
+  // Mirrors isOutstanding() in lib/advised-lab.ts - the same rule, expressed as
+  // a query. Keep the two in step.
+  const where = { labTestId: null, declinedAt: null } as const;
+
+  const [rows, count] = await Promise.all([
+    prisma.prescriptionUploadLab.findMany({
+      where,
+      orderBy: { createdAt: "asc" }, // oldest first - that is the one going stale
+      take: limit,
+      select: {
+        id: true, testName: true, catalogId: true, createdAt: true,
+        catalog: { select: { price: true } },
+        upload: {
+          select: {
+            appointmentId: true,
+            patient: { select: { id: true, displayId: true, fullName: true } },
+            appointment: { select: { opNumber: true, doctor: { select: { name: true } } } },
+          },
+        },
+      },
+    }),
+    prisma.prescriptionUploadLab.count({ where }),
+  ]);
+
+  type Row = {
+    id: string; testName: string; catalogId: string | null; createdAt: Date;
+    catalog: { price: { toString(): string } } | null;
+    upload: {
+      appointmentId: string | null;
+      patient: { id: string; displayId: string; fullName: string };
+      appointment: { opNumber: string; doctor: { name: string } | null } | null;
+    };
+  };
+
+  return {
+    count,
+    rows: (rows as Row[]).map((r) => ({
+      id: r.id,
+      testName: r.testName,
+      catalogId: r.catalogId,
+      price: r.catalog ? r.catalog.price.toString() : null,
+      advisedAt: r.createdAt.toISOString(),
+      patient: r.upload.patient,
+      appointmentId: r.upload.appointmentId,
+      opNumber: r.upload.appointment?.opNumber ?? null,
+      doctorName: r.upload.appointment?.doctor?.name ?? null,
+    })),
+  };
+}
+
+/**
+ * Take an advised test off the outstanding list WITHOUT ordering it.
+ *
+ * A reason is required. "Declined" with no reason is not a record - and an
+ * outstanding list that can be silently emptied is worth nothing, because the
+ * quickest way to clear it becomes the one that destroys the information.
+ */
+export async function declineAdvisedLab(
+  actor: AuthUser,
+  input: { id: string; reason: string },
+  ctx: { ipAddress?: string; userAgent?: string }
+): Promise<AdvisedLabDTO> {
+  const reason = input.reason.trim();
+  if (!reason) throw new ApiError(400, "Say why the test isn't being done");
+
+  const existing = await prisma.prescriptionUploadLab.findUnique({
+    where: { id: input.id },
+    select: { id: true, testName: true, labTestId: true, declinedAt: true },
+  });
+  if (!existing) throw new ApiError(404, "That advised test no longer exists");
+  if (existing.labTestId) throw new ApiError(409, "That test has already been ordered");
+  if (existing.declinedAt) throw new ApiError(409, "That test is already marked not needed");
+
+  const row = await prisma.prescriptionUploadLab.update({
+    where: { id: input.id },
+    data: { declinedAt: new Date(), declinedReason: reason },
+    select: advisedSelect,
+  });
+
+  await logAudit(actor, {
+    action: "ADVISED_LAB_DECLINED", targetTable: "PrescriptionUploadLab", targetId: input.id,
+    meta: { testName: existing.testName, reason }, ...ctx,
+  });
+
+  return toAdvisedDTO(row as AdvisedRow);
+}
+
+/**
+ * Link an order back to the advice it came from.
+ *
+ * Called by the labs service after the LabTest rows exist, inside the same
+ * request. Deliberately forgiving: a link that fails must never fail the order
+ * itself - the test being ordered is the thing that matters clinically, and an
+ * unlinked advised row simply stays on the outstanding list where a human can
+ * see it. Silently losing the ORDER to keep the bookkeeping tidy would be
+ * exactly the wrong trade.
+ */
+export async function linkAdvisedLabs(
+  pairs: { advisedLabId: string; labTestId: string }[]
+): Promise<void> {
+  for (const p of pairs) {
+    try {
+      // updateMany, so the "not already linked / not declined" guard is part of
+      // the WHERE rather than a read-then-write that two receptionists ordering
+      // the same advice at once could both pass.
+      await prisma.prescriptionUploadLab.updateMany({
+        where: { id: p.advisedLabId, labTestId: null, declinedAt: null },
+        data: { labTestId: p.labTestId },
+      });
+    } catch {
+      // Already linked, already declined, or gone. Not worth failing an order.
+    }
+  }
 }
 
 /** All uploaded prescriptions for a patient (newest first). */

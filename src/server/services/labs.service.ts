@@ -7,6 +7,7 @@ import { createInvoice, type BillLineInput } from "./billing.service";
 import { collectionByMode, type ModeTotal } from "./reports.service";
 import { publishLive } from "@/server/realtime/publish";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
+import { linkAdvisedLabs } from "./prescriptions.service";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma } from "@prisma/client";
 
@@ -117,7 +118,15 @@ export async function listLabTests(status?: "PENDING" | "COMPLETED"): Promise<La
  */
 export async function orderTests(
   actor: AuthUser,
-  input: { patientId: string; catalogIds: string[]; appointmentId?: string },
+  input: {
+    patientId: string; catalogIds: string[]; appointmentId?: string;
+    /**
+     * The doctor's advised rows this order fulfils, keyed by catalog id. Passing
+     * them is what closes the loop back to the OPD sheet, so the advice stops
+     * showing as outstanding. Optional - a walk-in order has no advice behind it.
+     */
+    fromAdvised?: { advisedLabId: string; catalogId: string }[];
+  },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<LabTestDTO[] & { chargedToRoom?: boolean }> {
   if (!input.catalogIds.length) throw new ApiError(400, "Select at least one test");
@@ -143,6 +152,8 @@ export async function orderTests(
 
   const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const ids: string[] = [];
+    /** catalogId -> the LabTest just raised for it, so advice can be linked. */
+    const byCatalog = new Map<string, string>();
     for (const c of catalog) {
       const t = await tx.labTest.create({
         data: {
@@ -158,6 +169,7 @@ export async function orderTests(
         select: { id: true },
       });
       ids.push(t.id);
+      byCatalog.set(c.id, t.id);
 
       // An inpatient's investigations get their own LAB bill, raised after this
       // transaction closes - see below. They are NOT posted to the room tab any
@@ -170,10 +182,23 @@ export async function orderTests(
       meta: { count: ids.length, patientId: input.patientId, ipNumber: admission?.ipNumber ?? null },
       ...ctx,
     }, tx);
-    return ids;
+    return { ids, byCatalog };
   });
 
-  const rows: TestRow[] = await prisma.labTest.findMany({ where: { id: { in: created } }, select: testSelect });
+  // Close the loop on the doctor's advice. AFTER the transaction and never
+  // inside it: the order is the clinically important thing, and a bookkeeping
+  // link must not be able to roll it back. linkAdvisedLabs swallows its own
+  // failures for the same reason - an unlinked row just stays on the
+  // outstanding list, which is visible and recoverable.
+  if (input.fromAdvised?.length) {
+    await linkAdvisedLabs(
+      input.fromAdvised
+        .map((a) => ({ advisedLabId: a.advisedLabId, labTestId: created.byCatalog.get(a.catalogId) ?? "" }))
+        .filter((p) => p.labTestId)
+    );
+  }
+
+  const rows: TestRow[] = await prisma.labTest.findMany({ where: { id: { in: created.ids } }, select: testSelect });
 
   // AN INPATIENT'S TESTS GET THEIR OWN LAB BILL, left UNPAID.
   //

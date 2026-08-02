@@ -22,7 +22,9 @@ interface Sheet {
     doctor: { name: string; department: string };
   };
   days: number; bedTotal: string; charges: Charge[]; chargesTotal: string; grandTotal: string;
-  nurseTotal: string; nursePerDay: string; notes: string | null;
+  nurseTotal: string; nursePerDay: string;
+  /** Append-only chronology - see AdmissionNote. Never edited in place. */
+  notes: { id: string; body: string; kind: "NURSING" | "DISCHARGE"; authorName: string | null; createdAt: string }[];
   /** One row per bed occupied. Two rows = they were transferred mid-stay. */
   legs: { wardName: string; bedNo: string; dailyCharge: string; days: number; total: string; current: boolean }[];
   advanceTotal: string;
@@ -164,10 +166,8 @@ export default function AdmissionSheetPage() {
   }, [admissionId]);
   useEffect(() => { load(); }, [load]);
 
-  // Seed the notes editor from the loaded sheet, unless the user is mid-edit.
-  useEffect(() => {
-    if (sheet && !notesDirty) setNotes(sheet.notes ?? "");
-  }, [sheet, notesDirty]);
+  // Nothing to seed - the box is always empty, because it adds an entry rather
+  // than editing the stay's notes. What has already been written is history.
 
   useEffect(() => {
     api.get<{ medicines: Med[] }>("/pharmacy/medicines").then((r) => setMeds(r.medicines)).catch(() => {});
@@ -189,13 +189,14 @@ export default function AdmissionSheetPage() {
   }
 
   async function saveNotes() {
+    if (!notes.trim()) return;
     setSavingNotes(true); setErr(null);
     try {
-      await api.patch(`/ipd/admissions/${admissionId}/notes`, { notes });
-      setNotesDirty(false);
-      setFlash("Notes saved to the stay.");
+      await api.post(`/ipd/admissions/${admissionId}/notes`, { body: notes.trim() });
+      setNotes(""); setNotesDirty(false);
+      setFlash("Note added to the stay.");
       await load();
-    } catch (e) { setErr(e instanceof ApiClientError ? e.message : "Could not save the notes."); }
+    } catch (e) { setErr(e instanceof ApiClientError ? e.message : "Could not add the note."); }
     finally { setSavingNotes(false); }
   }
 
@@ -447,26 +448,55 @@ export default function AdmissionSheetPage() {
           <div className="flex items-center justify-between border-b border-[var(--p-border)] px-5 py-3.5">
             <div>
               <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Nursing &amp; observation notes</h3>
-              <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">Shift handover - vitals, intake, how the night went. Not billed; carried onto the discharge summary.</p>
+              <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">Shift handover - vitals, intake, how the night went. Each entry is kept with the name and time it was written; nothing here can be edited or removed.</p>
             </div>
-            {notesDirty && <span className="rounded bg-[var(--p-amber-soft)] px-2 py-0.5 text-[11px] font-semibold text-[#8a6414]">Unsaved</span>}
+            <span className="rounded bg-[var(--p-bg)] px-2 py-0.5 text-[11px] font-semibold text-[var(--p-muted)]">
+              {sheet.notes.length} {sheet.notes.length === 1 ? "entry" : "entries"}
+            </span>
           </div>
           <div className="p-5">
-            <textarea
-              value={notes}
-              onChange={(e) => { setNotes(e.target.value); setNotesDirty(true); }}
-              disabled={discharged}
-              rows={5}
-              placeholder="e.g. 08:00 - BP 130/80, afebrile, tolerating orals. 14:00 - dressing changed, wound clean…"
-              className="w-full resize-y rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm leading-relaxed text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)] disabled:opacity-60" />
+            {/* The chronology. A correction is a NEW entry saying what it
+                corrects - the same as on paper, and the reason there is no
+                edit button on any of these rows. */}
+            {sheet.notes.length > 0 ? (
+              <ol className="mb-4 flex flex-col gap-3">
+                {sheet.notes.map((n) => (
+                  <li key={n.id} className="border-l-2 border-[var(--p-border)] pl-3">
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                      <span className="font-mono text-[11px] tabular-nums text-[var(--p-muted)]">
+                        {new Date(n.createdAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                      <span className="text-[11px] font-semibold text-[var(--p-ink)]">
+                        {n.authorName ?? "Author not recorded"}
+                      </span>
+                      {n.kind === "DISCHARGE" && (
+                        <span className="rounded bg-[var(--p-bg)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">On discharge</span>
+                      )}
+                    </div>
+                    <p className="mt-0.5 whitespace-pre-wrap text-[13px] leading-relaxed text-[var(--p-ink)]">{n.body}</p>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="mb-4 text-[13px] text-[var(--p-muted)]">No notes recorded on this stay yet.</p>
+            )}
+
             {!discharged && (
-              <div className="mt-3 flex items-center justify-end gap-3">
-                {notesDirty && <button onClick={() => { setNotes(sheet.notes ?? ""); setNotesDirty(false); }} className="text-[13px] font-medium text-[var(--p-muted)] hover:text-[var(--p-ink)]">Discard</button>}
-                <button onClick={saveNotes} disabled={savingNotes || !notesDirty}
-                  className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">
-                  {savingNotes ? <><Spinner /> Saving…</> : <><Icon name="check" size={14} /> Save notes</>}
-                </button>
-              </div>
+              <>
+                <textarea
+                  value={notes}
+                  onChange={(e) => { setNotes(e.target.value); setNotesDirty(true); }}
+                  rows={3}
+                  placeholder="e.g. 08:00 - BP 130/80, afebrile, tolerating orals."
+                  className="w-full resize-y rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm leading-relaxed text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]" />
+                <div className="mt-3 flex items-center justify-end gap-3">
+                  {notesDirty && <button onClick={() => { setNotes(""); setNotesDirty(false); }} className="text-[13px] font-medium text-[var(--p-muted)] hover:text-[var(--p-ink)]">Clear</button>}
+                  <button onClick={saveNotes} disabled={savingNotes || !notes.trim()}
+                    className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">
+                    {savingNotes ? <><Spinner /> Adding…</> : <><Icon name="check" size={14} /> Add note</>}
+                  </button>
+                </div>
+              </>
             )}
           </div>
         </section>

@@ -45,7 +45,12 @@ interface Data {
     bpSystolic: number | null; bpDiastolic: number | null; pulse: number | null;
     tempF: number | null; spo2: number | null; heightCm: number | null; weightKg: number | null;
   } | null;
-  clinical: { diagnosis: string | null; advice: string | null; labs: string[]; nextVisit: string | null; caseHistory: string | null } | null;
+  clinical: {
+    diagnosis: string | null; advice: string | null;
+    /** Advised tests, each carrying whether an order was ever raised for it. */
+    labs: { name: string; ordered: boolean; declined: boolean }[];
+    nextVisit: string | null; caseHistory: string | null;
+  } | null;
   /** What the lab wrote against this visit's completed tests. */
   labImpressions?: { testName: string; impression: string }[];
 }
@@ -350,9 +355,13 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
 
         {/* The two lines the patient leaves holding. On pre-printed stock they
             leave the flow together and sit in the band beside the QR - tests on
-            the left margin, the date in the corner under it. */}
+            the left margin, the date in the corner under it.
+
+            The patient's copy names the advised tests plainly. Whether reception
+            has raised the order yet is a desk concern, not something to print on
+            the slip somebody carries to the lab. */}
         <SheetFoot
-          tests={clin?.labs?.length ? clin.labs.join(" · ") : null}
+          tests={clin?.labs?.length ? clin.labs.map((l) => l.name).join(" · ") : null}
           nextVisit={clin?.nextVisit}
           inset={onStationery}
         />

@@ -186,6 +186,14 @@ enum BedStatus {
 /// silently reopen a closed stay. Anything reporting on CLOSURES has to name all
 /// four - see recentDischarges and ipdStats, which previously matched DISCHARGED
 /// alone and would have dropped these rows on the floor.
+enum AdmissionNoteKind {
+  /// Shift-handover observation typed at the ward desk.
+  NURSING
+  /// The closing note the discharge step records. Kept in the same stream so
+  /// the summary reads one chronology, not two.
+  DISCHARGE
+}
+
 enum AdmissionStatus {
   ADMITTED
   /// Discharged on medical advice, the ordinary ending.
@@ -282,6 +290,7 @@ model User {
   purchaseReturns PurchaseReturn[]     @relation("PurchaseReturnCreatedBy")
   requestsHandled AppointmentRequest[] @relation("BookingRequestHandledBy")
   eInvoicesRaised EInvoice[]           @relation("EInvoiceGeneratedBy")
+  admissionNotes  AdmissionNote[]      @relation("AdmissionNoteAuthor")
 }
 
 model Patient {
@@ -648,10 +657,12 @@ model PrescriptionUpload {
   doctorName       String?
 
   /// Clinical details typed from the handwritten sheet, printed onto the
-  /// generated OPD PDF. labsAdvised is newline-separated test names -
-  /// advisory text on the sheet, not lab orders (those are LabTest rows).
+  /// generated OPD PDF.
   diagnosis   String?
   advice      String?
+  /// DEPRECATED - superseded by the advisedLabs rows below. Was newline-
+  /// separated test names that nothing could act on. Kept for one release so
+  /// the backfill can be checked before the column is dropped.
   labsAdvised String?
   nextVisit   String?
   /// Presenting complaints and history as the doctor took them - the top block
@@ -660,8 +671,9 @@ model PrescriptionUpload {
   /// into fields at a reception desk loses the sentence that mattered.
   caseHistory String?
 
-  invoices Invoice[]
-  items    PrescriptionUploadItem[]
+  invoices    Invoice[]
+  items       PrescriptionUploadItem[]
+  advisedLabs PrescriptionUploadLab[]
 
   /// An inpatient prescription belongs to the STAY, not to an OPD appointment.
   /// Exactly one of appointmentId / admissionId is normally set.
@@ -693,6 +705,51 @@ model PrescriptionUploadItem {
   @@index([uploadId])
 }
 
+/// A test the doctor ADVISED on the OPD sheet.
+///
+/// This used to be newline-joined free text in PrescriptionUpload.labsAdvised,
+/// which printed correctly and could not be acted on: nothing turned advice into
+/// a LabTest, and nothing could answer "which advised tests were never ordered".
+/// A test the doctor asked for and nobody re-typed simply did not happen, and no
+/// screen showed the difference. In a small hospital there is no second person
+/// downstream to catch that.
+///
+/// Free text is still the SOURCE - reception is transcribing handwriting, and
+/// the catalog will never hold every phrase a doctor writes. `catalogId` is the
+/// optional resolution into the master, and `labTestId` is the order that
+/// actually fulfilled the advice. Advised-but-not-ordered is exactly the rows
+/// where labTestId is null.
+model PrescriptionUploadLab {
+  id       String             @id @default(cuid())
+  uploadId String
+  upload   PrescriptionUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+
+  /// As typed / as written on the sheet. Survives catalog renames.
+  testName String
+
+  /// Resolved into the lab master when the name matches one. Null when the
+  /// doctor wrote something the catalog does not stock - that advice still
+  /// prints, it just cannot be ordered in one click.
+  catalogId String?
+  catalog   LabTestCatalog? @relation(fields: [catalogId], references: [id])
+
+  /// The order raised against this advice. Null means NOT YET ORDERED, which is
+  /// the whole point of this table.
+  labTestId String?  @unique
+  labTest   LabTest? @relation(fields: [labTestId], references: [id])
+
+  /// Set when someone deliberately decides the test is not needed, so the
+  /// outstanding list can be cleared honestly instead of ignored. The reason is
+  /// required by the service - "declined" with no reason is not a record.
+  declinedAt     DateTime?
+  declinedReason String?
+
+  createdAt DateTime @default(now())
+
+  @@index([uploadId])
+  @@index([labTestId])
+}
+
 model PrescriptionItem {
   id             String       @id @default(cuid())
   prescriptionId String
@@ -718,8 +775,9 @@ model LabTestCatalog {
   gstRatePct Decimal @default(0) @db.Decimal(4, 2)
   active     Boolean @default(true)
 
-  labTests LabTest[]
-  analytes LabAnalyte[]
+  labTests  LabTest[]
+  analytes  LabAnalyte[]
+  advisedOn PrescriptionUploadLab[]
 }
 
 /// How a numeric result compares with its reference range. A report that only
@@ -813,10 +871,13 @@ model LabTest {
 
   invoiceItems InvoiceItem[]
   results      LabResultItem[]
+  /// Set when this order was raised FROM a doctor's written advice, closing the
+  /// loop back to the OPD sheet that asked for it.
+  advisedFrom  PrescriptionUploadLab?
   /// An INPATIENT's tests charge to the room tab, not the counter.
   /// Exactly one of appointmentId / admissionId is normally set.
   admissionId  String?
-  admission    Admission?      @relation(fields: [admissionId], references: [id])
+  admission    Admission?             @relation(fields: [admissionId], references: [id])
 
   @@index([status])
   @@index([appointmentId])
@@ -1221,12 +1282,12 @@ model Invoice {
   // and billed to their employer on Friday, and the bill is what carries the
   // tax position, not the person.
   /// The recipient's GSTIN. Its presence is what makes a bill B2B.
-  buyerGstin      String?
+  buyerGstin     String?
   /// Registered name of the buyer, as it appears against that GSTIN.
-  buyerLegalName  String?
-  buyerAddress    String?
+  buyerLegalName String?
+  buyerAddress   String?
   /// Two-digit GST state code of the buyer. See HospitalConfig.stateCode.
-  buyerStateCode  String?
+  buyerStateCode String?
 
   notes       String?
   paidAt      DateTime?
@@ -1266,20 +1327,20 @@ model EInvoice {
 
   /// Which route reached the IRP - "MANUAL", or a GSP's name. Recorded per
   /// row, not read from config, because config changes and history shouldn't.
-  provider  String         @default("MANUAL")
+  provider String @default("MANUAL")
 
   // ── WHAT THE IRP GAVE BACK ────────────────────────────────────────────────
   /// The 64-character Invoice Reference Number. Null until registered.
-  irn            String?  @unique
+  irn           String?   @unique
   /// Acknowledgement number and timestamp from the portal.
-  ackNo          String?
-  ackDt          DateTime?
+  ackNo         String?
+  ackDt         DateTime?
   /// The signed QR the portal returns, verbatim. This is what gets printed -
   /// it is NOT a QR we draw from the invoice ourselves, and the difference is
   /// the entire legal point of it.
-  signedQrCode   String?  @db.Text
+  signedQrCode  String?   @db.Text
   /// The signed invoice JWT, kept for audit. Rarely read, never edited.
-  signedInvoice  String?  @db.Text
+  signedInvoice String?   @db.Text
 
   // ── WHAT WE SENT, AND WHAT WENT WRONG ─────────────────────────────────────
   /// The exact payload submitted. Kept so a rejection can be diagnosed against
@@ -1293,10 +1354,10 @@ model EInvoice {
   cancelReason String?
 
   generatedById String?
-  generatedBy   User?    @relation("EInvoiceGeneratedBy", fields: [generatedById], references: [id])
+  generatedBy   User?     @relation("EInvoiceGeneratedBy", fields: [generatedById], references: [id])
   generatedAt   DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@index([status])
   @@index([createdAt])
@@ -1515,10 +1576,18 @@ model Admission {
   dischargedAt   DateTime?
   admittedById   String
   dischargedById String?
+  /// DEPRECATED - superseded by AdmissionNote. Read by nothing; kept for one
+  /// release so the backfill in 20260802_admission_notes can be checked against
+  /// the original text before the column is dropped.
   notes          String?
 
   invoices Invoice[]
 
+  /// Nursing / observation entries, append-only. Never updated, never deleted:
+  /// an overwritten ward note is the weakest possible record if a stay is ever
+  /// questioned, and this stay already distinguishes LAMA from ABSCONDED
+  /// precisely because that distinction has to survive being challenged.
+  noteEntries         AdmissionNote[]
   charges             AdmissionCharge[]
   prescriptionUploads PrescriptionUpload[]
 
@@ -1530,20 +1599,49 @@ model Admission {
   @@index([patientId])
 }
 
+/// One nursing / observation entry against a stay.
+///
+/// APPEND-ONLY BY CONTRACT. There is no update path and no delete path in the
+/// service layer, and there should never be one. The column this replaced was a
+/// single mutable `Admission.notes` string, which meant the evening shift's
+/// entry destroyed the morning's - no author, no time, no history. That is fine
+/// for a scratchpad and indefensible for a ward record.
+///
+/// A correction is written as a NEW entry that says what it corrects. That is
+/// how it is done on paper and it is the only version that survives a challenge.
+model AdmissionNote {
+  id          String    @id @default(cuid())
+  admissionId String
+  admission   Admission @relation(fields: [admissionId], references: [id], onDelete: Cascade)
+
+  body String            @db.Text
+  kind AdmissionNoteKind @default(NURSING)
+
+  /// Who wrote it. NULL ONLY on rows backfilled from the old Admission.notes
+  /// column, where the author genuinely was never recorded - the print and the
+  /// ward list both say so rather than guessing a name.
+  authorId String?
+  author   User?   @relation("AdmissionNoteAuthor", fields: [authorId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([admissionId, createdAt])
+}
+
 model HospitalConfig {
-  id               String   @id @default(cuid())
+  id               String  @id @default(cuid())
   legalName        String
   addressLine      String
   city             String
   state            String
-  stateCode        String   @default("36") // Telangana GST state code
+  stateCode        String  @default("36") // Telangana GST state code
   pincode          String
   gstin            String?
   phone            String?
   email            String?
   /// Default GST rate applied to NEW lab catalog entries (%). 0 = exempt (correct
   /// default for diagnostic services). Admin/CA can override per test.
-  defaultLabGstPct Decimal  @default(0) @db.Decimal(4, 2)
+  defaultLabGstPct Decimal @default(0) @db.Decimal(4, 2)
 
   // ── BRANDING ──────────────────────────────────────────────────────────────
   /// The logo, held as a base64 data URI rather than a file path.
@@ -1555,11 +1653,11 @@ model HospitalConfig {
   /// exactly wrong for a logo that has to render on a printed bill and a login
   /// screen. A logo is small, public, and changes about once a year - the column
   /// is the honest place for it. Capped at 512 KB by the validator.
-  logoDataUrl      String?  @db.Text
+  logoDataUrl    String? @db.Text
   /// Shown in the portal sidebar and on the login screens. Was hardcoded "Jeeva".
-  brandName        String   @default("Jeeva")
+  brandName      String  @default("Jeeva")
   /// One line under the brand on sign-in screens. Optional.
-  tagline          String?
+  tagline        String?
   /// The browser tab icon, held as a data URI for the same reason as the logo:
   /// a file written to /public does not survive a deploy.
   ///
@@ -1568,7 +1666,7 @@ model HospitalConfig {
   /// bill; a favicon is square and read at 16px in a tab strip. Scaling the
   /// letterhead down to 16px reliably produces a grey smudge, so the hospital
   /// gets to choose a mark that actually survives being that small.
-  faviconDataUrl   String?  @db.Text
+  faviconDataUrl String? @db.Text
 
   // ── WHAT PRINTS ON A BILL ─────────────────────────────────────────────────
   /// Free text at the foot of every invoice - terms, a refund policy, a helpline.
@@ -1609,27 +1707,27 @@ model HospitalConfig {
   // called them - not what we think they should be called. Defaults are the
   // conventional Tally names and will be wrong for somebody.
   /// Must match the company name in Tally exactly, or the import is refused.
-  tallyCompanyName          String?
+  tallyCompanyName       String?
   /// Income ledgers, one per revenue stream, so the P&L separates them.
-  tallySalesConsultation    String  @default("Consultation Income")
-  tallySalesLab             String  @default("Laboratory Income")
-  tallySalesPharmacy        String  @default("Pharmacy Sales")
-  tallySalesIpd             String  @default("Inpatient Income")
-  tallySalesOther           String  @default("Other Income")
+  tallySalesConsultation String  @default("Consultation Income")
+  tallySalesLab          String  @default("Laboratory Income")
+  tallySalesPharmacy     String  @default("Pharmacy Sales")
+  tallySalesIpd          String  @default("Inpatient Income")
+  tallySalesOther        String  @default("Other Income")
   /// Where the money landed.
-  tallyCashLedger           String  @default("Cash")
-  tallyBankLedger           String  @default("Bank Account")
+  tallyCashLedger        String  @default("Cash")
+  tallyBankLedger        String  @default("Bank Account")
   /// The party ledger a credit bill sits against until it is settled.
-  tallyDebtorLedger         String  @default("Sundry Debtors")
+  tallyDebtorLedger      String  @default("Sundry Debtors")
   /// Output tax. Only ever used on lines that actually carry GST.
-  tallyCgstLedger           String  @default("Output CGST")
-  tallySgstLedger           String  @default("Output SGST")
+  tallyCgstLedger        String  @default("Output CGST")
+  tallySgstLedger        String  @default("Output SGST")
 
   // ── PHARMACY BEHAVIOUR ────────────────────────────────────────────────────
   /// How far ahead a batch counts as "expiring soon". Was hardcoded to 90 days,
   /// which suits a fast-moving retail counter and not a hospital that buys in
   /// bulk twice a year.
-  expiryAlertDays  Int      @default(90)
+  expiryAlertDays Int @default(90)
 
   // ── WARD BEHAVIOUR ────────────────────────────────────────────────────────
   /// Refuse a discharge while pharmacy or lab bills on that stay are unpaid.
@@ -1657,11 +1755,11 @@ model HospitalConfig {
 
   // ── WHAT THE PUBLIC SITE CAN DO ───────────────────────────────────────────
   /// Master switch for online appointment booking.
-  onlineBookingEnabled     Boolean @default(true)
+  onlineBookingEnabled    Boolean @default(true)
   /// Master switch for the "request a callback" form.
-  callbackRequestsEnabled  Boolean @default(true)
+  callbackRequestsEnabled Boolean @default(true)
 
-  updatedAt        DateTime @updatedAt
+  updatedAt DateTime @updatedAt
 }
 
 /// Money going BACK to a patient. Deliberately NOT a negative Payment:

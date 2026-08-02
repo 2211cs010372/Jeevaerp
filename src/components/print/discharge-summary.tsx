@@ -10,10 +10,19 @@ import { isClosed, OUTCOME_LABEL, type AdmissionStatusValue } from "@/lib/admiss
 interface Data {
   hospital: { legalName: string; addressLine: string; city: string; state: string; pincode: string; gstin: string | null; phone: string | null; email: string | null } | null;
   generatedAt: string;
-  admission: { ipNumber: string; status: string; admittedAt: string; dischargedAt: string | null; days: number; wardName: string; bedNo: string; reason: string | null; observations: string | null };
+  admission: {
+    ipNumber: string; status: string; admittedAt: string; dischargedAt: string | null; days: number;
+    wardName: string; bedNo: string; reason: string | null;
+    /** The stay's chronology - each entry with who wrote it and when. */
+    observations: { id: string; body: string; kind: "NURSING" | "DISCHARGE"; authorName: string | null; createdAt: string }[];
+  };
   patient: { displayId: string; fullName: string; age: number | null; gender: string | null; phone: string; address: string | null; city: string | null; bloodGroup: string | null; dob: string | null };
   doctor: { name: string; specialization: string; department: string };
-  clinical: { diagnosis: string | null; advice: string | null; nextVisit: string | null; labsAdvised: string[] };
+  clinical: {
+    diagnosis: string | null; advice: string | null; nextVisit: string | null;
+    /** Advised tests, each carrying whether an order was ever raised for it. */
+    labsAdvised: { name: string; ordered: boolean; declined: boolean }[];
+  };
   medicines: { name: string; qty: number; dosage: string | null }[];
   investigations: { testName: string; status: string; reportReady: boolean; date: string }[];
   bill: {
@@ -111,8 +120,20 @@ export function DischargeSummary() {
         </Block>
 
         <Block title="Course in hospital / observations">
-          {a.observations
-            ? <p className="ds-body ds-pre">{a.observations}</p>
+          {a.observations.length > 0
+            ? (
+              <div className="ds-notes">
+                {a.observations.map((n) => (
+                  <div key={n.id} className="ds-note">
+                    <p className="ds-note-meta ds-mono">
+                      {dateTime(n.createdAt)} · {n.authorName ?? "author not recorded"}
+                      {n.kind === "DISCHARGE" ? " · on discharge" : ""}
+                    </p>
+                    <p className="ds-body ds-pre">{n.body}</p>
+                  </div>
+                ))}
+              </div>
+            )
             : <p className="ds-body ds-muted">No nursing / observation notes were recorded.</p>}
         </Block>
 
@@ -133,7 +154,20 @@ export function DischargeSummary() {
               </table>
             )}
             {d.clinical.labsAdvised.length > 0 && (
-              <p className="ds-body ds-sm"><b>Advised:</b> {d.clinical.labsAdvised.join(", ")}</p>
+              <p className="ds-body ds-sm">
+                <b>Advised:</b>{" "}
+                {d.clinical.labsAdvised.map((l, i) => (
+                  <span key={i}>
+                    {i > 0 && ", "}
+                    {l.name}
+                    {/* An advised test that was never ordered is exactly what a
+                        reader of this summary needs to see. The old free-text
+                        version could not tell it apart from one that was done. */}
+                    {!l.ordered && !l.declined && <b> (not ordered)</b>}
+                    {l.declined && " (declined)"}
+                  </span>
+                ))}
+              </p>
             )}
           </Block>
         )}
@@ -264,6 +298,13 @@ const EXTRA_CSS = `
   .ds-sm { margin-top: 6px; font-size: 10.5px; }
   .ds-muted { color: #7c8983; }
   .ds-two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+
+  /* One entry per note, each keeping its own author and time on the printed
+     page - the whole point of the append-only record is that the summary can
+     be read as a chronology rather than one undated block of text. */
+  .ds-notes { display: flex; flex-direction: column; gap: 7px; }
+  .ds-note { break-inside: avoid; border-left: 1.5px solid #cfd8d4; padding-left: 7px; }
+  .ds-note-meta { font-size: 8.5px; color: #7c8983; margin-bottom: 1px; }
 
   .ds-table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
   .ds-table th { text-align: left; font-size: 8.5px; text-transform: uppercase; letter-spacing: .06em; color: #7c8983; border-bottom: 1.5px solid #cfd8d4; padding: 3px 4px; }

@@ -68,9 +68,13 @@ export const addChargeSchema = z.object({
   gstRatePct: z.coerce.number().min(0).max(28).optional(),
 });
 
-/** Nursing / observation notes for the stay. */
-export const admissionNotesSchema = z.object({
-  notes: z.string().max(4000),
+/**
+ * ONE nursing / observation entry. Non-empty is enforced here rather than
+ * silently storing a blank row: an empty note is not a record of anything, and
+ * the append-only table has no way to tidy one away afterwards.
+ */
+export const admissionNoteSchema = z.object({
+  body: z.string().trim().min(1, "Write something before saving the note").max(4000),
 });
 
 /** Moving a patient to another bed mid-stay. */

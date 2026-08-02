@@ -26,6 +26,16 @@ export const orderTestsSchema = z.object({
   patientId: z.string().trim().min(1, "Select a patient"),
   catalogIds: z.array(z.string().trim().min(1)).min(1, "Select at least one test"),
   appointmentId: z.string().trim().optional(),
+  /**
+   * The doctor's advised rows this order fulfils. Sent when the order was
+   * raised FROM the advice, so the advised line stops showing as outstanding.
+   */
+  fromAdvised: z
+    .array(z.object({
+      advisedLabId: z.string().trim().min(1),
+      catalogId: z.string().trim().min(1),
+    }))
+    .optional(),
 });
 
 const paymentSchema = z.object({

@@ -405,7 +405,12 @@ export async function opdPrintData(appointmentId: string): Promise<{
   patient: { displayId: string; fullName: string; age: number | null; gender: string | null; bloodGroup: string | null; phone: string; address: string | null; city: string | null };
   rxItems: { medicineName: string; qty: number; dosage: string | null }[];
   vitals: VitalsDTO | null;
-  clinical: { diagnosis: string | null; advice: string | null; labs: string[]; nextVisit: string | null; caseHistory: string | null } | null;
+  clinical: {
+    diagnosis: string | null; advice: string | null;
+    /** Advised tests, each carrying whether an order was ever raised for it. */
+    labs: { name: string; ordered: boolean; declined: boolean }[];
+    nextVisit: string | null; caseHistory: string | null;
+  } | null;
   /**
    * What the lab wrote against this visit's completed tests - one line per test
    * that has an impression. Printed in the sheet's Investigation block, under
@@ -434,7 +439,8 @@ export async function opdPrintData(appointmentId: string): Promise<{
       orderBy: { createdAt: "desc" },
       select: {
         items: { select: { medicineName: true, qty: true, dosage: true }, orderBy: { id: "asc" } },
-        diagnosis: true, advice: true, labsAdvised: true, nextVisit: true, caseHistory: true,
+        diagnosis: true, advice: true, nextVisit: true, caseHistory: true,
+        advisedLabs: { select: { testName: true, labTestId: true, declinedAt: true }, orderBy: { createdAt: "asc" } },
       },
     }),
     prisma.vitals.findUnique({ where: { appointmentId: a.id } }),
@@ -458,11 +464,18 @@ export async function opdPrintData(appointmentId: string): Promise<{
     patient: a.patient,
     rxItems: upload?.items ?? [],
     vitals: vitals ? toVitalsDTO(vitals) : null,
-    clinical: upload && (upload.diagnosis || upload.advice || upload.labsAdvised || upload.nextVisit || upload.caseHistory)
+    clinical: upload && (upload.diagnosis || upload.advice || upload.advisedLabs.length || upload.nextVisit || upload.caseHistory)
       ? {
           diagnosis: upload.diagnosis,
           advice: upload.advice,
-          labs: upload.labsAdvised?.split("\n").filter(Boolean) ?? [],
+          // The printed sheet carries the advice AND what became of it. A test
+          // the doctor asked for that nobody ordered is the one line on this
+          // page that most needs to be visible.
+          labs: upload.advisedLabs.map((l) => ({
+            name: l.testName,
+            ordered: l.labTestId !== null,
+            declined: l.declinedAt !== null,
+          })),
           nextVisit: upload.nextVisit,
           caseHistory: upload.caseHistory,
         }

@@ -14,6 +14,13 @@ interface Patient { id: string; displayId: string; fullName: string; age: number
 interface CatalogItem { id: string; name: string; code: string | null; price: string; gstRatePct: string; }
 interface Visit { id: string; opNumber: string; doctorName: string; visitDate: string; }
 interface Ordered { id: string; testName: string; priceAtOrder: string | null; billed: boolean; }
+/** A test the doctor wrote on the sheet, and what became of it. */
+interface Advised {
+  id: string; testName: string; catalogId: string | null; price: string | null;
+  labTestId: string | null;
+  status: "ORDERED" | "DECLINED" | "OUTSTANDING";
+  declinedReason: string | null;
+}
 
 const money = (n: number) => n.toLocaleString("en-IN", { minimumFractionDigits: 2 });
 
@@ -47,6 +54,10 @@ export default function LabOrderPage() {
   const [payValid, setPayValid] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  /** What the doctor advised on the linked visit, and what became of each. */
+  const [advised, setAdvised] = useState<Advised[]>([]);
+  const [decliningId, setDecliningId] = useState<string | null>(null);
+  const [declineReason, setDeclineReason] = useState("");
   const [done, setDone] = useState<{ tests: Ordered[]; invoice?: { id: string; receiptNo: string; totalAmount: string } } | null>(null);
 
   useEffect(() => {
@@ -72,6 +83,30 @@ export default function LabOrderPage() {
       .then((r) => setVisits(r.visits)).catch(() => setVisits([]));
   }, [patient]);
 
+  // WHAT THE DOCTOR ASKED FOR ON THIS VISIT.
+  //
+  // The desk is about to order tests; this is the moment the doctor's written
+  // advice is worth something. Loaded per visit, and pre-ticked below, so the
+  // default action is "order what was actually asked for" rather than "retype
+  // it from the chit and hope nothing was missed".
+  const loadAdvised = useCallback(() => {
+    if (!visitId) { setAdvised([]); return; }
+    api.get<{ advised: Advised[] }>(`/reception/advised-labs?appointmentId=${encodeURIComponent(visitId)}`)
+      .then((r) => setAdvised(r.advised)).catch(() => setAdvised([]));
+  }, [visitId]);
+  useEffect(() => { loadAdvised(); }, [loadAdvised]);
+
+  // Pre-tick the outstanding advice that the catalog can actually price.
+  useEffect(() => {
+    const outstanding = advised.filter((a) => a.status === "OUTSTANDING" && a.catalogId);
+    if (outstanding.length === 0) return;
+    setPicked((prev) => {
+      const next = { ...prev };
+      for (const a of outstanding) if (a.catalogId && next[a.catalogId] === undefined) next[a.catalogId] = true;
+      return next;
+    });
+  }, [advised]);
+
   const shownCatalog = useMemo(() => {
     const s = catQ.trim().toLowerCase();
     if (!s) return catalog;
@@ -90,14 +125,33 @@ export default function LabOrderPage() {
     setVisits([]); setVisitId(""); setDone(null); setErr(null); setBillNow(true); setLabDisc(0); setPayments([]); setPayValid(true);
   }, []);
 
+  /** Take an advised test off the list without ordering it. Reason required. */
+  async function decline(id: string) {
+    if (declineReason.trim().length < 3) return;
+    setBusy(true); setErr(null);
+    try {
+      await api.post(`/reception/advised-labs/${id}/decline`, { reason: declineReason.trim() });
+      setDecliningId(null); setDeclineReason("");
+      loadAdvised();
+    } catch (e) { setErr(e instanceof ApiClientError ? e.message : "Could not update that test."); }
+    finally { setBusy(false); }
+  }
+
   async function submit() {
     if (!patient || chosen.length === 0) return;
     setBusy(true); setErr(null);
     try {
+      // Send the advised rows this order fulfils, so the doctor's instruction
+      // stops showing as outstanding the moment it is actually ordered.
+      const fulfils = advised
+        .filter((a) => a.status === "OUTSTANDING" && a.catalogId && picked[a.catalogId])
+        .map((a) => ({ advisedLabId: a.id, catalogId: a.catalogId! }));
+
       const tests = await api.post<{ tests: Ordered[] }>("/labs/tests/order", {
         patientId: patient.id,
         catalogIds: chosen.map((c) => c.id),
         appointmentId: visitId || undefined,
+        fromAdvised: fulfils.length ? fulfils : undefined,
       });
 
       // INPATIENT: orderTests already posted these to the room tab. Raising a
@@ -273,6 +327,71 @@ export default function LabOrderPage() {
                       />
                     ))}
                   </datalist>
+                </div>
+              )}
+
+              {/* WHAT THE DOCTOR ACTUALLY ASKED FOR.
+                  This used to be free text on the OPD sheet that nothing could
+                  act on - if nobody retyped it here, the test never happened and
+                  no screen showed the difference. The ones the catalog can price
+                  are already ticked below; the rest are named so they cannot be
+                  quietly lost. */}
+              {advised.length > 0 && (
+                <div className="mt-4 rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] p-4">
+                  <div className="mb-2 flex items-baseline justify-between gap-3">
+                    <h4 className="text-[13px] font-semibold text-[var(--p-ink)]">Advised by the doctor on this visit</h4>
+                    <span className="text-[12px] text-[var(--p-muted)]">
+                      {advised.filter((a) => a.status === "OUTSTANDING").length} still to order
+                    </span>
+                  </div>
+                  <ul className="flex flex-col gap-1.5">
+                    {advised.map((a) => (
+                      <li key={a.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px]">
+                        <span className="font-medium text-[var(--p-ink)]">{a.testName}</span>
+
+                        {a.status === "ORDERED" && (
+                          <span className="rounded bg-[var(--p-teal-soft)] px-1.5 py-0.5 text-[11px] font-semibold text-[var(--p-teal-deep)]">Ordered</span>
+                        )}
+                        {a.status === "DECLINED" && (
+                          <span className="text-[12px] text-[var(--p-muted)]">Not needed - {a.declinedReason}</span>
+                        )}
+                        {a.status === "OUTSTANDING" && (
+                          <>
+                            {a.catalogId ? (
+                              <span className="rounded bg-[var(--p-amber-soft)] px-1.5 py-0.5 text-[11px] font-semibold text-[#8a6414]">
+                                {picked[a.catalogId] ? "Ticked below" : "Not ordered"}
+                              </span>
+                            ) : (
+                              // The doctor wrote something the lab does not
+                              // stock. Still shown - losing the instruction
+                              // because the catalog is incomplete is the bug.
+                              <span className="rounded bg-[var(--p-amber-soft)] px-1.5 py-0.5 text-[11px] font-semibold text-[#8a6414]">Not in the lab list</span>
+                            )}
+                            <button
+                              onClick={() => { setDecliningId(a.id); setDeclineReason(""); }}
+                              className="text-[12px] font-medium text-[var(--p-muted)] underline underline-offset-2 hover:text-[var(--p-ink)]">
+                              Not needed
+                            </button>
+                          </>
+                        )}
+
+                        {decliningId === a.id && (
+                          <span className="flex w-full items-center gap-2 pt-1">
+                            <input
+                              value={declineReason}
+                              onChange={(e) => setDeclineReason(e.target.value)}
+                              autoFocus
+                              placeholder="Why isn't this being done?"
+                              className="flex-1 rounded border border-[var(--p-border)] bg-white px-2 py-1 text-[13px] outline-none focus:border-[var(--p-teal)]" />
+                            <button onClick={() => decline(a.id)} disabled={busy || declineReason.trim().length < 3}
+                              className="rounded bg-[var(--p-ink)] px-2.5 py-1 text-[12px] font-semibold text-white disabled:opacity-40">Save</button>
+                            <button onClick={() => { setDecliningId(null); setDeclineReason(""); }}
+                              className="text-[12px] text-[var(--p-muted)]">Cancel</button>
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
             </div>
