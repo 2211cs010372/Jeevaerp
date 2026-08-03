@@ -116,7 +116,7 @@ export function Departments() {
    onto the same element Tailwind is writing `-translate-y` onto means whichever
    ran last wins and the other silently stops working. */
 const CELL =
-  "rail-item w-[62vw] shrink-0 sm:w-[38vw] lg:w-[clamp(238px,20vw,296px)]";
+  "rail-item w-[44vw] shrink-0 sm:w-[38vw] lg:w-[clamp(185px,16vw,239px)]";
 const CARD = "flex h-full flex-col";
 
 /**

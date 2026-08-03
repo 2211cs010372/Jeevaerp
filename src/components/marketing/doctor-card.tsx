@@ -1,4 +1,8 @@
+"use client";
+
+import { useEffect, useLayoutEffect, useRef } from "react";
 import Link from "next/link";
+import gsap from "gsap";
 import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
 import type { Doctor } from "@/lib/data";
 import { doctorHref } from "@/lib/doctors";
@@ -22,12 +26,83 @@ import { doctorHref } from "@/lib/doctors";
  * as a mistake. The years-in-practice badge takes that slot instead, up on the
  * portrait where it does not squeeze the name.
  *
+ * THE PILL OPENS ON HOVER. Specialisation, years in practice and age sit in a
+ * panel that is closed until the pointer arrives, then grows the pill upward
+ * over the portrait. Three reasons it is built this way and not another:
+ *
+ *   - The badge leaves as the panel arrives. "12 yrs" is printed on the
+ *     portrait already, so the two would otherwise say the same thing twice
+ *     with the panel open. Read it as the figure moving into the pill rather
+ *     than as two separate animations.
+ *   - The panel is real markup, not a tooltip. With JavaScript off nothing
+ *     runs, the panel is never collapsed, and the card simply renders taller
+ *     with every field visible - the same bargain the scroll primitives in
+ *     motion.tsx make.
+ *   - Under prefers-reduced-motion the effect installs nothing at all. The
+ *     panel stays open, because a card that hides a doctor's specialisation
+ *     behind an interaction the visitor has switched off would be worse than
+ *     a card that is simply a little taller.
+ *
+ * A hover is a pointer's idea, so on a phone none of this fires - which is
+ * why nothing here is unique to the card. Every field in the panel is also on
+ * the consultant's profile, one tap away.
+ *
  * No fee. Consultation prices are published on the doctor's own profile and in
  * the booking flow, not on the browsing card.
  */
+
+/** useLayoutEffect that doesn't warn during SSR - as in motion.tsx. */
+const useIsoLayoutEffect =
+  typeof window !== "undefined" ? useLayoutEffect : useEffect;
+
 export function DoctorCard({ doctor: d }: { doctor: Doctor }) {
+  const root = useRef<HTMLAnchorElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const badge = useRef<HTMLSpanElement>(null);
+
+  useIsoLayoutEffect(() => {
+    const card = root.current;
+    const detail = panel.current;
+    const chip = badge.current;
+    if (!card || !detail || !chip) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+    const ctx = gsap.context(() => {
+      gsap.set(detail, { height: 0, autoAlpha: 0 });
+
+      /* One paused timeline played forward and reversed, rather than a tween
+         per event: a pointer crossing three cards in a second interrupts
+         mid-open, and reversing an existing timeline picks up from wherever it
+         got to instead of restarting from the closed state. */
+      const tl = gsap
+        .timeline({ paused: true, defaults: { ease: "power3.out" } })
+        .to(detail, { height: "auto", autoAlpha: 1, duration: 0.42 }, 0)
+        .to(chip, { autoAlpha: 0, y: -6, duration: 0.26 }, 0);
+
+      const open = () => tl.play();
+      const close = () => tl.reverse();
+
+      /* focusin/focusout rather than focus/blur - they bubble, so a keyboard
+         visitor tabbing onto the card gets the same panel a mouse does. */
+      card.addEventListener("mouseenter", open);
+      card.addEventListener("mouseleave", close);
+      card.addEventListener("focusin", open);
+      card.addEventListener("focusout", close);
+
+      return () => {
+        card.removeEventListener("mouseenter", open);
+        card.removeEventListener("mouseleave", close);
+        card.removeEventListener("focusin", open);
+        card.removeEventListener("focusout", close);
+      };
+    }, card);
+
+    return () => ctx.revert();
+  }, []);
+
   return (
     <Link
+      ref={root}
       href={doctorHref(d)}
       className="group block rounded-[10px] bg-[var(--bone)] p-2.5 transition-colors duration-300 hover:bg-[var(--bone-deep)]"
     >
@@ -40,7 +115,10 @@ export function DoctorCard({ doctor: d }: { doctor: Doctor }) {
 
         {/* years in practice - kept on the portrait so the pill below can give
             the whole of its width to a name that must not be truncated */}
-        <span className="mono absolute left-3 top-3 z-10 rounded-full bg-black/40 px-2.5 py-1 text-[9.5px] uppercase tracking-[0.14em] text-white backdrop-blur">
+        <span
+          ref={badge}
+          className="mono absolute left-3 top-3 z-10 rounded-full bg-black/40 px-2.5 py-1 text-[9.5px] uppercase tracking-[0.14em] text-white backdrop-blur"
+        >
           {d.experience} yrs
         </span>
 
@@ -53,6 +131,22 @@ export function DoctorCard({ doctor: d }: { doctor: Doctor }) {
           <p className="mono mt-0.5 truncate text-[9px] uppercase tracking-[0.12em] text-[var(--muted)] sm:text-[9.5px]">
             {d.department}
           </p>
+
+          {/* what the hover opens. `overflow-hidden` is what makes a height
+              tween to `auto` clip rather than spill while it runs. */}
+          <div ref={panel} className="overflow-hidden">
+            <dl className="mt-1.5 border-t border-[var(--line)] pt-1.5">
+              <dt className="sr-only">Specialisation</dt>
+              <dd className="mono text-[9px] uppercase leading-[1.35] tracking-[0.1em] text-[var(--teal)]">
+                {d.specialization}
+              </dd>
+
+              <dt className="sr-only">Experience and age</dt>
+              <dd className="mt-1 text-[10.5px] leading-[1.4] text-[var(--ink-soft)]">
+                {d.experience} yrs in practice · Age {d.age}
+              </dd>
+            </dl>
+          </div>
         </div>
       </div>
     </Link>

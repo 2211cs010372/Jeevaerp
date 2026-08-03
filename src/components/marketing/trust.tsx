@@ -24,6 +24,16 @@ import { Counter, Reveal, Stagger } from "./motion";
  * than bleeding to the edge, which is the detail that makes the grid read as
  * one object instead of a photo with boxes next to it.
  *
+ * IT STAYS A BENTO ON A PHONE. The grid is two columns from 320px up, not one -
+ * collapsing to a single column turned the chapter into 1500px of stacked
+ * blocks that read as a list of claims rather than one composed object. The
+ * weights just re-cast: the photograph and the three long-form cells run the
+ * full two columns, and the two short number cells pair off beside each other
+ * as square tiles. Those two tiles drop their supporting sentence below `sm`,
+ * because a 12.5px paragraph in a 120px column is nineteen characters to a
+ * line and rags badly - the number and the claim above it carry the point, and
+ * the sentence itself is said again in the departments and doctors chapters.
+ *
  * Red Hat Display used to be pinned to this chapter by overriding
  * --font-display on its root. It is now the whole public site's display face,
  * set once on `.site` in site-theme.css, so the local override has gone - it
@@ -50,10 +60,10 @@ export function Trust() {
       <Stagger
         each={0.07}
         y={22}
-        className="mt-9 grid gap-3 sm:mt-12 sm:grid-cols-2 lg:grid-cols-4"
+        className="mt-9 grid grid-cols-2 gap-3 sm:mt-12 lg:grid-cols-4"
       >
         {/* the building - two cells wide, two deep, and the only photograph */}
-        <Cell className="sm:col-span-2 lg:row-span-2">
+        <Cell className="col-span-2 lg:row-span-2" pad="p-3 sm:p-2">
           <figure className="flex h-full flex-col">
             <div className="relative flex-1 overflow-hidden rounded-[9px] max-sm:aspect-[4/3] sm:min-h-[19rem]">
               <SmartImage
@@ -94,37 +104,36 @@ export function Trust() {
           </figure>
         </Cell>
 
+        {/* the pair of short cells - one column each, on every screen */}
         <Stat
+          tile
           value={DEPARTMENTS.length}
           label="Departments, staffed"
           title="Most referrals never leave the building."
           text="Medicine, surgery, women's and children's health and more, consulting under one roof."
-          className = "p-5 sm:p-6"
         />
 
         <Stat
+          tile
           value={DOCTORS.length}
           suffix="+"
           label="Consultants on the panel"
           title="You know who you are seeing before you book."
           text="Named doctors with published fees, days and OPD hours. No pooled queue."
-          className = "p-5 sm:p-6"
         />
 
         {/* the widest claim gets the widest cell */}
         <Stat
-          className="lg:col-span-2 p-5 sm:p-6"
+          className="col-span-2"
           value={30}
           suffix=" min"
-
           label="Routine report turnaround"
           title="Bloods drawn in the morning are read before lunch."
           text="Routine samples are processed in-house and land on your record - and your phone - usually before you have left the building. Nothing is couriered to a lab three districts away."
-          
         />
 
         <Stat
-          className="sm:col-span-2 p-5 sm:p-6"
+          className="col-span-2"
           value={1}
           label="Hospital ID, for life"
           title="One ID carries every visit you have ever had here."
@@ -132,7 +141,7 @@ export function Trust() {
         />
 
         {/* the one filled cell - the only place the accent is spent */}
-        <Cell className="flex flex-col p-5 sm:p-6 justify-between bg-[var(--teal)] sm:col-span-2">
+        <Cell className="col-span-2 flex flex-col justify-between bg-[var(--teal)]">
           <p className="mono text-[10px] uppercase tracking-[0.18em] text-white/60">
             Ready when you are
           </p>
@@ -158,16 +167,23 @@ export function Trust() {
 /**
  * One bento cell. White, 16px corners, no border and no shadow - the porcelain
  * behind it is what draws the edge.
+ *
+ * Padding is a prop rather than a class on the caller because the two used to
+ * fight: the cell set `p-3` and every call site passed `p-5` after it, and
+ * which one won came down to the order Tailwind happened to emit them in.
  */
 function Cell({
   className = "",
+  pad = "p-4 sm:p-6",
   children,
 }: {
   className?: string;
+  /** The inner padding. Only the photograph's cell wants the tight inset. */
+  pad?: string;
   children: ReactNode;
 }) {
   return (
-    <div className={`rounded-[16px] bg-[var(--paper)] p-3 sm:p-2 ${className}`}>
+    <div className={`rounded-[16px] bg-[var(--paper)] ${pad} ${className}`}>
       {children}
     </div>
   );
@@ -180,6 +196,7 @@ function Stat({
   label,
   title,
   text,
+  tile = false,
   className = "",
 }: {
   value: number;
@@ -187,22 +204,28 @@ function Stat({
   label: string;
   title: string;
   text: string;
+  /** One column wide on a phone - see the note about the measure up top. */
+  tile?: boolean;
   className?: string;
 }) {
   return (
     <Cell className={`flex flex-col justify-between ${className}`}>
-      <p className=" text-[10px] uppercase tracking-[0.05em] text-[var(--muted)]">
+      <p className="text-[10px] uppercase tracking-[0.05em] text-[var(--muted)]">
         {label}
       </p>
 
-      <div className="mt-10">
+      <div className={tile ? "mt-6 sm:mt-10" : "mt-8 sm:mt-10"}>
         <p className="stat-num text-[var(--teal)] [font-size:clamp(2rem,3.2vw,2.9rem)]">
           <Counter value={value} suffix={suffix} />
         </p>
         <p className="mt-3 text-[13.5px] font-semibold leading-[1.35] tracking-[-0.015em] text-[var(--ink)]">
           {title}
         </p>
-        <p className="mt-2 max-w-[52ch] text-[12.5px] leading-[1.6] text-[var(--ink-soft)]">
+        <p
+          className={`mt-2 max-w-[52ch] text-[12.5px] leading-[1.6] text-[var(--ink-soft)] ${
+            tile ? "max-sm:hidden" : ""
+          }`}
+        >
           {text}
         </p>
       </div>

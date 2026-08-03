@@ -1968,12 +1968,12 @@ export const WARDS = [
     includes: ["Everything in General", "Two-bed room", "Attendant bench"]
   },
   {
-    name: "Private Room", beds: 4, price: 5500, gst: 5, floor: "2nd floor",
+    name: "Private Room", beds: 6, price: 5500, gst: 5, floor: "2nd floor",
     note: "Your own room, your own bathroom, a proper attendant bed.",
     includes: ["Everything in Semi-Private", "Attached bathroom", "Attendant bed", "AC"]
   },
   {
-    name: "ICU", beds: 4, price: 8000, gst: 0, floor: "3rd floor",
+    name: "ICU", beds: 8, price: 8000, gst: 0, floor: "3rd floor",
     note: "Monitored critical care. One nurse is never far from your person.",
     includes: ["Continuous monitoring", "Critical-care nursing", "Ventilator support"]
   },
