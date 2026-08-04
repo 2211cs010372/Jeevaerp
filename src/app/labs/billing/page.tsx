@@ -1,280 +1,273 @@
 "use client";
 
-import { useEffect, useState } from "react";
+/**
+ * GENERATE A LAB BILL.
+ *
+ * Three kinds of person get billed here and the screen has to hold all three:
+ *
+ *   · a patient whose tests were ordered earlier and are still unbilled;
+ *   · a patient on file who has just been handed a chit - tests are chosen
+ *     from the catalogue and ordered as the bill is raised;
+ *   · somebody with no record at all, who is registered from this screen.
+ *
+ * The last two used to require a trip to Order tests (and, before that, to
+ * reception) and a walk back. They are the same submit now: anything picked
+ * from the catalogue is ordered and billed in one call.
+ */
+
+import { useEffect, useMemo, useState } from "react";
 import { PrimaryButton } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
-import { DiscountInput, PaymentSection, type Tender } from "@/components/portal/ui/bill-fields";
 import { PortalScroll } from "@/components/portal/portal-scroll";
+import { PatientStep, draftName, draftPayload, type PatientChoice } from "@/components/portal/labs/patient-step";
+import { TestPicker, type CatalogItem } from "@/components/portal/labs/test-picker";
+import { BillAside, type Settlement } from "@/components/portal/labs/bill-aside";
+import { InvoiceView, type LabInvoice } from "@/components/portal/labs/invoice-view";
 import { api, ApiClientError } from "@/lib/api-client";
+import { formatPhone } from "@/lib/phone";
 
-interface Patient { id: string; displayId: string; fullName: string; phone: string; age: number | null; gender: string | null; }
-interface Test { id: string; testName: string; status: string; price: string | null; billed: boolean; }
-interface Invoice {
-  id: string; receiptNo: string; source: string; status: string; createdAt: string;
-  patient: { displayId: string; fullName: string; phone: string; address: string | null };
-  items: { description: string; hsnSac: string | null; qty: number; unitPrice: string; amount: string; gstRatePct: string }[];
-  subtotal: string; discountAmount: string; taxableAmount: string;
-  cgstAmount: string; sgstAmount: string; totalAmount: string; amountPaid: string; balanceDue: string;
-  hospital: { legalName: string; addressLine: string; city: string; state: string; stateCode: string; pincode: string; gstin: string | null; phone: string | null } | null;
+interface Test { id: string; testName: string; status: string; price: string | null; billed: boolean }
+
+interface WalkInResult {
+  patient: { id: string; displayId: string; fullName: string; phone: string; age: number | null; gender: string | null; isNew: boolean };
+  tests: { id: string; testName: string }[];
+  invoice: LabInvoice | null;
+  chargedToRoom: boolean;
 }
 
-
 export default function LabBillingPage() {
-  const [uhid, setUhid] = useState("");
-  const [patient, setPatient] = useState<Patient | null>(null);
-  const [tests, setTests] = useState<Test[]>([]);
-  const [picked, setPicked] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(false);
+  const [choice, setChoice] = useState<PatientChoice | null>(null);
 
-  const [disc, setDisc] = useState(0);
-  const [payNow, setPayNow] = useState(true);
-  const [payments, setPayments] = useState<Tender[]>([]);
-  const [payValid, setPayValid] = useState(true);
+  const [unbilled, setUnbilled] = useState<Test[]>([]);
+  const [loadingTests, setLoadingTests] = useState(false);
+  const [pickedTests, setPickedTests] = useState<Set<string>>(new Set());
 
-  const [billing, setBilling] = useState(false);
+  const [catalog, setCatalog] = useState<CatalogItem[]>([]);
+  const [pickedCatalog, setPickedCatalog] = useState<Set<string>>(new Set());
+  const [addingTests, setAddingTests] = useState(false);
+
+  const [settlement, setSettlement] = useState<Settlement>({ discountAmount: 0, payments: [], valid: true });
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [invoice, setInvoice] = useState<Invoice | null>(null);
+  const [result, setResult] = useState<WalkInResult | null>(null);
 
-  async function lookup() {
-    if (!uhid.trim()) return;
-    setError(null); setLoading(true); setPatient(null); setTests([]); setPicked(new Set());
-    try {
-      const r = await api.get<{ patient: Patient; tests: Test[] }>(`/labs/patients/${uhid.trim().toUpperCase()}`);
-      setPatient(r.patient);
-      setTests(r.tests.filter((t) => !t.billed));
-    } catch (e) { setError(e instanceof ApiClientError ? e.message : "Patient not found."); }
-    finally { setLoading(false); }
-  }
+  useEffect(() => {
+    api.get<{ catalog: CatalogItem[] }>("/labs/catalog")
+      .then((r) => setCatalog(r.catalog))
+      .catch(() => setCatalog([]));
+  }, []);
 
-  const toggle = (id: string) => setPicked((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const selected = tests.filter((t) => picked.has(t.id));
-  const subtotal = selected.reduce((s, t) => s + Number(t.price ?? 0), 0);
-  const estTotal = subtotal - disc; // GST added server-side per catalog rate
+  // What this patient already owes the lab. A brand-new walk-in has nothing by
+  // definition, so the fetch is keyed on the record's id and skipped for a draft.
+  const existingId = choice?.kind === "existing" ? choice.patient.displayId : null;
+  useEffect(() => {
+    setPickedTests(new Set());
+    setUnbilled([]);
+    if (!existingId) return;
+    let active = true;
+    setLoadingTests(true);
+    api.get<{ tests: Test[] }>(`/labs/patients/${existingId}`)
+      .then((r) => { if (active) setUnbilled(r.tests.filter((t) => !t.billed)); })
+      .catch((e) => { if (active) setError(e instanceof ApiClientError ? e.message : "Couldn't load this patient's tests."); })
+      .finally(() => { if (active) setLoadingTests(false); });
+    return () => { active = false; };
+  }, [existingId]);
+
+  // A patient with nothing outstanding is here to have something new done -
+  // open the catalogue for them rather than showing an empty list and a dead end.
+  useEffect(() => {
+    if (choice?.kind === "new") setAddingTests(true);
+    else if (existingId && !loadingTests && unbilled.length === 0) setAddingTests(true);
+  }, [choice?.kind, existingId, loadingTests, unbilled.length]);
+
+  const toggleTest = (id: string) =>
+    setPickedTests((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const toggleCatalog = (id: string) =>
+    setPickedCatalog((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+
+  const selectedTests = useMemo(() => unbilled.filter((t) => pickedTests.has(t.id)), [unbilled, pickedTests]);
+  const selectedCatalog = useMemo(() => catalog.filter((c) => pickedCatalog.has(c.id)), [catalog, pickedCatalog]);
+
+  const lines = [
+    ...selectedTests.map((t) => ({ id: t.id, label: t.testName, amount: Number(t.price ?? 0), note: "ordered earlier" })),
+    ...selectedCatalog.map((c) => ({ id: c.id, label: c.name, amount: Number(c.price), note: "ordered with this bill" })),
+  ];
+
+  const patientName = choice ? (choice.kind === "existing" ? choice.patient.fullName : draftName(choice.draft)) : "";
+  const canSubmit = !!choice && lines.length > 0 && !busy && settlement.valid;
 
   async function generate() {
-    if (!patient || picked.size === 0) return;
-    setError(null); setBilling(true);
+    if (!choice || lines.length === 0) return;
+    setError(null); setBusy(true);
     try {
-      const { invoice } = await api.post<{ invoice: Invoice }>("/labs/bill", {
-        patientId: patient.id,
-        labTestIds: [...picked],
-        discountAmount: disc || undefined,
-        payments: payNow && payments.length ? payments : undefined,
+      const r = await api.post<WalkInResult>("/labs/walk-in", {
+        ...(choice.kind === "existing" ? { patientId: choice.patient.id } : { newPatient: draftPayload(choice.draft) }),
+        catalogIds: [...pickedCatalog],
+        labTestIds: [...pickedTests],
+        bill: {
+          discountAmount: settlement.discountAmount || undefined,
+          payments: settlement.payments.length ? settlement.payments : undefined,
+        },
       });
-      setInvoice(invoice);
-    } catch (e) { setError(e instanceof ApiClientError ? e.message : "Could not generate the bill."); }
-    finally { setBilling(false); }
+      setResult(r);
+    } catch (e) {
+      setError(e instanceof ApiClientError ? e.message : "Could not generate the bill.");
+    } finally { setBusy(false); }
   }
 
-  function reset() { setInvoice(null); setPatient(null); setUhid(""); setTests([]); setPicked(new Set()); setDisc(0); setPayments([]); setPayValid(true); setError(null); }
+  function reset() {
+    setResult(null); setChoice(null); setUnbilled([]); setPickedTests(new Set());
+    setPickedCatalog(new Set()); setAddingTests(false);
+    setSettlement({ discountAmount: 0, payments: [], valid: true }); setError(null);
+  }
 
-  const fld = "w-full rounded-lg border border-[var(--p-border)] bg-white px-3.5 py-2.5 text-sm text-[var(--p-ink)] outline-none focus:border-[var(--p-teal)]";
+  if (result?.invoice) {
+    return (
+      <InvoiceView
+        invoice={result.invoice} onNew={reset} newLabel="New bill"
+        banner={result.patient.isNew ? <NewPatientBanner patient={result.patient} /> : undefined}
+      />
+    );
+  }
 
-  if (invoice) return <InvoiceView invoice={invoice} onNew={reset} />;
+  // Billing an admitted patient's tests never produces a counter receipt - the
+  // charge went to their stay. Say so instead of showing a blank invoice.
+  if (result?.chargedToRoom) {
+    return (
+      <div className="mx-auto max-w-lg">
+        <div className="surface flex flex-col items-center p-8 text-center">
+          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--p-amber-soft)] text-[#8a6414]"><Icon name="bed" size={20} /></span>
+          <h3 className="mt-4 font-serif-p text-[20px] font-semibold text-[var(--p-ink)]">Billed to the stay</h3>
+          <p className="mt-1 text-[13px] leading-relaxed text-[var(--p-muted)]">
+            {result.patient.fullName} is admitted. The tests were raised on their own lab bill, due at
+            discharge - take nothing at the counter.
+          </p>
+          <PrimaryButton onClick={reset}><Icon name="plus" size={15} /> New bill</PrimaryButton>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <PortalScroll>
       <div data-rise className="surface dotgrid mb-6 px-6 py-5">
         <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Generate lab bill</h1>
-        <p className="mt-1 text-[13px] text-[var(--p-muted)]">
-          GST is applied per test from the catalog. Diagnostic services are set to <strong>0% (exempt)</strong> by default - your CA can change rates per test.
+        <p className="mt-1 text-[13px] leading-relaxed text-[var(--p-muted)]">
+          Bill tests ordered earlier, add new ones from the catalogue, or register a walk-in and bill them
+          in one go. GST is applied per test from the catalogue - diagnostic services are <strong>0% (exempt)</strong> by
+          default, and your CA can change rates per test.
         </p>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
         <div className="space-y-6">
-          <section data-rise className="surface overflow-hidden">
-            <div className="border-b border-[var(--p-border)] px-6 py-4"><h3 className="text-[14px] font-semibold text-[var(--p-ink)]">1 · Find patient by Jeeva ID</h3></div>
-            <div className="p-6">
-              <div className="flex gap-2">
-                <input value={uhid} onChange={(e) => setUhid(e.target.value.toUpperCase())} onKeyDown={(e) => e.key === "Enter" && lookup()}
-                  placeholder="JMH2026OP00001" className={`${fld} font-mono`} />
-                <PrimaryButton onClick={lookup} disabled={loading}>{loading ? <Spinner /> : <Icon name="search" size={15} />} Find</PrimaryButton>
+          <PatientStep value={choice} onChange={setChoice} step="1" />
+
+          {/* ── already ordered ── */}
+          {choice?.kind === "existing" && (
+            <section data-rise className="surface overflow-hidden">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--p-border)] px-6 py-4">
+                <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">2 · Unbilled tests</h3>
+                <div className="flex items-center gap-2">
+                  {unbilled.length > 0 && (
+                    <button
+                      onClick={() => setPickedTests(pickedTests.size === unbilled.length ? new Set() : new Set(unbilled.map((t) => t.id)))}
+                      className="text-[12px] font-semibold text-[var(--p-teal)]"
+                    >
+                      {pickedTests.size === unbilled.length ? "Clear" : "Select all"}
+                    </button>
+                  )}
+                  <span className="badge">{pickedTests.size} selected</span>
+                </div>
               </div>
-              {patient && (
-                <div className="mt-4 flex items-center justify-between rounded-xl border border-[var(--p-teal)] bg-[var(--p-teal-soft)]/40 p-4">
-                  <div>
-                    <div className="text-[14px] font-semibold text-[var(--p-ink)]">{patient.fullName}</div>
-                    <div className="text-[11px] text-[var(--p-muted)]"><span className="tabular">{patient.displayId}</span> · {patient.phone}{patient.age != null && ` · ${patient.age}y`}</div>
-                  </div>
-                  <span className="badge">{tests.length} unbilled</span>
+              {loadingTests ? (
+                <div className="flex items-center justify-center gap-2 py-10 text-[13px] text-[var(--p-muted)]"><Spinner /> Loading tests…</div>
+              ) : unbilled.length === 0 ? (
+                <p className="px-6 py-10 text-center text-[13px] text-[var(--p-muted)]">
+                  Nothing outstanding for {patientName}. Add tests from the catalogue below.
+                </p>
+              ) : (
+                <div className="divide-y divide-[var(--p-border)]">
+                  {unbilled.map((t) => {
+                    const on = pickedTests.has(t.id);
+                    return (
+                      <button key={t.id} onClick={() => toggleTest(t.id)}
+                        className={`flex w-full items-center justify-between px-6 py-3.5 text-left transition-colors ${on ? "bg-[var(--p-teal-soft)]/40" : "hover:bg-[var(--p-bg)]"}`}>
+                        <div className="flex items-center gap-3">
+                          <span className={`flex h-5 w-5 items-center justify-center rounded border ${on ? "border-[var(--p-teal)] bg-[var(--p-teal)] text-white" : "border-[var(--p-border)]"}`}>
+                            {on && <Icon name="check" size={12} />}
+                          </span>
+                          <div>
+                            <div className="text-[13px] font-medium text-[var(--p-ink)]">{t.testName}</div>
+                            <div className="text-[11px] text-[var(--p-muted)]">{t.status === "PENDING" ? "Pending result" : "Completed"}</div>
+                          </div>
+                        </div>
+                        <span className="font-mono text-[13px] text-[var(--p-ink)]">₹{t.price ?? "0.00"}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
-            </div>
-          </section>
+            </section>
+          )}
 
-          <section data-rise className={`surface overflow-hidden ${patient ? "" : "pointer-events-none opacity-55"}`}>
-            <div className="flex items-center justify-between border-b border-[var(--p-border)] px-6 py-4">
-              <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">2 · Select tests to bill</h3>
-              <span className="badge">{picked.size} selected</span>
-            </div>
-            {tests.length === 0 ? (
-              <p className="px-6 py-10 text-center text-[13px] text-[var(--p-muted)]">
-                {patient ? "No unbilled tests for this patient." : "Find a patient to see their unbilled tests."}
-              </p>
-            ) : (
-              <div className="divide-y divide-[var(--p-border)]">
-                {tests.map((t) => {
-                  const on = picked.has(t.id);
-                  return (
-                    <button key={t.id} onClick={() => toggle(t.id)} className={`flex w-full items-center justify-between px-6 py-3.5 text-left transition-colors ${on ? "bg-[var(--p-teal-soft)]/40" : "hover:bg-[var(--p-bg)]"}`}>
-                      <div className="flex items-center gap-3">
-                        <span className={`flex h-5 w-5 items-center justify-center rounded border ${on ? "border-[var(--p-teal)] bg-[var(--p-teal)] text-white" : "border-[var(--p-border)]"}`}>{on && <Icon name="check" size={12} />}</span>
-                        <div>
-                          <div className="text-[13px] font-medium text-[var(--p-ink)]">{t.testName}</div>
-                          <div className="text-[11px] text-[var(--p-muted)]">{t.status === "PENDING" ? "Pending result" : "Completed"}</div>
-                        </div>
-                      </div>
-                      <span className="font-mono text-[13px] text-[var(--p-ink)]">₹{t.price ?? "0.00"}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </section>
+          {/* ── new tests on this bill ── */}
+          {choice && (addingTests ? (
+            <TestPicker
+              catalog={catalog} picked={pickedCatalog} onToggle={toggleCatalog}
+              step={choice.kind === "existing" ? "3" : "2"}
+              title="Add tests from the catalogue"
+              hint="Ordered and billed together - no separate trip to Order tests."
+              maxHeight="360px"
+            />
+          ) : (
+            <button
+              data-rise onClick={() => setAddingTests(true)}
+              className="surface surface-hover flex w-full items-center justify-center gap-2 px-6 py-4 text-[13px] font-semibold text-[var(--p-teal)]"
+            >
+              <Icon name="plus" size={14} /> Add a test to this bill
+            </button>
+          ))}
         </div>
 
         <aside data-rise className="lg:sticky lg:top-6 lg:self-start">
-          <div className="surface overflow-hidden">
-            <div className="border-b border-[var(--p-border)] px-5 py-4"><p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--p-ink)]">Bill</p></div>
-            <div className="space-y-3 p-5">
-              <Row k="Subtotal" v={`₹${subtotal.toFixed(2)}`} />
-              <DiscountInput subtotal={subtotal} accent="teal" onChange={(d) => setDisc(d.amount)} />
-              <div className="rule my-1" />
-              <Row k="Taxable" v={`₹${estTotal.toFixed(2)}`} />
-              <p className="text-[11px] leading-relaxed text-[var(--p-muted)]">CGST + SGST are computed server-side from each test&apos;s catalog rate (0% = exempt).</p>
-            </div>
-
-            <div className="border-t border-[var(--p-border)] p-5">
-              <label className="mb-3 flex items-center gap-2 text-[13px] text-[var(--p-text)]">
-                <input type="checkbox" checked={payNow} onChange={(e) => setPayNow(e.target.checked)} className="h-4 w-4 accent-[var(--p-teal)]" />
-                Collect payment now
-              </label>
-              {payNow && (
-                <PaymentSection total={estTotal} accent="teal" onChange={(r) => { setPayments(r.payments); setPayValid(r.valid); }} />
-              )}
-            </div>
-
-            {error && <div className="border-t border-[var(--p-border)] bg-[var(--p-rose-soft)] px-5 py-3 text-[12px] text-[var(--p-rose)]">{error}</div>}
-
-            <div className="border-t border-[var(--p-border)] p-5">
-              <PrimaryButton onClick={generate} disabled={!patient || picked.size === 0 || billing || (payNow && !payValid)} full>
-                {billing ? <><Spinner /> Generating…</> : <><Icon name="receipt" size={15} /> Generate GST bill</>}
+          <BillAside
+            title="Bill"
+            lines={lines}
+            emptyText={choice ? "Nothing on this bill yet." : "Find or register a patient to start."}
+            billNow={null}
+            onSettlementChange={setSettlement}
+            error={error}
+            footnote={
+              pickedCatalog.size > 0
+                ? `${pickedCatalog.size} new test${pickedCatalog.size === 1 ? "" : "s"} will be ordered as this bill is raised.`
+                : undefined
+            }
+            action={
+              <PrimaryButton onClick={generate} disabled={!canSubmit} full>
+                {busy ? <><Spinner /> Generating…</> : <><Icon name="receipt" size={15} /> Generate GST bill</>}
               </PrimaryButton>
-            </div>
-          </div>
+            }
+          />
         </aside>
       </div>
     </PortalScroll>
   );
 }
 
-function Row({ k, v }: { k: string; v: string }) {
-  return <div className="flex justify-between text-[13px]"><span className="text-[var(--p-muted)]">{k}</span><span className="font-mono text-[var(--p-ink)]">{v}</span></div>;
-}
-
-/** Printable GST invoice. */
-function InvoiceView({ invoice, onNew }: { invoice: Invoice; onNew: () => void }) {
-  const h = invoice.hospital;
-  const exempt = Number(invoice.cgstAmount) === 0 && Number(invoice.sgstAmount) === 0;
-  const discPctNum = Number(invoice.subtotal) > 0 ? (Number(invoice.discountAmount) / Number(invoice.subtotal)) * 100 : 0;
-  const discPct = discPctNum % 1 === 0 ? discPctNum.toFixed(0) : discPctNum.toFixed(1);
+function NewPatientBanner({ patient }: { patient: WalkInResult["patient"] }) {
   return (
-    <div className="mx-auto max-w-3xl">
-      <div className="mb-4 flex justify-between print:hidden">
-        <button onClick={onNew} className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-teal)]">
-          <Icon name="plus" size={14} /> New bill
-        </button>
-        <button onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-teal)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--p-teal-deep)]">
-          <Icon name="file" size={14} /> Print / Save PDF
-        </button>
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--p-teal)]/30 bg-[var(--p-teal-soft)] px-4 py-3">
+      <div>
+        <p className="text-[14px] font-semibold text-[var(--p-ink)]">{patient.fullName}</p>
+        <p className="text-[12px] text-[var(--p-muted)]">
+          <span className="tabular font-semibold text-[var(--p-teal-deep)]">{patient.displayId}</span> · {formatPhone(patient.phone)}
+        </p>
       </div>
-
-      <div className="surface overflow-hidden bg-white">
-        {/* header */}
-        <div className="border-b border-[var(--p-border)] px-8 py-6">
-          <div className="flex items-start justify-between">
-            <div>
-              <h2 className="font-serif-p text-[20px] font-semibold text-[var(--p-ink)]">{h?.legalName ?? "Jeeva Multispeciality Hospital"}</h2>
-              {h && <p className="mt-1 text-[12px] leading-relaxed text-[var(--p-muted)]">{h.addressLine}<br />{h.city}, {h.state} – {h.pincode}{h.phone && <> · {h.phone}</>}</p>}
-              {h?.gstin && <p className="mt-1 font-mono text-[12px] text-[var(--p-ink)]">GSTIN: {h.gstin} · State code: {h.stateCode}</p>}
-            </div>
-            <div className="text-right">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--p-muted)]">Tax Invoice</p>
-              <p className="mt-1 font-mono text-[15px] font-semibold text-[var(--p-ink)]">{invoice.receiptNo}</p>
-              <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">{new Date(invoice.createdAt).toLocaleString("en-IN")}</p>
-              <span className={`mt-2 inline-block rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${invoice.status === "PAID" ? "bg-[var(--p-teal-soft)] text-[var(--p-teal-deep)]" : "bg-[var(--p-amber-soft)] text-[#8a6414]"}`}>{invoice.status}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* patient */}
-        <div className="grid grid-cols-2 gap-px border-b border-[var(--p-border)] bg-[var(--p-border)]">
-          <div className="bg-white px-8 py-4">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Billed to</p>
-            <p className="mt-1 text-[14px] font-medium text-[var(--p-ink)]">{invoice.patient.fullName}</p>
-            <p className="font-mono text-[12px] text-[var(--p-muted)]">{invoice.patient.displayId} · {invoice.patient.phone}</p>
-          </div>
-          <div className="bg-white px-8 py-4">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Place of supply</p>
-            <p className="mt-1 text-[14px] text-[var(--p-ink)]">{h?.state ?? "Telangana"} ({h?.stateCode ?? "36"})</p>
-          </div>
-        </div>
-
-        {/* items */}
-        <table className="w-full text-left text-[13px]">
-          <thead>
-            <tr className="border-b border-[var(--p-border)] bg-[var(--p-bg)] text-[11px] uppercase tracking-wide text-[var(--p-muted)]">
-              <th className="px-8 py-2.5 font-semibold">Description</th>
-              <th className="py-2.5 font-semibold">SAC</th>
-              <th className="py-2.5 text-center font-semibold">Qty</th>
-              <th className="py-2.5 text-right font-semibold">Rate</th>
-              <th className="py-2.5 text-center font-semibold">GST</th>
-              <th className="px-8 py-2.5 text-right font-semibold">Amount</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[var(--p-border)]">
-            {invoice.items.map((it, i) => (
-              <tr key={i}>
-                <td className="px-8 py-3 text-[var(--p-ink)]">{it.description}</td>
-                <td className="py-3 font-mono text-[12px] text-[var(--p-muted)]">{it.hsnSac ?? "-"}</td>
-                <td className="py-3 text-center">{it.qty}</td>
-                <td className="py-3 text-right font-mono">₹{it.unitPrice}</td>
-                <td className="py-3 text-center font-mono text-[12px]">{Number(it.gstRatePct) === 0 ? "Exempt" : `${it.gstRatePct}%`}</td>
-                <td className="px-8 py-3 text-right font-mono font-semibold">₹{it.amount}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        {/* totals */}
-        <div className="flex justify-end border-t border-[var(--p-border)] bg-[var(--p-bg)] px-8 py-5">
-          <div className="w-64 space-y-2 text-[13px]">
-            <T k="Subtotal" v={invoice.subtotal} />
-            {Number(invoice.discountAmount) > 0 && <T k={`Discount (${discPct}%)`} v={`-${invoice.discountAmount}`} />}
-            <T k="Taxable value" v={invoice.taxableAmount} />
-            <T k="CGST" v={invoice.cgstAmount} />
-            <T k="SGST" v={invoice.sgstAmount} />
-            <div className="rule" />
-            <div className="flex justify-between pt-1">
-              <span className="text-[14px] font-semibold text-[var(--p-ink)]">Total</span>
-              <span className="font-mono text-[16px] font-semibold text-[var(--p-teal)]">₹{invoice.totalAmount}</span>
-            </div>
-            {Number(invoice.amountPaid) > 0 && <T k="Paid" v={invoice.amountPaid} />}
-            {Number(invoice.balanceDue) > 0 && <T k="Balance due" v={invoice.balanceDue} />}
-          </div>
-        </div>
-
-        {exempt && (
-          <p className="border-t border-[var(--p-border)] px-8 py-3 text-[11px] leading-relaxed text-[var(--p-muted)]">
-            Healthcare services by a clinical establishment are exempt from GST under Notification 12/2017 – Central Tax (Rate). Rates are configurable per test.
-          </p>
-        )}
-      </div>
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-[var(--p-teal-deep)]">
+        <Icon name="check" size={12} /> Newly registered - give them this ID
+      </span>
     </div>
   );
-}
-function T({ k, v }: { k: string; v: string }) {
-  return <div className="flex justify-between"><span className="text-[var(--p-muted)]">{k}</span><span className="font-mono text-[var(--p-ink)]">₹{v.replace("-", "")}</span></div>;
 }

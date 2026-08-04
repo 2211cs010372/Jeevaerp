@@ -837,6 +837,21 @@ model LabResultItem {
 
 model LabTest {
   id            String          @id @default(cuid())
+  /// THE ORDER these tests were raised in - one value shared by every test
+  /// picked in a single submit.
+  ///
+  /// A patient who gives one tube for a CBP, an LFT and a TSH is three rows
+  /// here (each has its own analytes, its own price and its own completion) but
+  /// ONE job at the bench and one line in the queue. Without this column the
+  /// queue had no way to say so: it showed three unrelated rows, and the
+  /// technician re-read the patient's name three times to convince themselves
+  /// it was the same person.
+  ///
+  /// Nullable because tests ordered before this column existed have no order to
+  /// belong to; those are read as an order of one. Not a foreign key - there is
+  /// no LabOrder table and inventing one would put a row in the way of the
+  /// clinically important thing, which is the test.
+  orderGroupId  String?
   /// Optional: walk-in lab tests have no doctor appointment.
   appointmentId String?
   appointment   Appointment?    @relation(fields: [appointmentId], references: [id])
@@ -882,6 +897,8 @@ model LabTest {
   @@index([status])
   @@index([appointmentId])
   @@index([admissionId])
+  /// The queue reads by order, and the result sheet pulls an order's siblings.
+  @@index([orderGroupId])
 }
 
 // ---------------------------------------------------------------------------

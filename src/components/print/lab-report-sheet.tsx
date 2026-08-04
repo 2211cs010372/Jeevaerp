@@ -55,7 +55,8 @@ interface ResultRow {
   flag: Flag; sortOrder: number;
 }
 
-interface Report {
+/** One test's report bundle. Exported: the whole-order print renders N of these. */
+export interface Report {
   hospital: HospitalInfo | null;
   test: {
     id: string; testName: string; code: string | null; status: string;
@@ -79,7 +80,7 @@ interface Report {
  * meridiem as "am" and orders the date day-first; this stamp has to read exactly
  * like the ones already printed on five years of filed reports.
  */
-const stamp = (iso: string | null): string => {
+export const stamp = (iso: string | null): string => {
   if (!iso) return "-";
   const d = new Date(iso);
   const date = d.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
@@ -209,37 +210,8 @@ function LabReportSheetInner() {
   if (error) return <div className="p-10 text-center text-[14px] text-[#8a3b2e]">{error}</div>;
   if (!data) return <div className="p-10 text-center text-[14px] text-[#5a6a66]">Preparing the report…</div>;
 
-  const { hospital, test, patient, referral, admission, results, abnormal } = data;
+  const { test, patient, results } = data;
   const entered = results.length > 0;
-  const department = departmentFor(test.code);
-  const specimen = specimenFor(test.code);
-
-  /** Left column: who the sample came from and what it is. */
-  const leftFields: { k: string; v: string; mono?: boolean }[] = [
-    { k: "Patient Name", v: patient ? `${title(patient.gender)}${patient.fullName.toUpperCase()}` : "" },
-    {
-      k: "Age / Gender",
-      v: [patient?.age != null ? `${patient.age} years` : null, sentenceCase(patient?.gender)]
-        .filter(Boolean).join(" / "),
-    },
-    { k: "Ref. Doctor", v: referral?.doctorName ? withTitle(referral.doctorName) : "Self / walk-in" },
-    { k: "Patient ID", v: patient?.displayId ?? "", mono: true },
-    { k: "Sample Type", v: specimen ?? "-" },
-    // Not recorded by this system - see the file note. Printed as a blank field
-    // so the form still reads as the hospital's, without inventing an
-    // accession number that no tube in the fridge carries.
-    { k: "Sample Id", v: "-", mono: true },
-  ];
-
-  /** Right column: the sample's chain of custody, such as we hold it. */
-  const rightFields: { k: string; v: string; mono?: boolean }[] = [
-    { k: "Ref. Customer", v: (hospital?.legalName ?? "").toUpperCase() },
-    { k: admission ? "IP No" : "OP No", v: admission?.ipNumber ?? referral?.opNumber ?? "-", mono: true },
-    { k: "Registered On", v: stamp(test.orderedAt) },
-    { k: "Collected On", v: "-" },
-    { k: "Received On", v: "-" },
-    { k: "Reported On", v: test.completedAt ? stamp(test.completedAt) : "Not yet reported" },
-  ];
 
   return (
     <div className="print-stage">
@@ -273,6 +245,67 @@ function LabReportSheetInner() {
       )}
 
       <div id="print-sheet" ref={sheetRef}>
+        <LabReportBody data={data} onStationery={onStationery} withNotes={withNotes} printedAt={printedAt} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * ONE test's report, from the letterhead down to the signature rule.
+ *
+ * Split out of the page above so the whole-order print can lay several of these
+ * end to end - one per test, each on its own sheet - without the two ever
+ * drifting apart. There is exactly one lab report layout in this hospital, and
+ * a patient handed three sheets from one sample must not be able to tell which
+ * screen printed which.
+ *
+ * It draws no page box of its own: the caller owns that (#print-sheet for a
+ * single report, .print-sheet for each page of an order), and with it the paper
+ * geometry and the page breaks.
+ */
+export function LabReportBody({ data, onStationery, withNotes, printedAt }: {
+  data: Report;
+  /** Printing onto the hospital's pre-printed paper, so the head is left blank. */
+  onStationery: boolean;
+  withNotes: boolean;
+  /** ISO stamp of when this was rendered; null until hydration. */
+  printedAt: string | null;
+}) {
+  const { hospital, test, patient, referral, admission, results, abnormal } = data;
+  const entered = results.length > 0;
+  const department = departmentFor(test.code);
+  const specimen = specimenFor(test.code);
+
+  /** Left column: who the sample came from and what it is. */
+  const leftFields: { k: string; v: string; mono?: boolean }[] = [
+    { k: "Patient Name", v: patient ? `${title(patient.gender)}${patient.fullName.toUpperCase()}` : "" },
+    {
+      k: "Age / Gender",
+      v: [patient?.age != null ? `${patient.age} years` : null, sentenceCase(patient?.gender)]
+        .filter(Boolean).join(" / "),
+    },
+    { k: "Ref. Doctor", v: referral?.doctorName ? withTitle(referral.doctorName) : "Self / walk-in" },
+    { k: "Patient ID", v: patient?.displayId ?? "", mono: true },
+    { k: "Sample Type", v: specimen ?? "-" },
+    // Not recorded by this system - see the file note. Printed as a blank field
+    // so the form still reads as the hospital's, without inventing an
+    // accession number that no tube in the fridge carries.
+    { k: "Sample Id", v: "-", mono: true },
+  ];
+
+  /** Right column: the sample's chain of custody, such as we hold it. */
+  const rightFields: { k: string; v: string; mono?: boolean }[] = [
+    { k: "Ref. Customer", v: (hospital?.legalName ?? "").toUpperCase() },
+    { k: admission ? "IP No" : "OP No", v: admission?.ipNumber ?? referral?.opNumber ?? "-", mono: true },
+    { k: "Registered On", v: stamp(test.orderedAt) },
+    { k: "Collected On", v: "-" },
+    { k: "Received On", v: "-" },
+    { k: "Reported On", v: test.completedAt ? stamp(test.completedAt) : "Not yet reported" },
+  ];
+
+  return (
+    <>
         {onStationery ? <PreprintedGuide /> : <LetterHead hospital={hospital} doctor={null} />}
 
         {/* ── IDENTITY: two colon-aligned columns, exactly as on the paper form ── */}
@@ -430,8 +463,7 @@ function LabReportSheetInner() {
           printedAt={printedAt}
           inset={onStationery}
         />
-      </div>
-    </div>
+    </>
   );
 }
 

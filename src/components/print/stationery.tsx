@@ -87,6 +87,65 @@ export const STATIONERY_PRINT_CSS = `
 `;
 
 /**
+ * SEVERAL SHEETS, ONE PRINT JOB.
+ *
+ * One sample can carry four tests, and each is its own report - its own
+ * department band, its own signature, its own "End of report". Printed one at a
+ * time that is four visits to the print dialog, and the fourth is the one that
+ * doesn't happen: the patient walks out with three of their four results.
+ *
+ * So the order prints as ONE document with a hard page break after every test.
+ * The page count follows the work - two tests, two pages; four, four - and a
+ * test whose analyte list runs long keeps its own sheet either way.
+ *
+ * Two differences from the single-report profiles above, both forced by there
+ * being more than one page:
+ *
+ *   * `.print-sheet`, a CLASS, not the `#print-sheet` id - an id can only ever
+ *     name one element, and this document has N.
+ *   * Sheets sit in normal flow with a fixed page height and `break-after`,
+ *     where a single sheet is pinned with position:absolute. Absolute pinning
+ *     is what confines that one to a single page; here it would stack every
+ *     report on top of the first.
+ *
+ * The height is 296.8mm rather than a round 297: browsers round page geometry
+ * in device pixels, and a box exactly as tall as the paper rounds UP often
+ * enough to emit a blank sheet between every report.
+ */
+export function multiSheetPrintCss(onStationery: boolean): string {
+  // Same reserved bands as STATIONERY_PRINT_CSS - see its note for the
+  // measurements off the stationery scan.
+  const pad = onStationery ? "40mm 13mm 46mm" : "10mm 11mm";
+  return `
+  .print-stage { --pr-primary: #0b5f55; --pr-accent: #c77d33; --pr-ink: #17211e; --pr-line: #b9c4c0;
+    --pr-muted: #7d8b86; --pr-hair: #dfe6e3; }
+  .print-stage { background: #e8e6e1; min-height: 100vh; padding: 24px 12px 64px; }
+  .print-sheet { position: relative; width: 210mm; min-height: 297mm; margin: 0 auto 22px; background: #fff;
+    color: var(--pr-ink); box-shadow: 0 8px 40px rgba(0,0,0,.18); padding: ${pad};
+    display: flex; flex-direction: column;
+    font-family: var(--font-sans, "Instrument Sans"), "Noto Sans Telugu", "Nirmala UI", Arial, sans-serif;
+    font-size: 11.5px; line-height: 1.45; }
+  .print-sheet .rule { border-bottom: 1px solid var(--pr-line); }
+  .print-sheet .rule-strong { border-bottom: 2px solid var(--pr-primary); }
+  @media print {
+    html, body { background: #fff !important; margin: 0 !important; padding: 0 !important; }
+    body * { visibility: hidden !important; }
+    .print-sheet, .print-sheet * { visibility: visible !important; }
+    .print-stage { background: #fff !important; padding: 0 !important; margin: 0 !important; min-height: 0 !important; }
+    @page { size: A4 portrait; margin: 0; }
+    .print-sheet { width: 210mm; height: 296.8mm; min-height: 0; margin: 0; box-shadow: none;
+      padding: ${pad}; overflow: hidden; break-inside: avoid; }
+    /* The break goes BEFORE each sheet after the first, not after every sheet:
+       a break after the last one is a blank sheet, and "after every sheet
+       except the last" is a rule that only holds while nothing else is ever
+       rendered below them. */
+    .print-sheet + .print-sheet { break-before: page; page-break-before: always; }
+    .screen-only { display: none !important; }
+  }
+`;
+}
+
+/**
  * A5 invoice stationery.
  *
  * The bill is printed on A5 (148 × 210 mm) - half a sheet, the size a pharmacy

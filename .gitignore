@@ -23,6 +23,10 @@ node_modules
 # Verification builds (NEXT_DIST_DIR=.next-verify). Its webpack cache holds
 # single files over 100 MB, which GitHub rejects outright - never commit it.
 /.next-verify/
+# Same thing under the name a build check writes to. It was committed once and
+# GitHub refused the push over a 278 MB webpack pack - the whole branch is
+# blocked by it, so the name goes here rather than being remembered.
+/.next-build-check/
 /out/
 /build
 next-env.d.ts

@@ -1,9 +1,11 @@
+import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
 import { storeFile } from "@/lib/storage";
 import { logAudit } from "./audit.service";
 import { DUTY_DOCTOR } from "./appointments.service";
-import { createInvoice, type BillLineInput } from "./billing.service";
+import { createInvoice, type BillLineInput, type InvoiceDTO } from "./billing.service";
+import { registerPatient } from "./reception.service";
 import { collectionByMode, type ModeTotal } from "./reports.service";
 import { publishLive } from "@/server/realtime/publish";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
@@ -16,6 +18,11 @@ export interface CatalogItemDTO {
 }
 export interface LabTestDTO {
   id: string; testName: string; status: string; price: string | null;
+  /**
+   * The order this test was raised in (see LabTest.orderGroupId). Null on tests
+   * that predate orders - the queue reads those as an order of one.
+   */
+  orderGroupId: string | null;
   reportFileUrl: string | null; createdAt: string; completedAt: string | null;
   patient: { id: string; displayId: string; fullName: string; phone: string } | null;
   appointment: { opNumber: string; doctorName: string; visitDate: string } | null;
@@ -48,7 +55,7 @@ export async function listCatalog(): Promise<CatalogItemDTO[]> {
 }
 
 const testSelect = {
-  id: true, testName: true, status: true, priceAtOrder: true,
+  id: true, testName: true, status: true, priceAtOrder: true, orderGroupId: true,
   reportFileUrl: true, createdAt: true, completedAt: true, impression: true,
   patient: { select: { id: true, displayId: true, fullName: true, phone: true } },
   appointment: {
@@ -63,6 +70,7 @@ const testSelect = {
 
 type TestRow = {
   id: string; testName: string; status: string; priceAtOrder: { toString(): string } | null;
+  orderGroupId: string | null;
   reportFileUrl: string | null; createdAt: Date; completedAt: Date | null; impression: string | null;
   patient: { id: string; displayId: string; fullName: string; phone: string } | null;
   appointment: {
@@ -78,6 +86,7 @@ function toTestDTO(t: TestRow): LabTestDTO {
   return {
     id: t.id, testName: t.testName, status: t.status,
     price: t.priceAtOrder ? t.priceAtOrder.toString() : null,
+    orderGroupId: t.orderGroupId,
     reportFileUrl: t.reportFileUrl,
     createdAt: t.createdAt.toISOString(),
     completedAt: t.completedAt ? t.completedAt.toISOString() : null,
@@ -90,7 +99,12 @@ function toTestDTO(t: TestRow): LabTestDTO {
   };
 }
 
-/** The lab work queue - pending first, newest first. */
+/**
+ * Individual tests - pending first, newest first.
+ *
+ * The bench reads `listLabOrders` instead; this stays flat for the screens that
+ * genuinely count tests rather than jobs (the lab dashboard's tallies).
+ */
 export async function listLabTests(status?: "PENDING" | "COMPLETED"): Promise<LabTestDTO[]> {
   const rows: TestRow[] = await prisma.labTest.findMany({
     where: status ? { status } : {},
@@ -99,6 +113,116 @@ export async function listLabTests(status?: "PENDING" | "COMPLETED"): Promise<La
     select: testSelect,
   });
   return rows.map(toTestDTO);
+}
+
+/**
+ * ONE ORDER = ONE ROW.
+ *
+ * What the technician picked in a single submit is one job at the bench: one
+ * patient, one sample, one line in the queue - however many tests it covers.
+ * The flat list this replaces drew a CBP, an LFT and a TSH for the same tube as
+ * three unrelated rows, three deep, with the patient's name repeated on each.
+ *
+ * The tests themselves stay separate inside the order, because they finish
+ * separately: an LFT off the analyser at 11:00 must be releasable while the
+ * culture in the same order is still growing.
+ */
+export interface LabOrderDTO {
+  /** The order's identity - its orderGroupId, or a lone test's own id. */
+  id: string;
+  createdAt: string;
+  patient: { id: string; displayId: string; fullName: string; phone: string } | null;
+  appointment: { opNumber: string; doctorName: string; visitDate: string } | null;
+  /** Every test on the order, in the sequence it was raised in. */
+  tests: LabTestDTO[];
+  /** PENDING while ANY test is still on the bench - the order isn't done until all of it is. */
+  status: "PENDING" | "COMPLETED";
+  pending: number;
+  /** Snapshotted prices, summed. Null when no test on the order carries one. */
+  total: string | null;
+  /** Every test on the order is on a bill. A part-billed order reads as unbilled. */
+  billed: boolean;
+}
+
+/**
+ * The lab work queue, by order - pending first, newest first.
+ *
+ * `status` filters which ORDERS are shown, never which of their tests: an order
+ * with one test left pending is a pending order, and it is drawn with all of
+ * its tests, the finished ones included. Hiding the released tests would leave
+ * the bench looking at a row that says "1 test" for a sample they know carried
+ * four, and re-releasing what was already handed over is the predictable next
+ * step. It also means a part-finished order stays under Pending and is not yet
+ * under Completed - it appears in exactly one place, and that place is the one
+ * with work left in it.
+ */
+export async function listLabOrders(status?: "PENDING" | "COMPLETED"): Promise<LabOrderDTO[]> {
+  // Which orders, cheaply. Ids only - the wide row select runs once the set is
+  // known, and only for orders that made the cut.
+  const hits: { id: string; orderGroupId: string | null }[] = await prisma.labTest.findMany({
+    where: status ? { status } : {},
+    orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+    take: 400,
+    select: { id: true, orderGroupId: true },
+  });
+
+  /** Order keys in the sequence they should appear, deduped. */
+  const keys: string[] = [];
+  const grouped = new Set<string>();
+  const solo = new Set<string>();
+  for (const h of hits) {
+    const key = h.orderGroupId ?? h.id;
+    if (grouped.has(key) || solo.has(key)) continue;
+    (h.orderGroupId ? grouped : solo).add(key);
+    keys.push(key);
+    if (keys.length >= 100) break;
+  }
+  if (keys.length === 0) return [];
+
+  const rows: TestRow[] = await prisma.labTest.findMany({
+    where: {
+      OR: [
+        ...(grouped.size ? [{ orderGroupId: { in: [...grouped] } }] : []),
+        // A test from before orders existed: it is its own order, and it must
+        // not swallow later tests that happen to have a null group.
+        ...(solo.size ? [{ id: { in: [...solo] }, orderGroupId: null }] : []),
+      ],
+    },
+    orderBy: { createdAt: "asc" },
+    select: testSelect,
+  });
+
+  const byKey = new Map<string, TestRow[]>();
+  for (const r of rows) {
+    const key = r.orderGroupId ?? r.id;
+    const list = byKey.get(key);
+    if (list) list.push(r); else byKey.set(key, [r]);
+  }
+
+  return keys.flatMap((key): LabOrderDTO[] => {
+    const group = byKey.get(key);
+    if (!group?.length) return [];
+    const tests = group.map(toTestDTO);
+    const pending = tests.filter((t) => t.status === "PENDING").length;
+    // Two of an order's four tests being released doesn't finish the order, so
+    // it must not surface under Completed while it is still owed work.
+    if (status === "COMPLETED" && pending > 0) return [];
+    const priced = group.filter((g) => g.priceAtOrder != null);
+    return [{
+      id: key,
+      // The order was raised in one submit, so its first test's stamp is its own.
+      createdAt: tests[0].createdAt,
+      patient: tests[0].patient,
+      appointment: tests[0].appointment,
+      tests,
+      status: pending > 0 ? "PENDING" : "COMPLETED",
+      pending,
+      total: priced.length
+        ? priced.reduce((s, g) => s + Number(g.priceAtOrder!.toString()), 0).toFixed(2)
+        : null,
+      billed: tests.every((t) => t.billed),
+    }];
+  });
 }
 
 /** Order one or more tests for a patient (walk-in - no doctor visit needed). */
@@ -150,6 +274,12 @@ export async function orderTests(
     select: { id: true, ipNumber: true },
   });
 
+  // Everything picked in this submit is ONE order, whatever it cost or however
+  // many tubes it takes. Minted here rather than derived later from timestamps
+  // because two orders for the same patient a second apart are two jobs, and
+  // nothing after the fact can tell them apart.
+  const orderGroupId = randomUUID();
+
   const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const ids: string[] = [];
     /** catalogId -> the LabTest just raised for it, so advice can be linked. */
@@ -157,6 +287,7 @@ export async function orderTests(
     for (const c of catalog) {
       const t = await tx.labTest.create({
         data: {
+          orderGroupId,
           patientId: input.patientId,
           // an inpatient's test hangs off the STAY; an outpatient's off the visit
           appointmentId: admission ? null : (input.appointmentId ?? null),
@@ -179,7 +310,7 @@ export async function orderTests(
     await logAudit(actor, {
       action: admission ? "LAB_TESTS_ORDERED_IP" : "LAB_TESTS_ORDERED",
       targetTable: "LabTest", targetId: ids[0],
-      meta: { count: ids.length, patientId: input.patientId, ipNumber: admission?.ipNumber ?? null },
+      meta: { count: ids.length, orderGroupId, patientId: input.patientId, ipNumber: admission?.ipNumber ?? null },
       ...ctx,
     }, tx);
     return { ids, byCatalog };
@@ -566,6 +697,46 @@ export async function labReportData(labTestId: string): Promise<LabReportDTO> {
   };
 }
 
+export interface LabOrderReportDTO {
+  /** The order these reports belong to - its group id, or a lone test's id. */
+  orderId: string;
+  /**
+   * One report per test on the order, in the sequence it was ordered.
+   *
+   * Tests with nothing entered yet are INCLUDED rather than filtered out here:
+   * the screen has to be able to say "two of these four have no values, they
+   * won't print" and it can only say it about tests it was told exist. What
+   * reaches paper is the print page's decision.
+   */
+  reports: LabReportDTO[];
+}
+
+/**
+ * Every report on one order, for printing as a single document.
+ *
+ * The reports are read one per test rather than in a single wide query: this is
+ * a print page opened a handful of times a day, and each report is the same
+ * bundle the single-report route already returns - so the sheets an order
+ * prints are, line for line, the sheets each test prints on its own. A faster
+ * query that built them a second way would be a second layout waiting to
+ * happen.
+ */
+export async function labOrderReportData(orderId: string): Promise<LabOrderReportDTO> {
+  const tests = await prisma.labTest.findMany({
+    // A test raised before orders existed is its own order, keyed by its id -
+    // and must not sweep up every other ungrouped test with it.
+    where: { OR: [{ orderGroupId: orderId }, { id: orderId, orderGroupId: null }] },
+    orderBy: { createdAt: "asc" },
+    select: { id: true },
+  });
+  if (tests.length === 0) throw new ApiError(404, "Order not found");
+
+  return {
+    orderId,
+    reports: await Promise.all(tests.map((t: { id: string }) => labReportData(t.id))),
+  };
+}
+
 /**
  * Save the measured values. Replaces the whole sheet - editing a result is
  * re-entering the sheet, and a half-updated report is worse than none. The
@@ -695,6 +866,138 @@ export async function billLabTests(
     { patientId: input.patientId, source: "LAB", appointmentId, lines, discountAmount: input.discountAmount, payment: input.payment, payments: input.payments },
     ctx
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE WALK-IN COUNTER
+//
+// Somebody arrives with a chit and no file. Registering them, ordering the
+// tests and taking the money is ONE transaction at the window even though it is
+// three rows in three tables, and the lab desk should not have to drive three
+// screens to record it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface WalkInPatientDTO {
+  id: string; displayId: string; fullName: string; phone: string;
+  age: number | null; gender: string | null;
+  /** True when this record was created by THIS call - the UI says so on the receipt. */
+  isNew: boolean;
+}
+
+export interface WalkInResultDTO {
+  patient: WalkInPatientDTO;
+  /** The tests ordered by this call. Empty when only pre-existing ones were billed. */
+  tests: LabTestDTO[];
+  /** Null when no bill was asked for, or when the charge went to a room tab. */
+  invoice: InvoiceDTO | null;
+  /**
+   * The patient is in a bed, so the tests raised their own bill due at
+   * discharge and NO money is taken at the counter. The UI has to say this out
+   * loud or the desk asks an inpatient's family to pay twice.
+   */
+  chargedToRoom: boolean;
+}
+
+/**
+ * Register (if new), order, and bill - in that order, in one call.
+ *
+ * Each step keeps its own transaction. They are deliberately NOT wrapped in an
+ * outer one: `createInvoice` opens its own, and nesting would hold a write lock
+ * across a registration and an order for the whole time. The steps are ordered
+ * so a failure leaves the least damage - a registered patient with no tests is
+ * a harmless empty record, and ordered-but-unbilled tests are exactly what the
+ * Billing page exists to clear. Only the last step can fail with work already
+ * done, and it says so in the error rather than leaving the desk guessing.
+ */
+export async function walkInOrder(
+  actor: AuthUser,
+  input: {
+    patientId?: string;
+    newPatient?: {
+      firstName: string; lastName?: string; phone: string;
+      age?: number; gender?: "MALE" | "FEMALE" | "OTHER";
+    };
+    catalogIds: string[];
+    labTestIds: string[];
+    bill?: {
+      discountAmount?: number;
+      payments?: { mode: "CASH" | "UPI" | "CARD" | "NETBANKING" | "OTHER"; amount: number; reference?: string }[];
+    };
+  },
+  ctx: { ipAddress?: string; userAgent?: string }
+): Promise<WalkInResultDTO> {
+  // ---- 1. who ----
+  let patient: WalkInPatientDTO;
+  if (input.newPatient) {
+    const created = await registerPatient(
+      actor,
+      {
+        firstName: input.newPatient.firstName,
+        lastName: input.newPatient.lastName,
+        phone: input.newPatient.phone,
+        age: input.newPatient.age,
+        gender: input.newPatient.gender,
+        isVip: false,
+      },
+      ctx
+    );
+    patient = {
+      id: created.id, displayId: created.displayId, fullName: created.fullName,
+      phone: created.phone, age: created.age, gender: created.gender, isNew: true,
+    };
+  } else {
+    const found = await prisma.patient.findUnique({
+      where: { id: input.patientId ?? "" },
+      select: { id: true, displayId: true, fullName: true, phone: true, age: true, gender: true, mergedIntoId: true, deletedAt: true },
+    });
+    if (!found || found.mergedIntoId || found.deletedAt) throw new ApiError(404, "Patient not found");
+    patient = {
+      id: found.id, displayId: found.displayId, fullName: found.fullName,
+      phone: found.phone, age: found.age, gender: found.gender, isNew: false,
+    };
+  }
+
+  // ---- 2. what ----
+  let tests: LabTestDTO[] = [];
+  let chargedToRoom = false;
+  if (input.catalogIds.length > 0) {
+    const ordered = await orderTests(actor, { patientId: patient.id, catalogIds: input.catalogIds }, ctx);
+    chargedToRoom = !!ordered.chargedToRoom;
+    tests = [...ordered];
+  }
+
+  // ---- 3. the money ----
+  //
+  // Skipped entirely for an inpatient: orderTests already raised their LAB bill
+  // against the stay, and billing again here would charge the same tests twice.
+  let invoice: InvoiceDTO | null = null;
+  if (input.bill && !chargedToRoom) {
+    const labTestIds = [...tests.map((t) => t.id), ...input.labTestIds];
+    try {
+      invoice = await billLabTests(
+        actor,
+        {
+          patientId: patient.id,
+          labTestIds,
+          discountAmount: input.bill.discountAmount,
+          payments: input.bill.payments,
+        },
+        ctx
+      );
+    } catch (e) {
+      const reason = e instanceof ApiError ? e.message : "Could not generate the bill";
+      // The tests exist and are findable; say where, so nobody re-orders them.
+      if (tests.length > 0) {
+        throw new ApiError(
+          e instanceof ApiError ? e.status : 400,
+          `${reason}. The ${tests.length === 1 ? "test is" : "tests are"} in the queue for ${patient.displayId} - raise the bill from the Billing page.`
+        );
+      }
+      throw e;
+    }
+  }
+
+  return { patient, tests, invoice, chargedToRoom };
 }
 
 /** Lab dashboard counters. */
