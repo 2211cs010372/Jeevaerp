@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { api, ApiClientError } from "@/lib/api-client";
 import {
@@ -68,6 +68,13 @@ export interface Report {
     bloodGroup: string | null; phone: string; address: string | null; city: string | null;
   } | null;
   referral: { opNumber: string; doctorName: string; visitDate: string } | null;
+  /**
+   * The name for the "Ref. Doctor" line. The visit's doctor where there was a
+   * visit; otherwise whoever the desk named on the order, which is how a sample
+   * given at the window against an outside chit still reports back to the
+   * doctor who asked for it. Null is a genuinely self-referred sample.
+   */
+  refDoctorName: string | null;
   admission: { ipNumber: string } | null;
   results: ResultRow[];
   abnormal: number;
@@ -117,6 +124,33 @@ const FLAG_INK: Record<Flag, string> = {
 };
 
 /**
+ * THE TABLE FITS THE PAGE, OR THE PAGE WINS.
+ *
+ * The sheet is pinned to ONE page: on the hospital's pre-printed stock the 40mm
+ * head band and the 46mm foot band are already in ink, leaving 211mm for the
+ * identity block, the table, the comments and the signature. Anything past that
+ * is not printed - and on the whole-order print, where each sheet is clipped to
+ * the paper with the foot lifted into the bottom band, the overspill lands ON
+ * TOP of "End of report" and the pathologist's rule. That is what a long panel
+ * looked like on page one: analyte lines printed over the signature block.
+ *
+ * So the table is set at a comfortable size for the panels that fit, and
+ * SHRINKS ITSELF for the ones that don't. Every type size and every row pad
+ * below is `calc(<px> * var(--pr-fit))`; the measuring loop in LabReportBody
+ * lowers that one variable until the sheet lands inside the paper, and a CBP of
+ * twenty analytes comes down a point or two rather than losing its last four
+ * lines off the bottom.
+ *
+ * The floor is real: below MIN_FIT the sheet stops shrinking and the screen
+ * warns instead. A report nobody can read at the counter is not a report that
+ * fitted - it is one that failed differently.
+ */
+const MIN_FIT = 0.72;
+
+/** A measurement in the table's own scaled units. */
+const fitPx = (px: number) => `calc(${px}px * var(--pr-fit, 1))`;
+
+/**
  * The air between one analyte line and the next.
  *
  * It lives on the CELLS, on all four of them, because that is the only place a
@@ -124,18 +158,24 @@ const FLAG_INK: Record<Flag, string> = {
  * which has no margin and no gap - `gap-y` on the row is dropped silently, and
  * padding on one cell alone leaves the other three columns riding at the old
  * pitch with the names drifting out of line.
- *
- * WHAT IT COSTS. The sheet is pinned to one page and anything past the bottom
- * is not printed. On the hospital's pre-printed stock the 40mm head band and
- * 46mm foot band are already spoken for, leaving 211mm for the identity block,
- * the table, the comments and the signature - call it 130mm of analyte lines.
- * At 13px type each line is about 8mm with this padding, so a panel runs out of
- * page around sixteen analytes, sooner when the reference notes are on. Widen
- * this and that ceiling drops. The screen measures each sheet and names the
- * ones that overflow before anybody prints, so tune it against a real panel -
- * a CBP or an LFT - rather than against a two-line test.
  */
-const ROW_PAD = "pb-[5px] pt-[7px]";
+const ROW_PAD = { paddingTop: fitPx(5), paddingBottom: fitPx(3) } as const;
+
+/**
+ * Millimetres to a CSS pixel, asked of the browser rather than assumed.
+ *
+ * Only called when a sheet actually overflows, which is rare - the probe is a
+ * layout read, and doing one on every render of every report to answer a
+ * question that is almost always "it fits" would be a poor trade.
+ */
+function mmPerPx(): number {
+  const probe = document.createElement("div");
+  probe.style.cssText = "width:100mm;position:absolute;visibility:hidden;pointer-events:none";
+  document.body.appendChild(probe);
+  const mm = 100 / probe.offsetWidth;
+  probe.remove();
+  return mm;
+}
 
 /** "MR." / "MS." from the recorded gender, or nothing when it isn't recorded. */
 function title(gender: string | null | undefined): string {
@@ -199,7 +239,6 @@ function LabReportSheetInner() {
   const [error, setError] = useState<string | null>(null);
   const [overflowMm, setOverflowMm] = useState(0);
   const [printedAt, setPrintedAt] = useState<string | null>(null);
-  const sheetRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     api.get<Report>(`/labs/tests/${labTestId}/print`)
@@ -211,22 +250,6 @@ function LabReportSheetInner() {
   // be read on the client - taken during hydration to keep the server and the
   // browser from disagreeing about what time it is.
   useEffect(() => setPrintedAt(new Date().toISOString()), [data]);
-
-  // The sheet is ONE page: print pins it to the paper, so anything past the
-  // bottom is simply not printed. A long panel with notes can do that, and a
-  // result line lost silently between the screen and the tray is the worst
-  // failure this page has - so measure it and say so before anyone prints.
-  useEffect(() => {
-    const el = sheetRef.current;
-    if (!el) return;
-    const probe = document.createElement("div");
-    probe.style.cssText = "width:100mm;position:absolute;visibility:hidden;pointer-events:none";
-    document.body.appendChild(probe);
-    const mmPerPx = 100 / probe.offsetWidth;
-    probe.remove();
-    const over = el.offsetHeight * mmPerPx - (onStationery ? 297 : 296);
-    setOverflowMm(over > 1 ? Math.round(over) : 0);
-  }, [data, onStationery, withNotes]);
 
   if (error) return <div className="p-10 text-center text-[14px] text-[#8a3b2e]">{error}</div>;
   if (!data) return <div className="p-10 text-center text-[14px] text-[#5a6a66]">Preparing the report…</div>;
@@ -253,8 +276,9 @@ function LabReportSheetInner() {
 
       {overflowMm > 0 && (
         <p className="mx-auto mb-3 w-full max-w-[210mm] border-l-2 border-[#d8b878] pl-3 text-[12.5px] leading-snug text-[#8a6414] print:hidden">
-          This report runs about {overflowMm}mm past the printable area - that much will be cut off at the bottom
-          of the sheet. Turn off the reference notes above, or hand the remaining lines on a second sheet.
+          Set as small as this sheet goes, the table still runs about {overflowMm}mm past the printable area -
+          that much would be cut off at the bottom. Turn off the reference notes above, or hand the remaining
+          lines on a second sheet.
         </p>
       )}
 
@@ -265,8 +289,16 @@ function LabReportSheetInner() {
         </p>
       )}
 
-      <div id="print-sheet" ref={sheetRef}>
-        <LabReportBody data={data} onStationery={onStationery} withNotes={withNotes} printedAt={printedAt} />
+      {/* The sheet is ONE page: print pins it to the paper, so anything past the
+          bottom is not printed. The body fits its own table to the page and
+          reports whatever it could not absorb, which is what the line above
+          warns about - a result lost silently between the screen and the tray
+          is the worst failure this page has. */}
+      <div id="print-sheet">
+        <LabReportBody
+          data={data} onStationery={onStationery} withNotes={withNotes}
+          printedAt={printedAt} onFit={setOverflowMm}
+        />
       </div>
     </div>
   );
@@ -285,18 +317,79 @@ function LabReportSheetInner() {
  * single report, .print-sheet for each page of an order), and with it the paper
  * geometry and the page breaks.
  */
-export function LabReportBody({ data, onStationery, withNotes, printedAt }: {
+export function LabReportBody({ data, onStationery, withNotes, printedAt, onFit }: {
   data: Report;
   /** Printing onto the hospital's pre-printed paper, so the head is left blank. */
   onStationery: boolean;
   withNotes: boolean;
   /** ISO stamp of when this was rendered; null until hydration. */
   printedAt: string | null;
+  /**
+   * How far past the paper this sheet still runs once it has shrunk as far as
+   * it will go, in millimetres - 0 when it fits, which is the usual answer.
+   * Reported from here rather than measured by the page, because only this
+   * component knows when the fitting has finished.
+   */
+  onFit?: (overflowMm: number) => void;
 }) {
-  const { hospital, test, patient, referral, admission, results, abnormal } = data;
+  const { hospital, test, patient, referral, refDoctorName, admission, results, abnormal } = data;
   const entered = results.length > 0;
   const department = departmentFor(test.code);
   const specimen = specimenFor(test.code);
+
+  // ── FITTING THE TABLE TO THE PAPER (see the MIN_FIT note) ──
+  const tableRef = useRef<HTMLTableElement | null>(null);
+  const [fit, setFit] = useState(1);
+
+  // A different report, a different paper, or the notes going on or off, is a
+  // different measurement - start from full size and let the loop below find
+  // the size again rather than inheriting the last sheet's squeeze.
+  //
+  // Reset DURING RENDER, not from an effect. An effect would have run after
+  // the measuring loop below had already asked for the first shrink, and the
+  // two updates cancelled: React landed back on the size it started at, saw no
+  // change, and skipped the re-render - so the loop never ran a second time and
+  // every long report stayed at full size. Adjusting the state in render is
+  // React's own answer to "this state depends on a prop".
+  //
+  // Keyed on what actually changes the height, NOT on the `data` object: a
+  // caller that rebuilds its report object each render would otherwise reset
+  // the fit every render, and the shrink and the reset would spend the
+  // afternoon undoing each other.
+  const fitKey = `${test.id}|${results.length}|${onStationery}|${withNotes}`;
+  const [measured, setMeasured] = useState(fitKey);
+  if (measured !== fitKey) { setMeasured(fitKey); setFit(1); }
+
+  // Measured, not estimated. Run after EVERY render and on layout rather than
+  // on paint, so the shrink happens before anything is shown: the sheet's own
+  // min-height is the paper, so whatever it stands taller than that is exactly
+  // what would be lost off the bottom (or printed over the signature block, on
+  // the whole-order print where each sheet is clipped to the page).
+  //
+  // Each pass takes the table down by the ratio it is over by, and never by
+  // less than a hundredth - so it converges in two or three renders and cannot
+  // sit oscillating between two sizes. The floor ends it either way.
+  useLayoutEffect(() => {
+    const table = tableRef.current;
+    const sheet = table?.closest("#print-sheet, .print-sheet") as HTMLElement | null;
+    if (!table || !sheet) return;
+    const paper = parseFloat(getComputedStyle(sheet).minHeight);
+    if (!Number.isFinite(paper) || paper <= 0) return;
+
+    const over = sheet.offsetHeight - paper;
+    const height = table.offsetHeight;
+    // 1px of slack: browsers round page geometry in device pixels, and chasing
+    // that last rounding error would shrink every sheet in the building.
+    if (over > 1 && fit > MIN_FIT && height > 0) {
+      setFit(Math.max(MIN_FIT, Math.min(fit * ((height - over) / height), fit - 0.01)));
+      return;
+    }
+    // Settled - either it fits, or it is as small as this sheet goes. Only now
+    // is there an honest number to warn the screen with; measuring before the
+    // shrink converged is how the desk gets told a report overflows that
+    // doesn't.
+    onFit?.(over > 1 ? Math.round(over * mmPerPx()) : 0);
+  });
 
   /** Left column: who the sample came from and what it is. */
   const leftFields: { k: string; v: string; mono?: boolean }[] = [
@@ -306,7 +399,7 @@ export function LabReportBody({ data, onStationery, withNotes, printedAt }: {
       v: [patient?.age != null ? `${patient.age} years` : null, sentenceCase(patient?.gender)]
         .filter(Boolean).join(" / "),
     },
-    { k: "Ref. Doctor", v: referral?.doctorName ? withTitle(referral.doctorName) : "Self / walk-in" },
+    { k: "Ref. Doctor", v: refDoctorName ? withTitle(refDoctorName) : "Self / walk-in" },
     { k: "Patient ID", v: patient?.displayId ?? "", mono: true },
     { k: "Sample Type", v: specimen ?? "-" },
     // Not recorded by this system - see the file note. Printed as a blank field
@@ -344,11 +437,15 @@ export function LabReportBody({ data, onStationery, withNotes, printedAt }: {
             rules: four columns of different kinds of thing held apart by
             alignment alone, which is what the hospital's own report does and
             what keeps a fourteen-analyte panel readable at speed. */}
-        <table className="mt-[10px] w-full border-collapse">
+        <table
+          ref={tableRef}
+          className="mt-[10px] w-full border-collapse"
+          style={{ "--pr-fit": fit } as React.CSSProperties}
+        >
           <thead>
             <tr
-              className="text-left align-bottom text-[12.5px] bg-[var(--pr-bg)] font-bold uppercase tracking-[0.02em]"
-              style={{ color: "var(--pr-ink)" }}
+              className="text-left align-bottom bg-[var(--pr-bg)] font-bold uppercase tracking-[0.02em]"
+              style={{ color: "var(--pr-ink)", fontSize: fitPx(11) }}
             >
               <th className="border-y w-[230px] py-[3px] pr-2" style={{ borderColor: "var(--pr-ink)" }}>Test Description</th>
               <th className="w-[70px] border-y py-[3px] pl-2" style={{ borderColor: "var(--pr-ink)" }}>Result</th>
@@ -366,7 +463,7 @@ export function LabReportBody({ data, onStationery, withNotes, printedAt }: {
             <tr>
               <td colSpan={4} className="pb-[2px] pt-[7px]">
                 <div className="relative text-center">
-                  <span className="text-[12.5px] font-bold uppercase tracking-[0.04em]" style={{ color: "var(--pr-ink)" }}>
+                  <span className="font-bold uppercase tracking-[0.04em]" style={{ color: "var(--pr-ink)", fontSize: fitPx(11.5) }}>
                     {department ?? "LABORATORY"}
                   </span>
                   <span
@@ -383,8 +480,8 @@ export function LabReportBody({ data, onStationery, withNotes, printedAt }: {
             <tr>
               <td colSpan={4} className="pb-[3px] pt-[5px]">
                 <span
-                  className="text-[14px] font-bold underline decoration-1 underline-offset-[3px]"
-                  style={{ color: "var(--pr-ink)" }}
+                  className="font-bold underline decoration-1 underline-offset-[3px]"
+                  style={{ color: "var(--pr-ink)", fontSize: fitPx(12.5) }}
                 >
                   {test.testName}
                 </span>
@@ -400,10 +497,10 @@ export function LabReportBody({ data, onStationery, withNotes, printedAt }: {
               const desc = withNotes ? analyteDescription(r.name) : null;
               return (
                 <tr key={`${r.name}-${i}`} className="align-baseline">
-                  <td className={`${ROW_PAD} pr-2`}>
-                    <span className="text-[13px] font-medium " style={{ color: "var(--pr-ink)" }}>{r.name}</span>
+                  <td className="pr-2" style={ROW_PAD}>
+                    <span className="font-medium " style={{ color: "var(--pr-ink)", fontSize: fitPx(11.5) }}>{r.name}</span>
                     {method && (
-                      <span className="block pl-[10px] text-[8.5px] italic leading-[1.3]" style={{ color: "var(--pr-muted)" }}>
+                      <span className="block pl-[10px] italic leading-[1.3]" style={{ color: "var(--pr-muted)", fontSize: fitPx(8) }}>
                         Method : {method}
                       </span>
                     )}
@@ -411,7 +508,7 @@ export function LabReportBody({ data, onStationery, withNotes, printedAt }: {
                       /* 9px is about as small as this can be set and still be
                          read off a laser print by someone holding it at a
                          counter - the whole point of the line. */
-                      <span className="block pl-[10px] text-[10px] italic leading-[1.35]" style={{ color: "var(--pr-muted)" }}>
+                      <span className="block pl-[10px] italic leading-[1.35]" style={{ color: "var(--pr-muted)", fontSize: fitPx(9) }}>
                         {desc}
                         {flagNote && (
                           <span className="font-semibold not-italic" style={{ color: FLAG_INK[r.flag] }}>
@@ -425,15 +522,15 @@ export function LabReportBody({ data, onStationery, withNotes, printedAt }: {
                       report has always used, and unlike a colour it survives the
                       mono laser most of this printing goes through. */}
                   <td
-                    className={`${ROW_PAD} pr-2 text-[13px]`}
-                    style={{ color: FLAG_INK[r.flag], fontWeight: off ? 700 : 400 }}
+                    className="pr-2"
+                    style={{ ...ROW_PAD, color: FLAG_INK[r.flag], fontWeight: off ? 700 : 400, fontSize: fitPx(11.5) }}
                   >
                     {r.value}
                   </td>
-                  <td className={`${ROW_PAD} pr-2 text-[12.5px]`} style={{ color: "var(--pr-ink)" }}>
+                  <td className="pr-2" style={{ ...ROW_PAD, color: "var(--pr-ink)", fontSize: fitPx(11) }}>
                     {r.unit ?? ""}
                   </td>
-                  <td className={`${ROW_PAD} text-[13px]`} style={{ color: "var(--pr-ink)" }}>
+                  <td style={{ ...ROW_PAD, color: "var(--pr-ink)", fontSize: fitPx(11.5) }}>
                     {rangeLabel(r)}
                   </td>
                 </tr>
@@ -442,7 +539,7 @@ export function LabReportBody({ data, onStationery, withNotes, printedAt }: {
 
             {!entered && (
               <tr style={{ height: "24mm" }}>
-                <td colSpan={4} className="pt-3 text-[13px] italic" style={{ color: "var(--pr-muted)" }}>
+                <td colSpan={4} className="pt-3 italic" style={{ color: "var(--pr-muted)", fontSize: fitPx(12) }}>
                   Results not entered.
                 </td>
               </tr>

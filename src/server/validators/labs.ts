@@ -28,6 +28,12 @@ export const orderTestsSchema = z.object({
   catalogIds: z.array(z.string().trim().min(1)).min(1, "Select at least one test"),
   appointmentId: z.string().trim().optional(),
   /**
+   * Who referred them, when no consultation here did - the doctor whose chit
+   * the patient is holding at the window. Dropped server-side when the order is
+   * linked to a visit, which already carries its own doctor.
+   */
+  referringDoctorId: z.string().trim().min(1).optional(),
+  /**
    * The doctor's advised rows this order fulfils. Sent when the order was
    * raised FROM the advice, so the advised line stops showing as outstanding.
    */
@@ -38,6 +44,25 @@ export const orderTestsSchema = z.object({
     }))
     .optional(),
 });
+
+/**
+ * Correcting an order already on the bench: the referring doctor, the date it
+ * was registered under, or both.
+ *
+ * Both fields are nullish rather than optional, and the difference carries
+ * meaning: an ABSENT key leaves the value alone, an explicit `null` clears it.
+ * Collapsing the two would mean a screen that only edits the date wipes the
+ * doctor every time it saves.
+ */
+export const updateLabOrderSchema = z
+  .object({
+    referringDoctorId: z.string().trim().min(1).nullish(),
+    /** `YYYY-MM-DD` from a date field, or a full ISO stamp. */
+    orderedAt: z.string().trim().min(1).nullish(),
+  })
+  .refine((d) => d.referringDoctorId !== undefined || d.orderedAt !== undefined, {
+    message: "Nothing to change",
+  });
 
 const paymentSchema = z.object({
   mode: z.enum(["CASH", "UPI", "CARD", "NETBANKING", "OTHER"]),
@@ -110,6 +135,8 @@ export const walkInSchema = z
     newPatient: quickPatientSchema.optional(),
     /** Catalog entries to order now. */
     catalogIds: z.array(z.string().trim().min(1)).default([]),
+    /** The doctor on the chit they walked in with, if they walked in with one. */
+    referringDoctorId: z.string().trim().min(1).optional(),
     /** Tests already ordered and still unbilled, to include on this bill. */
     labTestIds: z.array(z.string().trim().min(1)).default([]),
     /** Omit to order without taking money (the bill is raised later). */

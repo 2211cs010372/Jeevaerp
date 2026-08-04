@@ -20,6 +20,8 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { ResultSheet, type SavedTest, type SheetTest } from "@/components/portal/labs/result-sheet";
+import { OrderEditPanel } from "@/components/portal/labs/order-edit-panel";
+import { useDoctorRoster } from "@/components/portal/labs/referrer-select";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
 import { TOPICS } from "@/lib/realtime/topics";
@@ -37,10 +39,18 @@ interface Test {
 interface Order {
   id: string; createdAt: string; status: string; pending: number;
   total: string | null; billed: boolean;
+  /** The desk's correction to the registration date, when it made one. */
+  orderedAt: string | null;
   patient: { id: string; displayId: string; fullName: string; phone: string } | null;
   appointment: { opNumber: string; doctorName: string; visitDate: string } | null;
+  /** Named on the order when no consultation here named a doctor. */
+  referringDoctor: { id: string; name: string } | null;
   tests: Test[];
 }
+
+/** "4 Aug" - the registered-on date as the queue shows it. */
+const dayMonth = (iso: string) =>
+  new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 
 /** Which test the sheet opens on, and the order it belongs to. */
 interface SheetTarget { orderId: string; tests: SheetTest[]; openAt: string }
@@ -52,6 +62,9 @@ export default function LabQueuePage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  /** The order whose doctor / date correction panel is open, if any. */
+  const [editing, setEditing] = useState<string | null>(null);
+  const doctors = useDoctorRoster();
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   /** The order the result sheet is open on, and the tab it opened at. */
@@ -79,9 +92,9 @@ export default function LabQueuePage() {
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter]);
 
   // An order raised at reception appears here while the sample is still being
-  // collected. Suspended while a result sheet is open so typing is never
-  // interrupted by the list reloading underneath.
-  useLive([TOPICS.LABS], () => load(true), { enabled: !sheet });
+  // collected. Suspended while a result sheet or a correction panel is open so
+  // typing is never interrupted by the list reloading underneath.
+  useLive([TOPICS.LABS], () => load(true), { enabled: !sheet && !editing });
 
   /** Open the sheet on one test, with the rest of its order as tabs. */
   function openSheet(order: Order, testId?: string) {
@@ -284,7 +297,17 @@ export default function LabQueuePage() {
                       </div>
                       <div className="mt-0.5 text-[12px] text-[var(--p-muted)]">
                         {o.patient?.fullName ?? "-"} · <span className="tabular">{o.patient?.displayId ?? "-"}</span>
-                        {o.appointment ? ` · ${o.appointment.doctorName} (${o.appointment.opNumber})` : " · walk-in"}
+                        {/* Who the report will name as Ref. Doctor - the visit's
+                            doctor, else whoever the desk wrote on the order,
+                            else nobody at all. */}
+                        {o.appointment
+                          ? ` · ${o.appointment.doctorName} (${o.appointment.opNumber})`
+                          : o.referringDoctor ? ` · ref. ${o.referringDoctor.name}` : " · walk-in"}
+                        {" · "}<span className="tabular">{dayMonth(o.orderedAt ?? o.createdAt)}</span>
+                        {/* A corrected date says so, next to the date it replaced
+                            - a back-dated order that reads like an ordinary one
+                            is impossible to check against the register. */}
+                        {o.orderedAt && <span className="italic"> (typed in {dayMonth(o.createdAt)})</span>}
                       </div>
 
                       {/* What is actually on the order, without opening it -
@@ -340,6 +363,27 @@ export default function LabQueuePage() {
                         <Icon name="flask" size={13} /> {o.status === "PENDING" ? "Enter results" : "Results"}
                       </button>
 
+                      {/* THE CHIT NOBODY TYPED IN, AND THE DAY THAT WAS WRONG.
+                          An order with no doctor on it is called out rather
+                          than left to be noticed: it prints "Self / walk-in" on
+                          a report that goes back to the doctor who asked for
+                          it, and this row is the last place anyone sees it
+                          before that happens. */}
+                      {(() => {
+                        const noDoctor = !o.appointment && !o.referringDoctor;
+                        return (
+                          <button onClick={() => setEditing(editing === o.id ? null : o.id)}
+                            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                              noDoctor
+                                ? "border-[var(--p-amber)]/40 bg-[var(--p-amber-soft)] text-[#8a6414] hover:border-[var(--p-amber)]"
+                                : "border-[var(--p-border)] text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]"
+                            }`}>
+                            <Icon name="calendar" size={13} />
+                            {editing === o.id ? "Close" : noDoctor ? "Add doctor / date" : "Doctor & date"}
+                          </button>
+                        );
+                      })()}
+
                       {single ? testActions(single) : (
                         <button onClick={() => toggle(o.id)}
                           className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
@@ -348,6 +392,15 @@ export default function LabQueuePage() {
                       )}
                     </div>
                   </div>
+
+                  {editing === o.id && (
+                    <OrderEditPanel
+                      order={o}
+                      doctors={doctors}
+                      onClose={() => setEditing(null)}
+                      onSaved={() => { setEditing(null); load(true); }}
+                    />
+                  )}
 
                   {/* Each test finishes on its own clock, so each keeps its own
                       upload, print and done - just one level in. */}

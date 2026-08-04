@@ -8,6 +8,7 @@ import { createInvoice, type BillLineInput, type InvoiceDTO } from "./billing.se
 import { registerPatient } from "./reception.service";
 import { collectionByMode, type ModeTotal } from "./reports.service";
 import { publishLive } from "@/server/realtime/publish";
+import { parseLocalDate } from "@/lib/date";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import { linkAdvisedLabs } from "./prescriptions.service";
 import type { AuthUser } from "@/lib/auth/types";
@@ -24,8 +25,20 @@ export interface LabTestDTO {
    */
   orderGroupId: string | null;
   reportFileUrl: string | null; createdAt: string; completedAt: string | null;
+  /**
+   * The date the desk corrected this order to (see LabTest.orderedAt). Null on
+   * everything nobody has had to correct - read it as `orderedAt ?? createdAt`,
+   * which is what the report prints as "Registered On".
+   */
+  orderedAt: string | null;
   patient: { id: string; displayId: string; fullName: string; phone: string } | null;
   appointment: { opNumber: string; doctorName: string; visitDate: string } | null;
+  /**
+   * The doctor named on the order when no visit here named one - a chit from
+   * outside. Null when the test came off a consultation, whose own doctor is
+   * already on `appointment`.
+   */
+  referringDoctor: { id: string; name: string } | null;
   billed: boolean;
   /**
    * The measured analyte values, when the bench entered them. Optional because
@@ -56,7 +69,7 @@ export async function listCatalog(): Promise<CatalogItemDTO[]> {
 
 const testSelect = {
   id: true, testName: true, status: true, priceAtOrder: true, orderGroupId: true,
-  reportFileUrl: true, createdAt: true, completedAt: true, impression: true,
+  reportFileUrl: true, createdAt: true, orderedAt: true, completedAt: true, impression: true,
   patient: { select: { id: true, displayId: true, fullName: true, phone: true } },
   appointment: {
     select: {
@@ -65,18 +78,21 @@ const testSelect = {
       patient: { select: { id: true, displayId: true, fullName: true, phone: true } },
     },
   },
+  referringDoctor: { select: { id: true, name: true } },
   invoiceItems: { select: { id: true } },
 } as const;
 
 type TestRow = {
   id: string; testName: string; status: string; priceAtOrder: { toString(): string } | null;
   orderGroupId: string | null;
-  reportFileUrl: string | null; createdAt: Date; completedAt: Date | null; impression: string | null;
+  reportFileUrl: string | null; createdAt: Date; orderedAt: Date | null;
+  completedAt: Date | null; impression: string | null;
   patient: { id: string; displayId: string; fullName: string; phone: string } | null;
   appointment: {
     opNumber: string; visitDate: Date; doctor: { name: string } | null;
     patient: { id: string; displayId: string; fullName: string; phone: string };
   } | null;
+  referringDoctor: { id: string; name: string } | null;
   invoiceItems: { id: string }[];
 };
 
@@ -89,11 +105,13 @@ function toTestDTO(t: TestRow): LabTestDTO {
     orderGroupId: t.orderGroupId,
     reportFileUrl: t.reportFileUrl,
     createdAt: t.createdAt.toISOString(),
+    orderedAt: t.orderedAt ? t.orderedAt.toISOString() : null,
     completedAt: t.completedAt ? t.completedAt.toISOString() : null,
     patient: p,
     appointment: t.appointment
       ? { opNumber: t.appointment.opNumber, doctorName: t.appointment.doctor?.name ?? DUTY_DOCTOR.name, visitDate: t.appointment.visitDate.toISOString().slice(0, 10) }
       : null,
+    referringDoctor: t.referringDoctor,
     billed: t.invoiceItems.length > 0,
     impression: t.impression,
   };
@@ -131,8 +149,12 @@ export interface LabOrderDTO {
   /** The order's identity - its orderGroupId, or a lone test's own id. */
   id: string;
   createdAt: string;
+  /** The desk's correction to the registration date, if it made one. */
+  orderedAt: string | null;
   patient: { id: string; displayId: string; fullName: string; phone: string } | null;
   appointment: { opNumber: string; doctorName: string; visitDate: string } | null;
+  /** Named on the order when no visit here named a doctor - a chit from outside. */
+  referringDoctor: { id: string; name: string } | null;
   /** Every test on the order, in the sequence it was raised in. */
   tests: LabTestDTO[];
   /** PENDING while ANY test is still on the bench - the order isn't done until all of it is. */
@@ -202,27 +224,77 @@ export async function listLabOrders(status?: "PENDING" | "COMPLETED"): Promise<L
   return keys.flatMap((key): LabOrderDTO[] => {
     const group = byKey.get(key);
     if (!group?.length) return [];
-    const tests = group.map(toTestDTO);
-    const pending = tests.filter((t) => t.status === "PENDING").length;
+    const order = toOrderDTO(key, group);
     // Two of an order's four tests being released doesn't finish the order, so
     // it must not surface under Completed while it is still owed work.
-    if (status === "COMPLETED" && pending > 0) return [];
-    const priced = group.filter((g) => g.priceAtOrder != null);
-    return [{
-      id: key,
-      // The order was raised in one submit, so its first test's stamp is its own.
-      createdAt: tests[0].createdAt,
-      patient: tests[0].patient,
-      appointment: tests[0].appointment,
-      tests,
-      status: pending > 0 ? "PENDING" : "COMPLETED",
-      pending,
-      total: priced.length
-        ? priced.reduce((s, g) => s + Number(g.priceAtOrder!.toString()), 0).toFixed(2)
-        : null,
-      billed: tests.every((t) => t.billed),
-    }];
+    if (status === "COMPLETED" && order.pending > 0) return [];
+    return [order];
   });
+}
+
+/** An order's rows, from its group id - or from a lone pre-orders test's own id. */
+const orderWhere = (orderId: string) => ({
+  // A test raised before orders existed is its own order, keyed by its id - and
+  // must not sweep up every other ungrouped test with it.
+  OR: [{ orderGroupId: orderId }, { id: orderId, orderGroupId: null }],
+});
+
+/** One order's row, built from the tests on it. */
+function toOrderDTO(id: string, group: TestRow[]): LabOrderDTO {
+  const tests = group.map(toTestDTO);
+  const pending = tests.filter((t) => t.status === "PENDING").length;
+  const priced = group.filter((g) => g.priceAtOrder != null);
+  return {
+    id,
+    // The order was raised in one submit, so its first test's stamp is its own.
+    createdAt: tests[0].createdAt,
+    orderedAt: tests[0].orderedAt,
+    patient: tests[0].patient,
+    appointment: tests[0].appointment,
+    referringDoctor: tests[0].referringDoctor,
+    tests,
+    status: pending > 0 ? "PENDING" : "COMPLETED",
+    pending,
+    total: priced.length
+      ? priced.reduce((s, g) => s + Number(g.priceAtOrder!.toString()), 0).toFixed(2)
+      : null,
+    billed: tests.every((t) => t.billed),
+  };
+}
+
+/** One order, read back after it was changed. */
+async function readLabOrder(orderId: string): Promise<LabOrderDTO> {
+  const rows: TestRow[] = await prisma.labTest.findMany({
+    where: orderWhere(orderId), orderBy: { createdAt: "asc" }, select: testSelect,
+  });
+  if (rows.length === 0) throw new ApiError(404, "Order not found");
+  return toOrderDTO(orderId, rows);
+}
+
+/**
+ * The referring doctor a lab order should actually carry.
+ *
+ * Two rules, both of them about not printing a doctor's name on a report they
+ * never asked for:
+ *
+ *  * A test raised off a CONSULTATION already has a referring doctor - the one
+ *    who saw the patient. A second name typed beside it would put two doctors
+ *    on one "Ref. Doctor" line, so it is dropped.
+ *  * A doctor id that doesn't resolve to an active doctor is rejected rather
+ *    than silently stored: a dangling id prints as no doctor at all, which
+ *    reads on paper exactly like nobody having filled it in.
+ */
+async function resolveReferrer(
+  appointmentId: string | undefined,
+  referringDoctorId: string | undefined,
+): Promise<string | null> {
+  if (appointmentId || !referringDoctorId) return null;
+  const doctor = await prisma.doctor.findFirst({
+    where: { id: referringDoctorId, active: true },
+    select: { id: true },
+  });
+  if (!doctor) throw new ApiError(400, "That doctor is no longer on the roster");
+  return doctor.id;
 }
 
 /** Order one or more tests for a patient (walk-in - no doctor visit needed). */
@@ -244,6 +316,12 @@ export async function orderTests(
   actor: AuthUser,
   input: {
     patientId: string; catalogIds: string[]; appointmentId?: string;
+    /**
+     * The doctor who asked for these tests when no consultation here did - a
+     * patient at the window with an outside chit. Ignored when the order is
+     * linked to a visit, which carries its own doctor.
+     */
+    referringDoctorId?: string;
     /**
      * The doctor's advised rows this order fulfils, keyed by catalog id. Passing
      * them is what closes the loop back to the OPD sheet, so the advice stops
@@ -274,6 +352,14 @@ export async function orderTests(
     select: { id: true, ipNumber: true },
   });
 
+  // The referring doctor only means anything where there is no visit to take
+  // one from - a visit's own doctor IS the referrer, and storing a second name
+  // beside it is how a report ends up citing two.
+  const referringDoctorId = await resolveReferrer(
+    admission ? undefined : input.appointmentId,
+    input.referringDoctorId,
+  );
+
   // Everything picked in this submit is ONE order, whatever it cost or however
   // many tubes it takes. Minted here rather than derived later from timestamps
   // because two orders for the same patient a second apart are two jobs, and
@@ -292,6 +378,7 @@ export async function orderTests(
           // an inpatient's test hangs off the STAY; an outpatient's off the visit
           appointmentId: admission ? null : (input.appointmentId ?? null),
           admissionId: admission?.id ?? null,
+          referringDoctorId,
           catalogId: c.id,
           testName: c.name,
           priceAtOrder: c.price, // snapshot - survives catalog price changes
@@ -375,6 +462,113 @@ export async function orderTests(
     rows.length
   );
   return dtos;
+}
+
+/**
+ * The instant a corrected registration date means.
+ *
+ * The desk picks a DAY - a date field is what a counter can fill in without
+ * fumbling - but the column is a real instant and the report prints a clock
+ * time beside it ("Aug 01, 2026, 6:40 p.m."). So a date-only correction keeps
+ * the time of day it is replacing: the day was wrong, the hour was not, and
+ * defaulting to midnight would print every back-dated sample as having been
+ * registered at 12:00 a.m.
+ *
+ * Local components throughout, because this is a timestamp and not a
+ * date-only column - see the note at the top of lib/date.
+ */
+function parseOrderedAt(value: string, base: Date): Date {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const when = parseLocalDate(value);
+    when.setHours(base.getHours(), base.getMinutes(), base.getSeconds(), base.getMilliseconds());
+    if (Number.isNaN(when.getTime())) throw new ApiError(400, "That isn't a date");
+    return when;
+  }
+  const when = new Date(value);
+  if (Number.isNaN(when.getTime())) throw new ApiError(400, "That isn't a date");
+  return when;
+}
+
+/**
+ * CORRECT AN ORDER THAT IS ALREADY RAISED - the referring doctor, the date, or
+ * both.
+ *
+ * Two things get filled in wrong at a busy window, and both of them print:
+ *
+ *  * NO DOCTOR. The chit is in the patient's hand, the desk is three deep, and
+ *    the order goes in as a walk-in. The report then reads "Ref. Doctor: Self /
+ *    walk-in" and goes back to a doctor who is not named on it.
+ *  * THE WRONG DAY. A sample taken on Saturday evening is typed in on Monday,
+ *    and "Registered On" says Monday.
+ *
+ * Both apply to the WHOLE order, never to one test inside it: the tests on an
+ * order came off one tube on one day against one chit, and a report that
+ * disagreed with its siblings about either would be the harder bug to see.
+ *
+ * What this cannot do is move a test onto a different patient or a different
+ * visit - those are the things a re-order exists for, and quietly rewriting
+ * them here would leave an invoice pointing at a test that is no longer the one
+ * that was billed.
+ */
+export async function updateLabOrder(
+  actor: AuthUser,
+  input: {
+    orderId: string;
+    /** A doctor id to name, or null to clear the one on it. Omit to leave alone. */
+    referringDoctorId?: string | null;
+    /** ISO date to register the order under, or null to fall back to createdAt. */
+    orderedAt?: string | null;
+  },
+  ctx: { ipAddress?: string; userAgent?: string }
+): Promise<LabOrderDTO> {
+  const tests = await prisma.labTest.findMany({
+    where: orderWhere(input.orderId),
+    orderBy: { createdAt: "asc" },
+    select: { id: true, appointmentId: true, createdAt: true, orderedAt: true },
+  });
+  if (tests.length === 0) throw new ApiError(404, "Order not found");
+
+  const data: { referringDoctorId?: string | null; orderedAt?: Date | null } = {};
+
+  if (input.referringDoctorId !== undefined) {
+    // A test off a consultation already carries that doctor as its referrer -
+    // see resolveReferrer. Refused rather than ignored, so a desk that thinks it
+    // has renamed the doctor on a report finds out here and not on paper.
+    if (input.referringDoctorId && tests.some((t) => t.appointmentId)) {
+      throw new ApiError(400, "This order came off a consultation - its doctor is the one who saw the patient");
+    }
+    data.referringDoctorId = input.referringDoctorId
+      ? await resolveReferrer(undefined, input.referringDoctorId)
+      : null;
+  }
+
+  if (input.orderedAt !== undefined) {
+    if (input.orderedAt === null) {
+      data.orderedAt = null;
+    } else {
+      const when = parseOrderedAt(input.orderedAt, tests[0].orderedAt ?? tests[0].createdAt);
+      // A sample cannot have been registered tomorrow. The other end is left
+      // open on purpose: an old order being tidied up is a real thing, and the
+      // desk knows the date better than any bound this code could pick.
+      const endOfToday = new Date(); endOfToday.setHours(23, 59, 59, 999);
+      if (when > endOfToday) throw new ApiError(400, "A sample can't be registered in the future");
+      data.orderedAt = when;
+    }
+  }
+
+  if (Object.keys(data).length === 0) throw new ApiError(400, "Nothing to change");
+
+  await prisma.labTest.updateMany({ where: orderWhere(input.orderId), data });
+  await logAudit(actor, {
+    action: "LAB_ORDER_UPDATED", targetTable: "LabTest", targetId: tests[0].id,
+    meta: { orderId: input.orderId, tests: tests.length, ...data },
+    ...ctx,
+  });
+
+  // The order's own row, the queue's list and any report open on it all read
+  // the doctor and the date - so everyone watching gets the correction.
+  await publishLive([TOPICS.LABS, TOPICS.RECEPTION, TOPICS.ADMIN], EVENTS.LAB_ORDERED);
+  return readLabOrder(input.orderId);
 }
 
 /** Upload a report file and mark the test completed. */
@@ -620,6 +814,12 @@ export interface LabReportDTO {
   } | null;
   /** The visit that asked for it - a walk-in has none. */
   referral: { opNumber: string; doctorName: string; visitDate: string } | null;
+  /**
+   * The name for the report's "Ref. Doctor" line: the visit's doctor where
+   * there was a visit, otherwise whoever the desk named on the order. Null only
+   * when nobody referred the patient, which prints as "Self / walk-in".
+   */
+  refDoctorName: string | null;
   /** Set when the test belongs to a stay rather than to a visit. */
   admission: { ipNumber: string } | null;
   results: LabResultDTO[];
@@ -630,10 +830,11 @@ export async function labReportData(labTestId: string): Promise<LabReportDTO> {
   const t = await prisma.labTest.findUnique({
     where: { id: labTestId },
     select: {
-      id: true, testName: true, status: true, createdAt: true, completedAt: true,
+      id: true, testName: true, status: true, createdAt: true, orderedAt: true, completedAt: true,
       impression: true, reportFileUrl: true,
       catalog: { select: { code: true } },
       technician: { select: { name: true } },
+      referringDoctor: { select: { name: true } },
       patient: {
         select: {
           displayId: true, fullName: true, age: true, gender: true,
@@ -675,7 +876,9 @@ export async function labReportData(labTestId: string): Promise<LabReportDTO> {
     hospital,
     test: {
       id: t.id, testName: t.testName, code: t.catalog?.code ?? null, status: t.status,
-      orderedAt: t.createdAt.toISOString(),
+      // The desk's correction where it made one - see LabTest.orderedAt. What
+      // this prints as is "Registered On", and the patient can read it.
+      orderedAt: (t.orderedAt ?? t.createdAt).toISOString(),
       completedAt: t.completedAt ? t.completedAt.toISOString() : null,
       impression: t.impression,
       technicianName: t.technician?.name ?? null,
@@ -692,6 +895,12 @@ export async function labReportData(labTestId: string): Promise<LabReportDTO> {
         }
       : null,
     admission: t.admission ? { ipNumber: t.admission.ipNumber } : null,
+    // The visit's doctor first: where a consultation asked for the test, the
+    // doctor who saw the patient IS the referrer, and the order's own field is
+    // only ever filled in when there was no consultation to ask.
+    refDoctorName: t.appointment
+      ? (t.appointment.doctor?.name ?? DUTY_DOCTOR.name)
+      : (t.referringDoctor?.name ?? null),
     results,
     abnormal: abnormalCount(results),
   };
@@ -723,9 +932,7 @@ export interface LabOrderReportDTO {
  */
 export async function labOrderReportData(orderId: string): Promise<LabOrderReportDTO> {
   const tests = await prisma.labTest.findMany({
-    // A test raised before orders existed is its own order, keyed by its id -
-    // and must not sweep up every other ungrouped test with it.
-    where: { OR: [{ orderGroupId: orderId }, { id: orderId, orderGroupId: null }] },
+    where: orderWhere(orderId),
     orderBy: { createdAt: "asc" },
     select: { id: true },
   });
@@ -919,6 +1126,8 @@ export async function walkInOrder(
     };
     catalogIds: string[];
     labTestIds: string[];
+    /** The doctor on the chit they walked in with, when they walked in with one. */
+    referringDoctorId?: string;
     bill?: {
       discountAmount?: number;
       payments?: { mode: "CASH" | "UPI" | "CARD" | "NETBANKING" | "OTHER"; amount: number; reference?: string }[];
@@ -961,7 +1170,11 @@ export async function walkInOrder(
   let tests: LabTestDTO[] = [];
   let chargedToRoom = false;
   if (input.catalogIds.length > 0) {
-    const ordered = await orderTests(actor, { patientId: patient.id, catalogIds: input.catalogIds }, ctx);
+    const ordered = await orderTests(
+      actor,
+      { patientId: patient.id, catalogIds: input.catalogIds, referringDoctorId: input.referringDoctorId },
+      ctx,
+    );
     chargedToRoom = !!ordered.chargedToRoom;
     tests = [...ordered];
   }

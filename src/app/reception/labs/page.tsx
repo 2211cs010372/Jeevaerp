@@ -9,6 +9,7 @@ import { api, ApiClientError } from "@/lib/api-client";
 import { AdmissionBanner, useAdmission } from "@/components/portal/reception/admission-banner";
 import { InpatientPicker } from "@/components/portal/reception/inpatient-picker";
 import { DiscountInput, PaymentSection, type Tender } from "@/components/portal/ui/bill-fields";
+import { ReferrerSelect, useDoctorRoster } from "@/components/portal/labs/referrer-select";
 import { useLive } from "@/lib/realtime/use-live";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 
@@ -49,6 +50,15 @@ export default function LabOrderPage() {
   const [picked, setPicked] = useState<Record<string, boolean>>({});
   const [visits, setVisits] = useState<Visit[]>([]);
   const [visitId, setVisitId] = useState<string>("");
+  /**
+   * The doctor who asked for these tests when no consultation here did.
+   *
+   * The desk orders plenty of tests off a chit from outside, or from a doctor
+   * whose visit was never booked in. Without this the report goes back to that
+   * doctor with "Ref. Doctor: Self / walk-in" printed where their name belongs.
+   */
+  const [referrerId, setReferrerId] = useState("");
+  const doctors = useDoctorRoster();
 
   const [billNow, setBillNow] = useState(true);
   const [labDisc, setLabDisc] = useState(0);
@@ -132,7 +142,8 @@ export default function LabOrderPage() {
 
   const reset = useCallback(() => {
     setPatient(null); setQ(""); setResults([]); setPicked({});
-    setVisits([]); setVisitId(""); setDone(null); setErr(null); setBillNow(true); setLabDisc(0); setPayments([]); setPayValid(true);
+    setVisits([]); setVisitId(""); setReferrerId(""); setDone(null); setErr(null);
+    setBillNow(true); setLabDisc(0); setPayments([]); setPayValid(true);
   }, []);
 
   /** Take an advised test off the list without ordering it. Reason required. */
@@ -161,6 +172,9 @@ export default function LabOrderPage() {
         patientId: patient.id,
         catalogIds: chosen.map((c) => c.id),
         appointmentId: visitId || undefined,
+        // Only ever reaches the row when there is no visit to take a doctor
+        // from - a consultation's own doctor IS the referring doctor.
+        referringDoctorId: visitId ? undefined : (referrerId || undefined),
         fromAdvised: fulfils.length ? fulfils : undefined,
       });
 
@@ -337,6 +351,31 @@ export default function LabOrderPage() {
                       />
                     ))}
                   </datalist>
+                </div>
+              )}
+
+              {/* THE DOCTOR, WHEN NO CONSULTATION NAMES ONE.
+                  A visit carries its own doctor and that one wins - naming a
+                  second here would put two on the report's Ref. Doctor line.
+                  Without a visit there is nobody on the row at all, which is
+                  what printed "Self / walk-in" on tests the desk ordered
+                  straight off somebody's prescription. */}
+              {patient && (
+                <div className="mt-4">
+                  {visitId ? (
+                    <p className="text-[12px] text-[var(--p-muted)]">
+                      Referring doctor:{" "}
+                      <span className="font-medium text-[var(--p-ink)]">
+                        {visits.find((v) => v.id === visitId)?.doctorName ?? "the consulting doctor"}
+                      </span>{" "}
+                      - taken from the consultation above.
+                    </p>
+                  ) : (
+                    <ReferrerSelect
+                      doctors={doctors} value={referrerId} onChange={setReferrerId}
+                      hint="Who wrote the chit. Prints on the report as Ref. Doctor - leave it blank and it reads self / walk-in."
+                    />
+                  )}
                 </div>
               )}
 

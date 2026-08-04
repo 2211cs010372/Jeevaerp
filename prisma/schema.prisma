@@ -418,6 +418,8 @@ model Doctor {
   prescriptions   Prescription[]
   admissions      Admission[]
   bookingRequests AppointmentRequest[]
+  /// Tests referred by this doctor that came in without a consultation here.
+  labReferrals    LabTest[]            @relation("LabTestReferrer")
 
   @@index([department])
 }
@@ -855,6 +857,20 @@ model LabTest {
   /// Optional: walk-in lab tests have no doctor appointment.
   appointmentId String?
   appointment   Appointment?    @relation(fields: [appointmentId], references: [id])
+  /// WHO ASKED FOR THE TEST, when no visit in this hospital did.
+  ///
+  /// A sample given at the lab window against an outside chit has no
+  /// Appointment and therefore no doctor, so its report printed "Ref. Doctor:
+  /// Self / walk-in" for a patient who was standing there holding a referral.
+  /// This names that doctor without inventing a consultation that never
+  /// happened - no OP number is minted and nothing is billed for it.
+  ///
+  /// The visit still wins where there is one: a test ordered off a
+  /// consultation takes its referring doctor from the appointment, and this
+  /// column is what the desk fills in when there is no consultation to take it
+  /// from.
+  referringDoctorId String?
+  referringDoctor   Doctor?     @relation("LabTestReferrer", fields: [referringDoctorId], references: [id])
   /// A lab test always belongs to a patient (direct link, survives no-appointment case).
   patientId     String?
   patient       Patient?        @relation(fields: [patientId], references: [id])
@@ -870,6 +886,17 @@ model LabTest {
   technicianId     String?
   technician       User?         @relation("LabTestTechnician", fields: [technicianId], references: [id])
   createdAt        DateTime      @default(now())
+  /// The date the DESK says this sample was registered, when that is not the
+  /// moment it was typed in.
+  ///
+  /// A sample taken on Saturday evening and entered on Monday morning printed
+  /// "Registered On: Monday" - a date the patient can see is wrong on a
+  /// document they carry to another hospital. This is that correction, and it
+  /// is a SEPARATE column on purpose: `createdAt` stays the untouched record of
+  /// when the row was actually written, so the day's takings, the queue order
+  /// and the audit trail all still read the real clock. Null on everything
+  /// nobody has had to correct - the report falls back to createdAt.
+  orderedAt        DateTime?
   completedAt      DateTime?
   /// The lab's read of its OWN numbers, written by the technician as the results
   /// are saved: "Microcytic hypochromic anaemia", "Growth of E. coli, sensitive

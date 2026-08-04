@@ -22,6 +22,7 @@ import { Spinner, SuccessCheck } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { PatientStep, draftName, draftPayload, type PatientChoice } from "@/components/portal/labs/patient-step";
 import { TestPicker, type CatalogItem } from "@/components/portal/labs/test-picker";
+import { ReferrerSelect, useDoctorRoster } from "@/components/portal/labs/referrer-select";
 import { BillAside, type Settlement } from "@/components/portal/labs/bill-aside";
 import { InvoiceView, type LabInvoice } from "@/components/portal/labs/invoice-view";
 import { api, ApiClientError } from "@/lib/api-client";
@@ -38,6 +39,9 @@ export default function OrderTestsPage() {
   const [choice, setChoice] = useState<PatientChoice | null>(null);
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  /** The doctor on the chit in their hand, if there is one. "" = self-referred. */
+  const [referrerId, setReferrerId] = useState("");
+  const doctors = useDoctorRoster();
 
   const [billNow, setBillNow] = useState(true);
   const [settlement, setSettlement] = useState<Settlement>({ discountAmount: 0, payments: [], valid: true });
@@ -69,6 +73,7 @@ export default function OrderTestsPage() {
       const r = await api.post<WalkInResult>("/labs/walk-in", {
         ...(choice.kind === "existing" ? { patientId: choice.patient.id } : { newPatient: draftPayload(choice.draft) }),
         catalogIds: [...picked],
+        referringDoctorId: referrerId || undefined,
         bill: billNow
           ? {
               discountAmount: settlement.discountAmount || undefined,
@@ -83,7 +88,7 @@ export default function OrderTestsPage() {
   }
 
   function reset() {
-    setResult(null); setChoice(null); setPicked(new Set());
+    setResult(null); setChoice(null); setPicked(new Set()); setReferrerId("");
     setBillNow(true); setSettlement({ discountAmount: 0, payments: [], valid: true }); setError(null);
   }
 
@@ -146,6 +151,25 @@ export default function OrderTestsPage() {
             step="2" disabled={!choice}
             hint={choice ? `For ${patientName}` : "Choose a patient first"}
           />
+
+          {/* The chit is in their hand right now, and this is the only moment
+              anybody will be looking at it. Left blank the report reads
+              "Self / walk-in", which is true of plenty of samples and wrong
+              for every one that came off somebody's prescription. */}
+          <section data-rise className="surface overflow-hidden">
+            <div className="border-b border-[var(--p-border)] px-6 py-4">
+              <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">3 · Who referred them?</h3>
+              <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">
+                Whoever wrote the chit. Prints on the report as Ref. Doctor.
+              </p>
+            </div>
+            <div className="p-6">
+              <ReferrerSelect
+                doctors={doctors} value={referrerId} onChange={setReferrerId}
+                hint="Leave it as self / walk-in if nobody sent them - the report says so rather than naming a doctor who never saw the patient."
+              />
+            </div>
+          </section>
         </div>
 
         <aside data-rise className="lg:sticky lg:top-6 lg:self-start">

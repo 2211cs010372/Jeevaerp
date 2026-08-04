@@ -53,9 +53,13 @@ function LabOrderReportSheetsInner() {
   const [data, setData] = useState<OrderReports | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [printedAt, setPrintedAt] = useState<string | null>(null);
-  /** Test names whose sheet runs past the paper, measured after every render. */
-  const [overflowing, setOverflowing] = useState<string[]>([]);
-  const sheetRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  /**
+   * Millimetres each sheet still runs past the paper once it has shrunk as far
+   * as it will go, by test id. Reported by the sheets themselves - see
+   * LabReportBody's onFit - because only they know when their fitting has
+   * finished, and a warning raised mid-shrink names reports that end up fine.
+   */
+  const [overflowMm, setOverflowMm] = useState<Record<string, number>>({});
 
   useEffect(() => {
     api.get<OrderReports>(`/labs/orders/${orderId}/print`)
@@ -75,28 +79,15 @@ function LabOrderReportSheetsInner() {
     [data],
   );
 
-  // Each sheet is pinned to its own page, so anything past the bottom is simply
-  // not printed. A long panel with notes can do that, and a result line lost
-  // silently between the screen and the tray is the worst failure this page has
-  // - so measure every sheet and name the ones that overflow before anyone
-  // prints. Measured per test, because in a four-page document "this report is
-  // too long" is not an answer anybody can act on.
-  useEffect(() => {
-    if (printable.length === 0) return;
-    const probe = document.createElement("div");
-    probe.style.cssText = "width:100mm;position:absolute;visibility:hidden;pointer-events:none";
-    document.body.appendChild(probe);
-    const mmPerPx = 100 / probe.offsetWidth;
-    probe.remove();
-    setOverflowing(
-      printable
-        .filter((r) => {
-          const el = sheetRefs.current[r.test.id];
-          return !!el && el.offsetHeight * mmPerPx - 297 > 1;
-        })
-        .map((r) => r.test.testName),
-    );
-  }, [printable, onStationery, withNotes]);
+  // Each sheet is pinned to its own page, so anything past the bottom is not
+  // printed - and with the foot lifted into the paper's bottom band, the
+  // overspill prints ON TOP of the signature block rather than falling off the
+  // end. The sheets shrink themselves to avoid that; these are the ones that
+  // could not shrink far enough, named individually, because in a four-page
+  // document "this report is too long" is not an answer anybody can act on.
+  const overflowing = printable
+    .filter((r) => (overflowMm[r.test.id] ?? 0) > 0)
+    .map((r) => r.test.testName);
 
   if (error) return <div className="p-10 text-center text-[14px] text-[#8a3b2e]">{error}</div>;
   if (!data) return <div className="p-10 text-center text-[14px] text-[#5a6a66]">Preparing the reports…</div>;
@@ -140,8 +131,9 @@ function LabOrderReportSheetsInner() {
 
       {overflowing.length > 0 && (
         <p className="mx-auto mb-3 w-full max-w-[210mm] border-l-2 border-[#d8b878] pl-3 text-[12.5px] leading-snug text-[#8a6414] print:hidden">
-          {overflowing.join(", ")} {overflowing.length === 1 ? "runs" : "run"} past the printable area - the
-          bottom will be cut off. Turn off the reference notes above, or print
+          Set as small as {overflowing.length === 1 ? "it goes" : "they go"}, {overflowing.join(", ")}{" "}
+          {overflowing.length === 1 ? "still runs" : "still run"} past the printable area - the bottom would be
+          cut off. Turn off the reference notes above, or print
           {overflowing.length === 1 ? " that test" : " those tests"} on {overflowing.length === 1 ? "its" : "their"} own.
         </p>
       )}
@@ -152,8 +144,11 @@ function LabOrderReportSheetsInner() {
         </p>
       ) : (
         printable.map((r) => (
-          <div key={r.test.id} className="print-sheet" ref={(el) => { sheetRefs.current[r.test.id] = el; }}>
-            <LabReportBody data={r} onStationery={onStationery} withNotes={withNotes} printedAt={printedAt} />
+          <div key={r.test.id} className="print-sheet">
+            <LabReportBody
+              data={r} onStationery={onStationery} withNotes={withNotes} printedAt={printedAt}
+              onFit={(mm) => setOverflowMm((prev) => (prev[r.test.id] === mm ? prev : { ...prev, [r.test.id]: mm }))}
+            />
           </div>
         ))
       )}
