@@ -116,6 +116,27 @@ const FLAG_INK: Record<Flag, string> = {
   NORMAL: "var(--pr-ink)", HIGH: "#c8211b", LOW: "#1d4ed8", ABNORMAL: "#c8211b",
 };
 
+/**
+ * The air between one analyte line and the next.
+ *
+ * It lives on the CELLS, on all four of them, because that is the only place a
+ * table will take it: a `<tr>` in a border-collapse table is display:table-row,
+ * which has no margin and no gap - `gap-y` on the row is dropped silently, and
+ * padding on one cell alone leaves the other three columns riding at the old
+ * pitch with the names drifting out of line.
+ *
+ * WHAT IT COSTS. The sheet is pinned to one page and anything past the bottom
+ * is not printed. On the hospital's pre-printed stock the 40mm head band and
+ * 46mm foot band are already spoken for, leaving 211mm for the identity block,
+ * the table, the comments and the signature - call it 130mm of analyte lines.
+ * At 13px type each line is about 8mm with this padding, so a panel runs out of
+ * page around sixteen analytes, sooner when the reference notes are on. Widen
+ * this and that ceiling drops. The screen measures each sheet and names the
+ * ones that overflow before anybody prints, so tune it against a real panel -
+ * a CBP or an LFT - rather than against a two-line test.
+ */
+const ROW_PAD = "pb-[5px] pt-[7px]";
+
 /** "MR." / "MS." from the recorded gender, or nothing when it isn't recorded. */
 function title(gender: string | null | undefined): string {
   const g = (gender ?? "").toUpperCase();
@@ -326,7 +347,7 @@ export function LabReportBody({ data, onStationery, withNotes, printedAt }: {
         <table className="mt-[10px] w-full border-collapse">
           <thead>
             <tr
-              className="text-left align-bottom text-[10px] bg-[var(--pr-bg)] font-bold uppercase tracking-[0.02em]"
+              className="text-left align-bottom text-[12.5px] bg-[var(--pr-bg)] font-bold uppercase tracking-[0.02em]"
               style={{ color: "var(--pr-ink)" }}
             >
               <th className="border-y w-[230px] py-[3px] pr-2" style={{ borderColor: "var(--pr-ink)" }}>Test Description</th>
@@ -345,7 +366,7 @@ export function LabReportBody({ data, onStationery, withNotes, printedAt }: {
             <tr>
               <td colSpan={4} className="pb-[2px] pt-[7px]">
                 <div className="relative text-center">
-                  <span className="text-[11px] font-bold uppercase tracking-[0.04em]" style={{ color: "var(--pr-ink)" }}>
+                  <span className="text-[12.5px] font-bold uppercase tracking-[0.04em]" style={{ color: "var(--pr-ink)" }}>
                     {department ?? "LABORATORY"}
                   </span>
                   <span
@@ -362,7 +383,7 @@ export function LabReportBody({ data, onStationery, withNotes, printedAt }: {
             <tr>
               <td colSpan={4} className="pb-[3px] pt-[5px]">
                 <span
-                  className="text-[11px] font-bold underline decoration-1 underline-offset-[3px]"
+                  className="text-[14px] font-bold underline decoration-1 underline-offset-[3px]"
                   style={{ color: "var(--pr-ink)" }}
                 >
                   {test.testName}
@@ -379,8 +400,8 @@ export function LabReportBody({ data, onStationery, withNotes, printedAt }: {
               const desc = withNotes ? analyteDescription(r.name) : null;
               return (
                 <tr key={`${r.name}-${i}`} className="align-baseline">
-                  <td className="pb-[2px] pr-2 pt-[4px]">
-                    <span className="text-[11px] font-semibold " style={{ color: "var(--pr-ink)" }}>{r.name}</span>
+                  <td className={`${ROW_PAD} pr-2`}>
+                    <span className="text-[13px] font-medium " style={{ color: "var(--pr-ink)" }}>{r.name}</span>
                     {method && (
                       <span className="block pl-[10px] text-[8.5px] italic leading-[1.3]" style={{ color: "var(--pr-muted)" }}>
                         Method : {method}
@@ -390,7 +411,7 @@ export function LabReportBody({ data, onStationery, withNotes, printedAt }: {
                       /* 9px is about as small as this can be set and still be
                          read off a laser print by someone holding it at a
                          counter - the whole point of the line. */
-                      <span className="block pl-[10px] text-[9px] italic leading-[1.35]" style={{ color: "var(--pr-muted)" }}>
+                      <span className="block pl-[10px] text-[10px] italic leading-[1.35]" style={{ color: "var(--pr-muted)" }}>
                         {desc}
                         {flagNote && (
                           <span className="font-semibold not-italic" style={{ color: FLAG_INK[r.flag] }}>
@@ -404,15 +425,15 @@ export function LabReportBody({ data, onStationery, withNotes, printedAt }: {
                       report has always used, and unlike a colour it survives the
                       mono laser most of this printing goes through. */}
                   <td
-                    className="pb-[2px] pr-2 pt-[4px] text-[11px]"
+                    className={`${ROW_PAD} pr-2 text-[13px]`}
                     style={{ color: FLAG_INK[r.flag], fontWeight: off ? 700 : 400 }}
                   >
                     {r.value}
                   </td>
-                  <td className="pb-[2px] pr-2 pt-[4px] text-[11px]" style={{ color: "var(--pr-ink)" }}>
+                  <td className={`${ROW_PAD} pr-2 text-[12.5px]`} style={{ color: "var(--pr-ink)" }}>
                     {r.unit ?? ""}
                   </td>
-                  <td className="pb-[2px] pt-[4px] text-[11px]" style={{ color: "var(--pr-ink)" }}>
+                  <td className={`${ROW_PAD} text-[13px]`} style={{ color: "var(--pr-ink)" }}>
                     {rangeLabel(r)}
                   </td>
                 </tr>
@@ -421,7 +442,7 @@ export function LabReportBody({ data, onStationery, withNotes, printedAt }: {
 
             {!entered && (
               <tr style={{ height: "24mm" }}>
-                <td colSpan={4} className="pt-3 text-[11px] italic" style={{ color: "var(--pr-muted)" }}>
+                <td colSpan={4} className="pt-3 text-[13px] italic" style={{ color: "var(--pr-muted)" }}>
                   Results not entered.
                 </td>
               </tr>
