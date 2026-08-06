@@ -119,6 +119,117 @@ describe("the hospital's own numbers survived transcription", () => {
     expect(bands).toHaveLength(7);
     for (const b of bands) expect(b.refLow, b.name).not.toBeNull();
   });
+
+  it("names the infant bilirubin row instead of indenting it", () => {
+    // It was transcribed as sixteen spaces and "(Infants)", which printed as a
+    // range with nothing to say what it was a range of.
+    const row = find("BILIRUBIN", "Total Bilirubin (Infants)");
+    expect(row.name.trim()).toBe(row.name);
+  });
+});
+
+describe("the ranges and the menu the hospital asked for", () => {
+  const test = (code: string) => LAB_CATALOG.find((c) => c.code === code)!;
+  const find = (code: string, name: string) =>
+    test(code).analytes.find((a) => a.name === name)!;
+  const names = (code: string) => test(code).analytes.map((a) => a.name);
+
+  it("reads the differential in the bench's own order", () => {
+    // Neutrophils, lymphocytes, eosinophils, monocytes, basophils - the order
+    // they come off the analyser, and the order a technician proof-reads.
+    for (const code of ["CBP-M", "CBP-F", "HAEMOGRAM-M", "HAEMOGRAM-F"]) {
+      const diff = names(code).filter((n) =>
+        ["Neutrophils", "Lymphocytes", "Eosinophils", "Monocytes", "Basophils"].includes(n));
+      expect(diff, code).toEqual(["Neutrophils", "Lymphocytes", "Eosinophils", "Monocytes", "Basophils"]);
+    }
+  });
+
+  it("keeps the red-cell indices together, above the differential", () => {
+    for (const code of ["HAEMOGRAM-M", "HAEMOGRAM-F", "HAEMOGRAM-PED"]) {
+      const n = names(code);
+      const indices = ["Haematocrit (PCV)", "M.C.V", "M.C.H", "M.C.H.C"];
+      expect(n.filter((x) => indices.includes(x)), code).toEqual(indices);
+      expect(n.indexOf("M.C.H.C"), `${code}: indices must precede the differential`)
+        .toBeLessThan(n.indexOf("Neutrophils"));
+    }
+  });
+
+  it("has a male haemogram on male numbers", () => {
+    expect(find("HAEMOGRAM-M", "Haemoglobin").refLow).toBe(13);
+    expect(find("HAEMOGRAM-F", "Haemoglobin").refLow).toBe(12);
+    expect(find("HAEMOGRAM-M", "Haematocrit (PCV)").refLow).toBe(40);
+    expect(find("HAEMOGRAM-F", "Haematocrit (PCV)").refLow).toBe(36);
+  });
+
+  it("moves post-lunch sugar to 110 - 170", () => {
+    expect(find("PLBS", "Post Lunch Blood Sugar").refLow).toBe(110);
+    expect(find("PLBS", "Post Lunch Blood Sugar").refHigh).toBe(170);
+    // The combined form must move with it, or one sample gets two verdicts.
+    expect(find("FBS-PLBS", "Post Lunch Blood Sugar").refLow).toBe(110);
+    expect(find("FBS-PLBS", "Post Lunch Blood Sugar").refHigh).toBe(170);
+  });
+
+  it("keeps fasting sugar at 60 - 110", () => {
+    expect(find("FBS", "Fasting Blood Sugar").refLow).toBe(60);
+    expect(find("FBS", "Fasting Blood Sugar").refHigh).toBe(110);
+    expect(find("FBS-PLBS", "Fasting Blood Sugar").refHigh).toBe(110);
+  });
+
+  it("judges a random sugar at 70 - 160 on EVERY form that reports one", () => {
+    // The bug this guards: the same analyte, from the same sample, flagged one
+    // way on the RBS slip and another on the profile it also appears in.
+    const rows = LAB_CATALOG.flatMap((c) =>
+      c.analytes.filter((a) => a.name === "Random Blood Sugar").map((a) => ({ ...a, code: c.code })));
+    expect(rows.length).toBeGreaterThan(2);
+    for (const r of rows) {
+      expect(r.refLow, `${r.code} random sugar low`).toBe(70);
+      expect(r.refHigh, `${r.code} random sugar high`).toBe(160);
+    }
+  });
+
+  it("retires the Serum Creatinine & RBS pairing", () => {
+    expect(LAB_CATALOG.some((c) => c.code === "CREAT-RBS")).toBe(false);
+    // ...but both halves still have a home.
+    expect(find("RFT", "Serum Creatinine")).toBeDefined();
+    expect(find("RFT", "Blood Urea")).toBeDefined();
+    expect(find("RBS", "Random Blood Sugar")).toBeDefined();
+  });
+
+  it("sells HCV on its own and with the other two viral markers", () => {
+    expect(names("HCV")).toEqual(["HCV"]);
+    expect(names("HIV-HBSAG-HCV")).toEqual(["H.I.V. I & II", "HBsAg", "HCV"]);
+  });
+
+  it("adds the standalone haematology counts", () => {
+    expect(find("PLT", "Platelet Count").refLow).toBe(1.5);
+    expect(find("PLT", "Platelet Count").refHigh).toBe(4.5);
+    expect(find("PLT", "Platelet Count").unit).toBe("Lakhs/cmm");
+    expect(find("AEC", "A.E.C").refLow).toBe(40);
+    expect(find("AEC", "A.E.C").refHigh).toBe(440);
+    expect(find("AEC", "A.E.C").unit).toBe("Cells/cmm");
+    expect(find("RETIC", "Reticulocyte Count").refLow).toBe(0.2);
+    expect(find("RETIC", "Reticulocyte Count").refHigh).toBe(2);
+  });
+
+  it("adds the gravindex, referenced against the not-pregnant state", () => {
+    // The reference column prints what a NORMAL result looks like. Nothing here
+    // grades the result: text values are only flagged abnormal by hand.
+    expect(find("GRAVINDEX", "Urine For Gravindex").refText).toBe("Negative");
+  });
+
+  it("builds the surgical profile out of the same rows as its parts", () => {
+    expect(names("SURGICAL")).toEqual([
+      "Bleeding Time", "Clotting Time",
+      "Blood Group", "Rh Type (D)",
+      "H.I.V. I & II", "HBsAg", "HCV",
+      "Random Blood Sugar",
+    ]);
+    // Composed, not retyped: the ranges must be the same objects' values as the
+    // standalone tests carry, or the profile drifts off on its own numbers.
+    expect(find("SURGICAL", "Bleeding Time").refHigh).toBe(find("BTCT", "Bleeding Time").refHigh);
+    expect(find("SURGICAL", "Clotting Time").refHigh).toBe(find("BTCT", "Clotting Time").refHigh);
+    expect(find("SURGICAL", "Random Blood Sugar").refHigh).toBe(find("RBS", "Random Blood Sugar").refHigh);
+  });
 });
 
 describe("the printed report still finds everything", () => {
@@ -181,6 +292,41 @@ describe("the printed report still finds everything", () => {
     expect(methodFor("Total RBC Count")).toBe(methodFor("RBC Count"));
     expect(methodFor("Haematocrit (PCV)")).toBe(methodFor("PCV (Haematocrit)"));
     expect(methodFor("E.S.R")).toBe("Westergren");
+  });
+
+  it("prints a method under every analyte that is actually measured", () => {
+    // The report prints "Method: ..." under each investigation, and a missing
+    // one does not error - the line just disappears, which is how a catalogue
+    // and a method list drift apart unnoticed. This is the guard that makes
+    // adding an analyte without its method a failing build instead.
+    //
+    // The exemptions are the rows that are NOT assays. A method is an analytical
+    // claim about how this lab ran something; there is no way to "measure" the
+    // pathologist's impression or the interval the patient abstained for, and
+    // inventing a method for them would be the very thing methodFor refuses to
+    // do (see its note in lab-reference.ts).
+    const NOT_MEASURED = new Set([
+      "Impression",           // the pathologist's conclusion, not a measurement
+      "Abstinence Period",    // taken from the patient, not from the sample
+      "Method of Collection", // it IS the method
+      "Result",               // the reading of the rows above it, on Widal and Montoux
+      "Fluid",                // names which fluid was tapped; not an assay
+    ]);
+    const missing = [...new Set(
+      analytes.filter((a) => !NOT_MEASURED.has(a.name) && !methodFor(a.name, a.code)).map((a) => a.name),
+    )];
+    expect(missing, `no method for ${missing.length}: ${missing.join(" | ")}`).toEqual([]);
+  });
+
+  it("tells a urine albumin from a serum one", () => {
+    // The same analyte name, two different assays. Passing the test code is
+    // what separates them; without it both would print the urine method.
+    expect(methodFor("Albumin", "PROTEIN")).toMatch(/Bromocresol/);
+    expect(methodFor("Albumin", "CUE")).toMatch(/dipstick/);
+    expect(methodFor("Sugar", "CUE")).toMatch(/dipstick/);
+    expect(methodFor("Sugar", "FLUID")).toMatch(/GOD-POD/);
+    expect(methodFor("Lymphocytes", "FLUID")).toMatch(/Microscopy/);
+    expect(methodFor("Lymphocytes", "CBP-M")).toMatch(/impedance/);
   });
 });
 

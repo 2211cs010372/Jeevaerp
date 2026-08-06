@@ -487,11 +487,15 @@ const SPECIMENS: Record<string, string> = {
   "CBP-M": "Whole blood (EDTA)",
   "CBP-F": "Whole blood (EDTA)",
   "CBP-F-AEC": "Whole blood (EDTA)",
+  "HAEMOGRAM-M": "Whole blood (EDTA)",
   "HAEMOGRAM-F": "Whole blood (EDTA)",
   "HAEMOGRAM-PED": "Whole blood (EDTA)",
   "HB-M": "Whole blood (EDTA)",
   "HB-F": "Whole blood (EDTA)",
   "HB-PED": "Whole blood (EDTA)",
+  PLT: "Whole blood (EDTA)",
+  AEC: "Whole blood (EDTA)",
+  RETIC: "Whole blood (EDTA)",
   BTCT: "Capillary blood (finger prick)",
   PS: "Whole blood (EDTA)",
   BG: "Whole blood (EDTA)",
@@ -500,6 +504,9 @@ const SPECIMENS: Record<string, string> = {
   "FBS-PLBS": "Plasma (fasting & post lunch)",
   GTT: "Plasma (serial)",
   UREA: "Serum",
+  // Kept after the test itself was retired: a report printed against the old
+  // "Serum Creatinine & RBS" code still has to find its specimen line when
+  // somebody re-opens it.
   "CREAT-RBS": "Serum & plasma",
   RFT: "Serum",
   CALCIUM: "Serum",
@@ -518,14 +525,18 @@ const SPECIMENS: Record<string, string> = {
   "HIV-HBSAG-VDRL": "Serum",
   "HIV-HBSAG-VDRL-BG": "Serum & whole blood (EDTA)",
   "HIV-HBSAG-VDRL-HCV": "Serum",
+  HCV: "Serum",
+  "HIV-HBSAG-HCV": "Serum",
   "MP-PF-PV": "Whole blood (EDTA)",
   "MP-PF-PAN": "Whole blood (EDTA)",
   // Not a specimen at all - the reading is taken off the patient's forearm.
   MONTOUX: "Intradermal (forearm)",
+  GRAVINDEX: "Urine (first morning sample)",
   CUE: "Urine (mid-stream)",
   FLUID: "Body fluid (as collected)",
   SEMEN: "Semen",
   ANTENATAL: "Serum & whole blood (EDTA)",
+  SURGICAL: "Serum, whole blood (EDTA) & capillary blood",
 };
 
 /** The specimen line for a test, or null when the catalogue code is unknown. */
@@ -580,6 +591,10 @@ const DEPARTMENTS: Record<string, string> = {
   "HB-M": "HAEMATOLOGY",
   "HB-F": "HAEMATOLOGY",
   "HB-PED": "HAEMATOLOGY",
+  "HAEMOGRAM-M": "HAEMATOLOGY",
+  PLT: "HAEMATOLOGY",
+  AEC: "HAEMATOLOGY",
+  RETIC: "HAEMATOLOGY",
   BTCT: "HAEMATOLOGY",
   PS: "HAEMATOLOGY",
   BG: "BLOOD BANKING",
@@ -606,13 +621,17 @@ const DEPARTMENTS: Record<string, string> = {
   "HIV-HBSAG-VDRL": "SEROLOGY",
   "HIV-HBSAG-VDRL-BG": "SEROLOGY",
   "HIV-HBSAG-VDRL-HCV": "SEROLOGY",
+  HCV: "SEROLOGY",
+  "HIV-HBSAG-HCV": "SEROLOGY",
   "MP-PF-PV": "SEROLOGY",
   "MP-PF-PAN": "SEROLOGY",
   MONTOUX: "SEROLOGY",
+  GRAVINDEX: "SEROLOGY",
   CUE: "CLINICAL PATHOLOGY",
   FLUID: "CLINICAL PATHOLOGY",
   SEMEN: "CLINICAL PATHOLOGY",
   ANTENATAL: "PROFILES",
+  SURGICAL: "PROFILES",
 };
 
 /** The department band for a test, or null when the code is unknown. */
@@ -636,6 +655,7 @@ export function departmentFor(code: string | null | undefined): string | null {
  * catalogue and edited from Admin instead.
  */
 const METHODS: Record<string, string> = {
+  // ── haematology ──
   haemoglobin: "Non-cyanide haemoglobin analysis",
   totalwbccount: "Electrical impedance",
   neutrophils: "Electrical impedance",
@@ -651,9 +671,176 @@ const METHODS: Record<string, string> = {
   plateletcount: "Electrical impedance & microscopy",
   esrwestergren: "Westergren",
   esr: "Westergren",
+  aec: "Calculated from total leucocyte and differential count",
+  reticulocytecount: "Supravital stain (New Methylene Blue), microscopy",
+  bloodpicture: "Microscopy of Leishman stained smear",
+  rbcmorphology: "Microscopy of Leishman stained smear",
+  wbc: "Microscopy of Leishman stained smear",
+  platelets: "Microscopy of Leishman stained smear",
+  bleedingtime: "Duke's method",
+  clottingtime: "Capillary tube method",
+  // The antenatal form spells them with the abbreviation in brackets.
+  bleedingtimebt: "Duke's method",
+  clottingtimect: "Capillary tube method",
+  // Every band of the paediatric ladder is the same assay on the same analyser.
+  haemoglobinbirth2days: "Non-cyanide haemoglobin analysis",
+  haemoglobin3days1month: "Non-cyanide haemoglobin analysis",
+  haemoglobin12months: "Non-cyanide haemoglobin analysis",
+  haemoglobin23months: "Non-cyanide haemoglobin analysis",
+  haemoglobin3months2years: "Non-cyanide haemoglobin analysis",
+  haemoglobin26years: "Non-cyanide haemoglobin analysis",
+  haemoglobin612years: "Non-cyanide haemoglobin analysis",
+
+  // ── blood banking ──
+  bloodgroup: "Forward and reverse grouping, antisera agglutination",
+  rhtyped: "Anti-D antisera agglutination",
+  duweakd: "Indirect antiglobulin test (Coombs)",
+
+  // ── blood sugar ──
+  glucosefasting: "GOD-POD, enzymatic",
+  glucosepostprandial: "GOD-POD, enzymatic",
+  randombloodsugar: "GOD-POD, enzymatic",
+  "1sthourplasmaglucose": "GOD-POD, enzymatic",
+  "2ndhourplasmaglucose": "GOD-POD, enzymatic",
+  correspondingurinesugar: "Benedict's test",
+  correspondingurinesugarfasting: "Benedict's test",
+  correspondingurinesugarpostlunch: "Benedict's test",
+  urinesugarfasting: "Benedict's test",
+  "urinesugar1sthour": "Benedict's test",
+  "urinesugar2ndhour": "Benedict's test",
+
+  // ── biochemistry ──
+  bloodurea: "Urease / GLDH, kinetic UV",
+  serumcreatinine: "Jaffe's kinetic, alkaline picrate",
+  uricacid: "Uricase-peroxidase",
+  uricacidmale: "Uricase-peroxidase",
+  uricacidfemale: "Uricase-peroxidase",
+  totalbilirubin: "Diazo (Jendrassik-Grof)",
+  directbilirubin: "Diazo (Jendrassik-Grof)",
+  indirectbilirubin: "Calculated",
+  totalbilirubinadult: "Diazo (Jendrassik-Grof)",
+  totalbilirubininfants: "Diazo (Jendrassik-Grof)",
+  // The infant row used to be transcribed as an indent - sixteen spaces and
+  // "(Infants)" - so results reported before it was named are stored under a
+  // name that normalises to just "infants". Kept so those reports still print
+  // their method line.
+  infants: "Diazo (Jendrassik-Grof)",
+  sgotast: "IFCC without pyridoxal-5-phosphate",
+  sgptalt: "IFCC without pyridoxal-5-phosphate",
+  alkalinephosphatase: "PNPP kinetic, AMP buffer",
+  totalcholesterol: "CHOD-POD, enzymatic",
+  hdlcholesterol: "Direct enzymatic, PEG-modified",
+  triglycerides: "GPO-POD, enzymatic",
+  ldlcholesterol: "Friedewald calculation",
+  vldlcholesterol: "Friedewald calculation",
+  totalcholesterolhdlratio: "Calculated",
+  ldlcholesterolhdlratio: "Calculated",
+  calcium: "Arsenazo III",
+  totalprotein: "Biuret",
+  globulin: "Calculated",
+  agratio: "Calculated",
+  sodium: "Ion selective electrode",
+  potassium: "Ion selective electrode",
+  serumamylase: "CNPG3, kinetic",
+
+  // ── serology ──
+  // "H.I.V. I & II" normalises to hiviii - three i's: the V's trailing dot, then
+  // the roman I and II with everything non-alphanumeric thrown away.
+  hiviii: "Rapid immunochromatography",
+  hbsag: "Rapid immunochromatography",
+  hcv: "Rapid immunochromatography",
+  vdrl: "RPR slide flocculation",
+  styphio: "Slide agglutination, confirmed by tube dilution",
+  styphih: "Slide agglutination, confirmed by tube dilution",
+  sparatyphiah: "Slide agglutination, confirmed by tube dilution",
+  sparatyphibh: "Slide agglutination, confirmed by tube dilution",
+  denguens1antigen: "Rapid immunochromatography",
+  dengueigm: "Rapid immunochromatography",
+  dengueigg: "Rapid immunochromatography",
+  urineforgravindex: "Latex slide agglutination inhibition",
+  creactiveprotein: "Latex agglutination, turbidimetric",
+  rafactor: "Latex agglutination",
+  plasmodiumvivax: "Rapid immunochromatography & microscopy",
+  plasmodiumfalciparum: "Rapid immunochromatography & microscopy",
+  panotherspeciesnonfalciparum: "Rapid immunochromatography & microscopy",
+  induration: "Intradermal Mantoux, measured at 72 hours",
+  erythema: "Intradermal Mantoux, measured at 72 hours",
+
+  // ── clinical pathology: urine ──
+  // The physical rows are read off the sample, the chemical rows off the strip,
+  // and the deposit under the microscope. That is three different claims, so
+  // they are three different lines.
+  colour: "Visual inspection",
+  reaction: "Reagent strip (dipstick)",
+  appearance: "Visual inspection",
+  specificgravity: "Reagent strip (dipstick)",
+  glucose: "Reagent strip (dipstick)",
+  proteinalbumin: "Reagent strip (dipstick)",
+  ketonebodies: "Reagent strip (dipstick)",
+  urobilinogen: "Reagent strip (dipstick)",
+  bilesalts: "Hay's sulphur test",
+  bilepigments: "Fouchet's test",
+  rbcs: "Microscopy of centrifuged deposit",
+  puscells: "Microscopy of centrifuged deposit",
+  epithelialcells: "Microscopy of centrifuged deposit",
+  casts: "Microscopy of centrifuged deposit",
+  crystals: "Microscopy of centrifuged deposit",
+  parasite: "Microscopy of centrifuged deposit",
+  mucousthreads: "Microscopy of centrifuged deposit",
+  bacteria: "Microscopy of centrifuged deposit",
+  others: "Microscopy of centrifuged deposit",
+
+  // ── clinical pathology: body fluid ──
+  quantity: "Volumetric measurement",
+  clots: "Visual inspection",
+  totalcount: "Neubauer chamber count",
+  polymorphs: "Microscopy of stained smear",
+  mesothelialcells: "Microscopy of stained smear",
+  redcells: "Neubauer chamber count",
+  proteins: "Biuret",
+
+  // ── clinical pathology: semen ──
+  volume: "Volumetric measurement",
+  liquefactiontime: "Timed observation at 37 °C",
+  totalspermcount: "Neubauer chamber count",
+  motilityactive: "Microscopy, WHO grading",
+  motilitysluggish: "Microscopy, WHO grading",
+  nonmotile: "Microscopy, WHO grading",
+  abnormalforms: "Microscopy of stained smear, WHO morphology",
 };
 
-/** The method line for an analyte, or null when this lab has not stated one. */
-export function methodFor(name: string): string | null {
-  return METHODS[resolve(name)] ?? null;
+/**
+ * The few analytes whose method depends on WHICH test they appear in.
+ *
+ * Names are the only key a result row carries, and three of them mean different
+ * work on different forms: "Albumin" is a dipstick square on a urine report and
+ * a bromocresol green assay on a serum one; "Sugar" is a dipstick on urine and
+ * an enzymatic assay on a body fluid; a fluid's lymphocytes are counted down a
+ * microscope, not by the haematology analyser's impedance channel.
+ *
+ * Keyed by test code so the general map stays right for the common case and
+ * only the genuine exceptions are listed. Without this the report would print a
+ * confident, wrong analytical claim - the one thing methodFor exists to avoid.
+ */
+const METHODS_BY_TEST: Record<string, Record<string, string>> = {
+  PROTEIN: { proteinalbumin: "Bromocresol green (BCG)" },
+  FLUID: {
+    glucose: "GOD-POD, enzymatic",
+    proteinalbumin: "Biuret",
+    lymphocytes: "Microscopy of stained smear",
+  },
+};
+
+/**
+ * The method line for an analyte, or null when this lab has not stated one.
+ *
+ * `code` is the test the row was reported under. Pass it where it is known: it
+ * is what tells a urine albumin from a serum one. Without it the general
+ * method is used, which is right for every analyte except the handful in
+ * METHODS_BY_TEST above.
+ */
+export function methodFor(name: string, code?: string | null): string | null {
+  const k = resolve(name);
+  const override = code ? METHODS_BY_TEST[code.toUpperCase()]?.[k] : undefined;
+  return override ?? METHODS[k] ?? null;
 }

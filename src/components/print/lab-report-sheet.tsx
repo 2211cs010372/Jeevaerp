@@ -544,7 +544,10 @@ export function LabReportPages({ data, onStationery, printedAt, onLayout }: {
 
                 {slice.map((r, i) => {
                   const off = r.flag !== "NORMAL";
-                  const method = methodFor(r.name);
+                  // The code goes in: "Albumin" on a urine report is a dipstick
+                  // square and on a serum one a BCG assay, and the name alone
+                  // cannot tell them apart.
+                  const method = methodFor(r.name, test.code);
                   return (
                     <tr key={`${r.name}-${start + i}`} data-analyte className="align-baseline  ">
                       <td className="pr-1" style={ROW_PAD}>

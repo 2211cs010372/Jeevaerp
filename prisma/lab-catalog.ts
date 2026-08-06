@@ -62,19 +62,59 @@ const BLOOD_GROUP: AnalyteSpec[] = [
   { name: "Rh Type (D)", refText: "Positive" },
 ];
 
-/** The five-part differential, identical on every adult haematology form. */
+/**
+ * The five-part differential, identical on every adult haematology form.
+ *
+ * The order is the bench's own reading order - neutrophils, lymphocytes,
+ * eosinophils, monocytes, basophils - which is also the order the counter reads
+ * them off the analyser. It is not alphabetical and not the order the old
+ * templates happened to be typed in; a technician proof-reading a printed report
+ * against the screen is comparing two lists line by line, and the two lists have
+ * to run the same way.
+ */
 const DIFFERENTIAL: AnalyteSpec[] = [
   { name: "Neutrophils", unit: "%", refLow: 40, refHigh: 75 },
-  { name: "Eosinophils", unit: "%", refLow: 2, refHigh: 6 },
-  { name: "Basophils", unit: "%", refLow: 0, refHigh: 1 },
   { name: "Lymphocytes", unit: "%", refLow: 20, refHigh: 40 },
+  { name: "Eosinophils", unit: "%", refLow: 2, refHigh: 6 },
   { name: "Monocytes", unit: "%", refLow: 2, refHigh: 8 },
+  { name: "Basophils", unit: "%", refLow: 0, refHigh: 1 },
+];
+
+/**
+ * The red-cell indices, in the order they are derived and read: the packed
+ * volume first, then the three values calculated from it. They sit together,
+ * above the differential, on every haemogram.
+ */
+const INDICES = (pcvLow: number, pcvHigh: number, mcvLow: number, mcvHigh: number,
+  mchLow: number, mchHigh: number, mchcLow: number, mchcHigh: number): AnalyteSpec[] => [
+  { name: "Haematocrit (PCV)", unit: "vol %", refLow: pcvLow, refHigh: pcvHigh },
+  { name: "M.C.V", unit: "fl", refLow: mcvLow, refHigh: mcvHigh },
+  { name: "M.C.H", unit: "pg", refLow: mchLow, refHigh: mchHigh },
+  { name: "M.C.H.C", unit: "%", refLow: mchcLow, refHigh: mchcHigh },
 ];
 
 /** The free-text smear comment that closes every blood picture report. */
 const SMEAR: AnalyteSpec = { name: "Blood Picture", refText: "Normocytic and Normochromic" };
 
 const PLATELETS: AnalyteSpec = { name: "Platelet Count", unit: "Lakhs/cmm", refLow: 1.5, refHigh: 4.5 };
+
+const AEC: AnalyteSpec = { name: "A.E.C", unit: "Cells/cmm", refLow: 40, refHigh: 440 };
+
+const RETICULOCYTES: AnalyteSpec = { name: "Reticulocyte Count", unit: "%", refLow: 0.2, refHigh: 2 };
+
+/**
+ * Random blood sugar, shared by every form that asks for one.
+ *
+ * It appears on the standalone glucometer test, on the renal panel, and on both
+ * profiles. Composed rather than retyped for the reason the serology markers
+ * are: the same analyte flagged against two different ranges on two forms from
+ * the same sample is the bug this file exists to prevent.
+ */
+const RANDOM_SUGAR: AnalyteSpec = { name: "Random Blood Sugar", unit: "mg/dl", refLow: 70, refHigh: 160 };
+
+/** Bleeding and clotting time, as the BT-CT form and both profiles carry them. */
+const BLEEDING_TIME: AnalyteSpec = { name: "Bleeding Time", unit: "Minutes", refLow: 1, refHigh: 3 };
+const CLOTTING_TIME: AnalyteSpec = { name: "Clotting Time", unit: "Minutes", refLow: 3, refHigh: 9 };
 
 /** Every sugar form asks for it, and it is dashed out as often as filled in. */
 const URINE_SUGAR: AnalyteSpec = { name: "Corresponding Urine Sugar", refText: "Nil" };
@@ -120,7 +160,27 @@ export const LAB_CATALOG: CatalogSpec[] = [
       { name: "Total RBC Count", unit: "m/cmm", refLow: 3.8, refHigh: 4.8 },
       PLATELETS,
       ...DIFFERENTIAL,
-      { name: "A.E.C", unit: "Cells/cmm", refLow: 40, refHigh: 440 },
+      AEC,
+      SMEAR,
+    ],
+  },
+  {
+    // The male haemogram has no template of its own - the lab has only ever
+    // printed the female and paediatric forms - so it is composed from the male
+    // ranges the CBP (Male) form DOES carry. The one number with no source is
+    // the haematocrit: 40-50 vol % is the standard adult male band, and it is
+    // FLAGGED FOR THE PATHOLOGIST as the row to confirm before go-live.
+    code: "HAEMOGRAM-M",
+    name: "Haemogram (Male)",
+    group: "Haematology",
+    analytes: [
+      { name: "Total WBC Count", unit: "/cmm", refLow: 4000, refHigh: 11000 },
+      { name: "Haemoglobin", unit: "Gms %", refLow: 13, refHigh: 18 },
+      { name: "Total RBC Count", unit: "m/cmm", refLow: 4.5, refHigh: 5.5 },
+      PLATELETS,
+      ...INDICES(40, 50, 80, 95, 27, 32, 32, 36),
+      ...DIFFERENTIAL,
+      RETICULOCYTES,
       SMEAR,
     ],
   },
@@ -133,12 +193,9 @@ export const LAB_CATALOG: CatalogSpec[] = [
       { name: "Haemoglobin", unit: "Gms %", refLow: 12, refHigh: 16 },
       { name: "Total RBC Count", unit: "m/cmm", refLow: 3.8, refHigh: 4.8 },
       PLATELETS,
-      { name: "Haematocrit (PCV)", unit: "vol %", refLow: 36, refHigh: 46 },
+      ...INDICES(36, 46, 80, 95, 27, 32, 32, 36),
       ...DIFFERENTIAL,
-      { name: "M.C.V", unit: "fl", refLow: 80, refHigh: 95 },
-      { name: "M.C.H", unit: "pg", refLow: 27, refHigh: 32 },
-      { name: "M.C.H.C", unit: "%", refLow: 32, refHigh: 36 },
-      { name: "Reticulocyte Count", unit: "%", refLow: 0.2, refHigh: 2 },
+      RETICULOCYTES,
       SMEAR,
     ],
   },
@@ -151,16 +208,13 @@ export const LAB_CATALOG: CatalogSpec[] = [
       { name: "Haemoglobin", unit: "Gms %", refLow: 11, refHigh: 14 },
       { name: "Total RBC Count", unit: "m/cmm", refLow: 4.0, refHigh: 5.2 },
       PLATELETS,
-      { name: "Haematocrit (PCV)", unit: "vol %", refLow: 34, refHigh: 40 },
+      ...INDICES(34, 40, 75, 87, 24, 30, 31, 37),
       // The paediatric form prints no differential ranges of its own, so the
       // adult ones are carried across unchanged. FLAGGED FOR THE PATHOLOGIST:
       // paediatric lymphocyte counts run higher than adult, and these five rows
       // are the ones to check before this goes live.
       ...DIFFERENTIAL,
-      { name: "M.C.V", unit: "fl", refLow: 75, refHigh: 87 },
-      { name: "M.C.H", unit: "pg", refLow: 24, refHigh: 30 },
-      { name: "M.C.H.C", unit: "%", refLow: 31, refHigh: 37 },
-      { name: "Reticulocyte Count", unit: "%", refLow: 0.2, refHigh: 2 },
+      RETICULOCYTES,
       { name: "E.S.R", unit: "mm 1st hr", refLow: 5, refHigh: 15 },
       SMEAR,
     ],
@@ -202,13 +256,31 @@ export const LAB_CATALOG: CatalogSpec[] = [
     analytes: [{ name: "E.S.R", unit: "mm 1st hr", refLow: 5, refHigh: 15 }],
   },
   {
+    // Asked for on its own often enough to be its own line on the order form -
+    // a dengue or fever follow-up wants the count and nothing else, and
+    // ordering a whole CBP to get it bills the patient for work nobody reads.
+    code: "PLT",
+    name: "Platelet Count",
+    group: "Haematology",
+    analytes: [PLATELETS],
+  },
+  {
+    code: "AEC",
+    name: "Absolute Eosinophil Count (AEC)",
+    group: "Haematology",
+    analytes: [AEC],
+  },
+  {
+    code: "RETIC",
+    name: "Reticulocyte Count",
+    group: "Haematology",
+    analytes: [RETICULOCYTES],
+  },
+  {
     code: "BTCT",
     name: "Bleeding Time & Clotting Time (BT-CT)",
     group: "Haematology",
-    analytes: [
-      { name: "Bleeding Time", unit: "Minutes", refLow: 1, refHigh: 3 },
-      { name: "Clotting Time", unit: "Minutes", refLow: 3, refHigh: 9 },
-    ],
+    analytes: [BLEEDING_TIME, CLOTTING_TIME],
   },
   {
     code: "PS",
@@ -254,7 +326,7 @@ export const LAB_CATALOG: CatalogSpec[] = [
     name: "Post Lunch Blood Sugar (PLBS)",
     group: "Blood Sugar",
     analytes: [
-      { name: "Post Lunch Blood Sugar", unit: "mg/dl", refLow: 100, refHigh: 160 },
+      { name: "Post Lunch Blood Sugar", unit: "mg/dl", refLow: 110, refHigh: 170 },
       URINE_SUGAR,
     ],
   },
@@ -265,15 +337,15 @@ export const LAB_CATALOG: CatalogSpec[] = [
     analytes: [
       { name: "Fasting Blood Sugar", unit: "mg/dl", refLow: 60, refHigh: 110 },
       { name: "Corresponding Urine Sugar (Fasting)", refText: "Nil" },
-      { name: "Post Lunch Blood Sugar", unit: "mg/dl", refLow: 100, refHigh: 160 },
+      { name: "Post Lunch Blood Sugar", unit: "mg/dl", refLow: 110, refHigh: 170 },
       { name: "Corresponding Urine Sugar (Post Lunch)", refText: "Nil" },
     ],
   },
   {
     code: "RBS",
-    name: "Random Blood Sugar (Glucometer)",
+    name: "Random Blood Sugar (RBS)",
     group: "Blood Sugar",
-    analytes: [{ name: "Random Blood Sugar", unit: "mg/dl", refLow: 60, refHigh: 130 }],
+    analytes: [RANDOM_SUGAR],
   },
   {
     code: "GTT",
@@ -297,23 +369,18 @@ export const LAB_CATALOG: CatalogSpec[] = [
     analytes: [{ name: "Blood Urea", unit: "mg/dl", refLow: 10, refHigh: 45 }],
   },
   {
-    code: "CREAT-RBS",
-    name: "Serum Creatinine & RBS",
-    group: "Biochemistry",
-    analytes: [
-      { name: "Serum Creatinine", unit: "mg/dl", refLow: 0.6, refHigh: 1.3 },
-      { name: "Random Blood Sugar", unit: "mg/dl", refLow: 60, refHigh: 130 },
-      URINE_SUGAR,
-    ],
-  },
-  {
+    // "Serum Creatinine & RBS" is GONE. It was a pairing of two unrelated
+    // assays that existed because the old form printed them on one page; both
+    // now stand on their own - creatinine under RFT below, the sugar under RBS -
+    // and the seed retires the old code rather than deleting it, so the reports
+    // already printed against it stay readable.
     code: "RFT",
     name: "Renal Function Tests (RFT)",
     group: "Biochemistry",
     analytes: [
-      { name: "Blood Urea", unit: "mg/dl", refLow: 10, refHigh: 45 },
-      { name: "Random Blood Sugar", unit: "mg/dl", refLow: 60, refHigh: 130 },
       { name: "Serum Creatinine", unit: "mg/dl", refLow: 0.6, refHigh: 1.3 },
+      { name: "Blood Urea", unit: "mg/dl", refLow: 10, refHigh: 45 },
+      RANDOM_SUGAR,
       // The RFT form prints both sexes' uric acid ranges side by side. Two rows,
       // so whichever is filled is judged against the right one.
       { name: "Serum Uric Acid (Male)", unit: "mg/dl", refLow: 3.5, refHigh: 7.2 },
@@ -341,8 +408,14 @@ export const LAB_CATALOG: CatalogSpec[] = [
     analytes: [
       // Adult and infant split for the same reason as the haemoglobin ladder:
       // a healthy 3-day-old sits where an adult would be in liver failure.
+      //
+      // The infant row is NAMED, not indented. It was transcribed off the form
+      // as sixteen spaces and "(Infants)", which is how the paper indents it
+      // under the line above - but on screen and in the results table that
+      // prints as a row with no name on it, and a range with nothing to say
+      // what it is a range OF is worse than a lost indent.
       { name: "Total Bilirubin (Adults)", unit: "mg/dl", refLow: 0.1, refHigh: 1.2 },
-      { name: "                (Infants)", unit: "mg/dl", refLow: 1.2, refHigh: 12 },
+      { name: "Total Bilirubin (Infants)", unit: "mg/dl", refLow: 1.2, refHigh: 12 },
       { name: "Direct Bilirubin", unit: "mg/dl", refLow: 0.0, refHigh: 0.3 },
       { name: "Indirect Bilirubin", unit: "mg/dl", refLow: 0.1, refHigh: 1.0 },
     ],
@@ -413,6 +486,14 @@ export const LAB_CATALOG: CatalogSpec[] = [
   // one form, one fee, one signature. Composed from the shared markers above.
   { code: "HIV", name: "H.I.V. I & II Screening", group: "Serology", analytes: [HIV] },
   { code: "HBSAG", name: "HBsAg", group: "Serology", analytes: [HBSAG] },
+  // HCV used to exist only inside the four-marker panel, so a doctor who wanted
+  // hepatitis C alone had to order - and the patient had to pay for - three
+  // markers they hadn't asked for.
+  { code: "HCV", name: "H.C.V", group: "Serology", analytes: [HCV] },
+  // The three viral markers a pre-operative or pre-transfusion screen actually
+  // asks for, on one form and one fee. VDRL is deliberately not in it: the
+  // panels that want syphilis are the ones already listed below.
+  { code: "HIV-HBSAG-HCV", name: "HIV, HBsAg, HCV", group: "Serology", analytes: [HIV, HBSAG, HCV] },
   { code: "HIV-VDRL", name: "HIV, VDRL", group: "Serology", analytes: [HIV, VDRL] },
   { code: "HIV-BG", name: "HIV, Blood Group", group: "Serology", analytes: [HIV, ...BLOOD_GROUP] },
   { code: "HIV-HBSAG", name: "HIV, HBsAg", group: "Serology", analytes: [HIV, HBSAG] },
@@ -444,6 +525,20 @@ export const LAB_CATALOG: CatalogSpec[] = [
       { name: "Dengue Check NS1", refText: "Negative" },
       { name: "Dengue Check IgM", refText: "Negative" },
       { name: "Dengue Check IgG", refText: "Negative" },
+    ],
+  },
+  {
+    code: "GRAVINDEX",
+    name: "Gravindex Test (Urine Pregnancy)",
+    group: "Serology",
+    analytes: [
+      // The reference reads "Negative", not "Positive". This column is what a
+      // NORMAL result looks like - it is printed under BIOLOGICAL REFERENCE
+      // INTERVAL - and on a pregnancy test that is the not-pregnant state. The
+      // result itself is whatever the bench types, Positive or Negative, and
+      // neither is flagged: text results are only ever marked abnormal by hand
+      // (see flagFor in labs.service.ts), so nothing here grades a pregnancy.
+      { name: "Urine For Gravindex", refText: "Negative" },
     ],
   },
   {
@@ -564,7 +659,7 @@ export const LAB_CATALOG: CatalogSpec[] = [
     name: "Antenatal Profile",
     group: "Profiles",
     analytes: [
-      { name: "Random Blood Sugar", unit: "mg/dl", refLow: 60, refHigh: 130 },
+      RANDOM_SUGAR,
       { name: "Blood Urea", unit: "mg/dl", refLow: 10, refHigh: 45 },
       { name: "Bleeding Time (BT)", unit: "Minutes", refLow: 1, refHigh: 3 },
       { name: "Clotting Time (CT)", unit: "Minutes", refLow: 3, refHigh: 7 },
@@ -572,6 +667,23 @@ export const LAB_CATALOG: CatalogSpec[] = [
       HBSAG,
       HIV,
       { name: "VDRL", refText: "Non - Reactive" },
+    ],
+  },
+  {
+    // What a surgeon wants back before a list: can this patient clot, what is
+    // their group if they need blood, are they carrying anything the theatre
+    // team must know about, and where is their sugar. One form, one fee.
+    code: "SURGICAL",
+    name: "Surgical Profile",
+    group: "Profiles",
+    analytes: [
+      BLEEDING_TIME,
+      CLOTTING_TIME,
+      ...BLOOD_GROUP,
+      HIV,
+      HBSAG,
+      HCV,
+      RANDOM_SUGAR,
     ],
   },
 ];
@@ -650,10 +762,10 @@ export const SMEAR_PHRASES = {
  */
 export const PRICE_CARRYOVER: Record<string, string> = {
   "CBP-M": "CBP", "CBP-F": "CBP", "CBP-F-AEC": "CBP",
-  "HAEMOGRAM-F": "CBP", "HAEMOGRAM-PED": "CBP",
+  "HAEMOGRAM-M": "CBP", "HAEMOGRAM-F": "CBP", "HAEMOGRAM-PED": "CBP",
   FBS: "FBS", PLBS: "PPBS", RBS: "RBS",
   LIPID: "LIPID", LFT: "LFT", BILIRUBIN: "BILIRUBIN",
-  RFT: "KFT", "CREAT-RBS": "CREAT", URIC: "URIC",
+  RFT: "KFT", URIC: "URIC",
   AMYLASE: "AMYLASE", CRP: "CRP", ESR: "ESR", RAF: "RAF",
   CUE: "URINE", DENGUE: "DENGUE", WIDAL: "WIDAL",
 };
