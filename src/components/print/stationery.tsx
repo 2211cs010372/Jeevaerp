@@ -732,13 +732,18 @@ export function PreprintedGuide() {
  *
  *   Name          Age           Date
  *   Phone         UHID          OP No
- *   Address (full width)
+ *   Address       Weight        Height
+ *
+ * Weight and Height sit on the address row rather than down in the vitals,
+ * which is where the client's own printed sheet puts them: they are the two
+ * numbers reception measures at the desk with the rest of the identity block,
+ * not the four a nurse takes at triage.
  *
  * A field with no value prints its label and a run of blank paper, so the same
  * sheet serves a computer-filled visit and a hand-written one.
  */
 export function FieldGrid({ fields }: {
-  fields: { k: string; v?: string | null; span?: 1 | 2 | 3; mono?: boolean }[];
+  fields: { k: string; v?: string | null; span?: 1 | 2 | 3; mono?: boolean; wrap?: boolean }[];
 }) {
   // Not equal thirds, and the tracks are set by what each column actually
   // holds. Column one takes Name, Phone and Address, so it needs the most;
@@ -753,14 +758,28 @@ export function FieldGrid({ fields }: {
           {/* No colon after the label: caps against ink already separate the two,
               and a column of colons was punctuation doing a job space does more
               quietly. */}
-          <span className={`shrink-0 ${CAPS_LABEL}`} style={{ color: "var(--pr-muted)" }}>{f.k}: </span>
+          <span className={`shrink-0 ${CAPS_LABEL}`} style={{ color: "var(--pr-primary)" }}>{f.k}: </span>
           {/* The line-height is the row height, and the non-breaking space below
               holds it with or without ink - so all three rows sit on a common
               baseline and a blank field is a writing space of a known size
-              rather than a collapsed row. */}
-          <span className={`min-w-0 truncate text-[13px] font-semibold leading-[4.2mm] ${f.mono ? "font-mono tracking-tight" : ""}`}
+              rather than a collapsed row.
+
+              `wrap` is for the one field that no longer has the sheet's full
+              width to itself: the address now shares its row with Weight and
+              Height, and one line of a long address is a patient nobody can
+              reach. Two lines, then the ellipsis.
+
+              The clamp goes on the NESTED span below, not this one.
+              `line-clamp-*` works by setting `display:-webkit-box`, and this
+              span is a flex item - flex layout blockifies its display, which
+              silently drops the clamp and lets the address run to a third and
+              fourth line, pushing the whole split down the page. A child of a
+              block box keeps the display it was given. */}
+          <span className={`min-w-0 text-[13px] font-semibold leading-[4.2mm] ${f.wrap ? "" : "truncate"} ${f.mono ? "font-mono tracking-tight" : ""}`}
             style={{ color: "var(--pr-ink)" }}>
-              {f.v?.trim() || " "}
+            {f.wrap
+              ? <span className="line-clamp-2 break-words">{f.v?.trim() || " "}</span>
+              : (f.v?.trim() || " ")}
           </span>
         </div>
       ))}
@@ -769,27 +788,32 @@ export function FieldGrid({ fields }: {
 }
 
 /**
- * Vitals as the pre-printed sheet lists them: three across, two down.
+ * Vitals as the pre-printed sheet lists them.
  *
  * They used to be the only boxed cells on the page - a tint plus a hairline, on
  * the argument that a nurse mid-round finds numbers faster in a box. What the
  * printed sheet showed is that they don't need one: these are the only MONO
- * figures above the ℞ table, and set in the same label-and-ink voice as the
- * patient block they read as one identity strip continuing - which is what they
- * are - while six tinted cells read as a second table competing with it.
+ * figures on the sheet, and set in the same label-and-ink voice as the patient
+ * block they read as one identity strip continuing - which is what they are -
+ * while tinted cells read as a second table competing with it.
  *
- * Three across rather than two also buys back a row of vertical space, and this
- * sheet is fighting for the bottom of page one.
+ * `stack` is the column form - one vital per line - for the clinical rail down
+ * the left of the split sheet, which is how the client's own paper sets them:
+ * BP, Temp, Pulse, SpO₂ running down the margin beside the ℞. Unstacked they
+ * lie three across on the patient block's own tracks.
  */
-export function VitalsGrid({ items }: { items: { label: string; value: string | null }[] }) {
-  // Same tracks and gutter as FieldGrid above it, so the six vitals land on the
-  // patient block's own columns rather than on a second grid of their own -
-  // which is the whole reason they no longer need a box.
+export function VitalsGrid({ items, stack = false }: {
+  items: { label: string; value: string | null }[];
+  stack?: boolean;
+}) {
+  // Unstacked: same tracks and gutter as FieldGrid above it, so the vitals land
+  // on the patient block's own columns rather than on a second grid of their
+  // own - which is the whole reason they no longer need a box.
   return (
-    <div className="grid grid-cols-[1.15fr_0.85fr_1fr]  gap-x-5 gap-y-[5px]">
+    <div className={stack ? "flex flex-col gap-y-[8px]" : "grid grid-cols-[1.15fr_0.85fr_1fr]  gap-x-5 gap-y-[8px]"}>
       {items.map((b) => (
         <div key={b.label} className="flex min-w-0 items-baseline gap-2">
-          <span className={`shrink-0 ${CAPS_LABEL}`} style={{ color: "var(--pr-muted)" }}>{b.label}: </span>
+          <span className={`shrink-0 ${CAPS_LABEL}`} style={{ color: "var(--pr-primary)" }}>{b.label}: </span>
           <span className="font-mono text-[12px] font-semibold leading-[4.2mm]" style={{ color: "var(--pr-ink)" }}>
               {b.value || " "}
           </span>
@@ -895,17 +919,18 @@ export function RxPad({ items, slots = 9 }: {
 }) {
   const rows = Math.max(slots, items.length);
   return (
-    /* THE PAD TAKES THE SHEET'S SLACK, FIVE PARTS TO ONE.
+    /* THE PAD TAKES ITS COLUMN'S WHOLE HEIGHT.
 
-       Case history, Investigation and this pad all used to grow equally, so the
-       prescription - the thing an OPD sheet exists to carry - got a third of
-       whatever was left. On the hospital's pre-printed stock there is barely
-       any left to get: the logo band and the QR/address band are already in ink
-       on the paper, so 86mm of the 297 is reserved and 211mm holds the whole
-       consultation. The pad came out at its bare eight rows. Weighted 5-to-1
-       against the two prose blocks, the writing room lands where the pen goes;
-       the prose blocks keep their 10mm floors, so neither collapses. */
-    <section className="mt-[7px] flex flex-col" style={{ flex: "5 1 0%" }}>
+       It used to compete with Case history and Investigation for the sheet's
+       leftover height, stacked above and below it, and lost - on the hospital's
+       pre-printed stock the logo band and the QR/address band are already in
+       ink, so 86mm of the 297 is spoken for and 211mm holds the whole
+       consultation. The pad came out at its bare eight rows.
+
+       Side by side it doesn't have to compete: the prose blocks take the left
+       rail and every millimetre of the right column from the patient block down
+       to the foot is ruled writing space. */
+    <section className="flex min-h-0 flex-1 flex-col">
       {/* Row `height` is a minimum and the table is now sized by its CONTENT,
           not stretched: slack turns into more lines below rather than eight
           over-tall ones here. A doctor writing a fourth medicine needs a fourth
@@ -914,12 +939,17 @@ export function RxPad({ items, slots = 9 }: {
       <table className="w-full border-collapse text-[12px]">
         <thead>
           <tr className={`text-left align-bottom ${CAPS_HEAD}`} style={{ color: "var(--pr-primary)" }}>
-            <th className="w-[42px] border-b pb-1 pr-1 text-[23px] font-normal leading-none" style={{ borderColor: "var(--pr-primary)" }}>℞</th>
+            {/* Column widths are set for the sheet's RIGHT-HAND two thirds, not
+                its full measure: the pad shares the page with the clinical rail
+                now, so the three fixed columns give up about 70px between them
+                and the medicine name - the longest thing in the table - keeps
+                the width it had. */}
+            <th className="w-[30px] border-b pb-1 pr-1 text-[28px] font-normal leading-none" style={{ borderColor: "var(--pr-primary)" }}>℞</th>
             <th className="border-b pb-1.5 pr-2" style={{ borderColor: "var(--pr-primary)" }}>Medicine</th>
-            <th className="w-[78px] border-b pb-1.5 pr-2" style={{ borderColor: "var(--pr-primary)" }}>
+            <th className="w-[62px] border-b pb-1.5 pr-2" style={{ borderColor: "var(--pr-primary)" }}>
               Dosage<br /><span className="text-[8px] font-medium normal-case tracking-normal" style={{ color: "var(--pr-muted)" }}>ఉ – మ – రా</span>
             </th>
-            <th className="w-[168px] border-b pb-1.5" style={{ borderColor: "var(--pr-primary)" }}>
+            <th className="w-[124px] border-b pb-1.5" style={{ borderColor: "var(--pr-primary)" }}>
               Timing &amp; duration<br /><span className="text-[8px] font-medium normal-case tracking-normal" style={{ color: "var(--pr-muted)" }}>భోజనం ముందు / తర్వాత</span>
             </th>
           </tr>

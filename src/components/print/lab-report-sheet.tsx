@@ -3,11 +3,10 @@
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { api, ApiClientError } from "@/lib/api-client";
+import { specimenFor, departmentFor, methodFor } from "@/lib/lab-reference";
+import { rowsThatFit, repack, pageSlices } from "@/lib/lab-pagination";
 import {
-  analyteDescription, analyteFlagNote, specimenFor, departmentFor, methodFor,
-} from "@/lib/lab-reference";
-import {
-  PRINT_CSS, STATIONERY_PRINT_CSS, PrintToolbar, LetterHead, PreprintedGuide,
+  multiSheetPrintCss, PrintToolbar, LetterHead, PreprintedGuide,
   type HospitalInfo,
 } from "@/components/print/stationery";
 
@@ -17,14 +16,26 @@ import {
  *
  *   /print/lab/{labTestId}                   the finished report
  *   /print/lab/{labTestId}?paper=plain       drawn letterhead, for blank stock
- *   /print/lab/{labTestId}?notes=off         without the reference notes
  *
- * THE FORMAT. Two identity columns over a four-column table headed TEST
- * DESCRIPTION / RESULT / UNITS / BIOLOGICAL REFERENCE INTERVAL, a centred
- * department band, the panel name underlined beneath it, and a "Method :" line
- * under each investigation. Out-of-range values are set BOLD, which is the
- * marking on the hospital's existing report and the one thing on this sheet
- * that has to survive a mono laser.
+ * THE FORMAT. Two identity columns over a table headed TEST NAME / RESULT /
+ * UNITS / BIOLOGICAL REFERENCE INTERVAL, a centred department band, the panel
+ * name underlined beneath it, a colon between the analyte and its result, and a
+ * "Method:" line under each investigation. Out-of-range values are set BOLD,
+ * which is the marking on the hospital's existing report and the one thing on
+ * this sheet that has to survive a mono laser.
+ *
+ * ONLY THE METHOD. The line under an analyte carries the method name and
+ * nothing else - "Method: Coulter Principle" - because that is what the
+ * reference report the hospital works from carries. The general reference prose
+ * that used to print there made every row three lines deep and pushed long
+ * panels off the page to say things no bench result depends on.
+ *
+ * IT PAGINATES. A panel that does not fit is not shrunk and is not cut off: it
+ * runs on to a second sheet, which repeats the identity block, the department
+ * band and the panel name and continues the analyte list - the way a HAEMOGRAM
+ * runs across two pages on the reference report. Only the last sheet of a test
+ * carries the comments, the signature block and "End of report"; every sheet is
+ * numbered "Page n of m" so a patient handed three sheets knows they have three.
  *
  * PAPER. Same contract as the OPD sheet: the hospital prints on PRE-PRINTED
  * stationery carrying the logo, the wordmark and the address/QR band in ink, so
@@ -80,6 +91,18 @@ export interface Report {
   abnormal: number;
 }
 
+/** What the pagination settled on, reported back to the page for its notices. */
+export interface ReportLayout {
+  /** Sheets this one test will use. */
+  pages: number;
+  /**
+   * Millimetres the last sheet STILL runs past the paper - only ever non-zero
+   * when a single analyte row is taller than a whole page, which pagination
+   * cannot fix by moving it. 0 is the normal answer.
+   */
+  overflowMm: number;
+}
+
 /**
  * "Jul 30, 2026, 10:29 a.m." - the stamp format on the hospital's report.
  *
@@ -124,49 +147,23 @@ const FLAG_INK: Record<Flag, string> = {
 };
 
 /**
- * THE TABLE FITS THE PAGE, OR THE PAGE WINS.
- *
- * The sheet is pinned to ONE page: on the hospital's pre-printed stock the 40mm
- * head band and the 46mm foot band are already in ink, leaving 211mm for the
- * identity block, the table, the comments and the signature. Anything past that
- * is not printed - and on the whole-order print, where each sheet is clipped to
- * the paper with the foot lifted into the bottom band, the overspill lands ON
- * TOP of "End of report" and the pathologist's rule. That is what a long panel
- * looked like on page one: analyte lines printed over the signature block.
- *
- * So the table is set at a comfortable size for the panels that fit, and
- * SHRINKS ITSELF for the ones that don't. Every type size and every row pad
- * below is `calc(<px> * var(--pr-fit))`; the measuring loop in LabReportBody
- * lowers that one variable until the sheet lands inside the paper, and a CBP of
- * twenty analytes comes down a point or two rather than losing its last four
- * lines off the bottom.
- *
- * The floor is real: below MIN_FIT the sheet stops shrinking and the screen
- * warns instead. A report nobody can read at the counter is not a report that
- * fitted - it is one that failed differently.
- */
-const MIN_FIT = 0.72;
-
-/** A measurement in the table's own scaled units. */
-const fitPx = (px: number) => `calc(${px}px * var(--pr-fit, 1))`;
-
-/**
  * The air between one analyte line and the next.
  *
- * It lives on the CELLS, on all four of them, because that is the only place a
- * table will take it: a `<tr>` in a border-collapse table is display:table-row,
- * which has no margin and no gap - `gap-y` on the row is dropped silently, and
- * padding on one cell alone leaves the other three columns riding at the old
- * pitch with the names drifting out of line.
+ * It lives on the CELLS, on all of them, because that is the only place a table
+ * will take it: a `<tr>` in a border-collapse table is display:table-row, which
+ * has no margin and no gap - `gap-y` on the row is dropped silently, and padding
+ * on one cell alone leaves the other columns riding at the old pitch with the
+ * names drifting out of line.
  */
-const ROW_PAD = { paddingTop: fitPx(5), paddingBottom: fitPx(3) } as const;
+const ROW_PAD = { paddingTop: "5px", paddingBottom: "3px" } as const;
 
 /**
  * Millimetres to a CSS pixel, asked of the browser rather than assumed.
  *
- * Only called when a sheet actually overflows, which is rare - the probe is a
- * layout read, and doing one on every render of every report to answer a
- * question that is almost always "it fits" would be a poor trade.
+ * Only called when a sheet actually overflows past what pagination can fix,
+ * which is close to never - the probe is a layout read, and doing one on every
+ * render of every report to answer a question that is almost always "it fits"
+ * would be a poor trade.
  */
 function mmPerPx(): number {
   const probe = document.createElement("div");
@@ -207,10 +204,10 @@ function withTitle(name: string): string {
 function IdRow({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   return (
     <>
-      <span className="text-[10.5px] leading-[4.1mm]" style={{ color: "var(--pr-ink)" }}>{k}</span>
-      <span className="text-[10.5px] leading-[4.1mm]" style={{ color: "var(--pr-ink)" }}>:</span>
+      <span className="text-[12px] leading-[4.1mm]" style={{ color: "var(--pr-ink)" }}>{k}</span>
+      <span className="text-[12px] leading-[4.1mm]" style={{ color: "var(--pr-ink)" }}>:</span>
       <span
-        className={`text-[10.5px] font-semibold leading-[4.1mm] ${mono ? "font-mono tracking-tight" : ""}`}
+        className={`text-[12px] font-semibold leading-[4.1mm] ${mono ? "font-mono tracking-tight" : ""}`}
         style={{ color: "var(--pr-ink)" }}
       >
         {v || "-"}
@@ -233,11 +230,10 @@ function LabReportSheetInner() {
 
   const paperParam = params.get("paper");
   const [onStationery, setOnStationery] = useState(paperParam !== "plain");
-  const [withNotes, setWithNotes] = useState(params.get("notes") !== "off");
 
   const [data, setData] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [overflowMm, setOverflowMm] = useState(0);
+  const [layout, setLayout] = useState<ReportLayout>({ pages: 1, overflowMm: 0 });
   const [printedAt, setPrintedAt] = useState<string | null>(null);
 
   useEffect(() => {
@@ -259,26 +255,33 @@ function LabReportSheetInner() {
 
   return (
     <div className="print-stage">
-      <style dangerouslySetInnerHTML={{ __html: onStationery ? STATIONERY_PRINT_CSS : PRINT_CSS }} />
+      <style dangerouslySetInnerHTML={{ __html: multiSheetPrintCss(onStationery) }} />
       <PrintToolbar title={`Lab report · ${test.testName}${patient ? ` · ${patient.fullName}` : ""}`} />
 
-      {/* Screen-only desk controls: which paper, and whether the notes print. */}
+      {/* Screen-only desk control: which paper is in the tray. */}
       <div className="mx-auto mb-3 flex w-full max-w-[210mm] flex-wrap items-center gap-x-5 gap-y-2 print:hidden">
         <label className="flex items-center gap-2 text-[12.5px] text-[#3a4744]">
           <input type="checkbox" checked={onStationery} onChange={(e) => setOnStationery(e.target.checked)} />
           Printing on the hospital&apos;s pre-printed paper
         </label>
-        <label className="flex items-center gap-2 text-[12.5px] text-[#3a4744]">
-          <input type="checkbox" checked={withNotes} onChange={(e) => setWithNotes(e.target.checked)} />
-          Print the reference notes under each investigation
-        </label>
       </div>
 
-      {overflowMm > 0 && (
+      {/* How much paper this is about to use, before it is used. */}
+      {layout.pages > 1 && (
+        <p className="mx-auto mb-3 w-full max-w-[210mm] text-[12.5px] leading-snug text-[#5a6a66] print:hidden">
+          This panel runs to <span className="font-semibold">{layout.pages} sheets</span> - the analytes that
+          don&apos;t fit continue on the next page, under the same heading.
+        </p>
+      )}
+
+      {/* Pagination cannot move a row that is taller than a whole page. Nothing
+          in the catalogue is, but a result typed as a paragraph could be, and a
+          line lost silently between the screen and the tray is the worst failure
+          this page has. */}
+      {layout.overflowMm > 0 && (
         <p className="mx-auto mb-3 w-full max-w-[210mm] border-l-2 border-[#d8b878] pl-3 text-[12.5px] leading-snug text-[#8a6414] print:hidden">
-          Set as small as this sheet goes, the table still runs about {overflowMm}mm past the printable area -
-          that much would be cut off at the bottom. Turn off the reference notes above, or hand the remaining
-          lines on a second sheet.
+          One result on the last sheet is too long to fit a page on its own - about {layout.overflowMm}mm of it
+          would be cut off at the bottom. Shorten that value from the lab queue.
         </p>
       )}
 
@@ -289,106 +292,128 @@ function LabReportSheetInner() {
         </p>
       )}
 
-      {/* The sheet is ONE page: print pins it to the paper, so anything past the
-          bottom is not printed. The body fits its own table to the page and
-          reports whatever it could not absorb, which is what the line above
-          warns about - a result lost silently between the screen and the tray
-          is the worst failure this page has. */}
-      <div id="print-sheet">
-        <LabReportBody
-          data={data} onStationery={onStationery} withNotes={withNotes}
-          printedAt={printedAt} onFit={setOverflowMm}
-        />
-      </div>
+      <LabReportPages
+        data={data} onStationery={onStationery} printedAt={printedAt} onLayout={setLayout}
+      />
     </div>
   );
 }
 
 /**
- * ONE test's report, from the letterhead down to the signature rule.
+ * ONE test's report - as many sheets as its analytes need.
  *
- * Split out of the page above so the whole-order print can lay several of these
- * end to end - one per test, each on its own sheet - without the two ever
- * drifting apart. There is exactly one lab report layout in this hospital, and
- * a patient handed three sheets from one sample must not be able to tell which
- * screen printed which.
+ * Split out of the page above so the whole-order print can lay several tests end
+ * to end without the two ever drifting apart. There is exactly one lab report
+ * layout in this hospital, and a patient handed three sheets from one sample
+ * must not be able to tell which screen printed which.
  *
- * It draws no page box of its own: the caller owns that (#print-sheet for a
- * single report, .print-sheet for each page of an order), and with it the paper
- * geometry and the page breaks.
+ * It owns its own page boxes (`.print-sheet`, the class - an id can only name
+ * one element and this component renders n). The caller supplies the print CSS
+ * profile and nothing else; `multiSheetPrintCss` puts a hard break before every
+ * sheet after the first, so the breaks WITHIN a test and the breaks BETWEEN
+ * tests are the same rule.
  */
-export function LabReportBody({ data, onStationery, withNotes, printedAt, onFit }: {
+export function LabReportPages({ data, onStationery, printedAt, onLayout }: {
   data: Report;
   /** Printing onto the hospital's pre-printed paper, so the head is left blank. */
   onStationery: boolean;
-  withNotes: boolean;
   /** ISO stamp of when this was rendered; null until hydration. */
   printedAt: string | null;
   /**
-   * How far past the paper this sheet still runs once it has shrunk as far as
-   * it will go, in millimetres - 0 when it fits, which is the usual answer.
-   * Reported from here rather than measured by the page, because only this
-   * component knows when the fitting has finished.
+   * What the pagination settled on. Reported from here rather than measured by
+   * the page, because only this component knows when the packing has finished -
+   * a count read mid-pack names a page total that is about to change.
    */
-  onFit?: (overflowMm: number) => void;
+  onLayout?: (layout: ReportLayout) => void;
 }) {
   const { hospital, test, patient, referral, refDoctorName, admission, results, abnormal } = data;
   const entered = results.length > 0;
   const department = departmentFor(test.code);
   const specimen = specimenFor(test.code);
 
-  // ── FITTING THE TABLE TO THE PAPER (see the MIN_FIT note) ──
-  const tableRef = useRef<HTMLTableElement | null>(null);
-  const [fit, setFit] = useState(1);
+  // ── PACKING THE ANALYTES ONTO SHEETS ──
+  //
+  // `pageStarts[k]` is the index of the first analyte on sheet k, so [0] is
+  // everything on one sheet and [0, 14] is rows 0-13 then 14 onwards.
+  //
+  // The packing is measured, not estimated, and it is measured on the REAL
+  // rendered sheets rather than on a hidden probe: row heights depend on how the
+  // name wraps in its column, which depends on the paper, and a probe that gets
+  // that wrong pages the report at the wrong analyte. The arithmetic it feeds
+  // lives in @/lib/lab-pagination, where it is tested without a DOM.
+  //
+  // The sheets are collected by ref rather than found under a wrapper element,
+  // because they must not HAVE a wrapper: `multiSheetPrintCss` breaks pages with
+  // `.print-sheet + .print-sheet`, an adjacent-sibling rule, and a div around
+  // each test's sheets would leave the first sheet of test two with no sibling
+  // before it - printing it on the same page as the last sheet of test one.
+  const sheetsRef = useRef<(HTMLElement | null)[]>([]);
+  const [pageStarts, setPageStarts] = useState<number[]>([0]);
+  /** The last layout handed to `onLayout` - see the report guard in the effect. */
+  const reportedRef = useRef<ReportLayout | null>(null);
 
-  // A different report, a different paper, or the notes going on or off, is a
-  // different measurement - start from full size and let the loop below find
-  // the size again rather than inheriting the last sheet's squeeze.
+  // A different report, or different paper, is a different packing - start from
+  // one sheet and let the loop below find the breaks again rather than
+  // inheriting the last report's.
   //
-  // Reset DURING RENDER, not from an effect. An effect would have run after
-  // the measuring loop below had already asked for the first shrink, and the
-  // two updates cancelled: React landed back on the size it started at, saw no
-  // change, and skipped the re-render - so the loop never ran a second time and
-  // every long report stayed at full size. Adjusting the state in render is
-  // React's own answer to "this state depends on a prop".
-  //
-  // Keyed on what actually changes the height, NOT on the `data` object: a
-  // caller that rebuilds its report object each render would otherwise reset
-  // the fit every render, and the shrink and the reset would spend the
-  // afternoon undoing each other.
-  const fitKey = `${test.id}|${results.length}|${onStationery}|${withNotes}`;
-  const [measured, setMeasured] = useState(fitKey);
-  if (measured !== fitKey) { setMeasured(fitKey); setFit(1); }
+  // Reset DURING RENDER, not from an effect. An effect would have run after the
+  // packing loop had already asked for its first break, and the two updates
+  // cancelled. Keyed on what actually changes the height, NOT on the `data`
+  // object: a caller that rebuilds its report object each render would otherwise
+  // reset the packing every render, and the two would spend the afternoon
+  // undoing each other.
+  const layoutKey = `${test.id}|${results.length}|${onStationery}`;
+  const [measured, setMeasured] = useState(layoutKey);
+  if (measured !== layoutKey) { setMeasured(layoutKey); setPageStarts([0]); reportedRef.current = null; }
 
-  // Measured, not estimated. Run after EVERY render and on layout rather than
-  // on paint, so the shrink happens before anything is shown: the sheet's own
-  // min-height is the paper, so whatever it stands taller than that is exactly
-  // what would be lost off the bottom (or printed over the signature block, on
-  // the whole-order print where each sheet is clipped to the page).
+  // Run after EVERY render and on layout rather than on paint, so the sheets
+  // settle before anything is shown. A sheet's min-height IS the paper, so
+  // whatever it stands taller than that is exactly what would be lost off the
+  // bottom - and the fix is to move that many rows onto the next sheet.
   //
-  // Each pass takes the table down by the ratio it is over by, and never by
-  // less than a hundredth - so it converges in two or three renders and cannot
-  // sit oscillating between two sizes. The floor ends it either way.
+  // Each pass moves rows strictly downward, so it converges in one pass per new
+  // sheet and cannot sit oscillating between two packings.
   useLayoutEffect(() => {
-    const table = tableRef.current;
-    const sheet = table?.closest("#print-sheet, .print-sheet") as HTMLElement | null;
-    if (!table || !sheet) return;
-    const paper = parseFloat(getComputedStyle(sheet).minHeight);
-    if (!Number.isFinite(paper) || paper <= 0) return;
+    const sheets = sheetsRef.current.slice(0, pageStarts.length).filter(Boolean) as HTMLElement[];
+    if (sheets.length !== pageStarts.length) return;
 
-    const over = sheet.offsetHeight - paper;
-    const height = table.offsetHeight;
-    // 1px of slack: browsers round page geometry in device pixels, and chasing
-    // that last rounding error would shrink every sheet in the building.
-    if (over > 1 && fit > MIN_FIT && height > 0) {
-      setFit(Math.max(MIN_FIT, Math.min(fit * ((height - over) / height), fit - 0.01)));
-      return;
+    let stranded = 0;
+    for (let k = 0; k < sheets.length; k++) {
+      const sheet = sheets[k];
+      const paper = parseFloat(getComputedStyle(sheet).minHeight);
+      if (!Number.isFinite(paper) || paper <= 0) continue;
+      // 1px of slack: browsers round page geometry in device pixels, and chasing
+      // that last rounding error would re-page every report in the building.
+      const over = sheet.offsetHeight - paper;
+      if (over <= 1) continue;
+
+      const rows = Array.from(sheet.querySelectorAll<HTMLElement>("[data-analyte]"));
+      // One row that overflows a page on its own cannot be helped by moving it -
+      // it would overflow the next sheet identically. Leave it and say so.
+      if (rows.length <= 1) { stranded = Math.max(stranded, over); continue; }
+
+      const keep = rowsThatFit(rows.map((el) => el.offsetHeight), over);
+      const next = repack(pageStarts, k, keep, results.length);
+      // Identity means the packing has nothing left to give here - fall through
+      // and report, rather than scheduling a render that changes nothing.
+      if (next !== pageStarts) { setPageStarts(next); return; }
+      stranded = Math.max(stranded, over);
     }
-    // Settled - either it fits, or it is as small as this sheet goes. Only now
-    // is there an honest number to warn the screen with; measuring before the
-    // shrink converged is how the desk gets told a report overflows that
-    // doesn't.
-    onFit?.(over > 1 ? Math.round(over * mmPerPx()) : 0);
+
+    // Settled. Only now is there an honest page count to report; a count read
+    // mid-pack names a total that is about to change.
+    //
+    // Reported ONCE per distinct answer. This effect runs after every render by
+    // design - that is what lets it re-measure - so handing the caller a fresh
+    // object each time would spin any caller that holds it in state: new object,
+    // re-render, new object. The guard belongs here rather than in each caller,
+    // because a caller that forgets it doesn't get a stale count, it hangs.
+    const pages = sheets.length;
+    const overflowMm = stranded > 1 ? Math.round(stranded * mmPerPx()) : 0;
+    const last = reportedRef.current;
+    if (last && last.pages === pages && last.overflowMm === overflowMm) return;
+    reportedRef.current = { pages, overflowMm };
+    onLayout?.({ pages, overflowMm });
   });
 
   /** Left column: who the sample came from and what it is. */
@@ -418,176 +443,216 @@ export function LabReportBody({ data, onStationery, withNotes, printedAt, onFit 
     { k: "Reported On", v: test.completedAt ? stamp(test.completedAt) : "Not yet reported" },
   ];
 
+  const slices = pageSlices(pageStarts, results.length);
+  const total = slices.length;
+  // Drop refs to sheets that no longer exist, so a report that shrinks from
+  // three sheets to two doesn't keep measuring a detached third.
+  sheetsRef.current.length = total;
+
   return (
     <>
-        {onStationery ? <PreprintedGuide /> : <LetterHead hospital={hospital} doctor={null} />}
+      {slices.map(({ start, end }, k) => {
+        const slice = results.slice(start, end);
+        const isLast = k === total - 1;
 
-        {/* ── IDENTITY: two colon-aligned columns, exactly as on the paper form ── */}
-        <div className={`grid grid-cols-2 gap-x-10 ${onStationery ? "mt-2" : "mt-4"}`}>
-          <div className="grid grid-cols-[76px_7px_1fr] items-baseline">
-            {leftFields.map((f) => <IdRow key={f.k} {...f} />)}
-          </div>
-          <div className="grid grid-cols-[82px_7px_1fr] items-baseline">
-            {rightFields.map((f) => <IdRow key={f.k} {...f} />)}
-          </div>
-        </div>
+        return (
+          <div
+            key={`${test.id}-${k}`}
+            ref={(el) => { sheetsRef.current[k] = el; }}
+            className="print-sheet"
+          >
+            {onStationery ? <PreprintedGuide /> : <LetterHead hospital={hospital} doctor={null} />}
 
-        {/* ── THE TABLE ──
-            Rules above and below the header, no vertical rules and no row
-            rules: four columns of different kinds of thing held apart by
-            alignment alone, which is what the hospital's own report does and
-            what keeps a fourteen-analyte panel readable at speed. */}
-        <table
-          ref={tableRef}
-          className="mt-[10px] w-full border-collapse"
-          style={{ "--pr-fit": fit } as React.CSSProperties}
-        >
-          <thead>
-            <tr
-              className="text-left align-bottom bg-[var(--pr-bg)] font-bold uppercase tracking-[0.02em]"
-              style={{ color: "var(--pr-ink)", fontSize: fitPx(11) }}
-            >
-              <th className="border-y w-[230px] py-[3px] pr-2" style={{ borderColor: "var(--pr-ink)" }}>Test Description</th>
-              <th className="w-[70px] border-y py-[3px] pl-2" style={{ borderColor: "var(--pr-ink)" }}>Result</th>
-              <th className="w-[76px] border-y py-[3px] pr-2" style={{ borderColor: "var(--pr-ink)" }}>Units</th>
-              <th className="w-[140px] border-y py-[3px]" style={{ borderColor: "var(--pr-ink)" }}>
-                Biological Reference Interval
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {/* Department band - centred across the measure, the way a report is
-                actually navigated when it runs to several pages. The
-                out-of-range count rides at the right of the same line: it is
-                the first thing a doctor looks for, and it costs no extra rule. */}
-            <tr>
-              <td colSpan={4} className="pb-[2px] pt-[7px]">
-                <div className="relative text-center">
-                  <span className="font-bold uppercase tracking-[0.04em]" style={{ color: "var(--pr-ink)", fontSize: fitPx(11.5) }}>
-                    {department ?? "LABORATORY"}
-                  </span>
-                  <span
-                    className={`absolute right-0 top-[1px] uppercase ${abnormal > 0 ? "text-[9px] font-bold tracking-[0.18em]" : "text-[8.5px] font-semibold tracking-[0.14em]"}`}
-                    style={{ color: abnormal > 0 ? "#c8211b" : "var(--pr-muted)" }}
-                  >
-                    {abnormal > 0 ? `${abnormal} out of range` : entered ? "All within range" : "Awaiting results"}
-                  </span>
-                </div>
-              </td>
-            </tr>
+            {/* ── IDENTITY: two colon-aligned columns, exactly as on the paper
+                form. Repeated on every sheet of the test - a continuation page
+                that reaches a ward without a name on it is a loose sheet. ── */}
+            <div className={`grid grid-cols-2 gap-x-10 ${onStationery ? "mt-2" : "mt-4"}`}>
+              <div className="grid grid-cols-[76px_7px_1fr] items-baseline">
+                {leftFields.map((f) => <IdRow key={f.k} {...f} />)}
+              </div>
+              <div className="grid grid-cols-[82px_7px_1fr] items-baseline">
+                {rightFields.map((f) => <IdRow key={f.k} {...f} />)}
+              </div>
+            </div>
 
-            {/* The panel, named and underlined - the sub-head inside a department. */}
-            <tr>
-              <td colSpan={4} className="pb-[3px] pt-[5px]">
-                <span
-                  className="font-bold underline decoration-1 underline-offset-[3px]"
-                  style={{ color: "var(--pr-ink)", fontSize: fitPx(12.5) }}
+            {/* ── THE TABLE ──
+                Rules above and below the header, no vertical rules and no row
+                rules: columns of different kinds of thing held apart by
+                alignment alone, which is what the hospital's own report does and
+                what keeps a fourteen-analyte panel readable at speed.
+
+                The colon has a column of its own, unheaded, between the analyte
+                and its result - the way the reference report sets it. In the
+                name's own cell it would have ridden at the end of the name and
+                stepped left and right down the page with the wrapping. */}
+            <table className="mt-[10px] w-full border-collapse">
+              <thead>
+                <tr
+                  className="text-left align-bottom bg-[var(--pr-bg)] text-[11px] font-bold uppercase tracking-[0.02em]"
+                  style={{ color: "var(--pr-ink)" }}
                 >
-                  {test.testName}
-                </span>
-              </td>
-            </tr>
-
-            {results.map((r, i) => {
-              const off = r.flag !== "NORMAL";
-              const method = methodFor(r.name);
-              // The second sentence is earned, not automatic: only a line that
-              // is actually out of range gets told what that direction means.
-              const flagNote = off ? analyteFlagNote(r.name, r.flag) : null;
-              const desc = withNotes ? analyteDescription(r.name) : null;
-              return (
-                <tr key={`${r.name}-${i}`} className="align-baseline">
-                  <td className="pr-2" style={ROW_PAD}>
-                    <span className="font-medium " style={{ color: "var(--pr-ink)", fontSize: fitPx(11.5) }}>{r.name}</span>
-                    {method && (
-                      <span className="block pl-[10px] italic leading-[1.3]" style={{ color: "var(--pr-muted)", fontSize: fitPx(8) }}>
-                        Method : {method}
+                  <th className="w-[230px] border-y py-[3px] pr-1" style={{ borderColor: "var(--pr-ink)" }}>Test Name</th>
+                  <th className="w-[8px] border-y py-[3px]" style={{ borderColor: "var(--pr-ink)" }} />
+                  <th className="w-[70px] border-y py-[3px] pl-2" style={{ borderColor: "var(--pr-ink)" }}>Result</th>
+                  <th className="w-[76px] border-y py-[3px] pr-2" style={{ borderColor: "var(--pr-ink)" }}>Units</th>
+                  <th className="w-[140px] border-y py-[3px]" style={{ borderColor: "var(--pr-ink)" }}>
+                    Biological Reference Interval
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {/* Department band - centred across the measure, the way a report
+                    is actually navigated when it runs to several pages. The
+                    out-of-range count rides at the right of the same line: it is
+                    the first thing a doctor looks for, and it costs no extra
+                    rule. It counts the whole TEST, not this sheet, which is why
+                    it reads the same on both pages of a split panel. */}
+                <tr>
+                  <td colSpan={5} className="pb-[2px] pt-[7px]">
+                    <div className="relative text-center">
+                      <span className="text-[16px] font-bold uppercase tracking-[0.04em]" style={{ color: "var(--pr-ink)" }}>
+                        {department ?? "LABORATORY"}
                       </span>
-                    )}
-                    {withNotes && (desc || flagNote) && (
-                      /* 9px is about as small as this can be set and still be
-                         read off a laser print by someone holding it at a
-                         counter - the whole point of the line. */
-                      <span className="block pl-[10px] italic leading-[1.35]" style={{ color: "var(--pr-muted)", fontSize: fitPx(9) }}>
-                        {desc}
-                        {flagNote && (
-                          <span className="font-semibold not-italic" style={{ color: FLAG_INK[r.flag] }}>
-                            {desc ? "  " : ""}{flagNote}
-                          </span>
-                        )}
+                      <span
+                        className={`absolute right-0 top-[1px] uppercase ${abnormal > 0 ? "text-[9px] font-bold tracking-[0.18em]" : "text-[8.5px] font-semibold tracking-[0.14em]"}`}
+                        style={{ color: abnormal > 0 ? "#c8211b" : "var(--pr-muted)" }}
+                      >
+                        {abnormal > 0 ? `${abnormal} out of range` : entered ? "All within range" : "Awaiting results"}
                       </span>
-                    )}
-                  </td>
-                  {/* BOLD is the out-of-range marker - it is what the hospital's
-                      report has always used, and unlike a colour it survives the
-                      mono laser most of this printing goes through. */}
-                  <td
-                    className="pr-2"
-                    style={{ ...ROW_PAD, color: FLAG_INK[r.flag], fontWeight: off ? 700 : 400, fontSize: fitPx(11.5) }}
-                  >
-                    {r.value}
-                  </td>
-                  <td className="pr-2" style={{ ...ROW_PAD, color: "var(--pr-ink)", fontSize: fitPx(11) }}>
-                    {r.unit ?? ""}
-                  </td>
-                  <td style={{ ...ROW_PAD, color: "var(--pr-ink)", fontSize: fitPx(11.5) }}>
-                    {rangeLabel(r)}
+                    </div>
                   </td>
                 </tr>
-              );
-            })}
 
-            {!entered && (
-              <tr style={{ height: "24mm" }}>
-                <td colSpan={4} className="pt-3 italic" style={{ color: "var(--pr-muted)", fontSize: fitPx(12) }}>
-                  Results not entered.
-                </td>
-              </tr>
+                {/* The panel, named and underlined - the sub-head inside a
+                    department, repeated on a continuation sheet so the second
+                    half of a HAEMOGRAM still says what it is. */}
+                <tr>
+                  <td colSpan={5} className="pb-[3px] pt-[5px]">
+                    <span
+                      className="text-[15px] font-bold underline decoration-1 underline-offset-[3px]"
+                      style={{ color: "var(--pr-ink)" }}
+                    >
+                      {test.testName}
+                    </span>
+                    {k > 0 && (
+                      <span className="ml-2 text-[9px] italic" style={{ color: "var(--pr-muted)" }}>
+                        continued
+                      </span>
+                    )}
+                  </td>
+                </tr>
+
+                {slice.map((r, i) => {
+                  const off = r.flag !== "NORMAL";
+                  const method = methodFor(r.name);
+                  return (
+                    <tr key={`${r.name}-${start + i}`} data-analyte className="align-baseline  ">
+                      <td className="pr-1" style={ROW_PAD}>
+                        <span className="text-[14px] font-semibold" style={{ color: "var(--pr-ink)" }}>{r.name}</span>
+                        {/* The method, and nothing else - see the file note. */}
+                        {method && (
+                          <span className="block pl-[10px] text-[11px] italic leading-[0.98]" style={{ color: "var(--pr-muted)" }}>
+                            Method: {method}
+                          </span>
+                        )}
+                      </td>
+                      <td className="text-[14px]" style={{ ...ROW_PAD, color: "var(--pr-ink)" }}>:</td>
+                      {/* BOLD is the out-of-range marker - it is what the
+                          hospital's report has always used, and unlike a colour
+                          it survives the mono laser most of this printing goes
+                          through. */}
+                      <td
+                        className="pl-2 pr-2 font-semibold text-[14px]"
+                        style={{ ...ROW_PAD, color: FLAG_INK[r.flag], fontWeight: off ? 700 : 700 }}
+                      >
+                        {r.value}
+                      </td>
+                      <td className="pr-2 font-semibold text-[14px]" style={{ ...ROW_PAD, color: "var(--pr-ink)" }}>
+                        {r.unit ?? ""}
+                      </td>
+                      <td className="text-[14px] font-semibold" style={{ ...ROW_PAD, color: "var(--pr-ink)" }}>
+                        {rangeLabel(r)}
+                      </td>
+                    </tr>
+                  );
+                })}
+
+                {!entered && (
+                  <tr style={{ height: "24mm" }}>
+                    <td colSpan={5} className="pt-3 text-[12px] italic" style={{ color: "var(--pr-muted)" }}>
+                      Results not entered.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+
+            {/* grow: whatever height the sheet doesn't use lands BETWEEN the
+                table and the foot, so the gap on a two-analyte report opens in
+                the middle of the page instead of under the signature. */}
+            <div className="flex-1" />
+
+            {/* ── COMMENTS ──
+                The bench's read of its OWN numbers, in the technician's words,
+                under the heading the hospital's report uses. Set apart from the
+                table and never merged into it: a lab reports on a specimen, a
+                doctor diagnoses the person.
+
+                Last sheet only, with the signature: a comment is on the test,
+                not on the page, and printed twice it reads as two findings. */}
+            {isLast && test.impression?.trim() && (
+              <div className="mb-[4px] border-t pt-[6px]" style={{ borderColor: "var(--pr-hair)" }}>
+                <div className="text-[10.5px] font-bold" style={{ color: "var(--pr-ink)" }}>Comments</div>
+                <p className="mt-[2px] whitespace-pre-line text-[10.5px] leading-[1.45]" style={{ color: "var(--pr-ink)" }}>
+                  {test.impression}
+                </p>
+                <p className="mt-[3px] text-[8.5px] italic" style={{ color: "var(--pr-muted)" }}>
+                  Impression on the specimen examined - not a clinical diagnosis. Please correlate clinically.
+                </p>
+              </div>
             )}
-          </tbody>
-        </table>
 
-        {/* grow: whatever height the sheet doesn't use lands BETWEEN the table
-            and the comments, so the gap on a two-analyte report opens in the
-            middle of the page instead of under the signature. */}
-        <div className="flex-1" />
-
-        {/* ── COMMENTS ──
-            The bench's read of its OWN numbers, in the technician's words, under
-            the heading the hospital's report uses. Set apart from the table and
-            never merged into it: a lab reports on a specimen, a doctor diagnoses
-            the person.
-
-            Placed AFTER the grow spacer so it sits hard against the footer rule
-            rather than floating directly under the last analyte with a page of
-            white beneath it. The foot itself is lifted out of flow on
-            stationery (bottom: 20mm, inside the 46mm bottom padding), so this
-            block still ends clear of it - the padding is the margin they share. */}
-        {test.impression?.trim() && (
-          <div className="mb-[4px] border-t pt-[6px]" style={{ borderColor: "var(--pr-hair)" }}>
-            <div className="text-[10.5px] font-bold" style={{ color: "var(--pr-ink)" }}>Comments</div>
-            <p className="mt-[2px] whitespace-pre-line text-[10.5px] leading-[1.45]" style={{ color: "var(--pr-ink)" }}>
-              {test.impression}
-            </p>
-            <p className="mt-[3px] text-[8.5px] italic" style={{ color: "var(--pr-muted)" }}>
-              Impression on the specimen examined - not a clinical diagnosis. Please correlate clinically.
-            </p>
+            {isLast ? (
+              <ReportFoot
+                technicianName={test.technicianName}
+                printedAt={printedAt}
+                page={k + 1}
+                total={total}
+                inset={onStationery}
+              />
+            ) : (
+              <ContinuationFoot page={k + 1} total={total} inset={onStationery} />
+            )}
           </div>
-        )}
-
-        <ReportFoot
-          withNotes={withNotes && entered}
-          technicianName={test.technicianName}
-          printedAt={printedAt}
-          inset={onStationery}
-        />
+        );
+      })}
     </>
   );
 }
 
 /**
+ * The foot of a sheet that is NOT the last one of its test.
+ *
+ * It carries no signature and no "End of report", because neither is true yet -
+ * a continuation sheet is the middle of a document. What it must carry is where
+ * the reader is: a page marker, and the fact that the panel goes on. A patient
+ * who is handed only sheet two of two should be able to tell.
+ */
+function ContinuationFoot({ page, total, inset }: { page: number; total: number; inset: boolean }) {
+  const body = (
+    <div className="flex items-end justify-between gap-6 text-[8.5px]" style={{ color: "var(--pr-muted)" }}>
+      <span className="italic">Continued on the next sheet</span>
+      <span className="font-semibold uppercase tracking-[0.14em]">Page {page} of {total}</span>
+    </div>
+  );
+  if (!inset) return <div className="mt-[10px]">{body}</div>;
+  return <div className="absolute" style={{ left: "13mm", right: "27mm", bottom: "20mm" }}>{body}</div>;
+}
+
+/**
  * The report's foot - what makes it a document rather than a printout: who ran
- * it, who signs it, when it was printed, and the correlation note.
+ * it, who signs it, when it was printed, and the correlation note. Printed on
+ * the LAST sheet of a test only.
  *
  * The pathologist's name and registration number are NOT hardcoded. This
  * software has no business printing a doctor's credentials under a result they
@@ -597,11 +662,12 @@ export function LabReportBody({ data, onStationery, withNotes, printedAt, onFit 
  *
  * `inset` lifts the block into the bottom band of the pre-printed paper, in the
  * strip beside the printed QR (left 13mm, clear of the QR at 27mm, above the
- * printed address band at 22mm), so this sheet's foot lands on the same line as
+ * printed address band at 20mm), so this sheet's foot lands on the same line as
  * the OPD sheet's.
  */
-function ReportFoot({ withNotes, technicianName, printedAt, inset }: {
-  withNotes: boolean; technicianName: string | null; printedAt: string | null; inset: boolean;
+function ReportFoot({ technicianName, printedAt, page, total, inset }: {
+  technicianName: string | null; printedAt: string | null;
+  page: number; total: number; inset: boolean;
 }) {
   const body = (
     <>
@@ -627,22 +693,22 @@ function ReportFoot({ withNotes, technicianName, printedAt, inset }: {
         </div>
       </div>
 
-      {withNotes && (
-        <p className="mt-[6px] text-[8px] italic leading-[1.4]" style={{ color: "var(--pr-muted)" }}>
-          The italic lines under each investigation are general reference notes about the test itself, not an
-          interpretation of this result. Reference intervals vary with age, sex, pregnancy and method, and were
-          recorded with the result at the time of reporting. Please discuss this report with your doctor.
-        </p>
-      )}
-
       <p className="mt-[4px] text-[8px] italic leading-[1.4]" style={{ color: "var(--pr-muted)" }}>
         This is an electronically authenticated report.
         {printedAt ? ` Report Printed Date: ${stamp(printedAt)}` : ""}
       </p>
-      <p className="text-[8px] leading-[1.4]" style={{ color: "var(--pr-muted)" }}>
-        NOTE: Assay results should be correlated clinically with other clinical findings and the total clinical
-        status of the patient.
-      </p>
+      <div className="flex items-end justify-between gap-6">
+        <p className="text-[8px] leading-[1.4]" style={{ color: "var(--pr-muted)" }}>
+          NOTE: Assay results should be correlated clinically with other clinical findings and the total clinical
+          status of the patient.
+        </p>
+        {/* A single-sheet report says "Page 1 of 1" too: the marker is what tells
+            a reader nothing is missing, and it can only do that if it is always
+            there. */}
+        <span className="shrink-0 text-[8.5px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--pr-muted)" }}>
+          Page {page} of {total}
+        </span>
+      </div>
     </>
   );
   if (!inset) return <div className="mt-[10px]">{body}</div>;

@@ -65,22 +65,28 @@ const to12h = (hhmm: string) => {
 };
 const pretty = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 
+/** One decimal, but never a trailing ".0" - "168 cm" not "168.0 cm". */
+const num = (n: number | null | undefined) => (n == null ? null : String(Number(n.toFixed(1))));
+
 /**
- * The six vitals the hospital's own paper lists, in its own order - three
- * across, two down. Reception types the handwritten triage numbers back in;
- * anything not typed prints as blank paper for the pen.
+ * The four triage vitals, in the order the hospital's own paper lists them,
+ * stacked down the clinical rail. Reception types the handwritten numbers back
+ * in; anything not typed prints as blank paper for the pen.
  *
- * BMI / BSA are deliberately NOT here: the pre-printed sheet has room for six
- * boxes, and a derived number is worth less on it than the writing space.
+ * Height and weight are NOT here - they print on the patient block's third row,
+ * beside the address, which is where the client's sheet puts them: they are
+ * measured at the desk with the rest of the identity block, not taken at triage
+ * with the pulse.
+ *
+ * BMI / BSA are deliberately absent too: a derived number is worth less on this
+ * sheet than the writing space it would cost.
  */
 function vitalsBoxes(v: Data["vitals"]): { label: string; value: string | null }[] {
   return [
     { label: "BP (mmHg)", value: v?.bpSystolic != null && v?.bpDiastolic != null ? `${v.bpSystolic}/${v.bpDiastolic}` : null },
+    { label: "Temp (°F)", value: num(v?.tempF) },
     { label: "Pulse (bpm)", value: v?.pulse != null ? String(v.pulse) : null },
-    { label: "SpO₂ (%)", value: v?.spo2 != null ? String(v.spo2) : null },
-    { label: "Temp (°F)", value: v?.tempF != null ? v.tempF.toFixed(1) : null },
-    { label: "Height (cm)", value: v?.heightCm != null ? v.heightCm.toFixed(1) : null },
-    { label: "Weight (kg)", value: v?.weightKg != null ? v.weightKg.toFixed(1) : null },
+    { label: "SpO₂ (%)", value: num(v?.spo2) },
   ];
 }
 
@@ -148,9 +154,19 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
   // a clinical line lost silently between the screen and the tray is the worst
   // failure this page has - so measure it and say so before anyone prints.
   //
-  // The test is the sheet's own height against the paper, NOT scrollHeight vs
-  // clientHeight: the sheet is min-height + flex, so it GROWS past A4 rather
-  // than scrolling, and an overflow check would read zero every time.
+  // TWO ways it can be lost, and the split made the second one possible:
+  //
+  //  1. THE SHEET GROWS. Everything above and below the split - the patient
+  //     block, the foot - still pushes the sheet past A4 rather than scrolling,
+  //     so that is measured as the sheet's own height against the paper. A
+  //     scrollHeight check would read zero here every time.
+  //  2. A COLUMN CLIPS. The split's row is minmax(0,1fr), so a rail block or an
+  //     over-long ℞ overflows INSIDE its column and the sheet never grows - the
+  //     one case the height test above cannot see. That one is scrollHeight vs
+  //     clientHeight, measured on each column.
+  //
+  // The warning takes whichever is worse: either way the number is roughly how
+  // much of the consultation the printer will drop.
   useEffect(() => {
     const el = sheetRef.current;
     if (!el) return;
@@ -159,7 +175,10 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
     document.body.appendChild(probe);
     const mmPerPx = 100 / probe.offsetWidth;
     probe.remove();
-    const over = el.offsetHeight * mmPerPx - (onStationery ? 297 : 296);
+    const grown = el.offsetHeight * mmPerPx - (onStationery ? 297 : 296);
+    const clipped = Array.from(el.querySelectorAll<HTMLElement>("[data-sheet-col]"))
+      .reduce((worst, col) => Math.max(worst, (col.scrollHeight - col.clientHeight) * mmPerPx), 0);
+    const over = Math.max(grown, clipped);
     setOverflowMm(over > 1 ? Math.round(over) : 0);
   }, [data, headed, onStationery, pickedDoctorId]);
 
@@ -217,7 +236,18 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
     </span>
   );
 
-  /** Name / Age / Date · Phone / UHID / OP No · Address - the client's own grid. */
+  /**
+   * The client's own grid, three rows of three:
+   *
+   *   Name      Age     Date
+   *   Phone     UHID    OP No
+   *   Address   Weight  Height
+   *
+   * The address no longer runs the full width - it gives its last two thirds to
+   * the two measurements the desk takes with it - so it wraps to a second line
+   * rather than truncating.
+   */
+  const measured = isBlank ? null : v;
   const patientFields = headed
     ? [
       { k: "Name", v: headed.fullName },
@@ -226,13 +256,16 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
       { k: "Phone", v: headed.phone, mono: true as const },
       { k: "UHID", v: headed.displayId, mono: true as const },
       { k: "OP No", v: "" },
-      { k: "Address", v: [headed.address, headed.city].filter(Boolean).join(", "), span: 3 as const },
+      { k: "Address", v: [headed.address, headed.city].filter(Boolean).join(", "), wrap: true as const },
+      { k: "Weight", v: "", mono: true as const },
+      { k: "Height", v: "", mono: true as const },
     ]
     : isBlank
       ? [
         { k: "Name", v: "" }, { k: "Age", v: "" }, { k: "Date", v: "" },
         { k: "Phone", v: "" }, { k: "UHID", v: "" }, { k: "OP No", v: "" },
-        { k: "Address", v: "", span: 3 as const },
+        { k: "Address", v: "", wrap: true as const },
+        { k: "Weight", v: "" }, { k: "Height", v: "" },
       ]
       : [
         { k: "Name", v: p!.fullName },
@@ -241,7 +274,9 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
         { k: "Phone", v: p!.phone, mono: true as const },
         { k: "UHID", v: p!.displayId, mono: true as const },
         { k: "OP No", v: a!.opNumber, mono: true as const },
-        { k: "Address", v: [p!.address, p!.city].filter(Boolean).join(", "), span: 3 as const },
+        { k: "Address", v: [p!.address, p!.city].filter(Boolean).join(", "), wrap: true as const },
+        { k: "Weight", v: measured?.weightKg != null ? `${num(measured.weightKg)} kg` : "", mono: true as const },
+        { k: "Height", v: measured?.heightCm != null ? `${num(measured.heightCm)} cm` : "", mono: true as const },
       ];
 
   return (
@@ -309,49 +344,74 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
           <FieldGrid fields={patientFields} />
         </div>
 
-        {/* Fixed gaps, not vw: a viewport unit is a share of the WINDOW on
-            screen and of the 210mm page in print, so the two never matched and
-            the overflow warning above was measuring a layout the printer
-            wouldn't get.
+        {/* THE SPLIT - the whole consultation, side by side, under the patient
+            block. Twelve columns: four for the clinical rail, eight for the ℞.
 
-            6px rather than the grids' own 3px: the two blocks share a voice on
-            purpose, and this is the one gap that says where the patient ends
-            and the triage numbers begin. */}
-        <div className="mt-[16px] ">
-          <VitalsGrid items={vitalsBoxes(isBlank ? null : v)} />
+            Stacked, these two fought each other for the same vertical inches.
+            The pre-printed stock reserves 86mm of the 297 for its own ink, so
+            211mm holds everything, and Case history / Investigation / Advice ate
+            it a heading at a time until the ℞ pad - the thing the patient
+            actually carries to the pharmacy - came out at eight cramped rows and
+            Next visit fell off the bottom.
+
+            Beside each other they don't compete: the rail's blocks are short
+            prose that reads fine in a narrow measure, and the ℞ gets the full
+            height of the sheet at two thirds of its width.
+
+            Explicit single row at minmax(0,1fr) so both columns take the
+            sheet's leftover height and can shrink inside it - an auto row would
+            size to the taller column and push the foot off the page.
+
+            NOTE the vw top margin: a viewport unit is a share of the WINDOW on
+            screen and of the 210mm page in print, so this gap is one size in
+            the preview and another in the tray, and the overflow warning above
+            measures the preview's. A px value is the same on both. */}
+        <div className=" grid min-h-0 flex-1 grid-cols-12 mt-[3vw] gap-x-6"
+          style={{ gridTemplateRows: "minmax(0, 1fr)" }}>
+
+          {/* PART 1 - vitals, then the clinical prose, down the left four.
+              data-sheet-col: the overflow check above reads these two, because
+              a column clips its own content without the sheet ever growing. */}
+          <div data-sheet-col className="col-span-4 flex min-h-0 min-w-0 flex-col">
+            {/* No heading over these: set in the patient block's own voice they
+                read as that strip continuing down the margin, which is what the
+                client's paper does with them. */}
+            <VitalsGrid items={vitalsBoxes(isBlank ? null : v)} stack />
+
+            {/* grow: history and investigation share whatever the rail has left,
+                so a light visit turns into writing room under these two headings
+                rather than a gap at the bottom of the column. */}
+            <OpenBlock label="Case history" value={isBlank ? null : clin?.caseHistory} minHeight="14mm" grow />
+
+            {/* The lab's own words on the tests it finished for this visit.
+                Printed as "Test - impression" under the lab's name, never merged
+                into the Diagnosis line: that line is the consultant's. */}
+            <OpenBlock
+              label="Investigation"
+              value={labImpressions.length
+                ? labImpressions.map((l) => `${l.testName} — ${l.impression}`).join("\n")
+                : null}
+              minHeight="14mm"
+              grow
+              footnote={labImpressions.length ? "Laboratory impression on the specimen - not a clinical diagnosis." : undefined}
+            />
+
+            {/* Diagnosis is not one of the client's printed headings, but
+                reception can type one - so it prints between the investigation
+                and the advice when it exists and costs the sheet nothing when it
+                doesn't. Set as a block like its neighbours rather than inline:
+                in a four-column measure a heading and its value on one line
+                leave the value about two words of room. */}
+            {clin?.diagnosis?.trim() && <OpenBlock label="Diagnosis" value={clin.diagnosis} />}
+
+            <OpenBlock label="Advice" value={clin?.advice} minHeight="18mm" />
+          </div>
+
+          {/* PART 2 - the ℞ pad, the remaining eight, full height. */}
+          <div data-sheet-col className="col-span-8 flex min-h-0 min-w-0 flex-col">
+            <RxPad items={isBlank ? [] : rxItems} slots={8} />
+          </div>
         </div>
-
-        <div className="mt-[16px]" />
-        {/* grow: history and investigation share the sheet's leftover height
-            with the ℞ pad, so a light visit turns into writing room under these
-            two headings instead of eight over-stretched prescription lines. */}
-        <OpenBlock label="Case history" value={isBlank ? null : clin?.caseHistory} minHeight="10mm" grow />
-        {/* Diagnosis is not one of the client's printed headings, but reception
-            can type one - so it prints as a line under the history when it
-            exists and costs the sheet nothing when it doesn't. Rendered through
-            the same inline block as Tests and Advice rather than hand-set, so
-            the four clinical lines can't drift into four different looks. */}
-        {clin?.diagnosis?.trim() && <OpenBlock label="Diagnosis" inline value={clin.diagnosis} />}
-
-        {/* The lab's own words on the tests it finished for this visit. Printed
-            as "Test - impression" under the lab's name, never merged into the
-            Diagnosis line: that line is the consultant's. */}
-        <OpenBlock
-          label="Investigation"
-          value={labImpressions.length
-            ? labImpressions.map((l) => `${l.testName} — ${l.impression}`).join("\n")
-            : null}
-          minHeight="10mm"
-          grow
-          footnote={labImpressions.length ? "Laboratory impression on the specimen - not a clinical diagnosis." : undefined}
-        />
-
-        <RxPad items={isBlank ? [] : rxItems} slots={8} />
-
-        {/* Set on its heading's line when it's filled - a line of advice is
-            short, and a block of its own cost the sheet the room the foot needs
-            to stay on page one. Blank, it goes back to being writing space. */}
-        <OpenBlock label="Advice" inline value={clin?.advice} minHeight="15mm" />
 
         {/* The two lines the patient leaves holding. On pre-printed stock they
             leave the flow together and sit in the band beside the QR - tests on
