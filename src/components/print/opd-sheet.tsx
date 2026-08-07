@@ -408,8 +408,8 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
           </div>
 
           {/* PART 2 - the ℞ pad, the remaining eight, full height. */}
-          <div data-sheet-col className="col-span-8 flex min-h-0 min-w-0 flex-col">
-            <RxPad items={isBlank ? [] : rxItems} slots={8} />
+          <div data-sheet-col className="col-span-8 mt-[12vw] flex min-h-0 min-w-0 flex-col">
+            <RxPad items={isBlank ? [] : rxItems}  />
           </div>
         </div>
 

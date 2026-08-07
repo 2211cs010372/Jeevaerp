@@ -967,7 +967,7 @@ export function RxPad({ items, slots = 9 }: {
                  the header is what fits between the pre-printed bands. */
               <tr key={i} className="border-b border-dotted pt-1 align-baseline" style={{ borderColor: "var(--pr-hair)", height: "8.5mm" }}>
                 {/* No full stop after the serial - it is a tally, not a sentence. */}
-                <td className="pr-1 font-mono  text-[10px]" style={{ color: "var(--pr-muted)" }}>{i + 1}</td>
+                
                 <td className="pr-2 pt-2 text-[14.5px] font-semibold" style={{ color: "var(--pr-ink)" }}>
                   {it ? <>{it.medicineName}{it.qty > 1 ? <span className="ml-1 font-normal text-[#57655f]">× {it.qty}</span> : null}</> : " "}
                 </td>
