@@ -203,3 +203,73 @@ export const updateInvoiceSchema = z.object({
 export const cancelInvoiceSchema = z.object({
   reason: z.string().trim().min(3, "Give a reason for cancelling").max(200),
 });
+
+/**
+ * A test the bench adds or corrects in the catalogue.
+ *
+ * The same shape admin's catalogItemSchema takes, MINUS gstRatePct - deliberately
+ * and not as an oversight. A tax rate is a CA's call; the bench's business is the
+ * name, the code and what the test costs. Leaving the field off the schema means
+ * a labs client cannot set one even by posting it by hand, which is what makes
+ * "the labs screen doesn't touch GST" a rule rather than a convention.
+ */
+export const labCatalogItemSchema = z.object({
+  id: z.string().trim().optional(),
+  name: z.string().trim().min(2, "Give the test a name").max(120),
+  code: z.string().trim().max(20).optional().or(z.literal("")),
+  price: z.coerce.number().min(0, "A price cannot be negative"),
+  active: z.boolean().optional().default(true),
+});
+
+/**
+ * A test's normal-value template, replacing whatever it had.
+ *
+ * The rules below are the SAME invariants tests/lab-catalog.test.ts asserts over
+ * the seeded catalogue, enforced here so a row typed at a bench cannot break one
+ * the seed would never have produced:
+ *
+ *  · a half-range (a low with no high) silently flags everything above it;
+ *  · a numeric range AND a text range on one row means the flagging and the
+ *    printed reference disagree about what normal is;
+ *  · a low above its high flags every possible result;
+ *  · a repeated name violates @@unique([catalogId, name]) and fails mid-write.
+ */
+export const catalogAnalytesSchema = z.object({
+  analytes: z.array(z.object({
+    name: z.string().trim().min(1, "Every row needs a name").max(120),
+    unit: z.string().trim().max(30).nullish(),
+    refLow: z.coerce.number().nullish(),
+    refHigh: z.coerce.number().nullish(),
+    refText: z.string().trim().max(120).nullish(),
+  })).max(80, "A test cannot hold more than 80 rows"),
+}).superRefine((v, ctx) => {
+  const seen = new Set<string>();
+  v.analytes.forEach((a, i) => {
+    const key = a.name.trim().toLowerCase();
+    if (seen.has(key)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["analytes", i, "name"], message: `"${a.name}" appears twice` });
+    }
+    seen.add(key);
+
+    const hasLow = a.refLow != null;
+    const hasHigh = a.refHigh != null;
+    if (hasLow !== hasHigh) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom, path: ["analytes", i, hasLow ? "refHigh" : "refLow"],
+        message: `"${a.name}" has only one end of its range - give both, or neither`,
+      });
+    }
+    if (hasLow && hasHigh && (a.refLow as number) > (a.refHigh as number)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom, path: ["analytes", i, "refLow"],
+        message: `"${a.name}" has a low above its high`,
+      });
+    }
+    if ((hasLow || hasHigh) && a.refText?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom, path: ["analytes", i, "refText"],
+        message: `"${a.name}" has both a numeric range and a text one - keep one`,
+      });
+    }
+  });
+});

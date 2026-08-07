@@ -532,13 +532,12 @@ export const LAB_CATALOG: CatalogSpec[] = [
     name: "Gravindex Test (Urine Pregnancy)",
     group: "Serology",
     analytes: [
-      // The reference reads "Negative", not "Positive". This column is what a
-      // NORMAL result looks like - it is printed under BIOLOGICAL REFERENCE
-      // INTERVAL - and on a pregnancy test that is the not-pregnant state. The
-      // result itself is whatever the bench types, Positive or Negative, and
-      // neither is flagged: text results are only ever marked abnormal by hand
-      // (see flagFor in labs.service.ts), so nothing here grades a pregnancy.
-      { name: "Urine For Gravindex", refText: "Negative" },
+      // "Positive" is the hospital's own wording for this row, and it prints in
+      // the reference column as given. It costs nothing to be wrong about:
+      // nothing on this sheet grades a pregnancy, because text results are only
+      // ever marked abnormal by hand (see flagFor in labs.service.ts). The
+      // column is a printed prompt here, not a threshold.
+      { name: "Urine For Gravindex", refText: "Positive" },
     ],
   },
   {

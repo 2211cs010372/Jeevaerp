@@ -121,6 +121,9 @@ export const PORTALS: Record<string, PortalMeta> = {
       { label: "Dashboard", href: "/", icon: "grid" },
       { label: "Test queue", href: "/queue", icon: "flask" },
       { label: "Order tests", href: "/order", icon: "plus" },
+      // The same rows admin edits under "Lab catalog & GST" - one record, two
+      // doors. The bench keeps the names and the prices; admin keeps the tax.
+      { label: "Test catalog", href: "/catalog", icon: "box" },
       { label: "Billing", href: "/billing", icon: "rupee" },
       { label: "Invoices", href: "/invoices", icon: "receipt" },
       { label: "Day close", href: "/day-close", icon: "trend" },

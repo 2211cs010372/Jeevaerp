@@ -653,24 +653,120 @@ function doctorCreateData(d: DoctorProfileInput): DoctorProfileColumns &
 }
 
 // ---- Lab catalog management (GST rates live here) ----
+/**
+ * Create or update a test in the ONE catalogue.
+ *
+ * TWO SCREENS, ONE WRITE PATH. Admin -> Lab catalog & GST and Labs -> Test
+ * catalog both land here. There is no syncing between them and nothing to keep
+ * in step, because there is only ever one row: the lab technician who corrects a
+ * price and the admin who reads it are looking at the same record through two
+ * doors. Anything that made a second path - a labs-only table, a copy, a
+ * queue - would be a way for the two screens to disagree, and the price they
+ * would disagree about is the one a patient gets billed.
+ *
+ * `gstRatePct` IS OPTIONAL, and that is the difference between the two doors.
+ * A tax rate is a CA's call, not a bench call, so the labs screen never sends
+ * one: on an update the column is left exactly as the admin set it, and on a
+ * create it starts at 0 - exempt, which is what a diagnostic service is under
+ * Notification 12/2017. Omitting it is not the same as sending 0; the first
+ * preserves a rate somebody decided on, the second overwrites it.
+ */
 export async function upsertCatalogItem(
   actor: AuthUser,
-  input: { id?: string; name: string; code?: string; price: number; gstRatePct: number; active: boolean },
+  input: { id?: string; name: string; code?: string; price: number; gstRatePct?: number; active: boolean },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<void> {
+  const gst = input.gstRatePct == null ? {} : { gstRatePct: input.gstRatePct.toFixed(2) };
   if (input.id) {
     await prisma.labTestCatalog.update({
       where: { id: input.id },
-      data: { name: input.name, code: input.code || null, price: input.price.toFixed(2), gstRatePct: input.gstRatePct.toFixed(2), active: input.active },
+      data: { name: input.name, code: input.code || null, price: input.price.toFixed(2), ...gst, active: input.active },
     });
-    await logAudit(actor, { action: "CATALOG_UPDATED", targetTable: "LabTestCatalog", targetId: input.id, meta: { gstRatePct: input.gstRatePct }, ...ctx });
+    await logAudit(actor, { action: "CATALOG_UPDATED", targetTable: "LabTestCatalog", targetId: input.id, meta: { gstRatePct: input.gstRatePct ?? null }, ...ctx });
   } else {
     const created = await prisma.labTestCatalog.create({
-      data: { name: input.name, code: input.code || null, price: input.price.toFixed(2), gstRatePct: input.gstRatePct.toFixed(2), active: input.active },
+      data: {
+        name: input.name, code: input.code || null, price: input.price.toFixed(2),
+        gstRatePct: (input.gstRatePct ?? 0).toFixed(2), active: input.active,
+      },
       select: { id: true },
     });
     await logAudit(actor, { action: "CATALOG_CREATED", targetTable: "LabTestCatalog", targetId: created.id, ...ctx });
   }
+}
+
+export interface CatalogAnalyteDTO {
+  name: string; unit: string | null;
+  refLow: string | null; refHigh: string | null; refText: string | null;
+}
+
+/** The normal-value template for one test, in the order it prints. */
+export async function listCatalogAnalytes(catalogId: string): Promise<CatalogAnalyteDTO[]> {
+  const rows = await prisma.labAnalyte.findMany({
+    where: { catalogId },
+    orderBy: { sortOrder: "asc" },
+    select: { name: true, unit: true, refLow: true, refHigh: true, refText: true },
+  });
+  return rows.map((a) => ({
+    name: a.name,
+    unit: a.unit,
+    refLow: a.refLow == null ? null : a.refLow.toString(),
+    refHigh: a.refHigh == null ? null : a.refHigh.toString(),
+    refText: a.refText,
+  }));
+}
+
+/**
+ * Replace a test's normal values wholesale.
+ *
+ * REPLACE, NOT MERGE - the same rule the catalogue seed follows, and for the
+ * same reason: these rows are a TEMPLATE for the results form, so a row the
+ * technician deleted has been deleted from the form and must not linger. Merging
+ * would make deletion impossible to express.
+ *
+ * WHAT THIS DOES NOT TOUCH is any result already reported. A LabResultItem
+ * carries its own copy of the name, the unit and the range it was measured
+ * against, snapshotted at save time - so changing the template here changes what
+ * the NEXT sample is judged by, and re-opening a report from March still prints
+ * March's numbers against March's ranges. That separation is the whole reason
+ * editing this is safe to hand to the bench.
+ *
+ * The whole set is written in one transaction: a delete that succeeded and a
+ * create that failed would leave a test with no rows to fill in at all.
+ */
+export async function replaceCatalogAnalytes(
+  actor: AuthUser,
+  catalogId: string,
+  rows: { name: string; unit?: string | null; refLow?: number | null; refHigh?: number | null; refText?: string | null }[],
+  ctx: { ipAddress?: string; userAgent?: string }
+): Promise<void> {
+  const exists = await prisma.labTestCatalog.findUnique({ where: { id: catalogId }, select: { id: true } });
+  if (!exists) throw new ApiError(404, "That test is not in the catalog");
+
+  await prisma.$transaction(async (tx) => {
+    await tx.labAnalyte.deleteMany({ where: { catalogId } });
+    if (rows.length) {
+      await tx.labAnalyte.createMany({
+        data: rows.map((a, i) => ({
+          catalogId,
+          name: a.name,
+          unit: a.unit?.trim() || null,
+          refLow: a.refLow == null ? null : a.refLow.toFixed(4),
+          refHigh: a.refHigh == null ? null : a.refHigh.toFixed(4),
+          refText: a.refText?.trim() || null,
+          sortOrder: i,
+        })),
+      });
+    }
+  });
+
+  await logAudit(actor, {
+    action: "CATALOG_ANALYTES_REPLACED",
+    targetTable: "LabTestCatalog",
+    targetId: catalogId,
+    meta: { count: rows.length },
+    ...ctx,
+  });
 }
 
 export async function listAllCatalog(): Promise<{ id: string; name: string; code: string | null; price: string; gstRatePct: string; active: boolean }[]> {

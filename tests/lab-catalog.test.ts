@@ -211,10 +211,10 @@ describe("the ranges and the menu the hospital asked for", () => {
     expect(find("RETIC", "Reticulocyte Count").refHigh).toBe(2);
   });
 
-  it("adds the gravindex, referenced against the not-pregnant state", () => {
-    // The reference column prints what a NORMAL result looks like. Nothing here
-    // grades the result: text values are only flagged abnormal by hand.
-    expect(find("GRAVINDEX", "Urine For Gravindex").refText).toBe("Negative");
+  it("adds the gravindex in the hospital's own wording", () => {
+    // Nothing here grades the result: text values are only flagged abnormal by
+    // hand, so this string is a printed prompt, not a threshold.
+    expect(find("GRAVINDEX", "Urine For Gravindex").refText).toBe("Positive");
   });
 
   it("builds the surgical profile out of the same rows as its parts", () => {
