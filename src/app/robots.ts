@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 import { SITE_URL } from "@/lib/site";
+import { PORTAL_SUBDOMAINS } from "@/lib/auth/host";
 
 /**
  * The marketing site is open; everything that needs a login is not.
@@ -16,7 +17,11 @@ export default function robots(): MetadataRoute.Robots {
         allow: "/",
         disallow: [
           "/api/",
-          "/admin", "/reception", "/labs", "/pharmacy",
+          // Every portal except "doctor", which needs the anchored form below.
+          // Derived from the one portal list rather than retyped: this file was
+          // the last copy still listing them by hand, and it silently left the
+          // newest portal's login screen crawlable.
+          ...PORTAL_SUBDOMAINS.filter((p) => p !== "doctor").map((p) => `/${p}`),
           // CAREFUL: Disallow is a PREFIX match, so a bare "/doctor" would also
           // block "/doctors" and every doctor profile - the exact pages this
           // site most wants indexed. Anchor the portal path instead.

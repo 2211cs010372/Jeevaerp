@@ -8,6 +8,18 @@ import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 
+/** One row of the hospital's published rate card. See prisma ServiceCharge. */
+interface ServiceCharge {
+  id: string; name: string; group: string; category: string;
+  price: string; gstRatePct: string; perDay: boolean;
+}
+const SERVICE_GROUP_LABEL: Record<string, string> = {
+  IP_CHARGE: "Inpatient charges",
+  SURGERY_OPEN: "Surgery - open",
+  SURGERY_LAPAROSCOPIC: "Surgery - laparoscopic",
+  OTHER: "Other",
+};
+
 interface Charge {
   id: string; category: string; description: string; qty: number;
   unitPrice: string; gstRatePct: string; amount: string;
@@ -74,6 +86,25 @@ export default function AdmissionSheetPage() {
   const [qty, setQty] = useState("1");
   const [price, setPrice] = useState("");
   const [gst, setGst] = useState("0");
+
+  // The hospital's published rate card - the boards on the wall, in a dropdown.
+  const [services, setServices] = useState<ServiceCharge[]>([]);
+  useEffect(() => {
+    api.get<{ services: ServiceCharge[] }>("/ipd/services").then((r) => setServices(r.services)).catch(() => {});
+  }, []);
+
+  /** Fill the line from the rate card, leaving every box editable. */
+  function pickService(id: string) {
+    const svc = services.find((x) => x.id === id);
+    if (!svc) return;
+    setDesc(svc.name);
+    setCat(svc.category);
+    setPrice(String(Number(svc.price)));
+    setGst(String(Number(svc.gstRatePct)));
+    // A per-day charge defaults to the days so far. Still editable - nobody is
+    // on oxygen for every night they are in the bed.
+    setQty(svc.perDay && sheet ? String(sheet.days) : "1");
+  }
 
   // nursing / observation notes
   const [notes, setNotes] = useState("");
@@ -415,6 +446,32 @@ export default function AdmissionSheetPage() {
           {!discharged && (
             <div className="border-t border-[var(--p-border)] bg-[var(--p-bg)] p-5">
               <p className="mb-3 text-[12px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Add to the tab</p>
+              {/* THE RATE CARD, ahead of the free-text boxes.
+                  Typing a description and a price by hand is how the same
+                  procedure got billed at three different rates by three shifts,
+                  and how the board on the wall and the bill at the desk drifted
+                  apart with nobody able to say which was right. Picking fills
+                  both; the boxes below stay editable for the genuinely one-off. */}
+              {services.length > 0 && (
+                <div className="mb-3">
+                  <Field label="Pick from the rate card">
+                    <select className={fld} value="" onChange={(e) => pickService(e.target.value)}>
+                      <option value="">Choose a service, or type one below…</option>
+                      {Object.keys(SERVICE_GROUP_LABEL)
+                        .filter((g) => services.some((x) => x.group === g))
+                        .map((g) => (
+                          <optgroup key={g} label={SERVICE_GROUP_LABEL[g]}>
+                            {services.filter((x) => x.group === g).map((x) => (
+                              <option key={x.id} value={x.id}>
+                                {x.name} — ₹{Number(x.price).toLocaleString("en-IN")}{x.perDay ? " / day" : ""}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))}
+                    </select>
+                  </Field>
+                </div>
+              )}
               <div className="grid gap-3 sm:grid-cols-6">
                 <div className="sm:col-span-2">
                   <Field label="What"><select className={fld} value={cat} onChange={(e) => setCat(e.target.value)}>

@@ -80,6 +80,8 @@ export interface DayClose {
   totals: { collected: number; refunded: number; net: number };
   /** The number the receptionist physically counts. */
   cashInHand: number;
+  /** Bills this till RAISED today that settle at a counter. Insurance bills are
+   *  counted separately below and never folded in here. */
   bills: number;
   refundCount: number;
   /** Per-counter (receptionist) tally - how many payments each took and how much. */
@@ -89,8 +91,24 @@ export interface DayClose {
     receiptNo: string; patient: string; amount: number;
     mode: string; reason: string; by: string; at: string;
   }[];
-  /** Bills raised today that are still not fully paid. */
+  /** Bills raised today that are still not fully paid. Self-pay only - these are
+   *  debts somebody can actually be asked for. */
   outstanding: { receiptNo: string; patient: string; total: number; paid: number; due: number }[];
+  /**
+   * BILLED TO AN INSURER TODAY. SHOWN, NEVER COUNTED.
+   *
+   * These are not money and they are not a debt. No cash arrived, so they are
+   * absent from `modes`, `totals` and `cashInHand`; and nobody at the desk can
+   * collect them, so they are kept out of `outstanding` - a receptionist reading
+   * a ₹1.4L "still unpaid" line and going to find a family who owes nothing is
+   * exactly the confusion this split exists to prevent.
+   *
+   * They appear on the statement anyway, in their own block, because the shift
+   * genuinely did raise them and a day close that silently omitted a lakh of
+   * billing would be the other kind of wrong.
+   */
+  insurance: { receiptNo: string; patient: string; insurer: string | null; total: number }[];
+  insuranceTotal: number;
   /** Masthead for the printed statement. Bundled here rather than fetched
    *  separately so the print sheet needs one round trip and no ADMIN-only
    *  config call - same pattern as opdPrintData / advancePrintData. */
@@ -142,6 +160,7 @@ export async function dayClose(opts?: { dateISO?: string; till?: Till }): Promis
       where: { createdAt: { gte: from, lte: to }, ...invoiceWhere },
       select: {
         receiptNo: true, totalAmount: true, status: true,
+        payer: true, payerName: true,
         patient: { select: { fullName: true } },
         payments: { select: { amount: true } },
         refunds: { select: { amount: true } },
@@ -205,6 +224,20 @@ export async function dayClose(opts?: { dateISO?: string; till?: Till }): Promis
   const collected = r2(modes.reduce((s, m) => r2(s + m.collected), 0));
   const refunded = r2(modes.reduce((s, m) => r2(s + m.refunded), 0));
 
+  // The day's bills, split by whether they are a drawer's problem at all. Done
+  // once, here, so `bills`, `outstanding` and `insurance` below can never be
+  // computed off three different notions of what counts.
+  type InvoiceRow = {
+    receiptNo: string; totalAmount: { toString(): string }; status: string;
+    payer: string; payerName: string | null;
+    patient: { fullName: string } | null;
+    payments: { amount: { toString(): string } }[];
+    refunds: { amount: { toString(): string } }[];
+  };
+  const live = (invoices as InvoiceRow[]).filter((i) => i.status !== "CANCELLED");
+  const selfPayBills = live.filter((i) => i.payer !== "INSURANCE");
+  const insuranceBills = live.filter((i) => i.payer === "INSURANCE");
+
   return {
     hospital,
     date: localDateISO(from),
@@ -215,7 +248,7 @@ export async function dayClose(opts?: { dateISO?: string; till?: Till }): Promis
     totals: { collected, refunded, net: r2(collected - refunded) },
     // The drawer only ever sees cash. A ₹5,000 UPI refund does not empty it.
     cashInHand: modes.find((m) => m.mode === "CASH")?.net ?? 0,
-    bills: invoices.length,
+    bills: selfPayBills.length,
     refundCount: refunds.length,
     byCounter,
     refunds: (refunds as R[]).map((x) => ({
@@ -227,13 +260,7 @@ export async function dayClose(opts?: { dateISO?: string; till?: Till }): Promis
       by: x.refundedBy?.name ?? "-",
       at: x.createdAt.toISOString(),
     })),
-    outstanding: (invoices as {
-      receiptNo: string; totalAmount: { toString(): string }; status: string;
-      patient: { fullName: string } | null;
-      payments: { amount: { toString(): string } }[];
-      refunds: { amount: { toString(): string } }[];
-    }[])
-      .filter((i) => i.status !== "CANCELLED")
+    outstanding: selfPayBills
       .map((i) => {
         const total = Number(i.totalAmount.toString());
         const paid = r2(
@@ -249,6 +276,17 @@ export async function dayClose(opts?: { dateISO?: string; till?: Till }): Promis
       })
       .filter((i) => i.due > 0)
       .sort((a, b) => b.due - a.due),
+    insurance: insuranceBills
+      .map((i) => ({
+        receiptNo: i.receiptNo,
+        patient: i.patient?.fullName ?? "-",
+        insurer: i.payerName,
+        total: Number(i.totalAmount.toString()),
+      }))
+      .sort((a, b) => b.total - a.total),
+    insuranceTotal: r2(
+      insuranceBills.reduce((s, i) => r2(s + Number(i.totalAmount.toString())), 0)
+    ),
   };
 }
 
@@ -268,8 +306,12 @@ export interface TillSummary {
   digital: number;
   /** Number of tenders taken, not bills - a split payment is two. */
   payments: number;
-  /** Bills this counter raised today. */
+  /** Bills this counter raised today that settle at a counter. */
   bills: number;
+  /** Bills this counter raised that went to an insurer. Reported, never added
+   *  into `collected`, `net` or `cash` - no money crossed this drawer. */
+  insuranceBills: number;
+  insuranceAmount: number;
   /** Who was on this counter, biggest taker first. */
   staff: { name: string; count: number; amount: number }[];
   /** What this counter's money was for. */
@@ -288,7 +330,11 @@ export interface TillSummary {
 export async function dayCloseByTill(dateISO?: string): Promise<{
   date: string;
   tills: TillSummary[];
-  totals: { collected: number; refunded: number; net: number; cash: number; payments: number; bills: number };
+  totals: {
+    collected: number; refunded: number; net: number; cash: number; payments: number; bills: number;
+    /** Deliberately outside `collected` and `net`. See TillSummary.insuranceBills. */
+    insuranceBills: number; insuranceAmount: number;
+  };
 }> {
   const { from, to } = dayWindow(dateISO);
 
@@ -311,7 +357,7 @@ export async function dayCloseByTill(dateISO?: string): Promise<{
     }),
     prisma.invoice.findMany({
       where: { createdAt: { gte: from, lte: to } },
-      select: { createdBy: { select: { role: true } } },
+      select: { payer: true, totalAmount: true, createdBy: { select: { role: true } } },
     }),
   ]);
 
@@ -324,7 +370,7 @@ export async function dayCloseByTill(dateISO?: string): Promise<{
     till,
     label: till === "UNASSIGNED" ? "Unassigned" : TILL_LABEL[till],
     collected: 0, refunded: 0, net: 0, cash: 0, digital: 0,
-    payments: 0, bills: 0, staff: [], bySource: [],
+    payments: 0, bills: 0, insuranceBills: 0, insuranceAmount: 0, staff: [], bySource: [],
   });
 
   const acc = new Map<string, TillSummary>();
@@ -384,8 +430,18 @@ export async function dayCloseByTill(dateISO?: string): Promise<{
     sm.set(src, sc);
   }
 
-  for (const inv of invoices as { createdBy: { role: string } | null }[]) {
-    acc.get(tillOf(inv.createdBy?.role))!.bills += 1;
+  // `bills` on this roll-up is a COUNTER's output, so it counts what that counter
+  // raised to be settled at a counter. An insurance bill went to a TPA, not to
+  // this drawer, and is tallied on its own line instead - the owner still sees it,
+  // just not inside a column headed by a cash figure.
+  for (const inv of invoices as { payer: string; totalAmount: { toString(): string }; createdBy: { role: string } | null }[]) {
+    const row = acc.get(tillOf(inv.createdBy?.role))!;
+    if (inv.payer === "INSURANCE") {
+      row.insuranceBills += 1;
+      row.insuranceAmount = r2(row.insuranceAmount + Number(inv.totalAmount.toString()));
+    } else {
+      row.bills += 1;
+    }
   }
 
   const tills = [...TILLS, "UNASSIGNED" as const].map((t) => {
@@ -395,8 +451,10 @@ export async function dayCloseByTill(dateISO?: string): Promise<{
     row.bySource = [...sourceAcc.get(t)!.values()].sort((a, b) => b.net - a.net);
     return row;
   })
-    // A drawer that saw no money and wrote no bill is noise on this screen.
-    .filter((r) => r.till !== "UNASSIGNED" || r.collected > 0 || r.refunded > 0 || r.bills > 0);
+    // A drawer that saw no money and wrote no bill is noise on this screen. An
+    // insurance bill still counts as having written one - a desk whose whole day
+    // was cashless admissions must not vanish from the owner's roll-up.
+    .filter((r) => r.till !== "UNASSIGNED" || r.collected > 0 || r.refunded > 0 || r.bills > 0 || r.insuranceBills > 0);
 
   return {
     date: localDateISO(from),
@@ -408,6 +466,8 @@ export async function dayCloseByTill(dateISO?: string): Promise<{
       cash: r2(tills.reduce((s, t) => r2(s + t.cash), 0)),
       payments: tills.reduce((s, t) => s + t.payments, 0),
       bills: tills.reduce((s, t) => s + t.bills, 0),
+      insuranceBills: tills.reduce((s, t) => s + t.insuranceBills, 0),
+      insuranceAmount: r2(tills.reduce((s, t) => r2(s + t.insuranceAmount), 0)),
     },
   };
 }

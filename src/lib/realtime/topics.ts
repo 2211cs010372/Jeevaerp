@@ -44,6 +44,13 @@ export const TOPICS = {
    * sitting in the building since eleven o'clock, or refreshed out of habit.
    */
   DOCTOR: "doctor",
+  /**
+   * The insurance room. Hears about admissions rather than about claims: the
+   * work that goes stale there is a cashless patient who was admitted this
+   * morning and still has no pre-authorization by evening, and the only signal
+   * for that is somebody else's admission.
+   */
+  INSURANCE: "insurance",
 } as const;
 
 export type Topic = (typeof TOPICS)[keyof typeof TOPICS];

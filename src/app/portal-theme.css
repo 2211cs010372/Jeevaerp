@@ -8,16 +8,15 @@
    semantic tokens below are the source of truth and the legacy names alias
    onto them. One place to change the palette; it cascades everywhere.
    ========================================================================== */
-    
     /* Scrollbar ink, declared at the ROOT rather than on .portal: the window's
    own scrollbar belongs to the document element, which sits ABOVE .portal and
    so can never inherit a value from it. */
-
-    :root {
+    
+     :root {
         --p-scroll-thumb: rgba(9, 26, 52, 0.20);
         --p-scroll-thumb-hover: rgba(9, 26, 52, 0.36);
     }
-
+    
     .portal {
         /* ---- Neutrals: cool, blue-cast - never warm grey ---- */
         --p-ink: #091a34;
@@ -153,13 +152,12 @@
         border-color: rgba(255, 255, 255, 0.85);
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 1px 24px -8px rgba(9, 26, 52, 0.10);
     }
-    
     /* Nav skin - a chosen sidebar/topbar colour, replacing the frosted glass.
    Gated on [data-navskin], which only exists once somebody picks one, so an
    untouched portal keeps its own chrome untouched. The element selector takes
    this past the per-portal .glass overrides further down (the pharmacy has
    its own), which is the point: a deliberate choice outranks a skin. */
-
+    
     .portal[data-navskin] aside.navskin,
     .portal[data-navskin] header.navskin,
     .portal[data-navskin] div.navskin {
@@ -170,7 +168,6 @@
         backdrop-filter: none;
         box-shadow: none;
     }
-
     /* ============================ SCROLLBARS ==================================
    Thin, light, and with no stepper arrows.
 
@@ -189,57 +186,57 @@
    designed against.
    ========================================================================== */
     /* Standard properties - Firefox, and the engines that have caught up. */
-
-    :root:has(.portal),
+    
+     :root:has(.portal),
     .portal,
     .portal * {
         scrollbar-width: thin;
         scrollbar-color: var(--p-scroll-thumb) transparent;
     }
     /* WebKit / Blink - the window's bar plus every inner scroll container. */
-
-    :root:has(.portal)::-webkit-scrollbar,
+    
+     :root:has(.portal)::-webkit-scrollbar,
     .portal::-webkit-scrollbar,
     .portal *::-webkit-scrollbar {
         width: 8px;
         height: 8px;
     }
-
-    :root:has(.portal)::-webkit-scrollbar-track,
+    
+     :root:has(.portal)::-webkit-scrollbar-track,
     .portal::-webkit-scrollbar-track,
     .portal *::-webkit-scrollbar-track {
         background: transparent;
     }
-
-    :root:has(.portal)::-webkit-scrollbar-thumb,
+    
+     :root:has(.portal)::-webkit-scrollbar-thumb,
     .portal::-webkit-scrollbar-thumb,
     .portal *::-webkit-scrollbar-thumb {
         background: var(--p-scroll-thumb);
         border-radius: 999px;
     }
-
-    :root:has(.portal)::-webkit-scrollbar-thumb:hover,
+    
+     :root:has(.portal)::-webkit-scrollbar-thumb:hover,
     .portal::-webkit-scrollbar-thumb:hover,
     .portal *::-webkit-scrollbar-thumb:hover {
         background: var(--p-scroll-thumb-hover);
     }
     /* The steppers. A custom WebKit scrollbar drops them anyway - said out loud
    so that nothing later puts them back by styling the buttons. */
-
-    :root:has(.portal)::-webkit-scrollbar-button,
+    
+     :root:has(.portal)::-webkit-scrollbar-button,
     .portal::-webkit-scrollbar-button,
     .portal *::-webkit-scrollbar-button {
         display: none;
         width: 0;
         height: 0;
     }
-
-    :root:has(.portal)::-webkit-scrollbar-corner,
+    
+     :root:has(.portal)::-webkit-scrollbar-corner,
     .portal::-webkit-scrollbar-corner,
     .portal *::-webkit-scrollbar-corner {
         background: transparent;
     }
-
+    
     .portal .rule {
         height: 1px;
         background: var(--p-border);
@@ -1290,7 +1287,98 @@
     .portal[data-portal="doctor"] .flow-step {
         border-radius: 16px;
     }
-/* ============================================================================
+    
+    .portal[data-portal="insurance"] {
+        /* neutrals - pine-cast porcelain, identical to admin */
+        --p-ink: #0c1a1c;
+        --p-text: #3d4c4f;
+        --p-muted: #64737a;
+        --p-bg: #f1f3f2;
+        --p-surface: #ffffff;
+        --p-border: #e2e7e5;
+        --p-border-strong: #cdd6d3;
+        /* primary - deep pine, aliased onto the blue slots the components use */
+        --p-blue: #0b544c;
+        --p-blue-deep: #073d37;
+        --p-blue-soft: rgba(11, 84, 76, 0.08);
+        --p-blue-glow: rgba(11, 84, 76, 0.25);
+        /* positive / live - teal lift */
+        --p-cyan: #17705f;
+        --p-cyan-deep: #0b544c;
+        --p-cyan-soft: rgba(23, 112, 95, 0.10);
+        /* semantic - admin's muted brass + emergency red */
+        --p-amber: #a97b3f;
+        --p-amber-soft: rgba(169, 123, 63, 0.12);
+        --p-rose: #c2402f;
+        --p-rose-soft: rgba(194, 64, 47, 0.10);
+        --p-teal: var(--p-blue);
+        --p-teal-deep: var(--p-blue-deep);
+        --p-teal-soft: var(--p-blue-soft);
+        --p-sidebar: rgba(255, 255, 255, 0.78);
+        --p-sidebar-border: var(--p-border);
+        --p-shadow-sm: 0 1px 2px rgba(12, 26, 28, 0.04);
+        --p-shadow: 0 1px 2px rgba(12, 26, 28, 0.04), 0 10px 30px -18px rgba(12, 26, 28, 0.14);
+        --p-shadow-lg: 0 1px 2px rgba(12, 26, 28, 0.05), 0 24px 50px -24px rgba(12, 26, 28, 0.20);
+    }
+    /* a quiet pine bloom - same fixed backdrop as admin, no navy aurora */
+    
+    .portal[data-portal="insurance"]::before {
+        background: radial-gradient(760px 420px at 12% -6%, rgba(11, 84, 76, 0.07), transparent 62%), radial-gradient(620px 380px at 92% 4%, rgba(23, 112, 95, 0.06), transparent 60%);
+    }
+    /* headings inherit the shared Geist treatment (see base .font-serif-p). */
+    /* surfaces go big-radius and minimal - same geometry as admin's cards.
+   No brand-tab accent strip: admin's cards don't carry one, so reception's
+   no longer does either. */
+    
+    .portal[data-portal="insurance"] .surface {
+        border-radius: 22px;
+    }
+    
+    .portal[data-portal="insurance"] .surface-hover:hover {
+        border-color: #c9dcd6;
+        box-shadow: var(--p-shadow-lg);
+        transform: translateY(-2px);
+    }
+    /* glass tuned to admin's recipe - light frosted white on BOTH the topbar
+   and the sidebar. No dark rail override: aside.glass just inherits this,
+   same as it does in admin. */
+    
+    .portal[data-portal="insurance"] .glass {
+        background: rgba(255, 255, 255, 0.78);
+        backdrop-filter: blur(16px) saturate(1.4);
+        -webkit-backdrop-filter: blur(16px) saturate(1.4);
+        border-color: rgba(255, 255, 255, 0.85);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 1px 24px -8px rgba(12, 26, 28, 0.08);
+    }
+    
+    .portal[data-portal="insurance"] .dotgrid {
+        background-image: radial-gradient(rgba(11, 84, 76, 0.12) 1px, transparent 1px);
+    }
+    /* Buttons use the shared Supabase treatment (see base .btn-primary) - the
+   pine accent comes through var(--p-blue). Nothing to override here. */
+    /* rounded utilities scale up inside reception too, matching admin exactly -
+   pills stay pills */
+    
+    .portal[data-portal="insurance"] .rounded-md {
+        border-radius: 10px;
+    }
+    
+    .portal[data-portal="insurance"] .rounded-lg {
+        border-radius: 14px;
+    }
+    
+    .portal[data-portal="insurance"] .rounded-xl {
+        border-radius: 18px;
+    }
+    
+    .portal[data-portal="insurance"] .rounded-2xl {
+        border-radius: 24px;
+    }
+    
+    .portal[data-portal="insurance"] .flow-step {
+        border-radius: 16px;
+    }
+    /* ============================================================================
    OVERLAYS
 
    .modal-veil was referenced by the shared Modal but never defined, so every
@@ -1304,79 +1392,85 @@
    tablet that actually sits on the counter - so the collect panel rises from
    the bottom edge rather than covering the middle of the screen.
    ========================================================================== */
-
-.portal .modal-veil,
-.portal .sheet-veil {
-    position: fixed;
-    inset: 0;
-    z-index: 60;
-    display: flex;
-    background: rgba(9, 26, 52, .42);
-    backdrop-filter: blur(2px);
-    animation: veilIn .16s ease-out;
-}
-
-.portal .modal-veil {
-    align-items: center;
-    justify-content: center;
-    padding: 16px;
-}
-
-.portal .sheet-veil {
-    align-items: flex-end;
-    justify-content: center;
-    padding: 0;
-}
-
-/* The sheet itself: full width on a phone, a centred card on a desktop, always
+    
+    .portal .modal-veil,
+    .portal .sheet-veil {
+        position: fixed;
+        inset: 0;
+        z-index: 60;
+        display: flex;
+        background: rgba(9, 26, 52, .42);
+        backdrop-filter: blur(2px);
+        animation: veilIn .16s ease-out;
+    }
+    
+    .portal .modal-veil {
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+    }
+    
+    .portal .sheet-veil {
+        align-items: flex-end;
+        justify-content: center;
+        padding: 0;
+    }
+    /* The sheet itself: full width on a phone, a centred card on a desktop, always
    flush to the bottom edge. max-height keeps a long bill scrollable inside the
    sheet instead of pushing its footer off-screen. */
-.portal .sheet-panel {
-    width: 100%;
-    max-width: 560px;
-    max-height: 88vh;
-    display: flex;
-    flex-direction: column;
-    border-radius: 20px 20px 0 0;
-    background: #fff;
-    box-shadow: 0 -18px 60px -12px rgba(9, 26, 52, .35);
-    animation: sheetUp .22s cubic-bezier(.22, 1, .36, 1);
-    /* Clear the home indicator on iOS so the action button is never under it. */
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-
-/* The grab handle. Purely affordance - it says "this came from the bottom and
-   can go back there", which a centred dialog never needs to say. */
-.portal .sheet-grip {
-    width: 38px;
-    height: 4px;
-    border-radius: 999px;
-    background: var(--p-border-strong);
-    margin: 10px auto 2px;
-    flex-shrink: 0;
-}
-
-@keyframes veilIn {
-    from { opacity: 0; }
-    to   { opacity: 1; }
-}
-
-@keyframes sheetUp {
-    from { transform: translateY(100%); }
-    to   { transform: translateY(0); }
-}
-
-/* Someone who has asked the OS to reduce motion should not get a 22px slide. */
-@media (prefers-reduced-motion: reduce) {
-    .portal .modal-veil,
-    .portal .sheet-veil,
+    
     .portal .sheet-panel {
-        animation: none;
+        width: 100%;
+        max-width: 560px;
+        max-height: 88vh;
+        display: flex;
+        flex-direction: column;
+        border-radius: 20px 20px 0 0;
+        background: #fff;
+        box-shadow: 0 -18px 60px -12px rgba(9, 26, 52, .35);
+        animation: sheetUp .22s cubic-bezier(.22, 1, .36, 1);
+        /* Clear the home indicator on iOS so the action button is never under it. */
+        padding-bottom: env(safe-area-inset-bottom, 0px);
     }
-}
-
-
-/* ============================================================================
+    /* The grab handle. Purely affordance - it says "this came from the bottom and
+   can go back there", which a centred dialog never needs to say. */
+    
+    .portal .sheet-grip {
+        width: 38px;
+        height: 4px;
+        border-radius: 999px;
+        background: var(--p-border-strong);
+        margin: 10px auto 2px;
+        flex-shrink: 0;
+    }
+    
+    @keyframes veilIn {
+        from {
+            opacity: 0;
+        }
+        to {
+            opacity: 1;
+        }
+    }
+    
+    @keyframes sheetUp {
+        from {
+            transform: translateY(100%);
+        }
+        to {
+            transform: translateY(0);
+        }
+    }
+    /* Someone who has asked the OS to reduce motion should not get a 22px slide. */
+    
+    @media (prefers-reduced-motion: reduce) {
+        .portal .modal-veil,
+        .portal .sheet-veil,
+        .portal .sheet-panel {
+            animation: none;
+        }
+    }
+    /* ============================================================================
    AUTH SCREEN
 
    One centred column on the portal's own canvas. No second colour system, no
@@ -1385,20 +1479,19 @@
    below is backdrop and card geometry - all colour comes from the portal
    tokens above, so each desk's login is already tinted like its own portal.
    ========================================================================== */
-
-.portal.authx {
-    min-height: 100dvh;
-    background: var(--p-bg);
-}
-
-/* The workspace bloom is sized for a scrolling page; this screen paints its
+    
+    .portal.authx {
+        min-height: 100dvh;
+        background: var(--p-bg);
+    }
+    /* The workspace bloom is sized for a scrolling page; this screen paints its
    own, centred behind the card. */
-.portal.authx::before {
-    display: none;
-}
-
-/* One soft light source, up and behind the card. */
-/* The form column sits on the same full-bleed photograph as the hero, so this
+    
+    .portal.authx::before {
+        display: none;
+    }
+    /* One soft light source, up and behind the card. */
+    /* The form column sits on the same full-bleed photograph as the hero, so this
    layer does two jobs: it is the accent glow, and it is the SCRIM that makes
    text on this half readable.
    
@@ -1408,35 +1501,28 @@
    the picture does. A flat veil, strongest through the middle where the column
    content sits and easing off at the edges, keeps the building visible while
    putting every piece of type back on a known surface. */
-.authx-bloom {
-    position: absolute;
-    inset: 0;
-    z-index: 0;
-    pointer-events: none;
-    background:
-        radial-gradient(680px 420px at 50% -8%, var(--p-blue-soft), transparent 68%),
-        radial-gradient(520px 360px at 88% 104%, var(--p-cyan-soft), transparent 64%),
-        linear-gradient(90deg,
-            color-mix(in srgb, var(--p-bg) 82%, transparent) 0%,
-            color-mix(in srgb, var(--p-bg) 94%, transparent) 22%,
-            color-mix(in srgb, var(--p-bg) 94%, transparent) 100%);
-}
-
-/* ---- hero panel ----------------------------------------------------------
+    
+    .authx-bloom {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        background: radial-gradient(680px 420px at 50% -8%, var(--p-blue-soft), transparent 68%), radial-gradient(520px 360px at 88% 104%, var(--p-cyan-soft), transparent 64%), linear-gradient(90deg, color-mix(in srgb, var(--p-bg) 82%, transparent) 0%, color-mix(in srgb, var(--p-bg) 94%, transparent) 22%, color-mix(in srgb, var(--p-bg) 94%, transparent) 100%);
+    }
+    /* ---- hero panel ----------------------------------------------------------
    The photograph carries type, so it is pushed down far enough that white
    text clears contrast on it WITHOUT a plate behind the words. Two washes:
    a diagonal ink gradient for the body, and a heavier foot so the bottom
    line never lands on a bright patch of sky. */
-
-/* Transparent on purpose. The photograph is a full-bleed layer on the grid
+    /* Transparent on purpose. The photograph is a full-bleed layer on the grid
    ROOT, painted underneath both columns; an opaque background here would sit
    on top of it and turn this panel into a flat dark rectangle. The form column
    stays opaque, which is what confines the photo to this half. */
-.authx-hero {
-    background: transparent;
-}
-
-/* The ink wash, drawn by the panel itself rather than by a spare div.
+    
+    .authx-hero {
+        background: transparent;
+    }
+    /* The ink wash, drawn by the panel itself rather than by a spare div.
    
    brightness() on the photograph darkens it evenly, which is the one thing a
    backdrop for type must not be: the headline needs a deep, settled ground
@@ -1444,59 +1530,47 @@
    building. So this is a diagonal gradient, heaviest at the two corners the
    type actually sits in - top-left for the brand, bottom for the headline and
    the location line - and lightest across the middle. */
-.authx-hero::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: 1;
-    pointer-events: none;
-    background:
-        linear-gradient(158deg,
-            rgba(5, 22, 19, 0.88) 0%,
-            rgba(5, 22, 19, 0.42) 42%,
-            rgba(5, 22, 19, 0.30) 58%,
-            rgba(5, 22, 19, 0.82) 100%),
-        radial-gradient(120% 80% at 50% 120%, rgba(5, 22, 19, 0.6), transparent 62%);
-}
-
-/* The seam. The two halves meet on a continuous photograph, so without this
-   the split is only implied by where the glass happens to start. A hairline of
-   light down the join says the layout meant it. */
-@media (min-width: 1024px) {
-    .authx-hero::after {
+    
+    .authx-hero::before {
         content: "";
         position: absolute;
-        top: 0;
-        right: 0;
-        bottom: 0;
-        z-index: 2;
-        width: 1px;
+        inset: 0;
+        z-index: 1;
         pointer-events: none;
-        background: linear-gradient(180deg,
-            transparent 0%,
-            rgba(255, 255, 255, 0.28) 18%,
-            rgba(255, 255, 255, 0.28) 82%,
-            transparent 100%);
+        background: linear-gradient(158deg, rgba(5, 22, 19, 0.88) 0%, rgba(5, 22, 19, 0.42) 42%, rgba(5, 22, 19, 0.30) 58%, rgba(5, 22, 19, 0.82) 100%), radial-gradient(120% 80% at 50% 120%, rgba(5, 22, 19, 0.6), transparent 62%);
     }
-}
-
-/* A hairline grid that fades out before it reaches the form. Texture, not
+    /* The seam. The two halves meet on a continuous photograph, so without this
+   the split is only implied by where the glass happens to start. A hairline of
+   light down the join says the layout meant it. */
+    
+    @media (min-width: 1024px) {
+        .authx-hero::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 2;
+            width: 1px;
+            pointer-events: none;
+            background: linear-gradient(180deg, transparent 0%, rgba(255, 255, 255, 0.28) 18%, rgba(255, 255, 255, 0.28) 82%, transparent 100%);
+        }
+    }
+    /* A hairline grid that fades out before it reaches the form. Texture, not
    pattern - at 3% it is felt rather than seen, and it never sits behind text. */
-.authx-grid {
-    position: absolute;
-    inset: 0;
-    z-index: 0;
-    pointer-events: none;
-    background-image:
-        linear-gradient(var(--p-ink) 1px, transparent 1px),
-        linear-gradient(90deg, var(--p-ink) 1px, transparent 1px);
-    background-size: 56px 56px;
-    opacity: 0.03;
-    mask-image: radial-gradient(circle at 50% 42%, transparent 34%, #000 78%);
-    -webkit-mask-image: radial-gradient(circle at 50% 42%, transparent 34%, #000 78%);
-}
-
-/* ---- the glass panel -----------------------------------------------------
+    
+    .authx-grid {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        background-image: linear-gradient(var(--p-ink) 1px, transparent 1px), linear-gradient(90deg, var(--p-ink) 1px, transparent 1px);
+        background-size: 56px 56px;
+        opacity: 0.03;
+        mask-image: radial-gradient(circle at 50% 42%, transparent 34%, #000 78%);
+        -webkit-mask-image: radial-gradient(circle at 50% 42%, transparent 34%, #000 78%);
+    }
+    /* ---- the glass panel -----------------------------------------------------
    The one surface on the form side. Frosted rather than solid so the building
    stays present behind the sign-in, but weighted towards white so the dark ink
    inside it keeps its contrast - see the note in auth-screen.tsx.
@@ -1504,76 +1578,74 @@
    saturate() on the backdrop is what stops the blurred photograph going grey
    and muddy; the inset top highlight is the light catching the top edge, which
    is most of what makes a pane read as glass rather than as a translucent box. */
-.authx-glass {
-    /* --p-muted is tuned for opaque white. On a pane sitting over a photograph
+    
+    .authx-glass {
+        /* --p-muted is tuned for opaque white. On a pane sitting over a photograph
        the effective surface lands around #dbdcdb, where that grey measures
        3.58:1 - under the 4.5:1 AA needs for the label and help text. Darkened
        here ONLY, which fixes every muted string inside the panel at once and
        leaves the workspace palette untouched. Measured 4.99:1. */
-    --p-muted: #4f5b60;
-    background: color-mix(in srgb, var(--p-surface) 82%, transparent);
-    -webkit-backdrop-filter: blur(28px) saturate(1.6);
-    backdrop-filter: blur(28px) saturate(1.6);
-    border: 1px solid rgba(255, 255, 255, 0.55);
-    box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.9),
-        0 2px 6px rgba(9, 26, 52, 0.06),
-        0 30px 64px -28px rgba(9, 26, 52, 0.45);
-}
-
-/* Where the browser cannot blur, the pane would be a flat 78% wash over a
+        --p-muted: #4f5b60;
+        background: color-mix(in srgb, var(--p-surface) 82%, transparent);
+        -webkit-backdrop-filter: blur(28px) saturate(1.6);
+        backdrop-filter: blur(28px) saturate(1.6);
+        border: 1px solid rgba(255, 255, 255, 0.55);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 2px 6px rgba(9, 26, 52, 0.06), 0 30px 64px -28px rgba(9, 26, 52, 0.45);
+    }
+    /* Where the browser cannot blur, the pane would be a flat 78% wash over a
    photograph - busy behind small type. Go nearly opaque instead. */
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .authx-glass {
-        background: color-mix(in srgb, var(--p-surface) 96%, transparent);
+    
+    @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+        .authx-glass {
+            background: color-mix(in srgb, var(--p-surface) 96%, transparent);
+        }
     }
-}
-
-/* Someone who has asked the OS for less transparency should not get a pane of
+    /* Someone who has asked the OS for less transparency should not get a pane of
    frosted glass between them and a login form. */
-@media (prefers-reduced-transparency: reduce) {
-    .authx-glass {
-        background: var(--p-surface);
-        -webkit-backdrop-filter: none;
-        backdrop-filter: none;
+    
+    @media (prefers-reduced-transparency: reduce) {
+        .authx-glass {
+            background: var(--p-surface);
+            -webkit-backdrop-filter: none;
+            backdrop-filter: none;
+        }
     }
-}
-
-/* The card is now the glass panel itself. This stays as a hook so the markup
+    /* The card is now the glass panel itself. This stays as a hook so the markup
    reads the same, but it draws nothing - a bordered white box inside a pane of
    glass is two surfaces doing one surface's job. */
-.authx-card {
-    background: transparent;
-    border: 0;
-    padding: 0;
-    box-shadow: none;
-}
-
-/* Inputs on this screen are taller than the workspace default - a login is
+    
+    .authx-card {
+        background: transparent;
+        border: 0;
+        padding: 0;
+        box-shadow: none;
+    }
+    /* Inputs on this screen are taller than the workspace default - a login is
    typed once, in a hurry, often on a shared machine, and 46px is a target
    nobody misses. Radius matches the app's fields so it still reads as Jeeva. */
-.portal.authx :is(input) {
-    border-radius: 8px;
-}
-
-/* The one entrance. The card arrives; nothing else moves. */
-.portal.authx main {
-    animation: authxIn 0.5s cubic-bezier(0.22, 0.61, 0.24, 1) both;
-}
-
-@keyframes authxIn {
-    from {
-        opacity: 0;
-        transform: translateY(10px);
+    
+    .portal.authx :is(input) {
+        border-radius: 8px;
     }
-    to {
-        opacity: 1;
-        transform: none;
-    }
-}
-
-@media (prefers-reduced-motion: reduce) {
+    /* The one entrance. The card arrives; nothing else moves. */
+    
     .portal.authx main {
-        animation: none;
+        animation: authxIn 0.5s cubic-bezier(0.22, 0.61, 0.24, 1) both;
     }
-}
+    
+    @keyframes authxIn {
+        from {
+            opacity: 0;
+            transform: translateY(10px);
+        }
+        to {
+            opacity: 1;
+            transform: none;
+        }
+    }
+    
+    @media (prefers-reduced-motion: reduce) {
+        .portal.authx main {
+            animation: none;
+        }
+    }

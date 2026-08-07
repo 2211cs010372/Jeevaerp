@@ -1,9 +1,11 @@
+/** Mirrors the Role enum in schema.prisma. Keep the two in the same order. */
 export const ROLES = [
   "PATIENT",
   "DOCTOR",
   "RECEPTIONIST",
   "LAB_TECH",
   "PHARMACIST",
+  "INSURANCE_DESK",
   "ADMIN",
 ] as const;
 

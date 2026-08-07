@@ -14,6 +14,8 @@ interface Invoice {
   subtotal: string; discountAmount: string; taxableAmount: string;
   cgstAmount: string; sgstAmount: string; totalAmount: string;
   amountPaid: string; advanceAdjusted: string; balanceDue: string;
+  /** SELF_PAY or INSURANCE, with the insurer's name when it is the latter. */
+  payer?: string; payerName?: string | null;
   payments: { mode: string; amount: string; reference: string | null; createdAt: string }[];
   hospital: HospitalInfo | null;
   buyer: { gstin: string; legalName: string; address: string | null; stateCode: string | null } | null;
@@ -194,7 +196,20 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
           <div className="min-w-0 flex-1">
             <p className="text-[8px] font-bold uppercase tracking-wide text-[#3c4a45]">Amount payable (in words)</p>
             <p className="mt-0.5 text-[11px] font-black italic" style={{ color: "var(--pr-primary)" }}>{amountInWords(netPayable)}</p>
-            {inv.payments.length > 0 && <p className="mt-1.5 text-[9.5px] text-[#4a5652]"><span className="font-semibold">Paid by:</span> {payMode}</p>}
+            {/* HOW THIS BILL SETTLES.
+                On a cashless bill this line is the whole point: the family is
+                handed a printed bill for a sum they are not being asked for, and
+                without it in black and white the desk gets the argument. */}
+            {inv.payer === "INSURANCE" ? (
+              <p className="mt-1.5 text-[9.5px] text-[#4a5652]">
+                <span className="font-semibold">Billed to insurer:</span>{" "}
+                {inv.payerName || "Insurer / TPA"}
+                {" — "}cashless. Not payable at the counter.
+                {inv.payments.length > 0 && <> Received here: {payMode}.</>}
+              </p>
+            ) : inv.payments.length > 0 ? (
+              <p className="mt-1.5 text-[9.5px] text-[#4a5652]"><span className="font-semibold">Paid by:</span> {payMode}</p>
+            ) : null}
             <p className="mt-1.5 text-[7.5px] leading-relaxed text-[#6b7772]">
               Healthcare services (consultation &amp; diagnostics) are GST-exempt; lines marked Exempt carry 0%.
               Medicines and taxable services show CGST + SGST split equally (intra-state, Telangana – 36).

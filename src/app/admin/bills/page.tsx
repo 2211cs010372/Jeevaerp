@@ -12,6 +12,9 @@ interface Bill {
   id: string; receiptNo: string; source: string; status: string;
   totalAmount: string; amountPaid: string; refunded: string; refundable: string;
   paymentModes: string[];
+  /** SELF_PAY or INSURANCE - see the PayerType enum. */
+  payer: string;
+  payerName: string | null;
   createdAt: string; patient: { displayId: string; fullName: string };
 }
 
@@ -22,8 +25,10 @@ const SOURCES = ["CONSULTATION", "LAB", "PHARMACY", "IPD", "OTHER"] as const;
 const SRC_LABEL: Record<string, string> = { CONSULTATION: "Consultation", LAB: "Lab", PHARMACY: "Pharmacy", IPD: "Inpatient", OTHER: "Other" };
 const SRC_COLOR: Record<string, string> = { CONSULTATION: "#0b5f55", LAB: "#2f6df6", PHARMACY: "#c77d33", IPD: "#7c5cbf", OTHER: "#94a3b8" };
 
-// Payment-type buckets to filter by.
-const PAY_FILTERS = ["ALL", "CASH", "UPI", "CARD", "SPLIT", "UNPAID"] as const;
+// Payment-type buckets to filter by. INSURANCE sits alongside the tender types
+// because it is the answer to the same question - how did this bill settle -
+// and because "show me everything with the TPAs" is a question the owner asks.
+const PAY_FILTERS = ["ALL", "CASH", "UPI", "CARD", "SPLIT", "INSURANCE", "UNPAID"] as const;
 
 function billChip(status: string) {
   const map: Record<string, string> = {
@@ -71,6 +76,11 @@ export default function AdminBillsPage() {
 
   const matchPay = (b: Bill) => {
     if (pay === "ALL") return true;
+    if (pay === "INSURANCE") return b.payer === "INSURANCE";
+    // Every tender bucket below is about money at a counter, so a cashless bill
+    // belongs in none of them - including UNPAID, which means "somebody still
+    // owes us at the desk" and is exactly what an insurance bill is not.
+    if (b.payer === "INSURANCE") return false;
     if (pay === "UNPAID") return b.paymentModes.length === 0;
     if (pay === "SPLIT") return b.paymentModes.length > 1;
     return b.paymentModes.length === 1 && b.paymentModes[0] === pay;
@@ -155,7 +165,16 @@ export default function AdminBillsPage() {
                   <div className="min-w-[70px] text-[12px] text-[var(--p-muted)]">{dt(b.createdAt)}</div>
                   <div className="min-w-[150px]">
                     <div className="flex flex-wrap gap-1">
-                      {b.paymentModes.length > 0 ? b.paymentModes.map(modeChip) : <span className="text-[11px] text-[var(--p-muted)]">unpaid</span>}
+                      {/* "unpaid" is only true of a bill somebody could have paid.
+                          A cashless bill names its insurer instead - it has no
+                          tender because none was ever going to be taken here. */}
+                      {b.payer === "INSURANCE" ? (
+                        <span className="rounded bg-[var(--p-blue-soft)] px-1.5 py-0.5 text-[11px] font-semibold text-[var(--p-blue-deep)]">
+                          Insurance{b.payerName ? ` · ${b.payerName}` : ""}
+                        </span>
+                      ) : b.paymentModes.length > 0 ? b.paymentModes.map(modeChip) : (
+                        <span className="text-[11px] text-[var(--p-muted)]">unpaid</span>
+                      )}
                     </div>
                     {Number(b.refunded) > 0 && <div className="mt-0.5 text-[10px] text-[var(--p-rose)]">−{inr2(Number(b.refunded))} refunded</div>}
                   </div>

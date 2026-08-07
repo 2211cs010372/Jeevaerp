@@ -7,7 +7,9 @@ import { admitSchema } from "@/server/validators/ipd";
 export const dynamic = "force-dynamic";
 
 export const GET = handler(async (req) => {
-  await requireRole(req, "RECEPTIONIST", "ADMIN", "DOCTOR");
+  // The insurance desk reads this list to find the stays it has to raise claims
+  // for. Read-only for them: admitting is still reception's job below.
+  await requireRole(req, "RECEPTIONIST", "ADMIN", "DOCTOR", "INSURANCE_DESK");
   return NextResponse.json({ inpatients: await currentInpatients() });
 });
 
@@ -24,6 +26,10 @@ export const POST = handler(async (req) => {
     attendantPhone: i.attendantPhone || undefined,
     attendantRelation: i.attendantRelation || undefined,
     notes: i.notes || undefined,
+    payerType: i.payerType,
+    insurer: i.insurer || undefined,
+    policyNo: i.policyNo || undefined,
+    memberId: i.memberId || undefined,
   }, auditContext(req));
   return NextResponse.json(result, { status: 201 });
 });

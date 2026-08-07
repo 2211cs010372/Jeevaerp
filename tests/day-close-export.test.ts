@@ -29,6 +29,8 @@ const sample: DayCloseExport = {
     at: "2026-07-26T10:30:00.000Z",
   }],
   outstanding: [{ receiptNo: "INV-2026-000315", patient: "Divya Prasad", total: 2400, paid: 1000, due: 1400 }],
+  insurance: [{ receiptNo: "INV-2026-000318", patient: "Sunita Rao", insurer: "Star Health", total: 46000 }],
+  insuranceTotal: 46000,
 };
 
 const cell = (ws: XLSX.WorkSheet, ref: string) => ws[ref] as XLSX.CellObject | undefined;
@@ -40,7 +42,7 @@ describe("the day-close workbook", () => {
 
   it("carries one sheet per section of the page", async () => {
     const wb = await buildDayCloseWorkbook(sample);
-    expect(wb.SheetNames).toEqual(["Summary", "Payment types", "By counter", "Refunds", "Outstanding"]);
+    expect(wb.SheetNames).toEqual(["Summary", "Payment types", "By counter", "Refunds", "Outstanding", "Insurance"]);
   });
 
   it("leads with cash in hand - the one figure anyone acts on", async () => {
@@ -90,6 +92,65 @@ describe("the day-close workbook", () => {
     expect(wb.SheetNames).toContain("Refunds");
     expect(wb.SheetNames).toContain("Outstanding");
     expect(XLSX.utils.sheet_to_json(wb.Sheets["Refunds"])).toHaveLength(0);
+  });
+
+  // ── INSURANCE ── billed, never collected.
+  //
+  // The failure this guards against is the quiet one: a cashless bill folded into
+  // a collections figure. The accountant sums the column, the drawer disagrees by
+  // the size of a stay, and nobody can find where it came from.
+  it("keeps insurance billing out of the collected totals", async () => {
+    const wb = await buildDayCloseWorkbook(sample);
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets["Payment types"]);
+    const total = rows.find((r) => r.Mode === "TOTAL");
+    // ₹46,000 went to Star Health today and appears in neither figure.
+    expect(total?.Collected).toBe(20800.5);
+    expect(total?.Net).toBe(20300.5);
+  });
+
+  it("reports insurance on the summary, below the money and never inside it", async () => {
+    const wb = await buildDayCloseWorkbook(sample);
+    const ws = wb.Sheets["Summary"];
+    // Walk the declared range rather than Object.keys: the summary has blank
+    // spacer rows, so its A-column cells are not contiguous and an index into a
+    // filtered key list is not a row number.
+    const range = XLSX.utils.decode_range(ws["!ref"] as string);
+    const rowOf = (label: (s: string) => boolean) => {
+      for (let r = range.s.r; r <= range.e.r; r++) {
+        const c = ws[XLSX.utils.encode_cell({ c: 0, r })] as XLSX.CellObject | undefined;
+        if (c && label(String(c.v ?? ""))) return r;
+      }
+      return -1;
+    };
+    const netRow = rowOf((l) => l === "Net collected");
+    const insRow = rowOf((l) => l.startsWith("Billed to insurers"));
+    expect(netRow).toBeGreaterThan(-1);
+    expect(insRow).toBeGreaterThan(netRow);
+    // and as a real number, so it can be read by the same person summing columns
+    const insCell = ws[XLSX.utils.encode_cell({ c: 1, r: insRow })] as XLSX.CellObject | undefined;
+    expect(insCell?.t).toBe("n");
+    expect(insCell?.v).toBe(46000);
+  });
+
+  it("gives insurance its own sheet, written even on a day with none", async () => {
+    const quiet: DayCloseExport = { ...sample, insurance: [], insuranceTotal: 0 };
+    const wb = await buildDayCloseWorkbook(quiet);
+    expect(wb.SheetNames).toContain("Insurance");
+    // The TOTAL row is always present, so the sheet is never a blank rectangle.
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets["Insurance"]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.Receipt).toBe("TOTAL");
+  });
+
+  it("survives a caller that predates the insurance fields", async () => {
+    // The field is optional so an older caller still exports; it must not throw
+    // and must not invent a number.
+    const legacy = { ...sample } as DayCloseExport;
+    delete legacy.insurance;
+    delete legacy.insuranceTotal;
+    const wb = await buildDayCloseWorkbook(legacy);
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets["Insurance"]);
+    expect(rows[0]?.["Amount billed"]).toBe(0);
   });
 
   it("keeps every sheet name inside Excel's 31-character limit", async () => {

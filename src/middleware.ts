@@ -3,6 +3,7 @@ import { jwtVerify } from "jose";
 import { ACCESS_COOKIE } from "@/lib/auth/session";
 import {
   isPortalSubdomain,
+  PORTAL_SUBDOMAINS,
   SUBDOMAIN_ALLOWED_ROLES,
   type PortalSubdomain,
 } from "@/lib/auth/portals";
@@ -18,8 +19,6 @@ import type { Role } from "@/lib/auth/types";
  *
  * Edge-safe: verifies the JWT with jose (no Prisma/Node APIs here).
  */
-
-const PORTAL_SUBDOMAINS = ["admin", "reception", "doctor", "labs", "pharmacy"];
 
 async function roleFromRequest(req: NextRequest): Promise<Role | null> {
   const token = req.cookies.get(ACCESS_COOKIE)?.value;

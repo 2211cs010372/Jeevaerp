@@ -40,6 +40,9 @@ export interface Close {
   byCounter: { name: string; count: number; amount: number }[];
   refunds: { receiptNo: string; patient: string; amount: number; mode: string; reason: string; by: string; at: string }[];
   outstanding: { receiptNo: string; patient: string; total: number; paid: number; due: number }[];
+  /** Billed to an insurer today. Listed, never added to any total on this page. */
+  insurance?: { receiptNo: string; patient: string; insurer: string | null; total: number }[];
+  insuranceTotal?: number;
 }
 
 const money = (n: number) => n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -300,6 +303,40 @@ export function DayCloseStatement({
                       <span className="w-[100px] text-right font-mono text-[14px] font-bold text-[var(--p-rose)]">₹{money(o.due)}</span>
                     </div>
                   ))}
+                </div>
+              </section>
+            )}
+
+            {/* ── BILLED TO INSURERS ── shown, never counted.
+                Placed AFTER "still owed" and visually cooler than it on purpose:
+                a receptionist scanning for what to chase must not mistake this
+                for money anybody in the building can collect. The heading says
+                where it went and the footer says it is not in any total above. */}
+            {(data.insurance ?? []).length > 0 && (
+              <section data-rise className="surface overflow-hidden">
+                <div className="border-b border-[var(--p-border)] px-5 py-3.5">
+                  <h2 className="text-[14px] font-semibold text-[var(--p-ink)]">Billed to insurers today</h2>
+                  <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">
+                    Cashless bills - nothing was taken at this counter, so none of this is in the figures above.
+                  </p>
+                </div>
+                <div className="divide-y divide-[var(--p-border)]">
+                  {(data.insurance ?? []).map((o) => (
+                    <div key={o.receiptNo} className="flex items-center gap-4 px-5 py-3">
+                      <div className="min-w-[170px] flex-1">
+                        <div className="font-mono text-[13px] font-semibold text-[var(--p-ink)]">{o.receiptNo}</div>
+                        <div className="text-[12px] text-[var(--p-muted)]">{o.patient}</div>
+                      </div>
+                      <span className="flex-1 text-right text-[12px] text-[var(--p-muted)]">{o.insurer ?? "Insurer not recorded"}</span>
+                      <span className="w-[110px] text-right font-mono text-[14px] font-semibold text-[var(--p-blue-deep)]">₹{money(o.total)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between border-t border-[var(--p-border)] bg-[var(--p-bg)] px-5 py-3">
+                  <span className="text-[12px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
+                    With insurers · not collected
+                  </span>
+                  <span className="font-mono text-[15px] font-bold text-[var(--p-blue-deep)]">₹{money(data.insuranceTotal ?? 0)}</span>
                 </div>
               </section>
             )}

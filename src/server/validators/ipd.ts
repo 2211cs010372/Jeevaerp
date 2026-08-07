@@ -44,7 +44,18 @@ export const admitSchema = z.object({
   attendantPhone: z.string().trim().regex(/^[6-9]\d{9}$/, "Enter a valid 10-digit mobile").optional().or(z.literal("")),
   attendantRelation: z.string().trim().max(40).optional().or(z.literal("")),
   notes: z.string().trim().max(500).optional().or(z.literal("")),
-});
+  /// Who settles the stay. Optional so every existing caller keeps admitting a
+  /// self-paying patient without knowing the field exists.
+  payerType: z.enum(["SELF_PAY", "INSURANCE"]).optional(),
+  insurer: z.string().trim().max(80).optional().or(z.literal("")),
+  policyNo: z.string().trim().max(60).optional().or(z.literal("")),
+  memberId: z.string().trim().max(60).optional().or(z.literal("")),
+}).refine(
+  // Checked here as well as in the service, so the desk gets the message on the
+  // field rather than as a 400 after the bed has already been picked.
+  (v) => v.payerType !== "INSURANCE" || (!!v.insurer?.trim() && !!v.policyNo?.trim()),
+  { message: "An insurance admission needs the insurer and the policy number", path: ["insurer"] }
+);
 
 export const dischargeSchema = z.object({
   admissionId: z.string().trim().min(1),
@@ -60,11 +71,28 @@ export const dischargeSchema = z.object({
   outcome: z.enum(DISCHARGE_OUTCOMES).optional(),
 });
 
+export const CHARGE_CATEGORIES = [
+  "PROCEDURE", "DOCTOR_VISIT", "NURSING", "OXYGEN", "INVESTIGATION", "CONSUMABLE", "PHARMACY", "OTHER",
+] as const;
+
 export const addChargeSchema = z.object({
-  category: z.enum(["PROCEDURE", "DOCTOR_VISIT", "NURSING", "OXYGEN", "INVESTIGATION", "CONSUMABLE", "PHARMACY", "OTHER"]),
+  category: z.enum(CHARGE_CATEGORIES),
   description: z.string().trim().min(2).max(160),
   qty: z.coerce.number().int().min(1).max(999),
   unitPrice: z.coerce.number().min(0),
+  gstRatePct: z.coerce.number().min(0).max(28).optional(),
+});
+
+/**
+ * Repricing an existing line to a payer's tariff. Every field optional - the
+ * insurance desk usually changes only the rate, and requiring the whole line
+ * back would make a partial edit silently blank the rest.
+ */
+export const updateChargeSchema = z.object({
+  category: z.enum(CHARGE_CATEGORIES).optional(),
+  description: z.string().trim().min(2).max(160).optional(),
+  qty: z.coerce.number().int().min(1).max(999).optional(),
+  unitPrice: z.coerce.number().min(0).optional(),
   gstRatePct: z.coerce.number().min(0).max(28).optional(),
 });
 

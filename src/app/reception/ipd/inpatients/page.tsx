@@ -20,6 +20,8 @@ interface Inpatient {
   id: string; ipNumber: string; admittedAt: string; days: number;
   ward: string; bedNo: string; dailyCharge: string; runningCharge: string;
   reason: string | null; attendantName: string | null; attendantPhone: string | null;
+  /** Who settles this stay, decided at admission. Changes what the desk asks for. */
+  payerType: string; insurer: string | null; policyNo: string | null;
   doctor: { name: string; department: string };
   patient: { displayId: string; fullName: string; age: number | null; gender: string | null; phone: string };
 }
@@ -73,6 +75,8 @@ export default function InpatientsPage() {
   const [discharges, setDischarges] = useState<Discharged[]>([]);
   const [disc, setDisc] = useState(0);
   const [payNow, setPayNow] = useState(true);
+  /** Cashless only: what the family pays at the desk. Starts at nothing. */
+  const [copay, setCopay] = useState(0);
   const [payments, setPayments] = useState<Tender[]>([]);
   const [payValid, setPayValid] = useState(true);
   const [notes, setNotes] = useState("");
@@ -121,8 +125,24 @@ export default function InpatientsPage() {
   const grand = sheet ? Number(sheet.grandTotal) : 0;
   const advance = sheet ? Number(sheet.advanceTotal) : 0;
   const afterDiscount = Math.max(0, grand - disc);
-  const est = Math.max(0, afterDiscount - advance);
   const refundDue = Math.max(0, advance - afterDiscount);
+
+  /**
+   * ── WHO IS ASKED FOR MONEY AT THIS DESK ──
+   *
+   * On a cashless stay the bill goes to the insurer, and the family owes only
+   * what the policy does not cover - a co-pay, the non-medical extras, the gap
+   * over a room-rent cap. Defaulting to the full total here would have the desk
+   * ask a family who was promised cashless for two lakh rupees, which is the
+   * single worst thing this screen could do.
+   *
+   * So an insurance discharge asks for a figure the desk types in, starting at
+   * zero, and states plainly what is going to the insurer instead.
+   */
+  const isInsurance = dischargeOf?.payerType === "INSURANCE";
+  const selfPayDue = Math.max(0, afterDiscount - advance);
+  const est = isInsurance ? Math.min(copay, selfPayDue) : selfPayDue;
+  const toInsurer = isInsurance ? Math.max(0, selfPayDue - est) : 0;
 
   async function discharge(allowOutstanding = false) {
     if (!dischargeOf) return;
@@ -147,7 +167,9 @@ export default function InpatientsPage() {
     finally { setBusy(false); }
   }
 
-  function closeModal() { setDischargeOf(null); setDisc(0); setPayments([]); setPayValid(true); setNotes(""); setPayNow(true); setDone(null); setError(null); setOutcome("DISCHARGED"); }
+  // Every field resets, co-pay included: a figure typed for one family must not
+  // still be sitting in the box when the next patient is discharged.
+  function closeModal() { setDischargeOf(null); setDisc(0); setCopay(0); setPayments([]); setPayValid(true); setNotes(""); setPayNow(true); setDone(null); setError(null); setOutcome("DISCHARGED"); }
 
   const Line = ({ k, v, tone, neg }: { k: string; v: string; tone?: "muted" | "cyan"; neg?: boolean }) => (
     <div className="mt-1 flex justify-between first:mt-0">
@@ -187,6 +209,15 @@ export default function InpatientsPage() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-[14px] font-semibold text-[var(--p-ink)]">{r.patient.fullName}</span>
                     <span className="font-mono text-[12px] text-[var(--p-blue)]">{r.ipNumber}</span>
+                    {/* Visible on the row, not only inside the discharge modal.
+                        The desk sorts its day off this list, and "who is cashless"
+                        changes what it says to a family in the corridor. */}
+                    {r.payerType === "INSURANCE" && (
+                      <span title={`Cashless · ${r.insurer ?? "insurer"}`}
+                        className="rounded bg-[var(--p-blue-soft)] px-1.5 py-0.5 text-[10.5px] font-semibold uppercase text-[var(--p-blue-deep)]">
+                        {r.insurer ?? "Insurance"}
+                      </span>
+                    )}
                     <Pill tone="checkedin">{r.ward} · {r.bedNo}</Pill>
                   </div>
                   <div className="mt-1 text-[13px] text-[var(--p-muted)]">
@@ -222,7 +253,7 @@ export default function InpatientsPage() {
                     className="rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">
                     Open sheet
                   </Link>
-                  <button onClick={() => setDischargeOf(r)}
+                  <button onClick={() => { setDischargeOf(r); setDisc(0); setCopay(0); }}
                     className="btn-primary rounded-lg px-3.5 py-2 text-[13px] font-semibold text-white">
                     Discharge
                   </button>
@@ -341,8 +372,39 @@ export default function InpatientsPage() {
                         </div>
                         {disc > 0 && <Line k="Discount" v={disc.toFixed(2)} neg tone="muted" />}
                         {advance > 0 && <Line k="Advance already paid" v={sheet.advanceTotal} neg tone="cyan" />}
+                        {/* ── CASHLESS ── the family is not being asked for this
+                            bill, and the desk has to see that before it opens
+                            its mouth. */}
+                        {isInsurance && (
+                          <div className="mt-3 rounded-lg border border-[var(--p-blue)]/35 bg-[var(--p-blue-soft)] px-3 py-2.5">
+                            <div className="text-[12px] font-bold uppercase tracking-wide text-[var(--p-blue-deep)]">
+                              Cashless · {dischargeOf?.insurer}
+                            </div>
+                            <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--p-blue-deep)]">
+                              This bill goes to the insurer. Collect only the co-pay or anything the
+                              policy does not cover - leave it at ₹0 if there is nothing to take.
+                            </p>
+                            <label className="mt-2 block">
+                              <span className="text-[11.5px] font-semibold uppercase tracking-wide text-[var(--p-blue-deep)]">
+                                Patient pays now
+                              </span>
+                              <input
+                                inputMode="numeric" value={copay || ""} placeholder="0"
+                                onChange={(e) => setCopay(Math.min(selfPayDue, Number(e.target.value.replace(/[^\d.]/g, "")) || 0))}
+                                className="mt-1 w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 font-mono text-[14px] text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]"
+                              />
+                            </label>
+                            <div className="mt-2 flex justify-between border-t border-[var(--p-blue)]/25 pt-2 text-[13px]">
+                              <span className="font-semibold text-[var(--p-blue-deep)]">Goes to {dischargeOf?.insurer}</span>
+                              <span className="font-mono font-bold text-[var(--p-blue-deep)]">₹{toInsurer.toFixed(2)}</span>
+                            </div>
+                          </div>
+                        )}
+
                         <div className="mt-2 flex justify-between border-t border-[var(--p-border)] pt-2">
-                          <span className="font-semibold text-[var(--p-ink)]">{refundDue > 0 ? "Refund due" : "To collect now"}</span>
+                          <span className="font-semibold text-[var(--p-ink)]">
+                            {refundDue > 0 ? "Refund due" : isInsurance ? "To collect from patient" : "To collect now"}
+                          </span>
                           <span className="font-mono text-[16px] font-bold text-[var(--p-blue)] tabular">₹{(refundDue > 0 ? refundDue : est).toFixed(2)}</span>
                         </div>
                         {refundDue > 0 && <p className="mt-2 text-[12px] text-[#8a6414]">The advance exceeds the bill - ₹{refundDue.toFixed(2)} must be refunded, not kept.</p>}

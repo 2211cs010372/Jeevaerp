@@ -869,7 +869,7 @@ export function OpenBlock({ label, value, minHeight = "14mm", footnote, inline =
           <h3 className={`shrink-0 ${CAPS_HEAD}`} style={{ color: "var(--pr-primary)" }}>
             {label}: 
           </h3>
-          <p className="min-w-0 flex-1 whitespace-pre-line text-[14.5px]  font-medium leading-snug"
+          <p className="min-w-0 flex-1 whitespace-pre-line pt-[2px] text-[14.5px]  font-medium leading-snug"
             style={{ color: "var(--pr-ink)" }}>
             {text}
           </p>

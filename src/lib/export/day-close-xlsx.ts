@@ -23,6 +23,11 @@ export interface DayCloseExport {
   byCounter: { name: string; count: number; amount: number }[];
   refunds: { receiptNo: string; patient: string; amount: number; mode: string; reason: string; by: string; at: string }[];
   outstanding: { receiptNo: string; patient: string; total: number; paid: number; due: number }[];
+  /** Billed to insurers. Its own sheet, deliberately never summed into the
+   *  collections sheet - an accountant opening this workbook must not find
+   *  cashless billing hiding inside a cash figure. */
+  insurance?: { receiptNo: string; patient: string; insurer: string | null; total: number }[];
+  insuranceTotal?: number;
 }
 
 /** Indian-format rupees with two decimals; negatives in red, as an accountant expects. */
@@ -83,8 +88,14 @@ export async function buildDayCloseWorkbook(d: DayCloseExport) {
     ["Total refunded", d.totals.refunded],
     ["Net collected", d.totals.net],
     [],
-    ["Bills raised", d.bills],
+    ["Bills raised (settled at a counter)", d.bills],
     ["Refunds given", d.refundCount],
+    [],
+    // Below the blank row and below "Net collected" on purpose. It is a fact
+    // about the day, not a component of the money above it, and this workbook is
+    // read by someone who will SUM a column without checking what is in it.
+    ["Billed to insurers (not collected)", d.insuranceTotal ?? 0],
+    ["Insurance bills raised", (d.insurance ?? []).length],
     [],
     ["Generated", new Date().toLocaleString("en-IN")],
   ], { widths: [44, 22], moneyCols: [1], headerRows: 3 });
@@ -115,6 +126,16 @@ export async function buildDayCloseWorkbook(d: DayCloseExport) {
     ["Receipt", "Patient", "Bill total", "Paid", "Still due"],
     ...d.outstanding.map((o) => [o.receiptNo, o.patient, o.total, o.paid, o.due] as Cell[]),
   ], { widths: [18, 28, 16, 16, 16], moneyCols: [2, 3, 4] });
+
+  // ── Insurance ────────────────────────────────────────────────────────────
+  // Its own sheet rather than a flag on "Outstanding": these are not overdue and
+  // nobody should be chased for them. Always written, empty or not, for the same
+  // reason as Refunds above.
+  addSheet("Insurance", [
+    ["Receipt", "Patient", "Insurer / TPA", "Amount billed"],
+    ...(d.insurance ?? []).map((o) => [o.receiptNo, o.patient, o.insurer ?? "Not recorded", o.total] as Cell[]),
+    ["TOTAL", null, null, d.insuranceTotal ?? 0],
+  ], { widths: [18, 28, 30, 16], moneyCols: [3] });
 
   return wb;
 }

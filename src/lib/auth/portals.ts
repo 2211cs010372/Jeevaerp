@@ -1,5 +1,5 @@
 import type { Role } from "@/lib/auth/types";
-import { classifyHost } from "@/lib/auth/host";
+import { classifyHost, PORTAL_SUBDOMAINS } from "@/lib/auth/host";
 
 /**
  * The ONE place that maps a role to where it lives. Used by:
@@ -16,6 +16,7 @@ export const ROLE_SUBDOMAIN: Record<Role, string | null> = {
   DOCTOR: "doctor",
   LAB_TECH: "labs",
   PHARMACIST: "pharmacy",
+  INSURANCE_DESK: "insurance",
   PATIENT: null,
 };
 
@@ -26,10 +27,14 @@ export const ROLE_HOME_PATH: Record<Role, string> = {
   DOCTOR: "/",
   LAB_TECH: "/",
   PHARMACIST: "/",
+  INSURANCE_DESK: "/",
   PATIENT: "/portal/profile",
 };
 
-const PORTAL_SUBDOMAINS = ["admin", "reception", "doctor", "labs", "pharmacy"] as const;
+/** Re-exported so the middleware routes off one list rather than its own copy -
+ *  a copy is how a new portal ends up working on its subdomain and 404ing on the
+ *  single-host path fallback. Defined in host.ts; see the note there. */
+export { PORTAL_SUBDOMAINS };
 export type PortalSubdomain = (typeof PORTAL_SUBDOMAINS)[number];
 
 /**
@@ -46,6 +51,7 @@ export const SUBDOMAIN_ALLOWED_ROLES: Record<PortalSubdomain, Role[]> = {
   doctor: ["DOCTOR", "ADMIN"],
   labs: ["LAB_TECH", "ADMIN"],
   pharmacy: ["PHARMACIST", "ADMIN"],
+  insurance: ["INSURANCE_DESK", "ADMIN"],
 };
 
 export function isPortalSubdomain(sub: string): sub is PortalSubdomain {
@@ -64,6 +70,7 @@ export const PORTAL_LABEL: Record<PortalSubdomain, string> = {
   doctor: "Doctor",
   labs: "Labs",
   pharmacy: "Pharmacy",
+  insurance: "Insurance",
 };
 
 /**

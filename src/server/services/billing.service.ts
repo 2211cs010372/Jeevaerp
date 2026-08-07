@@ -18,6 +18,7 @@ const s2 = (n: number) => r2(n).toFixed(2);
 
 export type InvoiceSourceT = "CONSULTATION" | "LAB" | "PHARMACY" | "IPD" | "OTHER";
 export type PaymentModeT = "CASH" | "UPI" | "CARD" | "NETBANKING" | "OTHER";
+export type PayerTypeT = "SELF_PAY" | "INSURANCE";
 
 /**
  * The IPD discharge applies the admission deposit as a payment against the final
@@ -50,6 +51,10 @@ export interface InvoiceDTO {
   source: string;
   status: string;
   createdAt: string;
+  /** SELF_PAY (money at a counter) or INSURANCE (billed to an insurer/TPA). */
+  payer: string;
+  /** The insurer/TPA, when `payer` is INSURANCE. */
+  payerName: string | null;
   patient: { displayId: string; fullName: string; phone: string; address: string | null; age: number | null; gender: string | null };
   items: { description: string; hsnSac: string | null; qty: number; unitPrice: string; amount: string; gstRatePct: string }[];
   subtotal: string;
@@ -98,6 +103,19 @@ export async function createInvoice(
     lines: BillLineInput[];
     discountAmount?: number;
     notes?: string;
+    /**
+     * How this bill gets settled. Defaults to SELF_PAY, so every existing caller
+     * - the OP counter, the lab, the pharmacy - keeps raising ordinary counter
+     * bills without knowing this parameter exists.
+     *
+     * INSURANCE does NOT forbid a tender below. A cashless patient still pays the
+     * non-medical extras and any co-pay at the desk, and that money is genuinely
+     * in the drawer: it counts on the day close as collected while the bill itself
+     * is reported under insurance. Both halves are true and both are shown.
+     */
+    payer?: PayerTypeT;
+    /** Insurer/TPA name, snapshotted onto the bill. Ignored unless payer is INSURANCE. */
+    payerName?: string;
     /** Optionally record a payment immediately (walk-in pays at the counter). */
     payment?: PaymentInput;
     /**
@@ -138,6 +156,11 @@ export async function createInvoice(
         appointmentId: input.appointmentId ?? null,
         prescriptionUploadId: input.prescriptionUploadId ?? null,
         admissionId: input.admissionId ?? null,
+        payer: input.payer ?? "SELF_PAY",
+        // Only meaningful on an insurance bill. Cleared otherwise rather than
+        // stored-and-ignored, so nothing downstream can print an insurer's name
+        // across a bill the family paid in cash.
+        payerName: input.payer === "INSURANCE" ? input.payerName?.trim() || null : null,
         subtotal: s2(subtotal),
         discountAmount: s2(discount),
         taxableAmount: s2(taxable),
@@ -291,6 +314,7 @@ export async function getInvoice(invoiceId: string): Promise<InvoiceDTO> {
     where: { id: invoiceId },
     select: {
       id: true, receiptNo: true, source: true, status: true, createdAt: true,
+      payer: true, payerName: true,
       subtotal: true, discountAmount: true, taxableAmount: true,
       cgstAmount: true, sgstAmount: true, totalAmount: true,
       buyerGstin: true, buyerLegalName: true, buyerAddress: true, buyerStateCode: true,
@@ -328,6 +352,8 @@ export async function getInvoice(invoiceId: string): Promise<InvoiceDTO> {
     source: inv.source,
     status: inv.status,
     createdAt: inv.createdAt.toISOString(),
+    payer: inv.payer,
+    payerName: inv.payerName,
     patient: inv.patient,
     items: inv.items.map((i: { description: string; hsnSac: string | null; qty: number; unitPrice: { toString(): string }; amount: { toString(): string }; gstRatePct: { toString(): string } }) => ({
       description: i.description, hsnSac: i.hsnSac, qty: i.qty,
@@ -490,6 +516,13 @@ export async function listInvoices(source?: InvoiceSourceT, limit = 50): Promise
   amountPaid: string; refunded: string; refundable: string;
   /** Distinct payment types used on this bill: [] unpaid, ["CASH"], or ["CASH","UPI"] for a split. */
   paymentModes: string[];
+  /**
+   * How the bill settles. SELF_PAY reads off `paymentModes`; INSURANCE is its own
+   * answer to that question and is why an empty `paymentModes` is not always the
+   * same as "not paid yet".
+   */
+  payer: string;
+  payerName: string | null;
   createdAt: string; patient: { displayId: string; fullName: string };
 }[]> {
   const MODE_ORDER = ["CASH", "UPI", "CARD", "NETBANKING", "OTHER"];
@@ -499,6 +532,7 @@ export async function listInvoices(source?: InvoiceSourceT, limit = 50): Promise
     take: limit,
     select: {
       id: true, receiptNo: true, source: true, status: true, totalAmount: true, createdAt: true,
+      payer: true, payerName: true,
       patient: { select: { displayId: true, fullName: true } },
       payments: { select: { amount: true, mode: true } },
       refunds: { select: { amount: true } },
@@ -507,6 +541,7 @@ export async function listInvoices(source?: InvoiceSourceT, limit = 50): Promise
   return rows.map((i: {
     id: string; receiptNo: string; source: string; status: string;
     totalAmount: { toString(): string }; createdAt: Date;
+    payer: string; payerName: string | null;
     patient: { displayId: string; fullName: string };
     payments: { amount: { toString(): string }; mode: string }[];
     refunds: { amount: { toString(): string } }[];
@@ -524,6 +559,7 @@ export async function listInvoices(source?: InvoiceSourceT, limit = 50): Promise
       // The desk should never have to work out the ceiling itself.
       refundable: s2(refundable(pays, refs)),
       paymentModes,
+      payer: i.payer, payerName: i.payerName,
       createdAt: i.createdAt.toISOString(),
       patient: i.patient,
     };

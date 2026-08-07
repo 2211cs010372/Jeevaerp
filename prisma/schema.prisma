@@ -32,6 +32,11 @@ enum Role {
   RECEPTIONIST
   LAB_TECH
   PHARMACIST
+  /// The insurance desk - the person in the insurance room who raises claims
+  /// with insurers and TPAs. A role of their own rather than ADMIN, because the
+  /// only alternative was handing them HR, salaries, accounts and the audit log
+  /// to let them submit a pre-auth.
+  INSURANCE_DESK
   ADMIN
 }
 
@@ -75,6 +80,25 @@ enum AppointmentRequestStatus {
 enum ClaimType {
   CASHLESS // hospital bills the insurer/TPA directly
   REIMBURSEMENT // patient pays, then claims back
+}
+
+/// WHO SETTLES A BILL - and therefore whether it is money at all.
+///
+/// SELF_PAY is the ordinary counter bill: someone hands over cash, UPI or a card,
+/// the money enters a drawer, and it belongs in that drawer's day close.
+///
+/// INSURANCE means the hospital billed an insurer or TPA directly (cashless).
+/// Nothing was tendered at the desk. Counting such a bill as a collection would
+/// inflate every reconciliation in the building, and leaving it in "outstanding"
+/// would tell a receptionist to go and chase a family who owes nothing - so it is
+/// shown on the day close, deliberately, but never added up.
+///
+/// Reimbursement claims are NOT this. There the patient pays the counter in full
+/// and claims the money back from their insurer themselves: the drawer really did
+/// receive that cash, so the bill stays SELF_PAY and a claim is raised beside it.
+enum PayerType {
+  SELF_PAY
+  INSURANCE
 }
 
 enum ClaimStage {
@@ -1312,6 +1336,21 @@ model Invoice {
   sgstAmount     Decimal @db.Decimal(10, 2)
   totalAmount    Decimal @db.Decimal(10, 2)
 
+  // ── HOW THIS BILL GETS SETTLED ────────────────────────────────────────────
+  //
+  // Separate from the four buyer columns below, which are a GST question. This
+  // is a CASH question: did money arrive at a counter, or is this bill sitting
+  // with an insurer? A cashless bill to an insurer with no GSTIN is INSURANCE
+  // here and still B2C down there, and both statements are true.
+  //
+  // Every reconciliation reads this. See PayerType for why it can't be inferred
+  // from "has no payments yet" - an unpaid self-pay bill is a debt to chase, an
+  // INSURANCE bill is not, and the day close must not confuse the two.
+  payer     PayerType @default(SELF_PAY)
+  /// The insurer/TPA this went to, snapshotted so a bill can print and a day
+  /// close can group without joining through the claim.
+  payerName String?
+
   // ── WHO IS BEING BILLED, when it isn't the patient ────────────────────────
   //
   // All four are null for an ordinary counter bill, which is B2C - the patient
@@ -1348,6 +1387,9 @@ model Invoice {
   @@index([patientId, createdAt])
   @@index([source, createdAt])
   @@index([status])
+  /// Day close splits one local day's bills into "money" and "with the insurer".
+  /// Without this the split scans every invoice ever raised, once per shift close.
+  @@index([payer, createdAt])
 }
 
 /// The government's record of one bill, held alongside our own.
@@ -1558,6 +1600,47 @@ model AdmissionCharge {
   @@index([admissionId])
 }
 
+/// Which board a service is printed on. The hospital's rate card is three lists
+/// on two boards on the wall, and staff look for a charge the way it is grouped
+/// there - so the picker groups it the same way.
+enum ServiceGroup {
+  IP_CHARGE
+  SURGERY_OPEN
+  SURGERY_LAPAROSCOPIC
+  OTHER
+}
+
+/// THE HOSPITAL'S PUBLISHED RATE CARD for everything that is not a bed, a lab
+/// test or a medicine - DMO charges, oxygen, nebulisation, and every surgery.
+///
+/// Until this existed the running tab took a free-typed description and a
+/// free-typed price, which is how the same procedure got billed at three
+/// different rates by three shifts, and how the board on the wall and the bill
+/// at the desk drifted apart with nobody able to say which was right.
+///
+/// The rate here is the COUNTER rate - what the board promises a walk-in family.
+/// It is a starting point, never a lock: an insurer settles against its own
+/// tariff, so a line raised from this catalogue is repriced on the claim (see
+/// updateAdmissionCharge). Both figures matter and they are different numbers.
+model ServiceCharge {
+  id    String       @id @default(cuid())
+  name  String       @unique
+  group ServiceGroup @default(IP_CHARGE)
+  /// Which running-tab heading a line raised from this lands under, so the
+  /// printed claim bill files it in the right section without anyone choosing.
+  category ChargeCategory @default(OTHER)
+
+  price      Decimal @db.Decimal(10, 2)
+  gstRatePct Decimal @default(0) @db.Decimal(4, 2)
+  /// Charged for each day of the stay (oxygen, monitor) rather than once. The
+  /// desk still confirms the quantity - a patient is not always on oxygen for
+  /// every night they are in the bed.
+  perDay Boolean @default(false)
+  active Boolean @default(true)
+
+  @@index([group, active])
+}
+
 model Ward {
   id          String  @id @default(cuid())
   name        String  @unique
@@ -1611,6 +1694,23 @@ model Admission {
   attendantPhone    String?
   attendantRelation String?
 
+  // ── WHO IS PAYING FOR THIS STAY ───────────────────────────────────────────
+  //
+  // Asked once, at the desk, while the family is standing there. This is the
+  // ONLY handoff between reception and the insurance room: without it nobody in
+  // that room ever learns the patient exists, and the whole claim is remembered
+  // by somebody shouting down a corridor.
+  //
+  // The policy is snapshotted here rather than read off a claim, because the
+  // claim is raised later - often days later - and the stay has to be findable
+  // as an insurance stay from the moment the bed is assigned.
+  payerType PayerType @default(SELF_PAY)
+  /// Insurer or TPA name. Free text - the picker offers the common ones but a
+  /// hospital meets a new TPA every few months.
+  insurer   String?
+  policyNo  String?
+  memberId  String?
+
   dailyChargeAtAdmit Decimal @db.Decimal(10, 2)
   wardNameAtAdmit    String
   gstRatePctAtAdmit  Decimal @default(0) @db.Decimal(4, 2)
@@ -1641,6 +1741,8 @@ model Admission {
 
   @@index([status, admittedAt])
   @@index([patientId])
+  /// The insurance desk's landing list: insurance patients currently in a bed.
+  @@index([payerType, status])
 }
 
 /// One nursing / observation entry against a stay.

@@ -9,6 +9,7 @@ import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
 import { TOPICS } from "@/lib/realtime/topics";
+import { INSURERS } from "@/lib/insurers";
 
 interface Bed {
   id: string; bedNo: string; status: string;
@@ -36,6 +37,7 @@ interface Sheet {
     id: string; ipNumber: string; status: string; admittedAt: string; reason: string | null;
     wardName: string; bedNo: string; dailyCharge: string; gstRatePct: string;
     attendantName: string | null; attendantPhone: string | null; attendantRelation: string | null;
+    payerType: string; insurer: string | null; policyNo: string | null; memberId: string | null;
     patient: { id: string; displayId: string; fullName: string; age: number | null; gender: string | null; phone: string };
     doctor: { name: string; department: string };
   };
@@ -43,7 +45,15 @@ interface Sheet {
   charges: { id: string }[];
 }
 
-const blank = { reason: "", attendantName: "", attendantPhone: "", attendantRelation: "", notes: "" };
+const blank = {
+  reason: "", attendantName: "", attendantPhone: "", attendantRelation: "", notes: "",
+  // Self-pay is the default because it is the common case and because the wrong
+  // default here is expensive in one direction only: an insurance patient marked
+  // self-pay is caught at the counter when the family says "but it's cashless",
+  // whereas a self-payer marked insurance sits on the claims desk forever.
+  payerType: "SELF_PAY" as "SELF_PAY" | "INSURANCE",
+  insurer: "", policyNo: "", memberId: "",
+};
 const money = (v: string | number) => Number(v).toLocaleString("en-IN", { maximumFractionDigits: 0 });
 /** "12 Aug" - the admission date, short enough to sit inside a bed tile. */
 const sinceDay = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
@@ -183,8 +193,11 @@ export default function BedBoardPage() {
     finally { setOccupantLoading(false); }
   }
 
+  /** An insurance admission is not complete without somebody to bill. */
+  const insuranceReady = form.payerType === "SELF_PAY" || (!!form.insurer.trim() && !!form.policyNo.trim());
+
   async function admit() {
-    if (!patient || !bedId || !doctorId) return;
+    if (!patient || !bedId || !doctorId || !insuranceReady) return;
     setBusy(true); setError(null);
     try {
       const res = await api.post<{ ipNumber: string; bedNo: string; ward: string }>("/ipd/admissions", {
@@ -195,6 +208,10 @@ export default function BedBoardPage() {
         attendantPhone: form.attendantPhone || undefined,
         attendantRelation: form.attendantRelation || undefined,
         notes: form.notes || undefined,
+        payerType: form.payerType,
+        insurer: form.payerType === "INSURANCE" ? form.insurer || undefined : undefined,
+        policyNo: form.payerType === "INSURANCE" ? form.policyNo || undefined : undefined,
+        memberId: form.payerType === "INSURANCE" ? form.memberId || undefined : undefined,
       });
       setDoneIp(res);
       setPatient(null); setPq(""); setDoctorId(""); setForm({ ...blank }); setBedId("");
@@ -347,6 +364,20 @@ export default function BedBoardPage() {
                     <Row k="Bed" v={<>{occupant.admission.wardName} · <b className="text-[var(--p-ink)]">{occupant.admission.bedNo}</b></>} />
                     <Row k="Attending" v={<>Dr. {occupant.admission.doctor.name} <span className="text-[var(--p-muted)]">({occupant.admission.doctor.department})</span></>} />
                     <Row k="Admitted" v={<>{new Date(occupant.admission.admittedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} · <b className="text-[var(--p-ink)]">day {occupant.days}</b></>} />
+                    {/* The desk asks the family for money at discharge. It has to
+                        know BEFORE it opens its mouth whether this is a bill they
+                        owe or one going to an insurer. */}
+                    <Row k="Paying" v={
+                      occupant.admission.payerType === "INSURANCE" ? (
+                        <>
+                          <b className="text-[var(--p-blue-deep)]">Insurance</b>
+                          <span className="block text-[13px] text-[var(--p-muted)]">
+                            {occupant.admission.insurer}
+                            {occupant.admission.policyNo && <> · <span className="font-mono">{occupant.admission.policyNo}</span></>}
+                          </span>
+                        </>
+                      ) : <>Self-paying</>
+                    } />
                     {occupant.admission.reason && <Row k="Reason" v={occupant.admission.reason} />}
                     {occupant.admission.attendantName && (
                       <Row k="Attendant" v={
@@ -483,6 +514,50 @@ export default function BedBoardPage() {
                   <input className={fld} value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} placeholder="Post-op observation…" />
                 </div>
 
+                {/* ── WHO IS PAYING ──
+                    Asked here because here is the only moment the family, the
+                    card and a member of staff are in the same place. Everything
+                    downstream - the insurance desk's list, the discharge bill,
+                    whether the day close counts this stay as money - reads the
+                    answer given in these two clicks. */}
+                <div className="rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] p-3">
+                  <p className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Who is paying</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([
+                      { k: "SELF_PAY", label: "Self-paying", sub: "Pays at the desk" },
+                      { k: "INSURANCE", label: "Insurance", sub: "Billed to insurer" },
+                    ] as const).map((o) => (
+                      <button key={o.k} type="button"
+                        onClick={() => setForm({ ...form, payerType: o.k })}
+                        className={`payer-opt ${form.payerType === o.k ? "is-on" : ""}`}>
+                        <span className="payer-label">{o.label}</span>
+                        <span className="payer-sub">{o.sub}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {form.payerType === "INSURANCE" && (
+                    <div className="mt-3 space-y-2">
+                      <div>
+                        <input className={fld} list="ins-list" value={form.insurer}
+                          onChange={(e) => setForm({ ...form, insurer: e.target.value })}
+                          placeholder="Insurer / TPA *" />
+                        <datalist id="ins-list">{INSURERS.map((x) => <option key={x} value={x} />)}</datalist>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input className={fld} value={form.policyNo}
+                          onChange={(e) => setForm({ ...form, policyNo: e.target.value })} placeholder="Policy no *" />
+                        <input className={fld} value={form.memberId}
+                          onChange={(e) => setForm({ ...form, memberId: e.target.value })} placeholder="Member ID" />
+                      </div>
+                      <p className="text-[12px] leading-relaxed text-[var(--p-muted)]">
+                        This puts the stay on the <b className="text-[var(--p-ink)]">insurance desk&apos;s</b> list straight away,
+                        so the pre-authorization gets raised while the patient is still here.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
                 <div className="rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] p-3">
                   <p className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Caring person</p>
                   <div className="space-y-2">
@@ -495,11 +570,16 @@ export default function BedBoardPage() {
                   <p className="mt-1.5 text-[12px] text-[var(--p-muted)]">Who the hospital rings at 3am.</p>
                 </div>
 
-                <button onClick={admit} disabled={busy || !patient || !bedId || !doctorId}
+                <button onClick={admit} disabled={busy || !patient || !bedId || !doctorId || !insuranceReady}
                   className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-[var(--p-blue-deep)] disabled:opacity-40">
                   {busy ? <><Spinner /> Admitting…</> : <><Icon name="bed" size={16} /> Admit &amp; assign bed</>}
                 </button>
                 {!patient && <p className="text-center text-[12px] text-[var(--p-muted)]">Find the patient first.</p>}
+                {patient && !insuranceReady && (
+                  <p className="text-center text-[12px] text-[var(--p-muted)]">
+                    Add the insurer and policy number, or switch to self-paying.
+                  </p>
+                )}
               </div>
             )}
           </section>
@@ -578,6 +658,17 @@ const CSS = `
 
 /* whose details are open on the right */
 .is-shown { border-color: var(--p-blue) !important; box-shadow: 0 0 0 3px var(--p-blue-glow); }
+
+/* who is paying - two targets big enough to hit without looking down */
+.payer-opt { display: flex; flex-direction: column; gap: 1px; border-radius: 10px;
+  border: 1px solid var(--p-border); background: #fff; padding: 8px 10px; text-align: left;
+  transition: border-color .14s ease, background .14s ease; }
+.payer-opt:hover { border-color: var(--p-blue); }
+.payer-label { font-size: 13px; font-weight: 600; color: var(--p-text); }
+.payer-sub   { font-size: 11px; color: var(--p-muted); }
+.payer-opt.is-on { border-color: var(--p-blue); background: var(--p-blue-soft);
+  box-shadow: 0 0 0 2px var(--p-blue-glow); }
+.payer-opt.is-on .payer-label { color: var(--p-blue-deep); }
 
 @media (prefers-reduced-motion: reduce) { .bed-card:hover { transform: none; } }
 `;

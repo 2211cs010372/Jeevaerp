@@ -18,6 +18,10 @@ interface Inv {
   refundable: string;
   /** Distinct payment types on this bill: [] unpaid, ["CASH"], ["CASH","UPI"] (split). */
   paymentModes: string[];
+  /** SELF_PAY or INSURANCE. On an insurance bill the modes are empty because
+   *  nobody paid a counter - which is not the same as "not paid yet". */
+  payer: string;
+  payerName: string | null;
   patient: { displayId: string; fullName: string };
 }
 
@@ -238,11 +242,17 @@ export default function BillingPage() {
                     <div className="font-mono text-[14px] font-semibold text-[var(--p-ink)]">₹{money(i.totalAmount)}</div>
                     <div className="text-[11px] text-[var(--p-muted)]">total</div>
                   </div>
+                  {/* An unpaid balance on a cashless bill is with the insurer, not
+                      with the family. Printing it in the same red as a real debt
+                      sends the desk to chase somebody who owes nothing. */}
                   <div className="w-[92px] text-right">
-                    <div className={`font-mono text-[14px] font-semibold ${bal > 0 && !voided ? "text-[var(--p-rose)]" : "text-[var(--p-muted)]"}`}>
+                    <div className={`font-mono text-[14px] font-semibold ${
+                      bal > 0 && !voided && i.payer !== "INSURANCE" ? "text-[var(--p-rose)]" : "text-[var(--p-muted)]"}`}>
                       ₹{money(String(bal))}
                     </div>
-                    <div className="text-[11px] text-[var(--p-muted)]">due</div>
+                    <div className="text-[11px] text-[var(--p-muted)]">
+                      {i.payer === "INSURANCE" && bal > 0 && !voided ? "with insurer" : "due"}
+                    </div>
                   </div>
 
                   <Pill tone={statusTone(
@@ -251,8 +261,18 @@ export default function BillingPage() {
                     {i.status === "REFUNDED" ? "Refunded" : voided ? "Voided" : bal > 0 ? "Part paid" : "Paid"}
                   </Pill>
 
-                  {/* how it was paid - cash, UPI, or both (split) - across every portal's bills */}
-                  {i.paymentModes.length > 0 && (
+                  {/* HOW IT SETTLES - one chip, always answering the same question.
+                      For a counter bill that is the tender: Cash, UPI, or both on
+                      a split. For a cashless bill the answer is the insurer, and
+                      it takes the same slot rather than leaving a gap that reads
+                      as "nobody has paid this yet". */}
+                  {i.payer === "INSURANCE" ? (
+                    <span
+                      title={i.payerName ? `Billed to ${i.payerName}` : "Billed to an insurer"}
+                      className="rounded bg-[var(--p-blue-soft)] px-2 py-1 text-[11px] font-semibold text-[var(--p-blue-deep)]">
+                      Insurance{i.payerName ? ` · ${i.payerName}` : ""}
+                    </span>
+                  ) : i.paymentModes.length > 0 ? (
                     <span
                       title={i.paymentModes.length > 1 ? "Split payment" : "Payment type"}
                       className={`rounded px-2 py-1 text-[11px] font-semibold ${
@@ -261,7 +281,7 @@ export default function BillingPage() {
                           : "bg-[var(--p-teal-soft)] text-[var(--p-teal-deep)]"}`}>
                       {payLabel(i.paymentModes)}
                     </span>
-                  )}
+                  ) : null}
 
                   {Number(i.refunded) > 0 && i.status !== "REFUNDED" && (
                     <span className="rounded bg-[var(--p-amber-soft)] px-2 py-1 font-mono text-[11px] font-semibold text-[var(--p-amber)]">

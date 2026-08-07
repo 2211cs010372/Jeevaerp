@@ -25,10 +25,10 @@ interface Staff {
   role: string; isActive: boolean; lastLoginAt: string | null; doctor: DoctorProfile | null;
 }
 
-const ROLES = ["ADMIN", "RECEPTIONIST", "LAB_TECH", "PHARMACIST", "DOCTOR"] as const;
-const ROLE_LABEL: Record<string, string> = { ADMIN: "Admin", RECEPTIONIST: "Reception", LAB_TECH: "Lab", PHARMACIST: "Pharmacy", DOCTOR: "Doctor" };
-const PREFIX: Record<string, string> = { ADMIN: "admin", RECEPTIONIST: "reception", LAB_TECH: "labs", PHARMACIST: "pharmacy", DOCTOR: "doctor" };
-const ROLE_ICON: Record<string, IconName> = { ADMIN: "building", RECEPTIONIST: "calendar", LAB_TECH: "flask", PHARMACIST: "pill", DOCTOR: "activity" };
+const ROLES = ["ADMIN", "RECEPTIONIST", "LAB_TECH", "PHARMACIST", "DOCTOR", "INSURANCE_DESK"] as const;
+const ROLE_LABEL: Record<string, string> = { ADMIN: "Admin", RECEPTIONIST: "Reception", LAB_TECH: "Lab", PHARMACIST: "Pharmacy", DOCTOR: "Doctor", INSURANCE_DESK: "Insurance" };
+const PREFIX: Record<string, string> = { ADMIN: "admin", RECEPTIONIST: "reception", LAB_TECH: "labs", PHARMACIST: "pharmacy", DOCTOR: "doctor", INSURANCE_DESK: "insurance" };
+const ROLE_ICON: Record<string, IconName> = { ADMIN: "building", RECEPTIONIST: "calendar", LAB_TECH: "flask", PHARMACIST: "pill", DOCTOR: "activity", INSURANCE_DESK: "shield" };
 
 /**
  * Suggestions, not a closed list - the <datalist> lets an admin type a specialty

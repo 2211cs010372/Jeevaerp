@@ -12,7 +12,18 @@
  * for a bare *.vercel.app (admin.<proj>.vercel.app has no cert). An explicit
  * COOKIE_DOMAIN always forces subdomain mode.
  */
-const PORTAL_PREFIXES = ["admin", "reception", "doctor", "labs", "pharmacy"];
+/**
+ * Every portal subdomain, defined HERE because this is the lowest-level module
+ * that needs it - portals.ts imports classifyHost, so the list cannot live there
+ * without a cycle. `portals.ts` re-exports it, and the middleware reads it from
+ * there, so there is exactly one copy in the codebase.
+ *
+ * There used to be three. The insurance portal was added to two of them and the
+ * third - this one - silently made `insurance.jeeva.com` its own root domain,
+ * which breaks the post-login redirect and scopes the session cookie to the
+ * wrong host. Nothing fails loudly; the desk just cannot stay signed in.
+ */
+export const PORTAL_SUBDOMAINS = ["admin", "reception", "doctor", "labs", "pharmacy", "insurance"] as const;
 
 export interface HostRouting {
   /** true → admin.host routing; false → /admin path routing. */
@@ -47,7 +58,7 @@ export function classifyHost(host: string, cookieDomain?: string): HostRouting {
 
   // Real custom domain → subdomain routing. Strip a leading portal/www label
   // to get the registrable root (admin.jeeva.com & www.jeeva.com → jeeva.com).
-  const hasSubPrefix = labels.length > 2 && (PORTAL_PREFIXES.includes(sub) || sub === "www");
+  const hasSubPrefix = labels.length > 2 && ((PORTAL_SUBDOMAINS as readonly string[]).includes(sub) || sub === "www");
   const rootDomain = hasSubPrefix ? labels.slice(1).join(".") : hostname;
   return { subdomainMode: true, rootDomain, sub, port };
 }

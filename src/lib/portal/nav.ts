@@ -104,6 +104,62 @@ export const PORTALS: Record<string, PortalMeta> = {
 
     ],
   },
+  insurance: {
+    key: "insurance",
+    brand: "Jeeva",
+    roleLabel: "Insurance Desk",
+    nav: [
+      { label: "Dashboard", href: "/", icon: "grid" },
+      {
+        // The list this desk lives on. A cashless patient who was admitted this
+        // morning and has no pre-auth by evening is the exact shape of work that
+        // ROTS if unseen - the stay runs up a bill nobody has authorized, and by
+        // discharge the insurer is entitled to refuse the lot.
+        label: "To raise", href: "/pending", icon: "alert",
+        badge: {
+          path: "/insurance/pending?limit=1", field: "count", tone: "rose",
+          // Only an admission or a discharge creates one of these. A claim being
+          // submitted removes one, and that happens on this very screen.
+          events: [EVENTS.ADMISSION_OPENED, EVENTS.ADMISSION_CLOSED],
+        },
+      },
+      // The patient list, separate from the late list above. A stay whose
+      // pre-auth is already submitted drops off "To raise" and would otherwise
+      // have no route to its bill at all - and repricing and reprinting that
+      // bill is most of this desk's work.
+      { label: "Insurance stays", href: "/stays", icon: "bed", hint: "Everyone admitted on a policy" },
+      { label: "Claims", href: "/claims", icon: "shield", hint: "Everything raised, and where it stands with the insurer" },
+    ],
+    groups: [
+      {
+        // Ordered the way the desk actually works: find what's new, then chase
+        // what's already out. Not "claims" as one undifferentiated pile.
+        title: "Today",
+        items: [
+          { label: "Dashboard", href: "/", icon: "grid" },
+          {
+            label: "To raise", href: "/pending", icon: "alert",
+            badge: {
+              path: "/insurance/pending?limit=1", field: "count", tone: "rose",
+              events: [EVENTS.ADMISSION_OPENED, EVENTS.ADMISSION_CLOSED],
+            },
+          },
+        ],
+      },
+      {
+        title: "The patients",
+        items: [
+          { label: "Insurance stays", href: "/stays", icon: "bed" },
+        ],
+      },
+      {
+        title: "With the insurer",
+        items: [
+          { label: "Claims", href: "/claims", icon: "shield" },
+        ],
+      },
+    ],
+  },
   doctor: {
     key: "doctor",
     brand: "Jeeva",

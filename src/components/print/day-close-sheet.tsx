@@ -221,6 +221,38 @@ function DayCloseSheetInner() {
           </>
         )}
 
+        {/* billed to insurers - on the sheet, outside every total on it.
+            This page accompanies physical cash to whoever counts it, so the one
+            thing it must never do is print a figure that looks like money and
+            isn't. Hence its own table, below the totals, with the caveat in the
+            heading rather than in a footnote nobody reads. */}
+        {(d.insurance ?? []).length > 0 && (
+          <>
+            <p className="mt-4 text-[9px] font-bold uppercase tracking-wide" style={{ color: "var(--pr-primary)" }}>
+              Billed to insurers - not collected, not in the totals above
+            </p>
+            <table className="mt-1 w-full border-collapse text-[10px]">
+              <thead>
+                <tr><Th w="16%">Receipt</Th><Th w="40%">Patient</Th><Th w="26%">Insurer / TPA</Th><Th right w="18%">Amount</Th></tr>
+              </thead>
+              <tbody>
+                {(d.insurance ?? []).map((o) => (
+                  <tr key={o.receiptNo}>
+                    <td className="rule py-[4px] pr-2 font-mono text-[9px]">{o.receiptNo}</td>
+                    <td className="rule py-[4px] pr-2">{o.patient}</td>
+                    <td className="rule py-[4px] pr-2 text-[9px]">{o.insurer ?? "Not recorded"}</td>
+                    <td className="rule py-[4px] text-right font-mono font-semibold">{money(o.total)}</td>
+                  </tr>
+                ))}
+                <tr style={{ color: "var(--pr-primary)" }}>
+                  <td className="py-[5px] pr-2 text-[9px] font-bold uppercase tracking-wide" colSpan={3}>With insurers</td>
+                  <td className="py-[5px] text-right font-mono font-bold">{money(d.insuranceTotal ?? 0)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </>
+        )}
+
         {/* handover signatures - this sheet accompanies physical cash */}
         <div className="mt-8 flex items-end justify-between gap-8">
           <div className="text-center">

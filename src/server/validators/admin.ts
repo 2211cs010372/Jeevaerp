@@ -44,12 +44,12 @@ const requireDoctorProfile = (
 export const createStaffSchema = z.object({
   /** role.name - e.g. reception.ravi */
   username: z.string().trim().toLowerCase()
-    .regex(/^(admin|reception|labs|pharmacy|doctor)\.[a-z0-9_]{2,30}$/, "Username must be role.name (e.g. reception.ravi)"),
+    .regex(/^(admin|reception|labs|pharmacy|doctor|insurance)\.[a-z0-9_]{2,30}$/, "Username must be role.name (e.g. reception.ravi)"),
   name: z.string().trim().min(2).max(80),
   email: z.string().trim().email("Invalid email").optional().or(z.literal("")),
   // Staff numbers are stored in the same +91 form as patients - see lib/phone.
   phone: z.string().trim().refine(isIndianMobile, "Enter a valid 10-digit number").transform(toE164),
-  role: z.enum(["ADMIN", "RECEPTIONIST", "LAB_TECH", "PHARMACIST", "DOCTOR"]),
+  role: z.enum(["ADMIN", "RECEPTIONIST", "LAB_TECH", "PHARMACIST", "DOCTOR", "INSURANCE_DESK"]),
   password: z.string().min(8, "Password must be at least 8 characters").max(72),
   doctor: doctorProfileSchema.optional(),
 }).superRefine(requireDoctorProfile);

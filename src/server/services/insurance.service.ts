@@ -2,18 +2,14 @@ import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
 import { nextId } from "@/lib/ids";
 import { logAudit } from "./audit.service";
+import { currentInpatients } from "./ipd.service";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, ClaimStatus } from "@prisma/client";
 
-/** The insurers and TPAs a hospital front office deals with most. Editable -
- *  the form also accepts a free-typed name for anything not on the list. */
-export const INSURERS = [
-  "Star Health", "HDFC ERGO", "ICICI Lombard", "Bajaj Allianz", "Care Health",
-  "Niva Bupa", "New India Assurance", "United India Insurance", "Oriental Insurance",
-  "National Insurance", "Aditya Birla Health", "Tata AIG", "SBI General",
-  "Medi Assist (TPA)", "Paramount TPA", "Health India TPA", "Vidal Health (TPA)",
-  "MDIndia (TPA)", "Family Health Plan (TPA)", "Aarogyasri (State scheme)", "CGHS", "ECHS",
-] as const;
+/** Re-exported so the existing API routes keep their import. The list itself
+ *  moved to @/lib/insurers when the admission form started needing it too - see
+ *  the note there on why it can't live in a server service. */
+export { INSURERS } from "@/lib/insurers";
 
 const money = (d: Prisma.Decimal | null | undefined): string | null =>
   d == null ? null : Number(d).toFixed(2);
@@ -98,6 +94,289 @@ export async function createClaim(
 
   await logAudit(actor, { action: "CLAIM_CREATED", targetTable: "InsuranceClaim", targetId: claim.id, meta: { insurer: input.insurer, amount: input.claimedAmount }, ...ctx });
   return getClaim(claim.id);
+}
+
+/**
+ * WHAT THIS DESK HAS TO RAISE, and hasn't yet.
+ *
+ * The whole point of the insurance portal. Reception flags a stay as INSURANCE at
+ * admission; from that moment there is a claim owed to somebody, and until this
+ * list existed the only thing tracking it was a person's memory.
+ *
+ * Two kinds of work, in the order they become urgent:
+ *
+ *   PRE_AUTH - they are in a bed right now and no pre-authorization has been
+ *     raised. This is the expensive one. A cashless insurer authorizes treatment
+ *     BEFORE it happens; a stay that runs three days unauthorized can be refused
+ *     in full, and the hospital eats it or bills a family who was promised
+ *     cashless. Hours matter, which is why `waitingHours` is on every row.
+ *
+ *   FINAL - they have gone home, the discharge bill exists, and the actual claim
+ *     against it has not been filed. Less urgent per hour, but it is money the
+ *     hospital has already spent and not yet asked for.
+ *
+ * Rows come from the stay, never from a claim, because the failure being caught
+ * here is a claim that does not exist.
+ */
+export interface PendingWorkDTO {
+  admissionId: string;
+  ipNumber: string;
+  patient: { id: string; displayId: string; fullName: string; phone: string };
+  insurer: string;
+  policyNo: string;
+  memberId: string | null;
+  ward: string;
+  bedNo: string;
+  admittedAt: string;
+  dischargedAt: string | null;
+  days: number;
+  stage: "PRE_AUTH" | "FINAL";
+  /** Running bill for a live stay; the final invoice total once discharged. */
+  amount: string;
+  invoiceId: string | null;
+  invoiceNo: string | null;
+  /** Since admission (PRE_AUTH) or since discharge (FINAL). Drives the urgency. */
+  waitingHours: number;
+  /** The draft already open against this stay, when one exists. */
+  claimId: string | null;
+  claimNo: string | null;
+  /**
+   * WHAT IS ACTUALLY MISSING - so the row can offer one button that does the
+   * next thing, rather than a generic "open" that makes the desk work out where
+   * this particular claim got stuck.
+   *
+   *   SET_AMOUNT - a draft exists (opened at admission) with no figure on it.
+   *   SUBMIT     - it has a figure and has still not gone to the insurer.
+   *   RAISE      - no claim at all. Either a stay admitted before pre-auths
+   *                opened themselves, or a discharge needing its final claim.
+   */
+  need: "SET_AMOUNT" | "SUBMIT" | "RAISE";
+}
+
+export async function pendingWork(): Promise<{ items: PendingWorkDTO[]; count: number }> {
+  const now = Date.now();
+  const hoursSince = (d: Date) => Math.max(0, Math.round((now - d.getTime()) / 3_600_000));
+
+  // Every claim already attached to a stay, so a stay can be judged on what it is
+  // MISSING. One query rather than a per-admission lookup: this list is read on
+  // every page load of the desk's landing screen.
+  const claims = await prisma.insuranceClaim.findMany({
+    where: { admissionId: { not: null }, status: { not: "CLOSED" } },
+    select: { id: true, claimNo: true, admissionId: true, stage: true, status: true, claimedAmount: true },
+  });
+  const byStay = new Map(claims.map((c) => [`${c.admissionId}:${c.stage}`, c]));
+
+  // ── STILL IN A BED, PRE-AUTH NOT WITH THE INSURER YET ──
+  //
+  // Since pre-auths open themselves at admission, most rows here are a DRAFT
+  // waiting for a figure - not a missing claim. A stay whose pre-auth has been
+  // SUBMITTED drops off: it is with the insurer, and waiting on them is not work
+  // sitting on this desk.
+  //
+  // Reuses currentInpatients rather than recomputing a running bill here. The
+  // bed-charge arithmetic (started days, transfers, per-ward rates) is subtle and
+  // already tested in one place; a second copy would drift within a release.
+  const inpatients = await currentInpatients();
+  const preAuth: PendingWorkDTO[] = inpatients
+    .filter((a) => a.payerType === "INSURANCE")
+    .map((a): PendingWorkDTO | null => {
+      const claim = byStay.get(`${a.id}:PRE_AUTH`);
+      // Submitted, queried, decided - all of it is the insurer's move, not ours.
+      if (claim && claim.status !== "DRAFT") return null;
+      const need: PendingWorkDTO["need"] = !claim
+        ? "RAISE"
+        : Number(claim.claimedAmount) > 0 ? "SUBMIT" : "SET_AMOUNT";
+      return {
+        admissionId: a.id,
+        ipNumber: a.ipNumber,
+        patient: { id: a.patient.id, displayId: a.patient.displayId, fullName: a.patient.fullName, phone: a.patient.phone },
+        insurer: a.insurer ?? "-",
+        policyNo: a.policyNo ?? "-",
+        memberId: null,
+        ward: a.ward,
+        bedNo: a.bedNo,
+        admittedAt: a.admittedAt,
+        dischargedAt: null,
+        days: a.days,
+        stage: "PRE_AUTH" as const,
+        amount: a.runningCharge,
+        invoiceId: null,
+        invoiceNo: null,
+        waitingHours: hoursSince(new Date(a.admittedAt)),
+        claimId: claim?.id ?? null,
+        claimNo: claim?.claimNo ?? null,
+        need,
+      };
+    })
+    .filter((x) => x !== null);
+
+  // ── GONE HOME, BILL RAISED, NO FINAL CLAIM ──
+  // Bounded to 90 days. Older than that the claim window has usually closed with
+  // the insurer anyway, and an unbounded list would grow into a screen nobody
+  // reads - which is the same as having no list.
+  const cutoff = new Date(now - 90 * 24 * 3_600_000);
+  const closed = await prisma.admission.findMany({
+    where: {
+      payerType: "INSURANCE",
+      status: { not: "ADMITTED" },
+      dischargedAt: { gte: cutoff },
+    },
+    orderBy: { dischargedAt: "desc" },
+    select: {
+      id: true, ipNumber: true, admittedAt: true, dischargedAt: true,
+      insurer: true, policyNo: true, memberId: true, wardNameAtAdmit: true,
+      bed: { select: { bedNo: true } },
+      patient: { select: { id: true, displayId: true, fullName: true, phone: true } },
+      invoices: {
+        where: { source: "IPD", status: { not: "CANCELLED" } },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { id: true, receiptNo: true, totalAmount: true },
+      },
+    },
+  });
+
+  const final: PendingWorkDTO[] = closed
+    .filter((a) => {
+      if (a.invoices.length === 0) return false;
+      const claim = byStay.get(`${a.id}:FINAL`);
+      // A final claim already with the insurer is off this desk's plate; a final
+      // claim still in draft is not.
+      return !claim || claim.status === "DRAFT";
+    })
+    .map((a) => {
+      const inv = a.invoices[0];
+      const end = a.dischargedAt ?? new Date();
+      const claim = byStay.get(`${a.id}:FINAL`);
+      return {
+        admissionId: a.id,
+        ipNumber: a.ipNumber,
+        patient: a.patient,
+        insurer: a.insurer ?? "-",
+        policyNo: a.policyNo ?? "-",
+        memberId: a.memberId,
+        ward: a.wardNameAtAdmit,
+        bedNo: a.bed?.bedNo ?? "-",
+        admittedAt: a.admittedAt.toISOString(),
+        dischargedAt: end.toISOString(),
+        days: Math.max(1, Math.ceil((end.getTime() - a.admittedAt.getTime()) / 86_400_000)),
+        stage: "FINAL" as const,
+        amount: Number(inv.totalAmount).toFixed(2),
+        invoiceId: inv.id,
+        invoiceNo: inv.receiptNo,
+        waitingHours: hoursSince(end),
+        claimId: claim?.id ?? null,
+        claimNo: claim?.claimNo ?? null,
+        need: (!claim
+          ? "RAISE"
+          : Number(claim.claimedAmount) > 0 ? "SUBMIT" : "SET_AMOUNT") as PendingWorkDTO["need"],
+      };
+    });
+
+  // Longest wait first, pre-auths ahead of final claims at equal age. The desk
+  // works down this list from the top, so the order IS the prioritisation.
+  const items = [...preAuth, ...final].sort((a, b) =>
+    a.stage === b.stage ? b.waitingHours - a.waitingHours : a.stage === "PRE_AUTH" ? -1 : 1
+  );
+  return { items, count: items.length };
+}
+
+/**
+ * EVERY INSURANCE STAY, whether or not it needs anything doing right now.
+ *
+ * `pendingWork` above answers "what is late"; this answers "who are my patients",
+ * and the desk needs both. Without it the only route to a stay's bill was through
+ * the pending list - so a stay whose pre-auth had been submitted vanished, and
+ * with it any way to reprice or reprint the bill it will be settled on. The work
+ * that page exists for outlives the reminder to start it.
+ */
+export interface StayDTO {
+  admissionId: string;
+  ipNumber: string;
+  patient: { id: string; displayId: string; fullName: string; phone: string };
+  insurer: string | null;
+  policyNo: string | null;
+  ward: string;
+  bedNo: string;
+  admittedAt: string;
+  dischargedAt: string | null;
+  days: number;
+  /** Running bill while in the bed; the final invoice total once discharged. */
+  amount: string;
+  /** Every claim raised against this stay, newest first. Empty means none yet. */
+  claims: { id: string; claimNo: string; stage: string; status: string; claimedAmount: string }[];
+}
+
+export async function insuranceStays(opts?: { includeDischarged?: boolean }): Promise<{ stays: StayDTO[] }> {
+  const cutoff = new Date(Date.now() - 90 * 24 * 3_600_000);
+  const rows = await prisma.admission.findMany({
+    where: {
+      payerType: "INSURANCE",
+      // Still in a bed, or discharged inside the claim window. Older than that
+      // the claim has usually closed, and an unbounded list is one nobody reads.
+      OR: [{ status: "ADMITTED" }, { dischargedAt: { gte: cutoff } }],
+    },
+    orderBy: [{ status: "asc" }, { admittedAt: "desc" }],
+    take: 200,
+    select: {
+      id: true, ipNumber: true, status: true, admittedAt: true, dischargedAt: true,
+      insurer: true, policyNo: true, wardNameAtAdmit: true, dailyChargeAtAdmit: true,
+      bed: { select: { bedNo: true } },
+      patient: { select: { id: true, displayId: true, fullName: true, phone: true } },
+      charges: { select: { qty: true, unitPrice: true } },
+      invoices: {
+        where: { source: "IPD", status: { not: "CANCELLED" } },
+        orderBy: { createdAt: "desc" }, take: 1,
+        select: { totalAmount: true },
+      },
+    },
+  });
+
+  // Claims are joined in JS, not by `include`: InsuranceClaim.admissionId is a
+  // plain column rather than a foreign key (see the model), so Prisma has no
+  // relation to traverse. One query for all of them beats one per stay.
+  const claimRows = await prisma.insuranceClaim.findMany({
+    where: { admissionId: { in: rows.map((r) => r.id) } },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, claimNo: true, stage: true, status: true, claimedAmount: true, admissionId: true },
+  });
+  const claimsByStay = new Map<string, typeof claimRows>();
+  for (const c of claimRows) {
+    if (!c.admissionId) continue;
+    claimsByStay.set(c.admissionId, [...(claimsByStay.get(c.admissionId) ?? []), c]);
+  }
+
+  const now = new Date();
+  const days = (from: Date, to: Date) => Math.max(1, Math.ceil((to.getTime() - from.getTime()) / 86_400_000));
+
+  return {
+    stays: rows.map((a) => {
+      const end = a.dischargedAt ?? now;
+      const d = days(a.admittedAt, end);
+      // A discharged stay has a real invoice; a live one is quoted at the bed
+      // plus its tab, the same arithmetic the ward board shows.
+      const running =
+        d * Number(a.dailyChargeAtAdmit) +
+        a.charges.reduce((s, c) => s + c.qty * Number(c.unitPrice), 0);
+      return {
+        admissionId: a.id,
+        ipNumber: a.ipNumber,
+        patient: a.patient,
+        insurer: a.insurer,
+        policyNo: a.policyNo,
+        ward: a.wardNameAtAdmit,
+        bedNo: a.bed?.bedNo ?? "-",
+        admittedAt: a.admittedAt.toISOString(),
+        dischargedAt: a.dischargedAt?.toISOString() ?? null,
+        days: d,
+        amount: (a.invoices[0] ? Number(a.invoices[0].totalAmount) : running).toFixed(2),
+        claims: (claimsByStay.get(a.id) ?? []).map((c) => ({
+          id: c.id, claimNo: c.claimNo, stage: c.stage, status: c.status,
+          claimedAmount: Number(c.claimedAmount).toFixed(2),
+        })),
+      };
+    }),
+  };
 }
 
 export async function listClaims(filter: { status?: string; q?: string }): Promise<ClaimListDTO[]> {

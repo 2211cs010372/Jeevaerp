@@ -19,6 +19,9 @@ interface Close {
   byCounter: { name: string; count: number; amount: number }[];
   refunds: { receiptNo: string; patient: string; amount: number; mode: string; reason: string; by: string; at: string }[];
   outstanding: { receiptNo: string; patient: string; total: number; paid: number; due: number }[];
+  /** Billed to insurers today. Reported here, absent from every total above. */
+  insurance: { receiptNo: string; patient: string; insurer: string | null; total: number }[];
+  insuranceTotal: number;
 }
 
 interface SourceTotal { source: string; collected: number; refunded: number; net: number; count: number; }
@@ -27,13 +30,17 @@ interface TillSummary {
   collected: number; refunded: number; net: number;
   cash: number; digital: number;
   payments: number; bills: number;
+  insuranceBills: number; insuranceAmount: number;
   staff: { name: string; count: number; amount: number }[];
   bySource: SourceTotal[];
 }
 interface ByTill {
   date: string;
   tills: TillSummary[];
-  totals: { collected: number; refunded: number; net: number; cash: number; payments: number; bills: number };
+  totals: {
+    collected: number; refunded: number; net: number; cash: number; payments: number; bills: number;
+    insuranceBills: number; insuranceAmount: number;
+  };
 }
 
 const money = (n: number) => n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -357,6 +364,33 @@ export default function AdminDayClosePage() {
                     <span className="font-mono text-[14px] font-bold text-[#8a5a1a]">₹{money(o.due)} due</span>
                   </div>
                 ))}
+              </div>
+            </section>
+          )}
+
+          {/* billed to insurers - reported, never counted. See the day close
+              service: no money crossed a drawer, so this sits outside every
+              collected/net figure on the page rather than inside one. */}
+          {(data.insurance ?? []).length > 0 && (
+            <section data-rise className="surface mt-6 overflow-hidden">
+              <div className="border-b border-[var(--p-border)] px-5 py-3.5">
+                <h2 className="text-[14px] font-semibold text-[var(--p-ink)]">Billed to insurers today</h2>
+                <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">Cashless - not collected, and not part of any total above.</p>
+              </div>
+              <div className="divide-y divide-[var(--p-border)]">
+                {(data.insurance ?? []).map((o) => (
+                  <div key={o.receiptNo} className="flex items-center justify-between gap-4 px-5 py-3">
+                    <div>
+                      <div className="text-[13px] text-[var(--p-ink)]">{o.patient} <span className="font-mono text-[12px] text-[var(--p-muted)]">· {o.receiptNo}</span></div>
+                      <div className="text-[12px] text-[var(--p-muted)]">{o.insurer ?? "Insurer not recorded"}</div>
+                    </div>
+                    <span className="font-mono text-[14px] font-bold text-[var(--p-blue-deep)]">₹{money(o.total)}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-between border-t border-[var(--p-border)] bg-[var(--p-bg)] px-5 py-3">
+                <span className="text-[12px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">With insurers · not collected</span>
+                <span className="font-mono text-[15px] font-bold text-[var(--p-blue-deep)]">₹{money(data.insuranceTotal ?? 0)}</span>
               </div>
             </section>
           )}
