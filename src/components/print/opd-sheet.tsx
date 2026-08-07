@@ -366,22 +366,30 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
             screen and of the 210mm page in print, so this gap is one size in
             the preview and another in the tray, and the overflow warning above
             measures the preview's. A px value is the same on both. */}
-        <div className=" grid min-h-0 flex-1 grid-cols-12 mt-[3vw] gap-x-6"
+
+        <div className="mt-[1.2vw]">
+          <VitalsGrid items={vitalsBoxes(isBlank ? null : v)} stack />
+        </div>
+
+        <div className="mt-[0.3vw]">
+
+          {/* grow: history and investigation share whatever the rail has left,
+                so a light visit turns into writing room under these two headings
+                rather than a gap at the bottom of the column. */}
+          <OpenBlock label="Case history" value={isBlank ? null : clin?.caseHistory} minHeight="14mm" grow />
+        </div>
+
+        <div className=" grid min-h-0 flex-1 grid-cols-12 mt-[2.2vw] gap-x-6"
           style={{ gridTemplateRows: "minmax(0, 1fr)" }}>
 
           {/* PART 1 - vitals, then the clinical prose, down the left four.
               data-sheet-col: the overflow check above reads these two, because
               a column clips its own content without the sheet ever growing. */}
-          <div data-sheet-col className="col-span-4 flex min-h-0 min-w-0 flex-col">
+          <div data-sheet-col className="col-span-4 mt-[3vw] flex min-h-0 min-w-0 flex-col">
             {/* No heading over these: set in the patient block's own voice they
                 read as that strip continuing down the margin, which is what the
                 client's paper does with them. */}
-            <VitalsGrid items={vitalsBoxes(isBlank ? null : v)} stack />
 
-            {/* grow: history and investigation share whatever the rail has left,
-                so a light visit turns into writing room under these two headings
-                rather than a gap at the bottom of the column. */}
-            <OpenBlock label="Case history" value={isBlank ? null : clin?.caseHistory} minHeight="14mm" grow />
 
             {/* The lab's own words on the tests it finished for this visit.
                 Printed as "Test - impression" under the lab's name, never merged
@@ -404,12 +412,12 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
                 leave the value about two words of room. */}
             {clin?.diagnosis?.trim() && <OpenBlock label="Diagnosis" value={clin.diagnosis} />}
 
-            <OpenBlock label="Advice" value={clin?.advice} minHeight="18mm" />
+            <OpenBlock label="Advice" grow value={clin?.advice} minHeight="18mm" />
           </div>
 
           {/* PART 2 - the ℞ pad, the remaining eight, full height. */}
-          <div data-sheet-col className="col-span-8 mt-[12vw] flex min-h-0 min-w-0 flex-col">
-            <RxPad items={isBlank ? [] : rxItems}  />
+          <div data-sheet-col className="col-span-8  flex min-h-0 min-w-0 flex-col">
+            <RxPad items={isBlank ? [] : rxItems} />
           </div>
         </div>
 

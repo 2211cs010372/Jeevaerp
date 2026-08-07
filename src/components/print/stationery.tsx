@@ -644,11 +644,11 @@ export function DoctorHead({ doctor, inset = false }: {
  */
 export function NextVisitNote({ value }: { value?: string | null }) {
   const body = (
-    <div className="text-right flex items-center gap-2 justify-center leading-tight">
+    <div className="text-right w-[140px]  flex items-center gap-2 justify-center leading-tight">
       <div className={CAPS_HEAD} style={{ color: "var(--pr-primary)" }}>Next visit: </div>
       {/* Non-breaking space so a blank pad keeps the line's height as writing
           space instead of collapsing to the label alone. */}
-      <div className="mt-[3px] text-[12px] font-medium leading-[4.2mm]" style={{ color: "var(--pr-ink)" }}>
+      <div className="mt-[3px]  text-[12px] font-medium leading-[4.2mm]" style={{ color: "var(--pr-ink)" }}>
         {value?.trim() || " "}
       </div>
     </div>
