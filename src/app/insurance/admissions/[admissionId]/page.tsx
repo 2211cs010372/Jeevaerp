@@ -7,6 +7,7 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { StatusPill } from "@/components/portal/insurance/claims-board";
 
 /**
  * THE ADMITTED PATIENT'S BILL, as the insurance desk needs it.
@@ -48,6 +49,12 @@ interface Sheet {
   bedTotal: string; nurseTotal: string; chargesTotal: string; grandTotal: string;
   advanceTotal: string; balance: string;
   charges: Charge[];
+  /** Pharmacy and lab bills going to the insurer on this stay. Nobody collects
+   *  these at a counter, so they are counted here rather than chased. */
+  claimBills: { id: string; receiptNo: string; source: string; total: string; createdAt: string }[];
+  claimBillsTotal: string;
+  /** grandTotal + claimBillsTotal - everything on the claim. */
+  claimTotal: string;
 }
 
 const CATEGORIES = [
@@ -64,6 +71,30 @@ const CAT_LABEL: Record<string, string> = {
   PHARMACY: "Pharmacy",
 };
 
+/** Every bill on the stay, oldest first. See stayBills. */
+interface StayBills {
+  admittedAt: string;
+  dischargedAt: string | null;
+  bills: {
+    id: string; receiptNo: string; source: string; payer: string; status: string;
+    total: string; paid: string; createdAt: string; outsideStay: boolean;
+    lines: number; summary: string;
+  }[];
+  outsideCount: number;
+}
+
+/** Where the stay stands with its insurer. See stayClaims. */
+interface StayClaims {
+  claims: {
+    id: string; claimNo: string; type: string; stage: string; status: string;
+    claimedAmount: string; approvedAmount: string | null; settledAmount: string | null;
+    insurerRef: string | null; submittedAt: string | null; decisionAt: string | null;
+  }[];
+  insuranceBills: { id: string; receiptNo: string; source: string; total: string; paid: string }[];
+  insuranceBillsTotal: string;
+  needsDecision: boolean;
+}
+
 interface Service {
   id: string; name: string; group: string; category: string;
   price: string; gstRatePct: string; perDay: boolean;
@@ -79,6 +110,7 @@ const GROUP_LABEL: Record<string, string> = {
 const withDr = (name: string) => (/^dr\.?\s/i.test(name.trim()) ? name.trim() : `Dr. ${name.trim()}`);
 const money = (v: string | number) => Number(v).toLocaleString("en-IN", { maximumFractionDigits: 0 });
 const money2 = (v: string | number) => Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const day = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 const blankLine = { category: "PROCEDURE", description: "", qty: "1", unitPrice: "", gstRatePct: "0" };
 
 export default function InsuranceAdmissionPage() {
@@ -95,12 +127,63 @@ export default function InsuranceAdmissionPage() {
   const [e, setE] = useState({ ...blankLine });
 
   const [services, setServices] = useState<Service[]>([]);
+  /** Where the stay stands with its insurer - and whether a decision is owed. */
+  const [sc, setSc] = useState<StayClaims | null>(null);
+  const [reverting, setReverting] = useState(false);
+  const [revertReason, setRevertReason] = useState("");
+  /** Every bill on the stay, in date order. Loaded on demand - most visits to
+   *  this page never open it. */
+  const [showBills, setShowBills] = useState(false);
+  const [bills, setBills] = useState<StayBills | null>(null);
+
+  const loadBills = useCallback(async () => {
+    try { setBills(await api.get<StayBills>(`/insurance/admissions/${admissionId}/bills`)); }
+    catch (err) { setError(err instanceof ApiClientError ? err.message : "Couldn't load the bills."); }
+  }, [admissionId]);
+
+  async function redate(invoiceId: string, date: string) {
+    if (!date) return;
+    try {
+      const r = await api.patch<{ receiptNo: string }>(`/insurance/admissions/${admissionId}/bills`, { invoiceId, date });
+      setFlash(`${r.receiptNo} re-dated.`);
+      await Promise.all([loadBills(), load()]);
+    } catch (err) {
+      setError(err instanceof ApiClientError ? err.message : "Couldn't change the date.");
+      // Put the control back to what the server actually holds.
+      await loadBills();
+    }
+  }
 
   const load = useCallback(async () => {
-    try { setS(await api.get<Sheet>(`/ipd/admissions/${admissionId}/sheet`)); setError(null); }
+    try {
+      const [sheet, claims] = await Promise.all([
+        api.get<Sheet>(`/ipd/admissions/${admissionId}/sheet`),
+        api.get<StayClaims>(`/insurance/admissions/${admissionId}/claims`),
+      ]);
+      setS(sheet); setSc(claims); setError(null);
+    }
     catch (err) { setError(err instanceof ApiClientError ? err.message : "Couldn't load the stay."); }
     finally { setLoading(false); }
   }, [admissionId]);
+
+  /** The insurer said no. Move the bills onto the patient so they can be collected. */
+  async function billThePatient() {
+    if (revertReason.trim().length < 3) return;
+    setBusy(true);
+    try {
+      const r = await api.post<{ moved: { receiptNo: string }[]; movedTotal: string; skipped: { receiptNo: string; why: string }[] }>(
+        `/insurance/admissions/${admissionId}/claims`,
+        { reason: revertReason.trim() }
+      );
+      setReverting(false); setRevertReason("");
+      setFlash(
+        `₹${money2(r.movedTotal)} across ${r.moved.length} bill${r.moved.length === 1 ? "" : "s"} is now the patient's - collect it on reception's Billing screen.` +
+        (r.skipped.length ? ` ${r.skipped.length} left alone (money already taken).` : "")
+      );
+      await load();
+    } catch (err) { setError(err instanceof ApiClientError ? err.message : "Couldn't move the bills."); }
+    finally { setBusy(false); }
+  }
   useEffect(() => { load(); }, [load]);
 
   // The hospital's published rate card. Loaded once - a desk adding four lines
@@ -191,11 +274,86 @@ export default function InsuranceAdmissionPage() {
         <Link href="/pending" className="inline-flex items-center gap-1.5 text-[13px] font-medium text-[var(--p-muted)] hover:text-[var(--p-blue)]">
           <Icon name="chevron" size={14} className="rotate-180" /> To raise
         </Link>
-        <a href={`/print/bill/${a.id}`} target="_blank" rel="noreferrer"
-          className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-[var(--p-blue-deep)]">
-          <Icon name="printer" size={15} /> Detailed bill · print / PDF
-        </a>
+        <div className="flex items-center gap-2">
+          {/* Every bill on the stay, in date order, dates editable. An assessor
+              reads a claim chronologically and strikes off anything dated
+              outside the admission window - see stayBills. */}
+          <button onClick={() => { setShowBills((v) => !v); if (!bills) loadBills(); }}
+            className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-[13px] font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+            <Icon name="receipt" size={15} /> All bills
+            {(bills?.outsideCount ?? 0) > 0 && (
+              <span className="rounded-full bg-[var(--p-rose-soft)] px-1.5 py-0.5 text-[10.5px] font-bold text-[var(--p-rose)]">
+                {bills!.outsideCount}
+              </span>
+            )}
+          </button>
+          <a href={`/print/bill/${a.id}`} target="_blank" rel="noreferrer"
+            className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-[var(--p-blue-deep)]">
+            <Icon name="printer" size={15} /> Detailed bill · print / PDF
+          </a>
+        </div>
       </div>
+
+      {/* ── ALL BILLS ON THE STAY ── */}
+      {showBills && (
+        <section data-rise className="surface mb-5 overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--p-border)] px-5 py-3.5">
+            <div>
+              <h2 className="text-[14px] font-semibold text-[var(--p-ink)]">Every bill on this stay</h2>
+              <p className="mt-0.5 text-[12.5px] text-[var(--p-muted)]">
+                Oldest first. Admitted {bills ? day(bills.admittedAt) : "—"}
+                {bills?.dischargedAt ? `, discharged ${day(bills.dischargedAt)}` : ", still in a bed"}.
+                A bill dated outside that window gets queried by the insurer.
+              </p>
+            </div>
+            <button onClick={() => setShowBills(false)} className="text-[var(--p-muted)] hover:text-[var(--p-ink)]">✕</button>
+          </div>
+
+          {!bills ? (
+            <div className="flex items-center justify-center gap-2 py-10 text-[13px] text-[var(--p-muted)]"><Spinner /> Loading…</div>
+          ) : bills.bills.length === 0 ? (
+            <p className="px-5 py-10 text-center text-[13px] text-[var(--p-muted)]">No bills raised on this stay yet.</p>
+          ) : (
+            <div className="divide-y divide-[var(--p-border)]">
+              {bills.bills.map((b) => (
+                <div key={b.id} className={`flex flex-wrap items-center justify-between gap-3 px-5 py-3 ${b.outsideStay ? "bg-[var(--p-rose-soft)]/50" : ""}`}>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-[12.5px] font-semibold text-[var(--p-ink)]">{b.receiptNo}</span>
+                      <span className="rounded bg-[var(--p-border)]/40 px-1.5 py-0.5 text-[10.5px] font-semibold uppercase text-[var(--p-muted)]">
+                        {b.source === "PHARMACY" ? "Pharmacy" : b.source === "LAB" ? "Lab" : b.source === "IPD" ? "Stay" : b.source}
+                      </span>
+                      {b.payer === "INSURANCE"
+                        ? <span className="rounded bg-[var(--p-blue-soft)] px-1.5 py-0.5 text-[10.5px] font-semibold uppercase text-[var(--p-blue-deep)]">On the claim</span>
+                        : <span className="rounded bg-[var(--p-amber-soft)] px-1.5 py-0.5 text-[10.5px] font-semibold uppercase text-[#8a6414]">Patient</span>}
+                      {b.outsideStay && (
+                        <span className="rounded bg-[var(--p-rose-soft)] px-1.5 py-0.5 text-[10.5px] font-bold uppercase text-[var(--p-rose)]">
+                          Outside the stay
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-0.5 truncate text-[12px] text-[var(--p-muted)]">{b.summary} · {b.lines} line{b.lines === 1 ? "" : "s"}</div>
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-3">
+                    <span className="font-mono text-[13.5px] font-semibold text-[var(--p-ink)]">₹{money2(b.total)}</span>
+                    {/* The date IS the control. Money taken or an IRN issued
+                        locks it - the service refuses either way. */}
+                    <input type="date" className={`${fld} w-[150px]`} value={b.createdAt.slice(0, 10)}
+                      disabled={Number(b.paid) > 0}
+                      title={Number(b.paid) > 0 ? "Money has been taken against this bill - its date is fixed" : "Correct the bill date"}
+                      onChange={(ev) => redate(b.id, ev.target.value)} />
+                    <a href={`/print/invoice/${b.id}`} target="_blank" rel="noreferrer"
+                      className="rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+                      Bill
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* ── WHO, AND UNDER WHAT POLICY ── */}
       <div data-rise className="surface dotgrid mb-5 flex flex-wrap items-start justify-between gap-5 px-6 py-5">
@@ -241,6 +399,92 @@ export default function InsuranceAdmissionPage() {
           <span>{error}</span>
           <button onClick={() => setError(null)}>✕</button>
         </div>
+      )}
+
+      {/* ── WHERE IT STANDS WITH THE INSURER ──
+          On the bill's own screen, because "has this been approved" and "who am
+          I billing" are the same question and they get asked while looking at
+          the bill. */}
+      {sc && sc.claims.length > 0 && (
+        <section data-rise className="surface mb-5 overflow-hidden">
+          <div className="border-b border-[var(--p-border)] px-5 py-3.5">
+            <h2 className="text-[14px] font-semibold text-[var(--p-ink)]">With the insurer</h2>
+          </div>
+          <div className="divide-y divide-[var(--p-border)]">
+            {sc.claims.map((c) => (
+              <div key={c.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-[12.5px] font-semibold text-[var(--p-ink)]">{c.claimNo}</span>
+                    <StatusPill s={c.status} />
+                    <span className="text-[11.5px] text-[var(--p-muted)]">
+                      {c.stage === "PRE_AUTH" ? "Pre-auth" : "Final"} · {c.type === "CASHLESS" ? "Cashless" : "Reimbursement"}
+                    </span>
+                  </div>
+                  {c.insurerRef && (
+                    <div className="mt-0.5 text-[12px] text-[var(--p-muted)]">Insurer ref <span className="font-mono">{c.insurerRef}</span></div>
+                  )}
+                </div>
+                <div className="text-right text-[12.5px]">
+                  <div className="font-mono font-semibold text-[var(--p-ink)]">₹{money2(c.claimedAmount)} claimed</div>
+                  {c.approvedAmount != null && (
+                    <div className="text-[var(--p-muted)]">₹{money2(c.approvedAmount)} approved</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* ── THE INSURER SAID NO, OR NOT ALL OF IT ──
+              Until this existed there was no way back: a bill marked INSURANCE
+              is kept out of every dues list and every collection total, so a
+              refused claim left the money sitting against an insurer who had
+              already declined it. Nobody was going to collect it, and no screen
+              said so. */}
+          {sc.needsDecision && (
+            <div className="border-t border-[var(--p-border)] bg-[var(--p-rose-soft)] px-5 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="flex items-center gap-2 text-[13px] font-bold text-[var(--p-rose)]">
+                    <Icon name="alert" size={15} /> The insurer has not covered this in full
+                  </p>
+                  <p className="mt-1 max-w-xl text-[12.5px] leading-relaxed text-[var(--p-rose)]">
+                    ₹{money2(sc.insuranceBillsTotal)} across {sc.insuranceBills.length} bill
+                    {sc.insuranceBills.length === 1 ? "" : "s"} is still pointed at them. While it stays there
+                    nobody can collect it - it is out of every dues list by design. Re-submit the claim, or
+                    bill the patient instead.
+                  </p>
+                </div>
+                {!reverting && (
+                  <button onClick={() => setReverting(true)}
+                    className="shrink-0 rounded-lg border border-[var(--p-rose)]/50 bg-white px-4 py-2.5 text-[13px] font-semibold text-[var(--p-rose)] hover:bg-[var(--p-rose-soft)]">
+                    Bill the patient instead
+                  </button>
+                )}
+              </div>
+
+              {reverting && (
+                <div className="mt-3 space-y-2 rounded-lg border border-[var(--p-rose)]/30 bg-white p-3">
+                  <p className="text-[12.5px] leading-relaxed text-[var(--p-text)]">
+                    These bills become the patient&apos;s and appear on reception&apos;s Billing screen to be
+                    collected. A bill with money already taken against it is left alone.
+                  </p>
+                  <input className={fld} autoFocus value={revertReason}
+                    onChange={(ev) => setRevertReason(ev.target.value)}
+                    placeholder="Why - e.g. Star Health rejected, ref STR/2026/8841" />
+                  <div className="flex justify-end gap-2">
+                    <button onClick={() => { setReverting(false); setRevertReason(""); }}
+                      className="rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] text-[var(--p-text)]">Cancel</button>
+                    <button onClick={billThePatient} disabled={busy || revertReason.trim().length < 3}
+                      className="rounded-lg bg-[var(--p-rose)] px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-40">
+                      {busy ? "Moving…" : `Bill the patient ₹${money2(sc.insuranceBillsTotal)}`}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
       )}
 
       <div className="grid gap-5 xl:grid-cols-[1fr_320px]">
@@ -327,12 +571,40 @@ export default function InsuranceAdmissionPage() {
               </div>
             )}
 
-            {s.charges.length === 0 ? (
+            {s.charges.length === 0 && s.claimBills.length === 0 ? (
               <p className="px-5 py-12 text-center text-[13px] text-[var(--p-muted)]">
                 Nothing on the tab yet beyond the bed and nursing.
               </p>
             ) : (
               <div className="divide-y divide-[var(--p-border)]">
+                {/* PHARMACY AND LAB SIT ON THE TAB TOO, on a claim.
+                    They are other counters' invoices, not charge lines - which
+                    is exactly why they used to be missing from this list, and
+                    why a desk reading it saw a stay with no medicines on it.
+                    Shown here so the running tab is the whole claim, and shown
+                    FIRST because they are the part somebody has to go and look
+                    at another document to check.
+                    Not editable: repricing a dispense here would decouple the
+                    bill from the stock that left the shelf. Change it on the
+                    invoice it came from. */}
+                {s.claimBills.map((b) => (
+                  <div key={b.id} className="flex flex-wrap items-center justify-between gap-3 bg-[var(--p-blue-soft)]/40 px-5 py-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[13.5px] font-medium text-[var(--p-ink)]">
+                          {b.source === "PHARMACY" ? "Pharmacy dispense" : b.source === "LAB" ? "Laboratory tests" : "Other charges"}
+                        </span>
+                        <span className="rounded bg-[var(--p-blue-soft)] px-1.5 py-0.5 text-[10.5px] font-semibold uppercase text-[var(--p-blue-deep)]">
+                          On the claim
+                        </span>
+                      </div>
+                      <div className="mt-0.5 text-[12px] text-[var(--p-muted)]">
+                        Bill <span className="font-mono">{b.receiptNo}</span> · billed to the insurer, not collected at a counter
+                      </div>
+                    </div>
+                    <span className="shrink-0 font-mono text-[14px] font-semibold text-[var(--p-ink)]">₹{money2(b.total)}</span>
+                  </div>
+                ))}
                 {s.charges.map((c) =>
                   editId === c.id ? (
                     <div key={c.id} className="grid gap-2 bg-[var(--p-blue-soft)] px-5 py-4 sm:grid-cols-[1fr_120px_100px_90px_140px]">
@@ -406,12 +678,24 @@ export default function InsuranceAdmissionPage() {
               <Row k="Bed" v={s.bedTotal} />
               <Row k="Nursing" v={s.nurseTotal} />
               <Row k="Charges" v={s.chargesTotal} />
+              {/* One line, not one per bill - the tab beside this already lists
+                  them individually, and a summary that repeats the detail just
+                  makes the reader check whether the two agree. */}
+              {Number(s.claimBillsTotal) > 0 && <Row k="Pharmacy &amp; lab" v={s.claimBillsTotal} />}
             </dl>
             <div className="border-t border-[var(--p-border)] bg-[var(--p-bg)] px-5 py-4">
               <div className="flex items-center justify-between">
-                <span className="text-[13px] font-semibold text-[var(--p-muted)]">Total</span>
-                <span className="font-mono text-[20px] font-bold text-[var(--p-ink)]">₹{money2(s.grandTotal)}</span>
+                <span className="text-[13px] font-semibold text-[var(--p-muted)]">
+                  {Number(s.claimBillsTotal) > 0 ? "Total on the claim" : "Total"}
+                </span>
+                <span className="font-mono text-[20px] font-bold text-[var(--p-ink)]">₹{money2(s.claimTotal)}</span>
               </div>
+              {Number(s.claimBillsTotal) > 0 && (
+                <p className="mt-1 text-[12px] leading-relaxed text-[var(--p-muted)]">
+                  Includes ₹{money2(s.claimBillsTotal)} of pharmacy and lab billed to the insurer.
+                  Nothing here is collected at a counter.
+                </p>
+              )}
               {Number(s.advanceTotal) > 0 && (
                 <div className="mt-1 flex items-center justify-between text-[12.5px] text-[var(--p-muted)]">
                   <span>less advance held</span>

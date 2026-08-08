@@ -436,7 +436,9 @@ export default function InpatientsPage() {
                               ))}
                             </div>
                             <p className="mt-1.5 text-[11px] leading-relaxed text-[#8a6414]">
-                              Settle these at their own counters. Discharge is refused while they are outstanding.
+                              Settle these on <b>Billing</b> - all of a patient&apos;s bills go in one
+                              payment there, and the lab window takes no money. Discharge is refused
+                              while they are outstanding.
                             </p>
                           </div>
                         )}

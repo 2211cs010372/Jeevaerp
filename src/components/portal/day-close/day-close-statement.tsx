@@ -43,6 +43,9 @@ export interface Close {
   /** Billed to an insurer today. Listed, never added to any total on this page. */
   insurance?: { receiptNo: string; patient: string; insurer: string | null; total: number }[];
   insuranceTotal?: number;
+  /** Settlements banked today. Revenue, but no drawer saw it. */
+  insurerReceipts?: number;
+  insurerReceiptCount?: number;
 }
 
 const money = (n: number) => n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -337,6 +340,27 @@ export function DayCloseStatement({
                     With insurers · not collected
                   </span>
                   <span className="font-mono text-[15px] font-bold text-[var(--p-blue-deep)]">₹{money(data.insuranceTotal ?? 0)}</span>
+                </div>
+              </section>
+            )}
+
+            {/* ── MONEY INSURERS SENT TODAY ──
+                The other half of the cashless story: claims settled earlier,
+                banked today. It is revenue and it is real, but it arrived by
+                transfer - so it is reported here and is in none of the drawer
+                figures above. A day that banked ₹1.6L of settlements should not
+                read as a day that earned nothing. */}
+            {(data.insurerReceipts ?? 0) > 0 && (
+              <section data-rise className="surface overflow-hidden">
+                <div className="flex items-center justify-between px-5 py-4">
+                  <div>
+                    <h2 className="text-[14px] font-semibold text-[var(--p-ink)]">Received from insurers</h2>
+                    <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">
+                      {data.insurerReceiptCount ?? 0} settlement{(data.insurerReceiptCount ?? 0) === 1 ? "" : "s"} banked today.
+                      Bank transfer - not in the drawer, not in the totals above.
+                    </p>
+                  </div>
+                  <span className="font-mono text-[17px] font-bold text-[var(--p-cyan-deep)]">₹{money(data.insurerReceipts ?? 0)}</span>
                 </div>
               </section>
             )}

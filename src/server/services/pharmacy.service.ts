@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
 import { logAudit } from "./audit.service";
 import { parsePack, packsToUnits, perUnitPrice, describeStock } from "@/lib/pharmacy/pack";
-import { createInvoice, type BillLineInput } from "./billing.service";
+import { createInvoice, counterDues, type BillLineInput, type CounterDue, type CounterDues, type CounterIpdDue } from "./billing.service";
 import { getSettings } from "./admin.service";
 import { publishLive } from "@/server/realtime/publish";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
@@ -774,116 +774,16 @@ export async function pharmacyProfitSummary(): Promise<{
 // ward ones first, because those are the ones a discharge is waiting on.
 // ---------------------------------------------------------------------------
 
-export interface PharmacyDue {
-  invoiceId: string;
-  receiptNo: string;
-  createdAt: string;
-  total: string;
-  paid: string;
-  due: string;
-  patient: { id: string; displayId: string; fullName: string; phone: string | null };
-  /** Set only for a bill raised against a live or past admission. */
-  ipNumber: string | null;
-  ward: string | null;
-  bedNo: string | null;
-  /** True while the patient is still in a bed - discharge is blocked on this bill. */
-  stillAdmitted: boolean;
-  /** "Pantop 40 · 6 tab + 2 more" - enough to recognise the sale without opening it. */
-  summary: string;
-}
-
 /**
- * Every pharmacy invoice with money still on it, newest debt last so the oldest
- * - the one most likely to be forgotten - sits at the top of the list.
+ * The dues list is now the shared one - see counterDues in billing.service for
+ * the grouping and why the lab needed exactly the same screen. Kept as aliases
+ * so callers importing these names still compile.
  */
-export async function pharmacyDues(): Promise<{
-  dues: PharmacyDue[];
-  /** Ward bills only. This is the number that blocks discharges. */
-  ipdCount: number;
-  ipdTotal: string;
-  /** Every unpaid pharmacy bill, ward and counter together. */
-  count: number;
-  totalDue: string;
-}> {
-  const rows = await prisma.invoice.findMany({
-    where: {
-      source: "PHARMACY",
-      status: { notIn: ["CANCELLED", "PAID"] },
-    },
-    orderBy: { createdAt: "asc" },
-    select: {
-      id: true, receiptNo: true, createdAt: true, totalAmount: true,
-      payments: { select: { amount: true } },
-      refunds: { select: { amount: true } },
-      patient: { select: { id: true, displayId: true, fullName: true, phone: true } },
-      items: { select: { description: true, qty: true }, orderBy: { id: "asc" } },
-      admission: {
-        select: {
-          ipNumber: true, status: true,
-          bed: { select: { bedNo: true, ward: { select: { name: true } } } },
-        },
-      },
-    },
-  });
+export type PharmacyDue = CounterDue;
+export type PharmacyIpdDue = CounterIpdDue;
 
-  type Row = {
-    id: string; receiptNo: string; createdAt: Date; totalAmount: { toString(): string };
-    payments: { amount: { toString(): string } }[];
-    refunds: { amount: { toString(): string } }[];
-    patient: { id: string; displayId: string; fullName: string; phone: string | null } | null;
-    items: { description: string; qty: number }[];
-    admission: { ipNumber: string; status: string; bed: { bedNo: string; ward: { name: string } } | null } | null;
-  };
-
-  const dues: PharmacyDue[] = [];
-  for (const inv of rows as Row[]) {
-    const total = Number(inv.totalAmount.toString());
-    const paid = r2(
-      inv.payments.reduce((s, x) => r2(s + Number(x.amount.toString())), 0) -
-      inv.refunds.reduce((s, x) => r2(s + Number(x.amount.toString())), 0)
-    );
-    const due = r2(total - paid);
-    // A rounding tail of a paisa is settled, not owed.
-    if (due <= 0.01) continue;
-    if (!inv.patient) continue;
-
-    const first = inv.items[0];
-    const more = inv.items.length - 1;
-    const summary = first
-      ? `${first.description.split("·")[0].trim()}${more > 0 ? ` + ${more} more` : ""}`
-      : "—";
-
-    dues.push({
-      invoiceId: inv.id,
-      receiptNo: inv.receiptNo,
-      createdAt: inv.createdAt.toISOString(),
-      total: total.toFixed(2),
-      paid: paid.toFixed(2),
-      due: due.toFixed(2),
-      patient: inv.patient,
-      ipNumber: inv.admission?.ipNumber ?? null,
-      ward: inv.admission?.bed?.ward.name ?? null,
-      bedNo: inv.admission?.bed?.bedNo ?? null,
-      stillAdmitted: inv.admission?.status === "ADMITTED",
-      summary,
-    });
-  }
-
-  // Ward bills first - a discharge is held up by those, a counter bill is not.
-  dues.sort((a, b) => {
-    if (a.stillAdmitted !== b.stillAdmitted) return a.stillAdmitted ? -1 : 1;
-    if (!!a.ipNumber !== !!b.ipNumber) return a.ipNumber ? -1 : 1;
-    return a.createdAt.localeCompare(b.createdAt);
-  });
-
-  const ipd = dues.filter((d) => d.ipNumber !== null);
-  return {
-    dues,
-    ipdCount: ipd.length,
-    ipdTotal: ipd.reduce((s, d) => r2(s + Number(d.due)), 0).toFixed(2),
-    count: dues.length,
-    totalDue: dues.reduce((s, d) => r2(s + Number(d.due)), 0).toFixed(2),
-  };
+export async function pharmacyDues(): Promise<CounterDues> {
+  return counterDues("PHARMACY");
 }
 
 /** Dashboard: queue depth, stock health, expiry risk, today's revenue. */

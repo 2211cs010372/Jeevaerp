@@ -135,6 +135,36 @@ export async function createInvoice(
     });
     if (!patient || patient.mergedIntoId || patient.deletedAt) throw new ApiError(404, "Patient not found");
 
+    // ── A BILL AGAINST A STAY INHERITS THAT STAY'S PAYER ──
+    //
+    // The pharmacy and the lab raise their own invoices for an inpatient and
+    // link them to the admission (see pharmacy.service / labs.service). They
+    // have no idea who is paying for the stay, so they raised every one of them
+    // as SELF_PAY - which meant a cashless patient's medicines and tests showed
+    // up at discharge as "still to collect", and a family who had been promised
+    // cashless was asked for them at the counter. Meanwhile the insurer was
+    // never billed for them at all: they were on nobody's claim.
+    //
+    // Inheriting here rather than at each caller is the point. There are three
+    // places that bill an inpatient and there will be more, and the one thing
+    // they all already know is the admission.
+    //
+    // An explicit `payer` still wins - the IPD discharge passes its own, and a
+    // caller that deliberately bills a self-payer inside an insurance stay
+    // (a non-covered extra, say) must be able to say so.
+    let payer = input.payer;
+    let payerName = input.payerName;
+    if (!payer && input.admissionId) {
+      const adm = await tx.admission.findUnique({
+        where: { id: input.admissionId },
+        select: { payerType: true, insurer: true },
+      });
+      if (adm) {
+        payer = adm.payerType;
+        payerName = adm.insurer ?? undefined;
+      }
+    }
+
     // ---- compute totals ----
     // The arithmetic lives in a pure function so it can be unit-tested without a
     // database. Do not inline it back in here.
@@ -156,11 +186,11 @@ export async function createInvoice(
         appointmentId: input.appointmentId ?? null,
         prescriptionUploadId: input.prescriptionUploadId ?? null,
         admissionId: input.admissionId ?? null,
-        payer: input.payer ?? "SELF_PAY",
+        payer: payer ?? "SELF_PAY",
         // Only meaningful on an insurance bill. Cleared otherwise rather than
         // stored-and-ignored, so nothing downstream can print an insurer's name
         // across a bill the family paid in cash.
-        payerName: input.payer === "INSURANCE" ? input.payerName?.trim() || null : null,
+        payerName: payer === "INSURANCE" ? payerName?.trim() || null : null,
         subtotal: s2(subtotal),
         discountAmount: s2(discount),
         taxableAmount: s2(taxable),
@@ -635,4 +665,387 @@ export async function refundInvoice(
       status,
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// DUES AT A COUNTER - who owes this counter money, grouped the way it collects.
+// ---------------------------------------------------------------------------
+//
+// The pharmacy and the lab each bill inpatients on their own invoices, left
+// unpaid until the family leaves. Both counters then need the same screen: what
+// is still open, oldest first, ward before walk-in.
+//
+// ONE ROW PER INPATIENT, not one per invoice. A ward patient is dispensed to or
+// sampled several times over a stay and each one is its own bill; listed
+// individually, bed 12 was four separate rows, so the counter settled the one
+// the family asked about and left three behind that nobody went looking for
+// until the discharge desk refused to let them go. The list is read as "who owes
+// us" and it was answering "which slips are open", which is a different
+// question.
+//
+// Shared rather than written twice on purpose: the two counters had no reason to
+// differ and every reason to drift if they were separate copies.
+
+export interface CounterDue {
+  invoiceId: string; receiptNo: string; createdAt: string;
+  total: string; paid: string; due: string;
+  patient: { id: string; displayId: string; fullName: string; phone: string | null };
+  ipNumber: string | null; ward: string | null; bedNo: string | null;
+  stillAdmitted: boolean;
+  /** Enough of the first line to recognise the bill without opening it. */
+  summary: string;
+}
+
+export interface CounterIpdDue {
+  patient: { id: string; displayId: string; fullName: string; phone: string | null };
+  ipNumber: string | null; ward: string | null; bedNo: string | null;
+  stillAdmitted: boolean;
+  bills: { invoiceId: string; receiptNo: string; due: string; createdAt: string; summary: string }[];
+  billCount: number;
+  due: string;
+  /** The oldest open bill - what makes this row urgent. */
+  oldestAt: string;
+}
+
+export interface CounterDues {
+  dues: CounterDue[];
+  /** Ward dues rolled up per patient - what the counter actually collects. */
+  ipdByPatient: CounterIpdDue[];
+  ipdCount: number;
+  ipdTotal: string;
+  count: number;
+  totalDue: string;
+}
+
+/**
+ * `source` omitted means EVERY counter - which is what the front desk needs. A
+ * lab bill is settled at reception, not at the collection window, so the desk
+ * has to be able to see and take a patient's lab and pharmacy dues together.
+ */
+export async function counterDues(source?: InvoiceSourceT): Promise<CounterDues> {
+  const rows = await prisma.invoice.findMany({
+    where: {
+      ...(source ? { source } : { source: { in: ["LAB", "PHARMACY", "OTHER"] } }),
+      status: { notIn: ["CANCELLED", "PAID"] },
+      // A cashless bill is with the insurer, not with anybody at this counter.
+      // Listing it here sends staff to chase a family who owes nothing.
+      payer: "SELF_PAY",
+    },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true, receiptNo: true, createdAt: true, totalAmount: true,
+      payments: { select: { amount: true } },
+      refunds: { select: { amount: true } },
+      patient: { select: { id: true, displayId: true, fullName: true, phone: true } },
+      items: { select: { description: true }, orderBy: { id: "asc" } },
+      admission: {
+        select: { ipNumber: true, status: true, bed: { select: { bedNo: true, ward: { select: { name: true } } } } },
+      },
+    },
+  });
+
+  const dues: CounterDue[] = [];
+  for (const inv of rows) {
+    const total = Number(inv.totalAmount);
+    const paid = r2(
+      inv.payments.reduce((s, x) => r2(s + Number(x.amount)), 0) -
+      inv.refunds.reduce((s, x) => r2(s + Number(x.amount)), 0)
+    );
+    const due = r2(total - paid);
+    // A rounding tail of a paisa is settled, not owed.
+    if (due <= 0.01) continue;
+    if (!inv.patient) continue;
+
+    const first = inv.items[0];
+    const more = inv.items.length - 1;
+    dues.push({
+      invoiceId: inv.id,
+      receiptNo: inv.receiptNo,
+      createdAt: inv.createdAt.toISOString(),
+      total: total.toFixed(2), paid: paid.toFixed(2), due: due.toFixed(2),
+      patient: inv.patient,
+      ipNumber: inv.admission?.ipNumber ?? null,
+      ward: inv.admission?.bed?.ward.name ?? null,
+      bedNo: inv.admission?.bed?.bedNo ?? null,
+      stillAdmitted: inv.admission?.status === "ADMITTED",
+      summary: first ? `${first.description.split("·")[0].trim()}${more > 0 ? ` + ${more} more` : ""}` : "\u2014",
+    });
+  }
+
+  // Ward bills first - a discharge is held up by those, a counter bill is not.
+  dues.sort((a, b) => {
+    if (a.stillAdmitted !== b.stillAdmitted) return a.stillAdmitted ? -1 : 1;
+    if (!!a.ipNumber !== !!b.ipNumber) return a.ipNumber ? -1 : 1;
+    return a.createdAt.localeCompare(b.createdAt);
+  });
+
+  const ipd = dues.filter((d) => d.ipNumber !== null);
+
+  // Grouped by the PATIENT rather than the admission: a re-admitted patient
+  // still owes one person's worth of money, and it is collected once.
+  const byPatient = new Map<string, CounterIpdDue>();
+  for (const d of ipd) {
+    const row = byPatient.get(d.patient.id) ?? {
+      patient: d.patient, ipNumber: d.ipNumber, ward: d.ward, bedNo: d.bedNo,
+      stillAdmitted: d.stillAdmitted, bills: [], billCount: 0, due: "0.00", oldestAt: d.createdAt,
+    };
+    row.bills.push({ invoiceId: d.invoiceId, receiptNo: d.receiptNo, due: d.due, createdAt: d.createdAt, summary: d.summary });
+    row.billCount = row.bills.length;
+    row.due = r2(Number(row.due) + Number(d.due)).toFixed(2);
+    if (d.createdAt < row.oldestAt) row.oldestAt = d.createdAt;
+    // Any live stay makes the row a ward row, whichever slip we are on.
+    if (d.stillAdmitted) {
+      row.stillAdmitted = true;
+      row.ipNumber = d.ipNumber; row.ward = d.ward; row.bedNo = d.bedNo;
+    }
+    byPatient.set(d.patient.id, row);
+  }
+  const ipdByPatient = [...byPatient.values()].sort((a, b) => {
+    if (a.stillAdmitted !== b.stillAdmitted) return a.stillAdmitted ? -1 : 1;
+    return a.oldestAt.localeCompare(b.oldestAt);
+  });
+
+  return {
+    dues,
+    ipdByPatient,
+    ipdCount: ipd.length,
+    ipdTotal: ipd.reduce((s, d) => r2(s + Number(d.due)), 0).toFixed(2),
+    count: dues.length,
+    totalDue: dues.reduce((s, d) => r2(s + Number(d.due)), 0).toFixed(2),
+  };
+}
+
+/**
+ * SETTLE EVERYTHING A PATIENT OWES A COUNTER, IN ONE MOTION.
+ *
+ * A ward patient accumulates several bills over a stay and the family settles
+ * them together - they hand over one amount, not one amount per slip. Paying
+ * them one at a time is how three of four get settled and the fourth is found
+ * at discharge.
+ *
+ * But each invoice is its own tax document and money has to land against a
+ * specific one, so this does not invent a combined bill: it ALLOCATES the tender
+ * across the open invoices, oldest first. Oldest first because that is the debt
+ * most likely to be forgotten, and because a part-payment should clear whole old
+ * bills rather than leave every bill part-paid.
+ *
+ * Tender modes are preserved exactly. ₹500 cash + ₹700 UPI across three bills
+ * stays ₹500 of cash and ₹700 of UPI in the day close, split across whichever
+ * invoices they land on - the drawer has to reconcile, and a mode invented here
+ * would break it.
+ */
+export async function settleDues(
+  actor: AuthUser,
+  input: { patientId: string; source?: InvoiceSourceT; payments: PaymentInput[] },
+  ctx: { ipAddress?: string; userAgent?: string }
+): Promise<{ settled: { receiptNo: string; applied: string }[]; totalApplied: string }> {
+  const tenders = input.payments.filter((p) => p && p.amount > 0);
+  if (!tenders.length) throw new ApiError(400, "Enter a payment amount");
+
+  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const invoices = await tx.invoice.findMany({
+      where: {
+        patientId: input.patientId,
+        ...(input.source ? { source: input.source } : {}),
+        status: { notIn: ["CANCELLED", "PAID"] },
+        // Never take a family's money against a bill that is with their insurer.
+        payer: "SELF_PAY",
+      },
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true, receiptNo: true, totalAmount: true,
+        payments: { select: { amount: true } },
+        refunds: { select: { amount: true } },
+      },
+    });
+
+    const open = invoices
+      .map((i) => ({
+        id: i.id,
+        receiptNo: i.receiptNo,
+        total: Number(i.totalAmount),
+        due: r2(
+          Number(i.totalAmount) -
+          netPaid(
+            i.payments.map((p) => ({ amount: Number(p.amount) })),
+            i.refunds.map((p) => ({ amount: Number(p.amount) }))
+          )
+        ),
+      }))
+      // A rounding tail of a paisa is settled, not owed.
+      .filter((i) => i.due > 0.01);
+
+    if (!open.length) throw new ApiError(409, "Nothing is outstanding for this patient");
+
+    const totalDue = r2(open.reduce((s, i) => r2(s + i.due), 0));
+    const offered = r2(tenders.reduce((s, t) => r2(s + t.amount), 0));
+    if (offered > totalDue + 0.01) {
+      throw new ApiError(400, `That is more than the ₹${totalDue.toFixed(2)} outstanding. Take the balance as a fresh bill, not as an overpayment.`);
+    }
+
+    // Draw from the tenders in the order they were given, so a split keeps its
+    // shape: the cash is spent before the UPI, not smeared across every bill.
+    const pool = tenders.map((t) => ({ mode: t.mode, reference: t.reference, left: t.amount }));
+    const settled: { receiptNo: string; applied: string }[] = [];
+
+    for (const inv of open) {
+      let need = inv.due;
+      let appliedHere = 0;
+      for (const p of pool) {
+        if (need <= 0.001) break;
+        if (p.left <= 0.001) continue;
+        const take = r2(Math.min(need, p.left));
+        await tx.payment.create({
+          data: {
+            invoiceId: inv.id,
+            mode: p.mode as PaymentMode,
+            amount: s2(take),
+            reference: p.reference?.trim() || null,
+            receivedById: actor.id,
+          },
+        });
+        p.left = r2(p.left - take);
+        need = r2(need - take);
+        appliedHere = r2(appliedHere + take);
+      }
+      if (appliedHere > 0) {
+        await tx.invoice.update({
+          where: { id: inv.id },
+          data: {
+            status: need <= 0.01 ? "PAID" : "PARTIALLY_PAID",
+            paidAt: need <= 0.01 ? new Date() : null,
+          },
+        });
+        settled.push({ receiptNo: inv.receiptNo, applied: s2(appliedHere) });
+      }
+      if (pool.every((p) => p.left <= 0.001)) break;
+    }
+
+    await logAudit(
+      actor,
+      {
+        action: "DUES_SETTLED", targetTable: "Patient", targetId: input.patientId,
+        meta: { source: input.source ?? "ALL", bills: settled.length, total: s2(offered) },
+        ...ctx,
+      },
+      tx
+    );
+
+    return { settled, totalApplied: s2(offered) };
+  });
+
+  // A due clearing changes the discharge desk's answer, the counter's list and
+  // the day close all at once.
+  await publishLive([TOPICS.RECEPTION, TOPICS.PHARMACY, TOPICS.LABS, TOPICS.IPD, TOPICS.ADMIN], EVENTS.PAYMENT_TAKEN);
+  return result;
+}
+
+/**
+ * MOVE BILLS BACK OFF A CLAIM, ONTO THE PATIENT.
+ *
+ * The insurer said no. Or said yes to less than was asked. Either way somebody
+ * still has to pay for the treatment, and until this existed there was no way
+ * back: a bill marked INSURANCE is deliberately kept out of the dues lists and
+ * out of every collection total, so a refused claim left the money sitting
+ * against an insurer who had already declined it. Nobody was ever going to
+ * collect it, and nothing on any screen said so.
+ *
+ * NOT AUTOMATIC ON REJECTION, and that is deliberate. A refused pre-auth is
+ * argued with, re-documented and re-submitted all the time; flipping the bills
+ * the moment a rejection is recorded would put a family into the dues list while
+ * the desk is still on the phone to the TPA. Somebody decides, and their reason
+ * is stored.
+ *
+ * Only bills with NO money on them move. If a co-pay was taken against a bill it
+ * is already part self-paid and re-pointing it would misstate what was collected
+ * and from whom.
+ */
+export async function revertBillsToSelfPay(
+  actor: AuthUser,
+  input: { admissionId: string; invoiceIds?: string[]; reason: string },
+  ctx: { ipAddress?: string; userAgent?: string }
+): Promise<{ moved: { receiptNo: string; total: string }[]; movedTotal: string; skipped: { receiptNo: string; why: string }[] }> {
+  const reason = input.reason.trim();
+  if (reason.length < 3) throw new ApiError(400, "Say why this is going back to the patient");
+
+  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const adm = await tx.admission.findUnique({
+      where: { id: input.admissionId },
+      select: { id: true, ipNumber: true, insurer: true },
+    });
+    if (!adm) throw new ApiError(404, "Admission not found");
+
+    const invoices = await tx.invoice.findMany({
+      where: {
+        admissionId: input.admissionId,
+        payer: "INSURANCE",
+        status: { not: "CANCELLED" },
+        ...(input.invoiceIds?.length ? { id: { in: input.invoiceIds } } : {}),
+      },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, receiptNo: true, totalAmount: true, payments: { select: { amount: true } } },
+    });
+    if (!invoices.length) throw new ApiError(409, "There are no insurance bills on this stay to move");
+
+    const moved: { receiptNo: string; total: string }[] = [];
+    const skipped: { receiptNo: string; why: string }[] = [];
+
+    for (const inv of invoices) {
+      const taken = inv.payments.reduce((s, p) => r2(s + Number(p.amount)), 0);
+      if (taken > 0.01) {
+        skipped.push({ receiptNo: inv.receiptNo, why: `₹${taken.toFixed(2)} was already taken against it` });
+        continue;
+      }
+      await tx.invoice.update({
+        where: { id: inv.id },
+        // status is untouched: it was PENDING as an insurance bill and it is
+        // PENDING as a patient bill. What changed is who is being asked.
+        data: { payer: "SELF_PAY", payerName: null },
+      });
+      moved.push({ receiptNo: inv.receiptNo, total: Number(inv.totalAmount).toFixed(2) });
+    }
+
+    if (moved.length) {
+      // On the stay's own record, not only in the audit log. The family will ask
+      // why they are being billed for a stay they were told was cashless, and the
+      // answer has to be somewhere the ward can read.
+      await tx.admissionNote.create({
+        data: {
+          admissionId: adm.id,
+          kind: "NURSING",
+          body:
+            `Billed to the patient instead of ${adm.insurer ?? "the insurer"}: ` +
+            `${moved.map((m) => m.receiptNo).join(", ")}. Reason: ${reason}`,
+          authorId: actor.id,
+        },
+      });
+    }
+
+    await logAudit(
+      actor,
+      {
+        action: "BILLS_REVERTED_TO_SELF_PAY", targetTable: "Admission", targetId: adm.id,
+        meta: {
+          ipNumber: adm.ipNumber, insurer: adm.insurer, reason,
+          moved: moved.map((m) => m.receiptNo), skipped: skipped.map((s) => s.receiptNo),
+        },
+        ...ctx,
+      },
+      tx
+    );
+
+    return {
+      moved,
+      movedTotal: s2(moved.reduce((s, m) => r2(s + Number(m.total)), 0)),
+      skipped,
+    };
+  });
+
+  // These bills have just become money somebody has to collect - every dues list
+  // and every day close is now wrong until it hears this.
+  await publishLive(
+    [TOPICS.RECEPTION, TOPICS.PHARMACY, TOPICS.LABS, TOPICS.IPD, TOPICS.INSURANCE, TOPICS.ADMIN],
+    EVENTS.INVOICE_RAISED
+  );
+  return result;
 }

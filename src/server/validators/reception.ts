@@ -228,3 +228,20 @@ export const recordVitalsSchema = z.object({
 export const declineAdvisedLabSchema = z.object({
   reason: z.string().trim().min(3, "Say why the test isn't being done"),
 });
+
+/**
+ * Settling everything a patient owes a counter in one payment.
+ *
+ * `source` narrows it to one counter's bills - the pharmacy settles its own
+ * dues without touching the lab's. Omitted, it takes everything the patient owes,
+ * which is what the front desk does at discharge.
+ */
+export const settleDuesSchema = z.object({
+  patientId: z.string().trim().min(1, "Pick a patient"),
+  source: z.enum(["CONSULTATION", "LAB", "PHARMACY", "IPD", "OTHER"]).optional(),
+  payments: z.array(z.object({
+    mode: z.enum(["CASH", "UPI", "CARD", "NETBANKING", "OTHER"]),
+    amount: z.coerce.number().min(0.01),
+    reference: z.string().trim().max(80).optional(),
+  })).min(1, "Enter a payment").max(4),
+});

@@ -1096,7 +1096,7 @@ export async function addAdmissionNote(
  * Scoped by the admission's patient; the current stay's rows are flagged.
  */
 export async function admissionHistory(admissionId: string): Promise<{
-  bills: { id: string; receiptNo: string; source: string; status: string; total: string; paid: string; balance: string; date: string }[];
+  bills: { id: string; receiptNo: string; source: string; status: string; total: string; paid: string; balance: string; date: string; payer: string }[];
   labs: { id: string; testName: string; status: string; reportReady: boolean; reportUrl: string | null; date: string; forThisStay: boolean }[];
   prescriptions: { id: string; title: string | null; fileUrl: string | null; status: string; forThisStay: boolean; date: string; items: { medicineName: string; qty: number; dosage: string | null }[] }[];
 }> {
@@ -1107,7 +1107,7 @@ export async function admissionHistory(admissionId: string): Promise<{
   const [invoices, labs, rxs] = await Promise.all([
     prisma.invoice.findMany({
       where: { patientId, status: { not: "CANCELLED" } }, orderBy: { createdAt: "desc" }, take: 50,
-      select: { id: true, receiptNo: true, source: true, status: true, totalAmount: true, createdAt: true, payments: { select: { amount: true } } },
+      select: { id: true, receiptNo: true, source: true, status: true, totalAmount: true, createdAt: true, payer: true, payments: { select: { amount: true } } },
     }),
     prisma.labTest.findMany({
       where: { patientId }, orderBy: { createdAt: "desc" }, take: 50,
@@ -1119,7 +1119,7 @@ export async function admissionHistory(admissionId: string): Promise<{
     }),
   ]);
 
-  type Inv = { id: string; receiptNo: string; source: string; status: string; totalAmount: { toString(): string }; createdAt: Date; payments: { amount: { toString(): string } }[] };
+  type Inv = { id: string; receiptNo: string; source: string; status: string; totalAmount: { toString(): string }; createdAt: Date; payer: string; payments: { amount: { toString(): string } }[] };
   type Lab = { id: string; testName: string; status: string; reportFileUrl: string | null; createdAt: Date; completedAt: Date | null; admissionId: string | null };
   type Rx = { id: string; title: string | null; fileUrl: string | null; status: string; admissionId: string | null; createdAt: Date; items: { medicineName: string; qty: number; dosage: string | null }[] };
 
@@ -1127,7 +1127,7 @@ export async function admissionHistory(admissionId: string): Promise<{
     bills: (invoices as Inv[]).map((i) => {
       const total = Number(i.totalAmount.toString());
       const paid = i.payments.reduce((s, p) => s + Number(p.amount.toString()), 0);
-      return { id: i.id, receiptNo: i.receiptNo, source: i.source, status: i.status, total: total.toFixed(2), paid: paid.toFixed(2), balance: Math.max(0, total - paid).toFixed(2), date: i.createdAt.toISOString().slice(0, 10) };
+      return { id: i.id, receiptNo: i.receiptNo, source: i.source, status: i.status, total: total.toFixed(2), paid: paid.toFixed(2), balance: Math.max(0, total - paid).toFixed(2), date: i.createdAt.toISOString().slice(0, 10), payer: i.payer };
     }),
     labs: (labs as Lab[]).map((t) => ({ id: t.id, testName: t.testName, status: t.status, reportReady: Boolean(t.reportFileUrl), reportUrl: t.reportFileUrl, date: (t.completedAt ?? t.createdAt).toISOString().slice(0, 10), forThisStay: t.admissionId === admissionId })),
     prescriptions: (rxs as Rx[]).map((r) => ({ id: r.id, title: r.title, fileUrl: r.fileUrl, status: r.status, forThisStay: r.admissionId === admissionId, date: r.createdAt.toISOString().slice(0, 10), items: r.items })),
@@ -1298,6 +1298,30 @@ export async function admissionSheet(admissionId: string): Promise<{
    *  leaving money uncollected. */
   outstandingBills: { id: string; receiptNo: string; source: string; total: string; paid: string; due: string; createdAt: string }[];
   outstandingTotal: string;
+  /**
+   * PHARMACY AND LAB ON A CASHLESS STAY - counted, not chased.
+   *
+   * A self-paying family settles three bills at three counters, and those show
+   * up in `outstandingBills` above as money somebody has to collect. A cashless
+   * patient pays at no counter at all: the pharmacy dispenses to the ward, the
+   * lab runs the samples, and every rupee of it belongs on one claim.
+   *
+   * So on an insurance stay those bills move out of "go and collect this" and
+   * into the running total instead - which is the only way the ward and the
+   * desk can see what the stay has actually cost. They were invisible before:
+   * excluded from the dues list because nobody owes them, and absent from the
+   * total because they are separate invoices.
+   *
+   * Empty on a self-paying stay, where the separate-counter flow is unchanged.
+   */
+  claimBills: { id: string; receiptNo: string; source: string; total: string; createdAt: string }[];
+  claimBillsTotal: string;
+  /**
+   * grandTotal + claimBillsTotal - everything the insurer is being asked for.
+   * Equals grandTotal on a self-paying stay, so any screen can show this figure
+   * without first working out which kind of stay it is looking at.
+   */
+  claimTotal: string;
   /** grandTotal − advanceTotal, floored at 0. What the family still owes today. */
   balance: string;
 }> {
@@ -1401,6 +1425,36 @@ export async function admissionSheet(admissionId: string): Promise<{
   const nurseTotal = days * NURSE_FEE_PER_DAY;
   const grandTotal = bedTotal + nurseTotal + chargesTotal;
 
+  // ── WHAT THE CLAIM CARRIES BEYOND THE STAY ──
+  //
+  // Only on a cashless admission, and only bills actually going to the insurer.
+  // See the claimBills doc on the return type for why these belong in a total
+  // rather than in a list of things to chase.
+  //
+  // grandTotal is deliberately NOT changed. It is the figure the discharge
+  // screen quotes and the IPD invoice is raised from, and that invoice covers
+  // the stay alone - pharmacy and lab already have invoices of their own.
+  // Folding these into grandTotal would have the desk collect for medicines
+  // twice, once here and once on the pharmacy's own bill.
+  const claimInvoices = a.payerType === "INSURANCE"
+    ? await prisma.invoice.findMany({
+        where: {
+          admissionId,
+          source: { in: ["PHARMACY", "LAB", "OTHER"] },
+          status: { not: "CANCELLED" },
+          payer: "INSURANCE",
+        },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, receiptNo: true, source: true, totalAmount: true, createdAt: true },
+      })
+    : [];
+  const claimBills = claimInvoices.map((i) => ({
+    id: i.id, receiptNo: i.receiptNo, source: i.source,
+    total: Number(i.totalAmount).toFixed(2),
+    createdAt: i.createdAt.toISOString(),
+  }));
+  const claimBillsTotal = claimBills.reduce((s, b) => round2(s + Number(b.total)), 0);
+
   return {
     admission: {
       id: a.id, ipNumber: a.ipNumber, status: a.status,
@@ -1424,6 +1478,9 @@ export async function admissionSheet(admissionId: string): Promise<{
     advances,
     outstandingBills: outstanding.bills,
     outstandingTotal: outstanding.totalDue,
+    claimBills,
+    claimBillsTotal: claimBillsTotal.toFixed(2),
+    claimTotal: round2(grandTotal + claimBillsTotal).toFixed(2),
     // Never negative. An advance bigger than the bill is a REFUND owed, not a
     // negative debt that would quietly subtract from the day's takings.
     balance: Math.max(0, grandTotal - advanceTotal).toFixed(2),
@@ -1879,15 +1936,27 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
         select: { wardName: true, dailyCharge: true, fromDate: true, toDate: true, bed: { select: { bedNo: true } } },
       },
       labTests: {
+        // Only tests no invoice has billed yet. A test that HAS been invoiced
+        // arrives below as an invoice line instead - counting it from both
+        // sources would bill the insurer twice for one sample.
+        where: { invoiceItems: { none: {} } },
         orderBy: { createdAt: "asc" },
         select: { testName: true, priceAtOrder: true, createdAt: true, orderGroupId: true, catalog: { select: { code: true } } },
       },
       advances: { select: { amount: true } },
       invoices: {
-        where: { source: "IPD", status: { not: "CANCELLED" } },
+        where: { status: { not: "CANCELLED" } },
         orderBy: { createdAt: "desc" },
-        take: 1,
-        select: { receiptNo: true, createdAt: true, discountAmount: true, cgstAmount: true, sgstAmount: true },
+        select: {
+          receiptNo: true, source: true, createdAt: true, payer: true,
+          discountAmount: true, cgstAmount: true, sgstAmount: true,
+          items: {
+            select: {
+              description: true, hsnSac: true, qty: true, unitPrice: true, amount: true,
+              batch: { select: { batchNo: true, expiryDate: true } },
+            },
+          },
+        },
       },
     },
   });
@@ -1943,6 +2012,59 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
     ]);
   }
 
+  // ── THE OTHER COUNTERS' BILLS, ON AN INSURANCE CLAIM ──
+  //
+  // Pharmacy and lab raise their own invoices against the stay and settle at
+  // their own counters. That is right for a self-paying family - three counters,
+  // three bills, each paid where it was incurred - and it is left exactly as it
+  // was for them.
+  //
+  // It is wrong for a cashless claim. The insurer settles ONE document for the
+  // admission; medicines and investigations billed on separate sheets simply do
+  // not reach it, so the hospital treats the patient and then never asks anyone
+  // for the cost of the drugs. So on an insurance stay those lines are folded in
+  // here, under their own headings, with the subtotals an assessor reads.
+  //
+  // The separate invoices still EXIST and are untouched - this changes what the
+  // claim bill shows, not what was billed.
+  const isInsurance = a.payerType === "INSURANCE";
+  if (isInsurance) {
+    const SECTION_OF: Record<string, string> = {
+      PHARMACY: "PHARMACY", LAB: "INVESTIGATIONS", OTHER: "SERVICES", CONSULTATION: "SERVICES",
+    };
+    for (const inv of a.invoices) {
+      // The IPD invoice is this bill, not an input to it.
+      if (inv.source === "IPD") continue;
+      // Only what is actually going to the insurer. A pharmacy bill the family
+      // already paid in cash at the window stays SELF_PAY (see the backfill),
+      // and putting it on the claim would ask the insurer for money the hospital
+      // has already taken.
+      if (inv.payer !== "INSURANCE") continue;
+      const section = SECTION_OF[inv.source] ?? "SERVICES";
+      for (const it of inv.items) {
+        bySection.set(section, [
+          ...(bySection.get(section) ?? []),
+          {
+            date: inv.createdAt.toISOString(),
+            // The receipt number doubles as the issue number, so an assessor
+            // querying one line can be pointed at the document it came from.
+            issueNo: inv.receiptNo,
+            code: it.hsnSac,
+            description: it.description,
+            batchNo: it.batch?.batchNo ?? null,
+            // MM/YYYY - how an expiry is printed on a strip and how an assessor
+            // checking a pharmacy line expects to read it. A full timestamp in a
+            // 8%-wide column would just be truncated.
+            expiry: it.batch?.expiryDate
+              ? `${String(it.batch.expiryDate.getMonth() + 1).padStart(2, "0")}/${it.batch.expiryDate.getFullYear()}`
+              : null,
+            rate: m2(num(it.unitPrice)), qty: it.qty, amount: m2(num(it.amount)),
+          },
+        ]);
+      }
+    }
+  }
+
   push("DOCTOR VISITING CHARGES", null, bySection.get("DOCTOR VISITING CHARGES") ?? []);
 
   // Nursing care is per-day and derived rather than stored - the same figure the
@@ -1968,13 +2090,32 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
     batchNo: null, expiry: null,
     rate: m2(num(t.priceAtOrder)), qty: 1, amount: m2(num(t.priceAtOrder)),
   }));
-  push("INVESTIGATIONS", "LABORATORY", [...labLines, ...(bySection.get("INVESTIGATIONS") ?? [])]);
+  // The invoice line wins over the raw test where both describe the same thing.
+  //
+  // labTestId now ties the two together (see labs.service) and the query above
+  // already drops any test an invoice has billed - but only for tests ordered
+  // since that link existed. Rows written before it have no link at all, and on
+  // those the same investigation would be listed twice and charged twice. This
+  // is the belt for the older rows: the invoice is the billed document, so a
+  // test whose name is already on a folded-in invoice line is dropped here.
+  const invoicedInvestigations = new Set(
+    (bySection.get("INVESTIGATIONS") ?? []).map((l) => l.description.trim().toLowerCase())
+  );
+  push("INVESTIGATIONS", "LABORATORY", [
+    ...labLines.filter((l) => !invoicedInvestigations.has(l.description.trim().toLowerCase())),
+    ...(bySection.get("INVESTIGATIONS") ?? []),
+  ]);
 
   push("PHARMACY", null, bySection.get("PHARMACY") ?? []);
 
   // ── The money block ──
+  //
+  // The bill number and the tax figures come from the IPD invoice specifically -
+  // the stay's own document. Pharmacy and lab invoices are folded into the lines
+  // above on a claim, but they are not what this sheet IS, and their receipt
+  // numbers must never end up in the "Bill No" box an insurer files it under.
   const gross = groups.reduce((s, g) => round2(s + Number(g.total)), 0);
-  const inv = a.invoices[0];
+  const inv = a.invoices.find((i) => i.source === "IPD");
   const discount = num(inv?.discountAmount);
   const gst = round2(num(inv?.cgstAmount) + num(inv?.sgstAmount));
   const netBill = round2(gross - discount + gst);

@@ -28,7 +28,18 @@ interface Due {
   ipNumber: string | null; ward: string | null; bedNo: string | null;
   stillAdmitted: boolean; summary: string;
 }
-interface DuesResponse { dues: Due[]; ipdCount: number; ipdTotal: string; count: number; totalDue: string; }
+/** One admitted patient, every open ward bill of theirs rolled together. */
+interface IpdDue {
+  patient: { id: string; displayId: string; fullName: string; phone: string | null };
+  ipNumber: string | null; ward: string | null; bedNo: string | null;
+  stillAdmitted: boolean;
+  bills: { invoiceId: string; receiptNo: string; due: string; createdAt: string; summary: string }[];
+  billCount: number; due: string; oldestAt: string;
+}
+interface DuesResponse {
+  dues: Due[]; ipdByPatient: IpdDue[];
+  ipdCount: number; ipdTotal: string; count: number; totalDue: string;
+}
 
 const money = (v: string | number) => Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
@@ -38,6 +49,8 @@ export default function PharmacyDuesPage() {
   const [data, setData] = useState<DuesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [collect, setCollect] = useState<Due | null>(null);
+  /** A ward patient's whole debt, settled in one payment. */
+  const [settle, setSettle] = useState<IpdDue | null>(null);
 
   /**
    * `quiet` is what makes a live refresh feel live rather than broken. The first
@@ -55,9 +68,12 @@ export default function PharmacyDuesPage() {
   // A ward dispense adds a due; a payment anywhere clears one.
   // Suspended while the collect sheet is open - refreshing the list out from
   // under someone who is counting cash is worse than being a few seconds stale.
-  useLive([TOPICS.PHARMACY], () => load(true), { enabled: !collect });
+  // Suspended while EITHER sheet is open - refreshing the list out from under
+  // someone who is counting cash is worse than being a few seconds stale.
+  useLive([TOPICS.PHARMACY], () => load(true), { enabled: !collect && !settle });
 
-  const ward = data?.dues.filter((d) => d.ipNumber !== null) ?? [];
+  // Ward dues come pre-grouped by patient from the service (ipdByPatient);
+  // only the counter's own walk-in bills are still listed one per invoice.
   const counter = data?.dues.filter((d) => d.ipNumber === null) ?? [];
 
   return (
@@ -94,11 +110,7 @@ export default function PharmacyDuesPage() {
         </div>
       ) : (
         <div className="space-y-6">
-          <DueSection
-            title="On the ward" tone="amber"
-            sub="Charged to an admitted patient. Their discharge is waiting on this."
-            rows={ward} onCollect={setCollect}
-          />
+          <WardDueSection rows={data?.ipdByPatient ?? []} onCollect={setSettle} />
           <DueSection
             title="At the counter" tone="plain"
             sub="Walk-in sales left part-paid or unpaid."
@@ -114,7 +126,119 @@ export default function PharmacyDuesPage() {
           onDone={() => { setCollect(null); load(); }}
         />
       )}
+      {settle && (
+        <SettleAllModal
+          p={settle}
+          onClose={() => setSettle(null)}
+          onDone={() => { setSettle(null); load(); }}
+        />
+      )}
     </PortalScroll>
+  );
+}
+
+/**
+ * THE WARD LIST, ONE ROW PER PATIENT.
+ *
+ * A ward patient is dispensed to several times over a stay, and each dispense is
+ * its own invoice. Listed one per invoice, bed 12 was four separate rows - so the
+ * counter settled the one the family asked about and left three behind, which
+ * nobody went looking for until the discharge desk refused to let them go.
+ *
+ * The row is the person and the figure is everything they owe. The individual
+ * bills are still there, one click down, because each is its own tax document
+ * and money is taken against ONE of them at a time - a single "collect ₹1,240"
+ * button would have to invent an invoice that does not exist.
+ */
+function WardDueSection({ rows, onCollect }: { rows: IpdDue[]; onCollect: (p: IpdDue) => void }) {
+  const [open, setOpen] = useState<string | null>(null);
+  if (rows.length === 0) return null;
+  const total = rows.reduce((s, r) => s + Number(r.due), 0);
+
+  return (
+    <section data-rise className="surface overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--p-border)] bg-[var(--p-amber-soft)] px-6 py-4">
+        <div>
+          <h3 className="flex items-center gap-2 text-[14px] font-semibold text-[#8a6414]">
+            <Icon name="alert" size={15} /> On the ward
+          </h3>
+          <p className="mt-0.5 text-[12px] text-[#8a6414]">
+            One row per patient. Their discharge is waiting on this.
+          </p>
+        </div>
+        <div className="font-mono text-[15px] font-bold text-[#8a6414]">₹{money(total)}</div>
+      </div>
+
+      <div className="divide-y divide-[var(--p-border)]">
+        {rows.map((p) => (
+          <div key={p.patient.id}>
+            <button onClick={() => setOpen(open === p.patient.id ? null : p.patient.id)}
+              className="flex w-full flex-wrap items-center justify-between gap-4 px-6 py-4 text-left transition-colors hover:bg-[var(--p-bg)]">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[14px] font-medium text-[var(--p-ink)]">{p.patient.fullName}</span>
+                  <span className="font-mono text-[11.5px] text-[var(--p-muted)]">{p.patient.displayId}</span>
+                  {p.stillAdmitted ? (
+                    <span className="rounded-full bg-[var(--p-amber-soft)] px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-[#8a6414]">In bed</span>
+                  ) : (
+                    <span className="rounded-full bg-[var(--p-rose-soft)] px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-[var(--p-rose)]">Discharged — unpaid</span>
+                  )}
+                </div>
+                <div className="mt-1 text-[12px] text-[var(--p-muted)]">
+                  {p.ipNumber && <><span className="font-mono">{p.ipNumber}</span>{" · "}</>}
+                  {p.ward && `${p.ward}${p.bedNo ? ` bed ${p.bedNo}` : ""} · `}
+                  {p.billCount} bill{p.billCount === 1 ? "" : "s"} · oldest {day(p.oldestAt)}
+                  {ageInDays(p.oldestAt) >= 1 && ` (${ageInDays(p.oldestAt)}d ago)`}
+                </div>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="text-right">
+                  <div className="font-mono text-[17px] font-bold text-[var(--p-amber)]">₹{money(p.due)}</div>
+                  <div className="text-[11px] text-[var(--p-muted)]">total owed</div>
+                </div>
+                {/* ONE BUTTON, THE WHOLE DEBT.
+                    The family hands over one amount; the allocation across their
+                    open bills happens in settleDues. A button per bill is what
+                    let three of four go unsettled. */}
+                <span
+                  role="button" tabIndex={0}
+                  onClick={(e) => { e.stopPropagation(); onCollect(p); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); onCollect(p); } }}
+                  className="btn-primary inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-3.5 py-2 text-[12.5px] font-semibold text-white">
+                  <Icon name="rupee" size={14} /> Collect ₹{money(p.due)}
+                </span>
+                <span className={`text-[var(--p-muted)] transition-transform ${open === p.patient.id ? "rotate-90" : ""}`}>
+                  <Icon name="chevron" size={16} />
+                </span>
+              </div>
+            </button>
+
+            {/* The bills themselves stay reachable - somebody always asks
+                "what is this for", and each one still prints on its own. Only
+                the collecting is combined. */}
+            {open === p.patient.id && (
+              <div className="space-y-1.5 border-t border-[var(--p-border)] bg-[var(--p-bg)] px-6 py-3">
+                {p.bills.map((b) => (
+                  <div key={b.invoiceId} className="flex flex-wrap items-center justify-between gap-3 py-1">
+                    <div className="min-w-0 flex-1">
+                      <span className="font-mono text-[12.5px] font-semibold text-[var(--p-ink)]">{b.receiptNo}</span>
+                      <span className="text-[12px] text-[var(--p-muted)]"> · {day(b.createdAt)} · {b.summary}</span>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="font-mono text-[13.5px] font-semibold text-[var(--p-amber)]">₹{money(b.due)}</span>
+                      <Link href={`/print/invoice/${b.invoiceId}`} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border-strong)] bg-white px-3 py-1.5 text-[12px] font-semibold text-[var(--p-ink)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+                        <Icon name="receipt" size={13} /> Bill
+                      </Link>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -189,6 +313,90 @@ function DueSection({
         ))}
       </div>
     </section>
+  );
+}
+
+/**
+ * ONE PAYMENT, EVERY OPEN BILL of one ward patient.
+ *
+ * The family hands over one amount. `settleDues` spreads it across their bills
+ * oldest-first and stamps a Payment against each, so every invoice stays its own
+ * document and the tender modes reach the day close unchanged.
+ *
+ * Part-payment is allowed and is the reason the allocation is oldest-first: ₹500
+ * against ₹1,240 clears the oldest slips outright rather than leaving all four
+ * part-paid, which is the state nobody can reconcile later.
+ */
+function SettleAllModal({ p, onClose, onDone }: { p: IpdDue; onClose: () => void; onDone: () => void }) {
+  const [payments, setPayments] = useState<Tender[]>([]);
+  const [valid, setValid] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function submit() {
+    setBusy(true); setErr(null);
+    try {
+      const r = await api.post<{ settled: { receiptNo: string; applied: string }[] }>(
+        "/billing/settle-dues",
+        { patientId: p.patient.id, source: "PHARMACY", payments }
+      );
+      // Every bill the money actually landed on prints, so the family leaves
+      // holding a receipt for each - one combined slip would be a document the
+      // hospital never raised.
+      for (const s of r.settled) {
+        const bill = p.bills.find((b) => b.receiptNo === s.receiptNo);
+        if (bill) window.open(`/print/invoice/${bill.invoiceId}`, "_blank", "noopener,noreferrer");
+      }
+      onDone();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not record the payment");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <BottomSheet
+      title={`Collect ₹${money(p.due)}`}
+      sub={`${p.patient.fullName} · ${p.billCount} bill${p.billCount === 1 ? "" : "s"}${p.ipNumber ? ` · ${p.ipNumber}` : ""}`}
+      busy={busy}
+      onClose={onClose}
+      footer={
+        <>
+          <GhostButton onClick={onClose} disabled={busy}>Cancel</GhostButton>
+          <button onClick={submit} disabled={busy || !valid}
+            className="btn-primary inline-flex flex-1 items-center justify-center gap-2 rounded-lg px-5 py-3 text-[14px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45 sm:flex-none">
+            {busy ? <Spinner /> : <Icon name="check" size={15} />}
+            {busy ? "Recording…" : "Record & print"}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-4 px-6 py-5">
+        <div className="rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] px-4 py-3 text-[12.5px] text-[var(--p-muted)]">
+          {p.bills.map((b) => (
+            <div key={b.invoiceId} className="flex justify-between gap-3 py-0.5">
+              <span className="min-w-0 truncate"><span className="font-mono">{b.receiptNo}</span> · {day(b.createdAt)}</span>
+              <span className="shrink-0 font-mono text-[var(--p-ink)]">₹{money(b.due)}</span>
+            </div>
+          ))}
+          <div className="mt-1 flex justify-between border-t border-[var(--p-border)] pt-1 font-semibold">
+            <span className="text-[var(--p-ink)]">Total due</span>
+            <span className="font-mono text-[var(--p-amber)]">₹{money(p.due)}</span>
+          </div>
+          <p className="mt-2 leading-relaxed">
+            Paying less than the total settles the oldest bills first.
+          </p>
+        </div>
+
+        <PaymentSection total={Number(p.due)} accent="blue" onChange={(r) => { setPayments(r.payments); setValid(r.valid); }} />
+
+        {err && (
+          <div className="rounded-lg border border-[var(--p-rose)]/30 bg-[var(--p-rose-soft)] px-4 py-3 text-[12.5px] text-[var(--p-rose)]">
+            {err}
+          </div>
+        )}
+      </div>
+    </BottomSheet>
   );
 }
 

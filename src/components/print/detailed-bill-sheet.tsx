@@ -75,6 +75,12 @@ export function DetailedBillSheet() {
   const { admissionId } = useParams<{ admissionId: string }>();
   const [b, setB] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Printing onto the hospital's own pre-printed pad, the same one the OPD
+   * sheet uses. Defaults ON because that is what is in the tray - a claim bill
+   * on blank paper is the exception here, not the rule.
+   */
+  const [onStationery, setOnStationery] = useState(true);
   const ipBar = useRef<SVGSVGElement>(null);
   const billBar = useRef<SVGSVGElement>(null);
 
@@ -103,21 +109,43 @@ export function DetailedBillSheet() {
 
   return (
     <div className="print-stage">
-      <style>{CSS}</style>
+      <style>{CSS(onStationery)}</style>
+      <div className="mx-auto mb-2 flex w-full max-w-[210mm] items-center justify-end print:hidden">
+        <label className="flex items-center gap-2 text-[13px] text-[#3a4744]">
+          <input type="checkbox" checked={onStationery} onChange={(e) => setOnStationery(e.target.checked)} />
+          Printing on the hospital&apos;s pre-printed sheet
+        </label>
+      </div>
       <PrintToolbar title={`Detailed bill · ${b.admission.ipNumber}`} />
 
       <div id="print-sheet">
-        <BillHead hospital={b.hospital} />
-        <div className="mt-1 text-center text-[12px] font-bold">
-          Detailed Bill (Credit)
-          {/* Said on the sheet, not just in the UI. A bill for a stay that is
-              still running WILL be filed by somebody as if it were final. */}
-          {b.provisional && (
-            <span className="ml-2 rounded border border-[#8a5a1a] px-1.5 py-[1px] text-[8.5px] font-bold uppercase tracking-wide text-[#8a5a1a]">
-              Provisional · stay in progress
-            </span>
-          )}
-        </div>
+        {/* ── THE DOCUMENT, AS ONE TABLE ──
+            A claim bill runs to three pages as often as one, and page two of a
+            bill carrying no patient name and no bill number is unattributable
+            the moment a TPA separates it from page one - which is exactly what
+            happens inside their file.
+            A `thead` is the one thing browsers reliably repeat on every printed
+            page, so the masthead and the patient box live in one. Everything
+            below flows normally and breaks wherever it needs to. */}
+        <table className="doc">
+          <thead>
+            <tr>
+              <td className="pb-1">
+                {/* On pre-printed paper the letterhead is already on the sheet,
+                    and the page margins below reserve the band it occupies -
+                    printing our own on top of it would strike through theirs. */}
+                {!onStationery && <BillHead hospital={b.hospital} />}
+                <div className="mt-1 text-center text-[12px] font-bold">
+                  Detailed Bill (Credit)
+                  {/* Said on the sheet, not just in the UI. A bill for a stay
+                      that is still running WILL be filed by somebody as if it
+                      were final. */}
+                  {b.provisional && (
+                    <span className="ml-2 rounded border border-[#8a5a1a] px-1.5 py-[1px] text-[8.5px] font-bold uppercase tracking-wide text-[#8a5a1a]">
+                      Provisional · stay in progress
+                    </span>
+                  )}
+                </div>
 
         {/* ── WHO, AND WHICH BILL ── two columns inside one box, as on the form
             the desk submits today. Kept together so it never splits across a
@@ -143,8 +171,15 @@ export function DetailedBillSheet() {
             <F k="Insurer / Policy" v={b.insurer ? `${b.insurer}${b.policyNo ? ` · ${b.policyNo}` : ""}` : "-"} />
           </div>
         </div>
+              </td>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
 
-        {/* ── THE LINES ── */}
+        {/* ── THE LINES ── its own thead, which repeats too, so a continuation
+            page carries the column headings rather than nine bare numbers. */}
         <table className="mt-2 w-full border-collapse text-[9.5px]">
           <thead>
             <tr className="border-b border-t border-[#333]">
@@ -245,6 +280,10 @@ export function DetailedBillSheet() {
             ? "Provisional bill for pre-authorisation. The final bill is raised at discharge."
             : "Computer-generated bill. Submitted for insurance settlement."}
         </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -280,11 +319,23 @@ function Th({ children, w, right }: { children?: React.ReactNode; w: string; rig
 }
 
 /**
- * A4, not the A5 used for counter bills - see the note at the top. `thead`
- * repeats on every printed page and no row is allowed to split, so a claim bill
- * that runs to three pages still reads as a table on each of them.
+ * A4, and DELIBERATELY MULTI-PAGE - see the note at the top. Everything here
+ * exists so a bill that outgrows one sheet stays readable on the next.
+ *
+ * THE PAGE MARGINS DO THE RESERVING. On the hospital's pre-printed pad the
+ * letterhead is already on the paper, top and bottom. `@page margin` applies to
+ * EVERY page, so page three keeps clear of the printed letterhead exactly as
+ * page one does. The other print profiles in this app pin their sheet with
+ * `position: absolute`, which reserves those bands beautifully and confines the
+ * document to a single page - correct for a one-page receipt, fatal here.
+ *
+ * NOTHING IS POSITIONED. No absolute pinning and no fixed height, so content
+ * flows and the browser breaks it where it runs out of paper.
+ *
+ * `thead` REPEATS. Both of them - the document header carrying the patient and
+ * the bill number, and the line table's column headings.
  */
-const CSS = `
+const CSS = (onStationery: boolean) => `
   .print-stage { --pr-primary: #0b5f55; --pr-ink: #17211e; --pr-line: #b9c4c0; }
   .print-stage { background: #e8e6e1; min-height: 100vh; padding: 24px 12px 64px; }
 
@@ -294,12 +345,19 @@ const CSS = `
     background: #fff;
     color: var(--pr-ink);
     box-shadow: 0 8px 40px rgba(0,0,0,.18);
-    padding: 10mm 10mm;
+    /* On screen the padding stands in for the page margins, so the preview is
+       laid out like the paper. Measurements match STATIONERY_PRINT_CSS. */
+    padding: ${onStationery ? "40mm 13mm 46mm" : "10mm 10mm"};
     font-family: var(--font-sans, "Instrument Sans"), "Noto Sans Telugu", "Nirmala UI", Arial, sans-serif;
     font-size: 9.7px;
     line-height: 1.4;
   }
   #print-sheet .rule-strong { border-bottom: 2px solid var(--pr-primary); }
+  /* The document wrapper is a table only so its header can repeat; it must not
+     look like one. */
+  #print-sheet table.doc { width: 100%; border-collapse: collapse; }
+  #print-sheet table.doc > thead > tr > td,
+  #print-sheet table.doc > tbody > tr > td { padding: 0; }
 
   @media print {
     html, body { background: #fff !important; margin: 0 !important; padding: 0 !important; }
@@ -307,11 +365,14 @@ const CSS = `
     #print-sheet, #print-sheet * { visibility: visible !important; }
     .print-stage { background: #fff !important; padding: 0 !important; margin: 0 !important; min-height: 0 !important; }
 
-    @page { size: A4 portrait; margin: 8mm; }
+    /* Per-page bands. On the pre-printed pad these clear the letterhead and the
+       printed footer on every sheet, not just the first. */
+    @page { size: A4 portrait; margin: ${onStationery ? "40mm 13mm 46mm" : "10mm"}; }
 
     #print-sheet {
       position: static !important;
       width: auto !important;
+      min-height: 0 !important;
       margin: 0 !important;
       box-shadow: none !important;
       padding: 0 !important;

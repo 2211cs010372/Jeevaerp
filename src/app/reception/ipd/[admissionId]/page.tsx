@@ -46,13 +46,18 @@ interface Sheet {
    *  documents from the discharge bill - this is where they surface. */
   outstandingBills: { id: string; receiptNo: string; source: string; total: string; paid: string; due: string; createdAt: string }[];
   outstandingTotal: string;
+  /** Cashless stays only: pharmacy and lab going to the insurer, counted in the
+   *  total rather than chased at a counter. Empty on a self-paying stay. */
+  claimBills: { id: string; receiptNo: string; source: string; total: string; createdAt: string }[];
+  claimBillsTotal: string;
+  claimTotal: string;
   balance: string;
 }
 interface Med { id: string; name: string; unit: string; inStock: number; }
 /** One deposit slip. `receiptNo` is what the family quotes at discharge. */
 interface Advance { id: string; receiptNo: string; amount: string; mode: string; }
 interface History {
-  bills: { id: string; receiptNo: string; source: string; status: string; total: string; paid: string; balance: string; date: string }[];
+  bills: { id: string; receiptNo: string; source: string; status: string; total: string; paid: string; balance: string; date: string; payer: string }[];
   labs: { id: string; testName: string; status: string; reportReady: boolean; reportUrl: string | null; date: string; forThisStay: boolean }[];
   prescriptions: { id: string; title: string | null; fileUrl: string | null; status: string; forThisStay: boolean; date: string; items: { medicineName: string; qty: number; dosage: string | null }[] }[];
 }
@@ -377,7 +382,12 @@ export default function AdmissionSheetPage() {
         <section data-rise className="surface overflow-hidden">
           <div className="flex items-center justify-between border-b border-[var(--p-border)] px-5 py-3.5">
             <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">The running tab</h3>
-            <span className="badge">{sheet.charges.length + 2} lines</span>
+            {/* +2 for the bed and the nursing fee, which are derived rather than
+                stored, plus the claim's pharmacy and lab now that they sit on
+                the tab too - the count has to match what is under it. */}
+            <span className="badge">
+              {sheet.charges.length + (sheet.claimBills?.length ?? 0) + (sheet.outstandingBills?.length ?? 0) + 2} lines
+            </span>
           </div>
 
           <div className="divide-y divide-[var(--p-border)]">
@@ -410,7 +420,63 @@ export default function AdmissionSheetPage() {
               <span className="font-mono text-[14px] font-bold text-[var(--p-ink)]">₹{money(sheet.nurseTotal)}</span>
             </div>
 
-            {sheet.charges.length === 0 ? (
+            {/* ── ON A CLAIM, THE OTHER COUNTERS' BILLS ARE ON THIS TAB TOO ──
+                Pharmacy and lab raise their own invoices against the stay. For a
+                self-paying family those are three bills settled at three
+                counters and they belong in the dues block, not here. For a
+                cashless one they are all one claim - so they sit on the running
+                tab, where the ward looks to see what the stay has cost.
+                Read-only: they are another document's lines, and repricing a
+                dispense here would decouple the bill from the stock that left
+                the shelf. */}
+            {(sheet.claimBills ?? []).map((b) => (
+              <div key={b.id} className="flex items-center justify-between gap-3 bg-[var(--p-blue-soft)]/40 px-5 py-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-[14px] font-medium text-[var(--p-ink)]">
+                      {b.source === "PHARMACY" ? "Pharmacy dispense" : b.source === "LAB" ? "Laboratory tests" : "Other charges"}
+                    </span>
+                    <span className="shrink-0 rounded bg-[var(--p-blue-soft)] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[var(--p-blue-deep)]">On the claim</span>
+                  </div>
+                  <div className="text-[12px] text-[var(--p-muted)]">
+                    Bill <span className="font-mono">{b.receiptNo}</span> · billed to the insurer, not collected here
+                  </div>
+                </div>
+                <span className="shrink-0 font-mono text-[14px] font-semibold text-[var(--p-ink)]">₹{money(b.total)}</span>
+              </div>
+            ))}
+
+            {/* ── SELF-PAY: THE SAME BILLS, THE OPPOSITE INSTRUCTION ──
+                Pharmacy and lab bill a self-paying family on their own invoices,
+                settled at Billing on the way out. They belong on this tab too - it
+                is the one screen that sees the whole stay - but they are marked
+                DUE and are deliberately NOT in the total below, because the
+                discharge invoice does not cover them. Somebody still has to
+                collect them, and the summary under the total says so. */}
+            {(sheet.outstandingBills ?? []).map((b) => (
+              <div key={b.id} className="flex items-center justify-between gap-3 bg-[var(--p-amber-soft)]/50 px-5 py-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-[14px] font-medium text-[var(--p-ink)]">
+                      {b.source === "PHARMACY" ? "Pharmacy dispense" : b.source === "LAB" ? "Laboratory tests" : "Other charges"}
+                    </span>
+                    <span className="shrink-0 rounded bg-[var(--p-amber-soft)] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[#8a6414]">Due</span>
+                  </div>
+                  <div className="text-[12px] text-[var(--p-muted)]">
+                    Bill <span className="font-mono">{b.receiptNo}</span> · settled at Billing, not on the discharge bill
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="font-mono text-[14px] font-semibold text-[#8a6414]">₹{money(b.due)}</span>
+                  <a href={`/print/invoice/${b.id}`} target="_blank" rel="noopener noreferrer"
+                    className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
+                    Bill
+                  </a>
+                </div>
+              </div>
+            ))}
+
+            {sheet.charges.length === 0 && (sheet.claimBills ?? []).length === 0 && (sheet.outstandingBills ?? []).length === 0 ? (
               <p className="px-5 py-8 text-center text-[13px] text-[var(--p-muted)]">
                 Nothing else on the tab yet. Add procedures, oxygen, doctor rounds below -
                 pharmacy medicines land here automatically.
@@ -580,7 +646,14 @@ export default function AdmissionSheetPage() {
                 <div key={b.id} className="flex items-center justify-between gap-3 px-5 py-3">
                   <div className="min-w-0">
                     <div className="truncate text-[13.5px] font-medium text-[var(--p-ink)]"><span className="font-mono">{b.receiptNo}</span> · {SRC_LABEL[b.source] ?? b.source}</div>
-                    <div className="text-[12px] text-[var(--p-muted)]">{prettyDate(b.date)} · Paid ₹{money(b.paid)} of ₹{money(b.total)}{Number(b.balance) > 0 && <span className="text-[var(--p-rose)]"> · ₹{money(b.balance)} due</span>}</div>
+                    {/* An unpaid balance on a cashless bill is with the insurer,
+                        not with the family. In the same red as a real debt it
+                        sends the desk to chase somebody who owes nothing. */}
+                    <div className="text-[12px] text-[var(--p-muted)]">{prettyDate(b.date)} · Paid ₹{money(b.paid)} of ₹{money(b.total)}{Number(b.balance) > 0 && (
+                      b.payer === "INSURANCE"
+                        ? <span className="text-[var(--p-blue-deep)]"> · ₹{money(b.balance)} with insurer</span>
+                        : <span className="text-[var(--p-rose)]"> · ₹{money(b.balance)} due</span>
+                    )}</div>
                   </div>
                   <a href={`/print/invoice/${b.id}`} target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--p-blue)] hover:border-[var(--p-blue)]"><Icon name="receipt" size={13} /> View</a>
                 </div>
@@ -646,43 +719,39 @@ export default function AdmissionSheetPage() {
               <span className="font-mono text-[var(--p-ink)]">₹{money(sheet.chargesTotal)}</span>
             </div>
 
-            {/* PHARMACY AND LAB ARE BILLED SEPARATELY.
-                They are not lines on the stay - they are their own invoices,
-                due on the way out. Shown here because this is the only screen
-                that sees all three, and because a discharge is refused while
-                any of them is unpaid. */}
+            {/* PHARMACY AND LAB ARE BILLED SEPARATELY, and are itemised on the
+                tab above. This is the WARNING, not a second copy of the list:
+                the figure that blocks a discharge, and why. */}
             {sheet.outstandingBills?.length > 0 && (
               <div className="rounded-lg border border-[var(--p-amber)]/35 bg-[var(--p-amber-soft)] px-3 py-2.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-[12px] font-bold uppercase tracking-wide text-[#8a6414]">Due separately</span>
+                  <span className="text-[12px] font-bold uppercase tracking-wide text-[#8a6414]">
+                    Due separately ({sheet.outstandingBills.length})
+                  </span>
                   <span className="font-mono text-[14px] font-bold text-[#8a6414]">₹{money(sheet.outstandingTotal)}</span>
                 </div>
-                <div className="mt-1.5 space-y-1">
-                  {sheet.outstandingBills.map((b) => (
-                    <div key={b.id} className="flex items-center justify-between gap-2 text-[12px] text-[#8a6414]">
-                      <span className="min-w-0 truncate">
-                        {b.source === "LAB" ? "Lab" : b.source === "PHARMACY" ? "Pharmacy" : "Other"}
-                        {" · "}<span className="font-mono">{b.receiptNo}</span>
-                      </span>
-                      <span className="flex shrink-0 items-center gap-2">
-                        <span className="font-mono font-semibold">₹{money(b.due)}</span>
-                        <a href={`/print/invoice/${b.id}`} target="_blank" rel="noopener noreferrer"
-                          className="font-semibold text-[var(--p-teal)] hover:underline">Bill</a>
-                      </span>
-                    </div>
-                  ))}
-                </div>
                 <p className="mt-1.5 text-[11px] leading-relaxed text-[#8a6414]">
-                  Not part of the discharge bill. Collect these at the pharmacy / lab counter -
-                  discharge is blocked until they are settled.
+                  Not part of the discharge bill and not in the total below. Collect them on
+                  <b> Billing</b>, where this patient&apos;s bills settle in one payment - the lab
+                  window takes no money. Discharge is blocked until they are.
                 </p>
               </div>
             )}
 
+            {/* The claim's pharmacy and lab are ON THE TAB above, not in their
+                own box down here - they are part of what the stay cost, and a
+                second list of the same figures would just invite a reader to
+                check whether the two agree. This total already includes them. */}
             <div className="flex items-center justify-between border-t border-[var(--p-border)] pt-3">
               <span className="text-[14px] font-semibold text-[var(--p-ink)]">Total so far</span>
-              <span className="font-mono text-[18px] font-bold text-[var(--p-ink)]">₹{money(sheet.grandTotal)}</span>
+              <span className="font-mono text-[18px] font-bold text-[var(--p-ink)]">₹{money(sheet.claimTotal ?? sheet.grandTotal)}</span>
             </div>
+            {Number(sheet.claimBillsTotal ?? 0) > 0 && (
+              <p className="text-[12px] leading-relaxed text-[var(--p-muted)]">
+                Includes ₹{money(sheet.claimBillsTotal)} of pharmacy and lab billed to the insurer.
+                None of it is collected at a counter.
+              </p>
+            )}
 
             {/* The deposit. Reception took this money - it must be visible, or
                 they'll ask the family for the full total at discharge. */}

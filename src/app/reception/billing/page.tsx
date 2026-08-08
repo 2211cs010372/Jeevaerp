@@ -25,6 +25,15 @@ interface Inv {
   patient: { displayId: string; fullName: string };
 }
 
+/** One admitted patient, every open counter bill of theirs rolled together. */
+interface IpdDue {
+  patient: { id: string; displayId: string; fullName: string; phone: string | null };
+  ipNumber: string | null; ward: string | null; bedNo: string | null;
+  stillAdmitted: boolean;
+  bills: { invoiceId: string; receiptNo: string; due: string; createdAt: string; summary: string }[];
+  billCount: number; due: string; oldestAt: string;
+}
+
 const SOURCE: Record<string, string> = {
   CONSULTATION: "OP consult", LAB: "Lab", PHARMACY: "Pharmacy", IPD: "Inpatient", OTHER: "Other",
 };
@@ -33,9 +42,18 @@ const MODE_LABEL: Record<string, string> = { CASH: "Cash", UPI: "UPI", CARD: "Ca
 const payLabel = (modes: string[]) => modes.map((m) => MODE_LABEL[m] ?? m).join(" + ");
 const money = (v: string) => Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2 });
 const due = (i: Inv) => Math.max(0, Number(i.totalAmount) - Number(i.amountPaid));
+/**
+ * Is the balance on this bill money somebody at this desk collects?
+ *
+ * A cashless bill carries an open balance for its entire life - that is not a
+ * debt, it is a claim, and it is settled by the insurer paying the hospital. One
+ * predicate so the tab, the count and the shift's "still owed" figure can never
+ * disagree about which bills are chaseable.
+ */
+const isCollectable = (i: Inv) => i.payer !== "INSURANCE" && i.status !== "CANCELLED";
 const isToday = (iso: string) => new Date(iso).toDateString() === new Date().toDateString();
 
-type Tab = "TODAY" | "DUE" | "ALL";
+type Tab = "TODAY" | "DUE" | "INSURER" | "ALL";
 
 export default function BillingPage() {
   const [invs, setInvs] = useState<Inv[]>([]);
@@ -76,9 +94,39 @@ export default function BillingPage() {
   }
   const [busy, setBusy] = useState(false);
 
+  /** Inpatient dues, already grouped per patient by the service. */
+  const [ipdDues, setIpdDues] = useState<IpdDue[]>([]);
+  const [settle, setSettle] = useState<IpdDue | null>(null);
+  const [settleAmt, setSettleAmt] = useState("");
+  const [settleMode, setSettleMode] = useState<(typeof MODES)[number]>("CASH");
+  const [settleRef, setSettleRef] = useState("");
+
+  /** Take the whole debt in one payment - see settleDues for the allocation. */
+  async function doSettle() {
+    if (!settle) return;
+    setBusy(true); setErr(null);
+    try {
+      await api.post("/billing/settle-dues", {
+        patientId: settle.patient.id,
+        payments: [{ mode: settleMode, amount: Number(settleAmt), reference: settleRef.trim() || undefined }],
+      });
+      setFlash(`₹${money(settleAmt)} collected from ${settle.patient.fullName}.`);
+      setSettle(null); setSettleAmt(""); setSettleRef(""); setSettleMode("CASH");
+      await load();
+    } catch (e) { setErr(e instanceof ApiClientError ? e.message : "Could not record the payment."); }
+    finally { setBusy(false); }
+  }
+
   const load = useCallback(async () => {
     setLoading(true);
-    try { const r = await api.get<{ invoices: Inv[] }>("/reception/billing"); setInvs(r.invoices); }
+    try {
+      const [r, d] = await Promise.all([
+        api.get<{ invoices: Inv[] }>("/reception/billing"),
+        api.get<{ ipdByPatient: IpdDue[] }>("/reception/dues"),
+      ]);
+      setInvs(r.invoices);
+      setIpdDues(d.ipdByPatient);
+    }
     catch (e) { setErr(e instanceof ApiClientError ? e.message : "Couldn't load bills."); }
     finally { setLoading(false); }
   }, []);
@@ -95,7 +143,13 @@ export default function BillingPage() {
   const filtered = useMemo(() => {
     let rows = invs;
     if (tab === "TODAY") rows = rows.filter((i) => isToday(i.createdAt));
-    if (tab === "DUE") rows = rows.filter((i) => due(i) > 0 && i.status !== "CANCELLED");
+    // "Balance due" means money somebody at this desk has to go and collect. A
+    // cashless bill has an open balance for its whole life and nobody is ever
+    // asked for it - listing it here sent the desk after families who owe
+    // nothing, which is the confusion the payer flag exists to prevent. They get
+    // their own tab instead, so they are still findable.
+    if (tab === "DUE") rows = rows.filter((i) => isCollectable(i) && due(i) > 0);
+    if (tab === "INSURER") rows = rows.filter((i) => i.payer === "INSURANCE" && i.status !== "CANCELLED");
     const s = q.trim().toLowerCase();
     if (s) rows = rows.filter((i) =>
       i.receiptNo.toLowerCase().includes(s) ||
@@ -109,14 +163,18 @@ export default function BillingPage() {
     const today = invs.filter((i) => isToday(i.createdAt) && i.status !== "CANCELLED");
     return {
       collected: today.reduce((s, i) => s + Number(i.amountPaid), 0),
-      outstanding: today.reduce((s, i) => s + due(i), 0),
+      // Same rule as the DUE tab: what is owed AT THIS DESK. A cashless bill
+      // raised today is not part of what the shift has to collect.
+      outstanding: today.filter(isCollectable).reduce((s, i) => s + due(i), 0),
       bills: today.length,
+      withInsurer: today.filter((i) => i.payer === "INSURANCE").reduce((s, i) => s + due(i), 0),
     };
   }, [invs]);
 
   const counts = useMemo(() => ({
     TODAY: invs.filter((i) => isToday(i.createdAt)).length,
-    DUE: invs.filter((i) => due(i) > 0 && i.status !== "CANCELLED").length,
+    DUE: invs.filter((i) => isCollectable(i) && due(i) > 0).length,
+    INSURER: invs.filter((i) => i.payer === "INSURANCE" && i.status !== "CANCELLED").length,
     ALL: invs.length,
   }), [invs]);
 
@@ -151,7 +209,8 @@ export default function BillingPage() {
 
   const fld = "w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm text-[var(--p-ink)] outline-none focus:border-[var(--p-teal)]";
   const TABS: { k: Tab; label: string }[] = [
-    { k: "TODAY", label: "Today" }, { k: "DUE", label: "Balance due" }, { k: "ALL", label: "All bills" },
+    { k: "TODAY", label: "Today" }, { k: "DUE", label: "Balance due" },
+    { k: "INSURER", label: "With insurer" }, { k: "ALL", label: "All bills" },
   ];
 
   return (
@@ -162,6 +221,63 @@ export default function BillingPage() {
           Settle balances, reprint a receipt, void a wrong bill.
         </p>
       </div>
+
+      {/* ── INPATIENT DUES, ONE ROW PER PATIENT ──
+          A stay runs up bills at three counters and the family settles them on
+          the way out, here, in ONE amount - the lab window takes no money at
+          all. Listed one per invoice they were four rows deep in the list below,
+          so the desk collected the one it was asked about and the rest were
+          found when the discharge was refused. */}
+      {ipdDues.length > 0 && (
+        <section data-rise className="surface mb-5 overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--p-border)] bg-[var(--p-amber-soft)] px-6 py-4">
+            <div>
+              <h2 className="text-[14px] font-semibold text-[#8a6414]">Inpatient dues</h2>
+              <p className="mt-0.5 text-[12px] text-[#8a6414]">
+                Pharmacy and lab bills for admitted patients. Collected here - a discharge is refused until they are.
+              </p>
+            </div>
+            <div className="font-mono text-[15px] font-bold text-[#8a6414]">
+              ₹{money(String(ipdDues.reduce((s, p) => s + Number(p.due), 0)))}
+            </div>
+          </div>
+          <div className="divide-y divide-[var(--p-border)]">
+            {ipdDues.map((p) => (
+              <div key={p.patient.id} className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[14px] font-medium text-[var(--p-ink)]">{p.patient.fullName}</span>
+                    <span className="font-mono text-[11.5px] text-[var(--p-muted)]">{p.patient.displayId}</span>
+                    {p.ipNumber && <span className="font-mono text-[11.5px] font-semibold text-[var(--p-teal-deep)]">{p.ipNumber}</span>}
+                    {!p.stillAdmitted && (
+                      <span className="rounded-full bg-[var(--p-rose-soft)] px-2 py-0.5 text-[10.5px] font-semibold uppercase text-[var(--p-rose)]">Discharged — unpaid</span>
+                    )}
+                  </div>
+                  {/* The bills stay visible - somebody always asks what it is for. */}
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[12px] text-[var(--p-muted)]">
+                    {p.bills.map((b) => (
+                      <a key={b.invoiceId} href={`/print/invoice/${b.invoiceId}`} target="_blank" rel="noreferrer"
+                        className="hover:text-[var(--p-teal)] hover:underline">
+                        <span className="font-mono">{b.receiptNo}</span> ₹{money(b.due)}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-4">
+                  <div className="text-right">
+                    <div className="font-mono text-[17px] font-bold text-[var(--p-amber)]">₹{money(p.due)}</div>
+                    <div className="text-[11px] text-[var(--p-muted)]">{p.billCount} bill{p.billCount === 1 ? "" : "s"}</div>
+                  </div>
+                  <button onClick={() => setSettle(p)}
+                    className="btn-primary inline-flex items-center gap-1.5 rounded-lg px-4 py-2.5 text-[13px] font-semibold text-white">
+                    <Icon name="rupee" size={14} /> Collect ₹{money(p.due)}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* the till - what you hand over at the end of the shift */}
       <div data-rise className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -177,6 +293,9 @@ export default function BillingPage() {
           </div>
           <div className="mt-0.5 text-[13px] text-[var(--p-muted)]">
             {counts.DUE > 0 ? `${counts.DUE} bill${counts.DUE === 1 ? "" : "s"} with a balance` : "everything settled"}
+            {till.withInsurer > 0 && (
+              <> · <span className="text-[var(--p-blue-deep)]">₹{money(String(till.withInsurer))} with insurers</span></>
+            )}
           </div>
         </div>
         <div className="surface flex items-center px-5 py-4">
@@ -372,6 +491,72 @@ export default function BillingPage() {
               <button onClick={collect} disabled={busy || !payAmt || Number(payAmt) <= 0}
                 className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-teal)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">
                 {busy ? <><Spinner /> Recording…</> : <><Icon name="check" size={15} /> Record ₹{payAmt || 0}</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─────────── SETTLE A PATIENT'S WHOLE DEBT ───────────
+          One amount, allocated across their open bills oldest-first by
+          settleDues. Paying less than the total is allowed and clears the oldest
+          bills outright rather than leaving every one of them part-paid. */}
+      {settle && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setSettle(null)}>
+          <div onClick={(e) => e.stopPropagation()} className="surface w-full max-w-md bg-white">
+            <div className="border-b border-[var(--p-border)] px-6 py-4">
+              <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Collect ₹{money(settle.due)}</h3>
+              <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">
+                {settle.patient.fullName}
+                {settle.ipNumber && <> · <span className="font-mono">{settle.ipNumber}</span></>}
+                {" · "}{settle.billCount} bill{settle.billCount === 1 ? "" : "s"}
+              </p>
+            </div>
+            <div className="space-y-4 p-6">
+              <div className="rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] px-4 py-3 text-[12.5px] text-[var(--p-muted)]">
+                {settle.bills.map((b) => (
+                  <div key={b.invoiceId} className="flex justify-between gap-3 py-0.5">
+                    <span className="min-w-0 truncate"><span className="font-mono">{b.receiptNo}</span> · {b.summary}</span>
+                    <span className="shrink-0 font-mono text-[var(--p-ink)]">₹{money(b.due)}</span>
+                  </div>
+                ))}
+                <div className="mt-1 flex justify-between border-t border-[var(--p-border)] pt-1 font-semibold">
+                  <span className="text-[var(--p-ink)]">Total due</span>
+                  <span className="font-mono text-[var(--p-amber)]">₹{money(settle.due)}</span>
+                </div>
+              </div>
+              <Field label="Amount (₹)">
+                <input className={fld} value={settleAmt} inputMode="decimal" autoFocus
+                  onChange={(e) => setSettleAmt(e.target.value.replace(/[^\d.]/g, ""))} />
+              </Field>
+              <Field label="Paid by">
+                <div className="flex gap-2">
+                  {MODES.map((m) => (
+                    <button key={m} onClick={() => setSettleMode(m)}
+                      className={`flex-1 rounded-lg border px-3 py-2 text-[14px] font-medium transition-colors ${
+                        settleMode === m ? "border-[var(--p-teal)] bg-[var(--p-teal)] text-white"
+                          : "border-[var(--p-border)] text-[var(--p-text)] hover:border-[var(--p-teal)]"}`}>
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+              {settleMode !== "CASH" && (
+                <Field label="Reference (UPI / card ref)">
+                  <input className={fld} value={settleRef} onChange={(e) => setSettleRef(e.target.value)} placeholder="Optional" />
+                </Field>
+              )}
+              {Number(settleAmt) > Number(settle.due) && (
+                <p className="rounded-lg bg-[var(--p-amber-soft)] px-3 py-2 text-[12px] text-[#8a6414]">
+                  That&apos;s more than the ₹{money(settle.due)} outstanding.
+                </p>
+              )}
+            </div>
+            <div className="flex justify-end gap-3 border-t border-[var(--p-border)] p-5">
+              <button onClick={() => setSettle(null)} className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm text-[var(--p-text)]">Cancel</button>
+              <button onClick={doSettle} disabled={busy || !settleAmt || Number(settleAmt) <= 0 || Number(settleAmt) > Number(settle.due)}
+                className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-teal)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">
+                {busy ? <><Spinner /> Recording…</> : <><Icon name="check" size={15} /> Record ₹{settleAmt || 0}</>}
               </button>
             </div>
           </div>

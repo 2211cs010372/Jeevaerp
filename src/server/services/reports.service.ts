@@ -109,13 +109,33 @@ export interface DayClose {
    */
   insurance: { receiptNo: string; patient: string; insurer: string | null; total: number }[];
   insuranceTotal: number;
+  /**
+   * MONEY INSURERS SENT TODAY, against claims settled earlier.
+   *
+   * Revenue, and real - but it arrived by bank transfer, so it is absent from
+   * `modes`, `totals`, `cashInHand` and `byCounter`. Reported here so a day that
+   * banked ₹1.6L of settlements does not read as a day that earned nothing.
+   */
+  insurerReceipts: number;
+  insurerReceiptCount: number;
   /** Masthead for the printed statement. Bundled here rather than fetched
    *  separately so the print sheet needs one round trip and no ADMIN-only
    *  config call - same pattern as opdPrintData / advancePrintData. */
   hospital: { legalName: string; addressLine: string; city: string; state: string; stateCode: string; pincode: string; gstin: string | null; phone: string | null } | null;
 }
 
+/**
+ * The tender types a HUMAN hands over at a counter.
+ *
+ * PaymentMode.INSURANCE is deliberately not here. An insurer settling a claim is
+ * a bank transfer to the hospital: real revenue, but it never touches a drawer,
+ * and a day close answers "what should be in this drawer". Every aggregation
+ * below filters it out and it is reported on its own line instead.
+ */
 const MODES = ["CASH", "UPI", "CARD", "NETBANKING", "OTHER"] as const;
+
+/** True for money that actually crossed a counter on somebody's shift. */
+const isCounterMode = (m: string) => (MODES as readonly string[]).includes(m);
 
 /** Local-day window. A hospital's day ends at midnight, not at UTC midnight. */
 function dayWindow(dateISO?: string) {
@@ -207,13 +227,17 @@ export async function dayClose(opts?: { dateISO?: string; till?: Till }): Promis
     cur.count += n;
     sourceMap.set(src, cur);
   };
-  for (const p of payments as P[]) bumpSource(p.invoice?.source ?? "OTHER", Number(p.amount.toString()), 0, 1);
+  // Counter money only - an insurer's transfer is not this till's takings.
+  for (const p of (payments as P[]).filter((x) => isCounterMode(x.mode))) {
+    bumpSource(p.invoice?.source ?? "OTHER", Number(p.amount.toString()), 0, 1);
+  }
   for (const x of refunds as R[]) bumpSource(x.invoice?.source ?? "OTHER", 0, Number(x.amount.toString()), 0);
   const bySource = [...sourceMap.values()].sort((a, b) => b.net - a.net);
 
-  // per-counter (receptionist) tally
+  // per-counter (receptionist) tally - counter money only, or a staff member who
+  // recorded an insurer's NEFT appears to have taken ₹1.6L on their shift.
   const counterMap = new Map<string, { name: string; count: number; amount: number }>();
-  for (const p of payments as P[]) {
+  for (const p of (payments as P[]).filter((x) => isCounterMode(x.mode))) {
     const name = p.receivedBy?.name ?? "\u2014";
     const cur = counterMap.get(name) ?? { name, count: 0, amount: 0 };
     cur.count += 1; cur.amount = r2(cur.amount + Number(p.amount.toString()));
@@ -287,6 +311,12 @@ export async function dayClose(opts?: { dateISO?: string; till?: Till }): Promis
     insuranceTotal: r2(
       insuranceBills.reduce((s, i) => r2(s + Number(i.totalAmount.toString())), 0)
     ),
+    insurerReceipts: r2(
+      (payments as P[])
+        .filter((p) => !isCounterMode(p.mode))
+        .reduce((s, p) => r2(s + Number(p.amount.toString())), 0)
+    ),
+    insurerReceiptCount: (payments as P[]).filter((p) => !isCounterMode(p.mode)).length,
   };
 }
 
@@ -334,6 +364,8 @@ export async function dayCloseByTill(dateISO?: string): Promise<{
     collected: number; refunded: number; net: number; cash: number; payments: number; bills: number;
     /** Deliberately outside `collected` and `net`. See TillSummary.insuranceBills. */
     insuranceBills: number; insuranceAmount: number;
+    /** Settlements banked today. Outside `collected` - no drawer saw them. */
+    insurerReceipts: number;
   };
 }> {
   const { from, to } = dayWindow(dateISO);
@@ -387,7 +419,14 @@ export async function dayCloseByTill(dateISO?: string): Promise<{
     receivedBy: { name: string; role: string } | null;
     invoice: { source: string } | null;
   };
-  for (const p of payments as P[]) {
+  // Insurer settlements are stripped before ANY of this. A till summary is a
+  // drawer, and a bank transfer belongs to no drawer - see MODES.
+  const counterPayments = (payments as P[]).filter((p) => isCounterMode(p.mode));
+  const insurerPaid = r2(
+    (payments as P[]).filter((p) => !isCounterMode(p.mode))
+      .reduce((s, p) => r2(s + Number(p.amount.toString())), 0)
+  );
+  for (const p of counterPayments) {
     const key = tillOf(p.receivedBy?.role);
     const row = acc.get(key)!;
     const amt = Number(p.amount.toString());
@@ -468,6 +507,7 @@ export async function dayCloseByTill(dateISO?: string): Promise<{
       bills: tills.reduce((s, t) => s + t.bills, 0),
       insuranceBills: tills.reduce((s, t) => s + t.insuranceBills, 0),
       insuranceAmount: r2(tills.reduce((s, t) => r2(s + t.insuranceAmount), 0)),
+      insurerReceipts: insurerPaid,
     },
   };
 }

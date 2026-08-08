@@ -434,11 +434,18 @@ export async function orderTests(
         source: "LAB",
         admissionId: admission.id,
         // Diagnostics are GST-exempt in this hospital's tax position.
+        //
+        // `labTestId` ties each line back to the test it bills. It was missing,
+        // and the gap was invisible until an insurance claim tried to assemble
+        // one bill from both the tests and the invoices: with no link, nothing
+        // could tell that "E.S.R the test" and "E.S.R the invoice line" were the
+        // same ₹200, and the claim listed every investigation twice.
         lines: catalog.map((c) => ({
           description: c.name,
           qty: 1,
           unitPrice: Number(c.price.toString()),
           gstRatePct: 0,
+          labTestId: created.byCatalog.get(c.id),
         })),
         notes: `Inpatient ${admission.ipNumber} - due at discharge`,
       },

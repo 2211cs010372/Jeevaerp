@@ -456,11 +456,17 @@ export async function actOnClaim(
   input: { action: "SUBMIT" | "QUERY" | "APPROVE" | "REJECT" | "SETTLE" | "NOTE"; amount?: number; insurerRef?: string; detail?: string },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<ClaimDetailDTO> {
-  const claim = await prisma.insuranceClaim.findUnique({ where: { id }, select: { id: true, status: true, claimedAmount: true, approvedAmount: true } });
+  const claim = await prisma.insuranceClaim.findUnique({ where: { id }, select: { id: true, status: true, claimedAmount: true, approvedAmount: true, admissionId: true, insurer: true } });
   if (!claim) throw new ApiError(404, "Claim not found");
 
   const now = new Date();
   const data: Prisma.InsuranceClaimUpdateInput = {};
+  /**
+   * Money the insurer actually sent, to be applied to the stay's bills below.
+   * Set only by SETTLE - an approval is a promise, and a promise does not close
+   * an invoice.
+   */
+  let settlementToApply: number | null = null;
   // store the timeline entry in past tense so it reads as a history, not a verb
   const KIND: Record<string, string> = { SUBMIT: "SUBMITTED", QUERY: "QUERIED", REJECT: "REJECTED", SETTLE: "SETTLED", NOTE: "NOTE" };
   let kind = KIND[input.action] ?? input.action;
@@ -497,6 +503,7 @@ export async function actOnClaim(
       const settled = input.amount ?? (claim.approvedAmount ? Number(claim.approvedAmount) : 0);
       data.status = "SETTLED"; data.settledAmount = settled.toFixed(2); data.settledAt = now;
       eventAmount = settled;
+      settlementToApply = settled;
       break;
     }
     case "NOTE":
@@ -509,8 +516,471 @@ export async function actOnClaim(
     await tx.claimEvent.create({
       data: { claimId: id, kind, detail: input.detail?.trim() || null, amount: eventAmount !== undefined ? eventAmount.toFixed(2) : null, byId: actor.id },
     });
+
+    // ── THE INSURER'S MONEY LANDS ON THE BILLS IT PAID ──
+    //
+    // Without this, recording a settlement moved a status and nothing else: the
+    // stay's invoices stayed PENDING for ever, the money existed in the bank and
+    // nowhere in the ERP, and accounts had no way to answer "which bills did
+    // this ₹1.6L transfer cover".
+    //
+    // Applied oldest-first, exactly like a counter payment, and stamped with the
+    // insurer's own reference so a bank line can be matched to these invoices
+    // months later. Mode INSURANCE keeps it out of every till reconciliation -
+    // it is revenue, but it is not in anybody's drawer.
+    //
+    // A short settlement is left short ON PURPOSE. Whatever the insurer did not
+    // pay stays open on the bills, where the desk can see it and decide - the
+    // "bill the patient instead" path. Silently writing it off here would lose
+    // the hospital the difference with nobody ever seeing a number.
+    if (settlementToApply !== null && settlementToApply > 0 && claim.admissionId) {
+      const bills = await tx.invoice.findMany({
+        where: { admissionId: claim.admissionId, payer: "INSURANCE", status: { not: "CANCELLED" } },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, totalAmount: true, payments: { select: { amount: true } }, refunds: { select: { amount: true } } },
+      });
+
+      let left = settlementToApply;
+      for (const b of bills) {
+        if (left <= 0.01) break;
+        const paid =
+          b.payments.reduce((s, p) => s + Number(p.amount), 0) -
+          b.refunds.reduce((s, r) => s + Number(r.amount), 0);
+        const owing = Math.round((Number(b.totalAmount) - paid) * 100) / 100;
+        if (owing <= 0.01) continue;
+
+        const take = Math.round(Math.min(owing, left) * 100) / 100;
+        await tx.payment.create({
+          data: {
+            invoiceId: b.id,
+            mode: "INSURANCE",
+            amount: take.toFixed(2),
+            reference: [claim.insurer, input.insurerRef?.trim()].filter(Boolean).join(" · ") || null,
+            receivedById: actor.id,
+          },
+        });
+        const stillOwing = Math.round((owing - take) * 100) / 100;
+        await tx.invoice.update({
+          where: { id: b.id },
+          data: { status: stillOwing <= 0.01 ? "PAID" : "PARTIALLY_PAID", paidAt: stillOwing <= 0.01 ? now : null },
+        });
+        left = Math.round((left - take) * 100) / 100;
+      }
+    }
   });
 
   await logAudit(actor, { action: `CLAIM_${input.action}`, targetTable: "InsuranceClaim", targetId: id, meta: { amount: input.amount, insurerRef: input.insurerRef }, ...ctx });
   return getClaim(id);
+}
+
+/**
+ * WHERE THIS STAY STANDS WITH ITS INSURER, and what that means for its bills.
+ *
+ * The claims desk needs this on the stay's own screen, not on a claims list a
+ * click away: the question "has this been approved" and the question "who am I
+ * billing" are the same question, and they get asked while looking at the bill.
+ */
+export interface StayClaimsDTO {
+  admissionId: string;
+  ipNumber: string;
+  payerType: string;
+  insurer: string | null;
+  policyNo: string | null;
+  claims: {
+    id: string; claimNo: string; type: string; stage: string; status: string;
+    claimedAmount: string; approvedAmount: string | null; settledAmount: string | null;
+    insurerRef: string | null; submittedAt: string | null; decisionAt: string | null;
+  }[];
+  /**
+   * Bills currently pointed at the insurer, with what has been taken against
+   * each. A bill with money on it cannot be moved back to the patient - see
+   * revertBillsToSelfPay - so the screen has to be able to say which.
+   */
+  insuranceBills: { id: string; receiptNo: string; source: string; total: string; paid: string }[];
+  insuranceBillsTotal: string;
+  /**
+   * The insurer has decided and the answer was no, or not all of it - so the
+   * shortfall is somebody else's to pay and the desk is being asked to choose.
+   * False while a claim is still in draft or still with the insurer: nothing is
+   * owed by anyone until they answer.
+   */
+  needsDecision: boolean;
+}
+
+export async function stayClaims(admissionId: string): Promise<StayClaimsDTO> {
+  const adm = await prisma.admission.findUnique({
+    where: { id: admissionId },
+    select: { id: true, ipNumber: true, payerType: true, insurer: true, policyNo: true },
+  });
+  if (!adm) throw new ApiError(404, "Admission not found");
+
+  const [claims, bills] = await Promise.all([
+    prisma.insuranceClaim.findMany({
+      where: { admissionId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true, claimNo: true, type: true, stage: true, status: true,
+        claimedAmount: true, approvedAmount: true, settledAmount: true,
+        insurerRef: true, submittedAt: true, decisionAt: true,
+      },
+    }),
+    prisma.invoice.findMany({
+      where: { admissionId, payer: "INSURANCE", status: { not: "CANCELLED" } },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, receiptNo: true, source: true, totalAmount: true, payments: { select: { amount: true } } },
+    }),
+  ]);
+
+  const insuranceBills = bills.map((b) => ({
+    id: b.id, receiptNo: b.receiptNo, source: b.source,
+    total: Number(b.totalAmount).toFixed(2),
+    paid: b.payments.reduce((s, p) => s + Number(p.amount), 0).toFixed(2),
+  }));
+
+  return {
+    admissionId: adm.id,
+    ipNumber: adm.ipNumber,
+    payerType: adm.payerType,
+    insurer: adm.insurer,
+    policyNo: adm.policyNo,
+    claims: claims.map((c) => ({
+      id: c.id, claimNo: c.claimNo, type: c.type, stage: c.stage, status: c.status,
+      claimedAmount: Number(c.claimedAmount).toFixed(2),
+      approvedAmount: c.approvedAmount == null ? null : Number(c.approvedAmount).toFixed(2),
+      settledAmount: c.settledAmount == null ? null : Number(c.settledAmount).toFixed(2),
+      insurerRef: c.insurerRef,
+      submittedAt: c.submittedAt?.toISOString() ?? null,
+      decisionAt: c.decisionAt?.toISOString() ?? null,
+    })),
+    insuranceBills,
+    insuranceBillsTotal: insuranceBills.reduce((s, b) => s + Number(b.total), 0).toFixed(2),
+    // REJECTED is the obvious one. PARTIALLY_APPROVED counts too: the insurer
+    // has settled part and the gap is the patient's, which is a decision nobody
+    // is prompted to make unless the screen asks.
+    needsDecision:
+      insuranceBills.length > 0 &&
+      claims.some((c) => c.status === "REJECTED" || c.status === "PARTIALLY_APPROVED") &&
+      !claims.some((c) => c.status === "SUBMITTED" || c.status === "QUERIED" || c.status === "DRAFT"),
+  };
+}
+
+/**
+ * THE OWNER'S VIEW OF THE INSURANCE BOOK.
+ *
+ * Cashless work is the one revenue stream where treating the patient and being
+ * paid for it are months apart, so the questions an owner asks about it are not
+ * the ones the day close answers:
+ *
+ *   how much of my money is sitting with insurers right now
+ *   how much have they agreed to, and how much of THAT has actually arrived
+ *   how much did they refuse, and which of them refuses most
+ *   how long are they taking
+ *
+ * Deliberately reported gross AND net. "₹4L claimed" flatters; "₹2.6L received"
+ * is the number that pays salaries, and the gap between them is the point of the
+ * whole screen.
+ */
+export interface InsuranceAnalyticsDTO {
+  /** Rolling totals over every claim ever raised. */
+  totals: {
+    claims: number;
+    claimed: string;
+    approved: string;
+    settled: string;
+    /** Approved, decided, and still not in the bank. */
+    awaiting: string;
+    /** Claimed but refused outright. */
+    rejected: string;
+    /** Raised or submitted, no decision yet. */
+    inFlight: string;
+  };
+  /** Claim counts by lifecycle state, for the funnel. */
+  funnel: { status: string; count: number; amount: string }[];
+  /** One row per insurer, worst payer first by what they still owe. */
+  byInsurer: {
+    insurer: string; claims: number;
+    claimed: string; approved: string; settled: string; awaiting: string; rejected: string;
+    /** Approved ÷ claimed, as a percentage. How much of an ask they honour. */
+    approvalPct: number;
+  }[];
+  /** Last 6 months, oldest first - claimed vs settled per month. */
+  monthly: { month: string; label: string; claimed: string; settled: string; claims: number }[];
+  /** Approved-but-unpaid claims by how long they have been waiting. */
+  ageing: { bucket: string; count: number; amount: string }[];
+  /** Bills still pointed at an insurer, whether or not a claim covers them. */
+  billsWithInsurers: { count: number; amount: string };
+}
+
+export async function insuranceAnalytics(): Promise<InsuranceAnalyticsDTO> {
+  const [claims, openBills] = await Promise.all([
+    prisma.insuranceClaim.findMany({
+      select: {
+        insurer: true, status: true, createdAt: true, decisionAt: true,
+        claimedAmount: true, approvedAmount: true, settledAmount: true,
+      },
+    }),
+    prisma.invoice.findMany({
+      where: { payer: "INSURANCE", status: { notIn: ["CANCELLED", "PAID"] } },
+      select: { totalAmount: true, payments: { select: { amount: true } } },
+    }),
+  ]);
+
+  const n = (d: unknown) => (d == null ? 0 : Number(d));
+  const f2 = (x: number) => x.toFixed(2);
+  const IN_FLIGHT = ["DRAFT", "SUBMITTED", "QUERIED"];
+
+  const sum = (rows: typeof claims, pick: (c: (typeof claims)[number]) => number) =>
+    rows.reduce((s, c) => s + pick(c), 0);
+
+  const claimed = sum(claims, (c) => n(c.claimedAmount));
+  const approved = sum(claims, (c) => n(c.approvedAmount));
+  const settled = sum(claims, (c) => n(c.settledAmount));
+  const rejected = sum(claims.filter((c) => c.status === "REJECTED"), (c) => n(c.claimedAmount));
+  const inFlight = sum(claims.filter((c) => IN_FLIGHT.includes(c.status)), (c) => n(c.claimedAmount));
+
+  // ── FUNNEL ──
+  const funnelMap = new Map<string, { count: number; amount: number }>();
+  for (const c of claims) {
+    const cur = funnelMap.get(c.status) ?? { count: 0, amount: 0 };
+    cur.count += 1; cur.amount += n(c.claimedAmount);
+    funnelMap.set(c.status, cur);
+  }
+  const ORDER = ["DRAFT", "SUBMITTED", "QUERIED", "APPROVED", "PARTIALLY_APPROVED", "SETTLED", "REJECTED", "CLOSED"];
+  const funnel = ORDER.filter((s) => funnelMap.has(s)).map((s) => ({
+    status: s, count: funnelMap.get(s)!.count, amount: f2(funnelMap.get(s)!.amount),
+  }));
+
+  // ── BY INSURER ──
+  const insMap = new Map<string, { claims: number; claimed: number; approved: number; settled: number; rejected: number }>();
+  for (const c of claims) {
+    const k = c.insurer.trim() || "Not recorded";
+    const cur = insMap.get(k) ?? { claims: 0, claimed: 0, approved: 0, settled: 0, rejected: 0 };
+    cur.claims += 1;
+    cur.claimed += n(c.claimedAmount);
+    cur.approved += n(c.approvedAmount);
+    cur.settled += n(c.settledAmount);
+    if (c.status === "REJECTED") cur.rejected += n(c.claimedAmount);
+    insMap.set(k, cur);
+  }
+  const byInsurer = [...insMap.entries()]
+    .map(([insurer, v]) => ({
+      insurer, claims: v.claims,
+      claimed: f2(v.claimed), approved: f2(v.approved), settled: f2(v.settled),
+      awaiting: f2(Math.max(0, v.approved - v.settled)),
+      rejected: f2(v.rejected),
+      approvalPct: v.claimed > 0 ? Math.round((v.approved / v.claimed) * 100) : 0,
+    }))
+    // Worst payer first: who is sitting on the most of the hospital's money.
+    .sort((a, b) => Number(b.awaiting) - Number(a.awaiting) || Number(b.claimed) - Number(a.claimed));
+
+  // ── LAST 6 MONTHS ──
+  const monthly: InsuranceAnalyticsDTO["monthly"] = [];
+  const now = new Date();
+  for (let i = 5; i >= 0; i--) {
+    const from = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const to = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+    const inMonth = claims.filter((c) => c.createdAt >= from && c.createdAt < to);
+    monthly.push({
+      month: `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, "0")}`,
+      label: from.toLocaleDateString("en-IN", { month: "short" }),
+      claimed: f2(sum(inMonth, (c) => n(c.claimedAmount))),
+      settled: f2(sum(inMonth, (c) => n(c.settledAmount))),
+      claims: inMonth.length,
+    });
+  }
+
+  // ── AGEING ── approved, decided, still unpaid. Measured from the DECISION,
+  // not from when the claim was raised: the clock an insurer is judged on starts
+  // when they said yes.
+  const waiting = claims.filter(
+    (c) => (c.status === "APPROVED" || c.status === "PARTIALLY_APPROVED") && n(c.approvedAmount) - n(c.settledAmount) > 0.01
+  );
+  const BUCKETS: { bucket: string; min: number; max: number }[] = [
+    { bucket: "0-30 days", min: 0, max: 30 },
+    { bucket: "31-60 days", min: 30, max: 60 },
+    { bucket: "61-90 days", min: 60, max: 90 },
+    { bucket: "over 90 days", min: 90, max: Infinity },
+  ];
+  const ageing = BUCKETS.map((b) => {
+    const rows = waiting.filter((c) => {
+      const since = c.decisionAt ?? c.createdAt;
+      const days = (now.getTime() - since.getTime()) / 86_400_000;
+      return days >= b.min && days < b.max;
+    });
+    return {
+      bucket: b.bucket,
+      count: rows.length,
+      amount: f2(sum(rows, (c) => n(c.approvedAmount) - n(c.settledAmount))),
+    };
+  });
+
+  // Bills pointed at an insurer with money still on them - the exposure that is
+  // real whether or not anybody has got round to raising the claim.
+  const billsOpen = openBills.reduce((s, b) => {
+    const paid = b.payments.reduce((x, p) => x + Number(p.amount), 0);
+    return s + Math.max(0, Number(b.totalAmount) - paid);
+  }, 0);
+
+  return {
+    totals: {
+      claims: claims.length,
+      claimed: f2(claimed),
+      approved: f2(approved),
+      settled: f2(settled),
+      awaiting: f2(Math.max(0, approved - settled)),
+      rejected: f2(rejected),
+      inFlight: f2(inFlight),
+    },
+    funnel,
+    byInsurer,
+    monthly,
+    ageing,
+    billsWithInsurers: { count: openBills.length, amount: f2(billsOpen) },
+  };
+}
+
+/**
+ * EVERY BILL ON A STAY, IN DATE ORDER, WITH THE DATE EDITABLE.
+ *
+ * An assessor reads a claim chronologically and checks each line against the
+ * admission window. A bill dated outside it - a lab test entered the morning
+ * after the sample was taken, a pharmacy slip keyed on the following shift -
+ * gets that line queried or struck off, and the query costs weeks.
+ *
+ * The dates go wrong for ordinary reasons: a counter bills at the end of a shift
+ * for something done hours earlier, or a bill is raised the next morning for
+ * yesterday's ward round. So the desk has to be able to correct them before the
+ * claim goes out.
+ *
+ * `outsideStay` is computed here rather than left to the reader. Comparing eleven
+ * timestamps against an admission window by eye is exactly the check people skip.
+ */
+export interface StayBillDTO {
+  id: string;
+  receiptNo: string;
+  source: string;
+  payer: string;
+  status: string;
+  total: string;
+  paid: string;
+  createdAt: string;
+  /** Dated before admission or after discharge - an insurer will query it. */
+  outsideStay: boolean;
+  lines: number;
+  summary: string;
+}
+
+export async function stayBills(admissionId: string): Promise<{
+  admittedAt: string;
+  dischargedAt: string | null;
+  bills: StayBillDTO[];
+  outsideCount: number;
+}> {
+  const adm = await prisma.admission.findUnique({
+    where: { id: admissionId },
+    select: { admittedAt: true, dischargedAt: true },
+  });
+  if (!adm) throw new ApiError(404, "Admission not found");
+
+  const rows = await prisma.invoice.findMany({
+    where: { admissionId, status: { not: "CANCELLED" } },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true, receiptNo: true, source: true, payer: true, status: true,
+      totalAmount: true, createdAt: true,
+      payments: { select: { amount: true } },
+      items: { select: { description: true }, orderBy: { id: "asc" } },
+    },
+  });
+
+  // The window a bill has to fall inside. Open-ended while the patient is still
+  // in a bed - nothing raised today can be "after discharge" if there has been
+  // no discharge.
+  const from = adm.admittedAt;
+  const to = adm.dischargedAt;
+
+  const bills: StayBillDTO[] = rows.map((r) => {
+    const first = r.items[0];
+    const more = r.items.length - 1;
+    return {
+      id: r.id, receiptNo: r.receiptNo, source: r.source, payer: r.payer, status: r.status,
+      total: Number(r.totalAmount).toFixed(2),
+      paid: r.payments.reduce((s, p) => s + Number(p.amount), 0).toFixed(2),
+      createdAt: r.createdAt.toISOString(),
+      // Compared on the DAY, not the instant: a bill raised at 23:55 on the
+      // discharge date is inside the stay by any reading an assessor would use.
+      outsideStay:
+        r.createdAt < startOfDay(from) || (to !== null && r.createdAt > endOfDay(to)),
+      lines: r.items.length,
+      summary: first ? `${first.description.split("·")[0].trim()}${more > 0 ? ` + ${more} more` : ""}` : "\u2014",
+    };
+  });
+
+  return {
+    admittedAt: adm.admittedAt.toISOString(),
+    dischargedAt: adm.dischargedAt?.toISOString() ?? null,
+    bills,
+    outsideCount: bills.filter((b) => b.outsideStay).length,
+  };
+}
+
+const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+
+/**
+ * Correct the date a bill is dated.
+ *
+ * Deliberately narrow: it moves `createdAt` and nothing else. It cannot be used
+ * on a bill that has been paid or that carries an IRN - a settled receipt and a
+ * government-registered invoice are both documents somebody else is holding a
+ * copy of, and re-dating them here would put this system out of step with theirs.
+ *
+ * The old date is kept in the audit log, because "the bill was re-dated after
+ * the treatment" is a question an insurer is entitled to ask.
+ */
+export async function redateBill(
+  actor: AuthUser,
+  input: { invoiceId: string; date: string; reason?: string },
+  ctx: { ipAddress?: string; userAgent?: string }
+): Promise<{ receiptNo: string; from: string; to: string }> {
+  const inv = await prisma.invoice.findUnique({
+    where: { id: input.invoiceId },
+    select: {
+      id: true, receiptNo: true, createdAt: true, status: true,
+      payments: { select: { id: true } },
+      eInvoice: { select: { status: true } },
+    },
+  });
+  if (!inv) throw new ApiError(404, "Bill not found");
+  if (inv.status === "CANCELLED") throw new ApiError(409, "That bill is cancelled");
+  if (inv.payments.length > 0) {
+    throw new ApiError(409, "Money has been taken against this bill - its date can't be changed. Cancel and reissue it.");
+  }
+  if (inv.eInvoice?.status === "GENERATED") {
+    throw new ApiError(409, "This bill is registered with an IRN. Its date is fixed with the government, not here.");
+  }
+
+  // Date only. The time of day is meaningless on a corrected bill and keeping the
+  // original clock time makes the ordering read sensibly against its neighbours.
+  const parts = input.date.split("-").map(Number);
+  if (parts.length !== 3 || parts.some(Number.isNaN)) throw new ApiError(400, "Enter a valid date");
+  const next = new Date(
+    parts[0], parts[1] - 1, parts[2],
+    inv.createdAt.getHours(), inv.createdAt.getMinutes(), inv.createdAt.getSeconds()
+  );
+  if (next > new Date()) throw new ApiError(400, "A bill can't be dated in the future");
+
+  await prisma.invoice.update({ where: { id: inv.id }, data: { createdAt: next } });
+  await logAudit(actor, {
+    action: "INVOICE_REDATED", targetTable: "Invoice", targetId: inv.id,
+    meta: {
+      receiptNo: inv.receiptNo,
+      from: inv.createdAt.toISOString(),
+      to: next.toISOString(),
+      reason: input.reason?.trim() || null,
+    },
+    ...ctx,
+  });
+
+  return { receiptNo: inv.receiptNo, from: inv.createdAt.toISOString(), to: next.toISOString() };
 }

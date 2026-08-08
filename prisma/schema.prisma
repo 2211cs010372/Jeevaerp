@@ -247,6 +247,19 @@ enum PaymentMode {
   CARD
   NETBANKING
   OTHER
+  /// AN INSURER SETTLING A CLAIM - a bank transfer to the hospital, not money
+  /// taken at a counter.
+  ///
+  /// It has to be a Payment or the bills it pays never close: `netPaid` drives
+  /// every balance in the app, and an invoice with no payment rows reads as
+  /// unpaid forever however much the insurer sent.
+  ///
+  /// It has to be its OWN mode for the opposite reason. A day close answers
+  /// "what should be in this drawer", and a ₹1.6L NEFT recorded as NETBANKING
+  /// would land in a receptionist's shift takings for money that never crossed
+  /// their counter. Every till reconciliation excludes this mode explicitly and
+  /// reports it on its own line - see reports.service.
+  INSURANCE
 }
 
 /// Where a bill stands with the government's Invoice Registration Portal.
