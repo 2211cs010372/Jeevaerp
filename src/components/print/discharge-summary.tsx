@@ -1,39 +1,71 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import { api, ApiClientError } from "@/lib/api-client";
-import { PRINT_CSS, PrintToolbar } from "@/components/print/stationery";
+import {
+  PrintToolbar, LetterHead, PreprintedGuide, type HospitalInfo,
+} from "@/components/print/stationery";
 import { isClosed, OUTCOME_LABEL, type AdmissionStatusValue } from "@/lib/admission-outcome";
 
-/* ── shape (mirrors dischargeSummaryData) ─────────────────────────────────── */
+/**
+ * THE DISCHARGE SUMMARY, SET LIKE THE LAB REPORT.
+ *
+ * It used to carry a layout of its own - its own header, its own type scale,
+ * its own idea of what a section heading looks like. Two documents from one
+ * hospital that did not look related, handed to the same family on the same day.
+ *
+ * So this now uses the lab report's typography: the same pre-printed / blank
+ * paper toggle, the same colon-aligned identity block in two columns, the same
+ * rules above and below a table and none inside it, the same signature foot.
+ * What differs is only what has to - a discharge summary is prose where a report
+ * is analytes.
+ *
+ * ONE DELIBERATE DIFFERENCE: this document FLOWS across pages instead of being
+ * paginated into fixed-height sheets. A lab report knows how many analytes it
+ * has and can measure them; a course-in-hospital entry is whatever the doctor
+ * wrote, and pinning it to a fixed sheet would clip the end of a sentence off a
+ * medico-legal document.
+ */
+
 interface Data {
-  hospital: { legalName: string; addressLine: string; city: string; state: string; pincode: string; gstin: string | null; phone: string | null; email: string | null } | null;
+  hospital: (HospitalInfo & { email: string | null }) | null;
   generatedAt: string;
   admission: {
     ipNumber: string; status: string; admittedAt: string; dischargedAt: string | null; days: number;
     wardName: string; bedNo: string; reason: string | null;
-    /** The stay's chronology - each entry with who wrote it and when. */
     observations: { id: string; body: string; kind: "NURSING" | "DISCHARGE"; authorName: string | null; createdAt: string }[];
-    /** SELF_PAY or INSURANCE - printed as the summary's payer panel. */
-    payerType?: string;
-    insurer?: string | null;
-    policyNo?: string | null;
+    payerType?: string; insurer?: string | null; policyNo?: string | null;
   };
-  patient: { displayId: string; fullName: string; age: number | null; gender: string | null; phone: string; address: string | null; city: string | null; bloodGroup: string | null; dob: string | null };
+  patient: {
+    displayId: string; fullName: string; age: number | null; gender: string | null;
+    phone: string; address: string | null; city: string | null; bloodGroup: string | null; dob: string | null;
+  };
   doctor: { name: string; specialization: string; department: string };
   clinical: {
     diagnosis: string | null; advice: string | null; nextVisit: string | null;
-    /** Advised tests, each carrying whether an order was ever raised for it. */
     labsAdvised: { name: string; ordered: boolean; declined: boolean }[];
   };
   medicines: { name: string; qty: number; dosage: string | null }[];
   investigations: { testName: string; status: string; reportReady: boolean; date: string }[];
+  /** What a person typed on the shared record. Null until somebody opens one. */
+  summary: {
+    status: "DRAFT" | "COMPLETED";
+    fields: Record<string, string | null>;
+    followUpDate: string | null;
+    completedBy: string | null;
+  } | null;
   bill: {
     legs: { wardName: string; bedNo: string; dailyCharge: string; days: number; total: string; current: boolean }[];
     bedTotal: string; nurseTotal: string; nursePerDay: string;
     charges: { description: string; category: string; qty: number; unitPrice: string; amount: string }[];
     chargesTotal: string; grandTotal: string; advanceTotal: string; balance: string;
+    /** The raised IPD invoice. Null while the patient is still in a bed. This is
+     *  where the DISCOUNT lives - the running lines above never had one. */
+    invoice: {
+      receiptNo: string; subtotal: string; discount: string; taxable: string;
+      gst: string; total: string; paid: string; balance: string;
+    } | null;
   };
 }
 
@@ -42,8 +74,119 @@ const date = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en
 const dateTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "-");
 const GENDER: Record<string, string> = { MALE: "Male", FEMALE: "Female", OTHER: "Other" };
 
+/** The examination readings, in the order the hospital's own paper lists them. */
+const EXAM: [string, string][] = [
+  ["vitalTemp", "Temp"], ["vitalPulse", "PR"], ["vitalBp", "BP"], ["vitalSpo2", "SpO₂"],
+  ["examCvs", "CVS"], ["examRs", "RS"], ["examPa", "P/A"], ["examCns", "CNS"],
+];
+
+/**
+ * Flowing A4, borrowed from the lab report's ink but not its pagination.
+ *
+ * `position: absolute` is what confines a single-sheet profile to one page. It
+ * is absent here on purpose: this document is as long as the doctor made it,
+ * and a second page is normal rather than a fault.
+ */
+const DS_CSS = (onStationery: boolean) => `
+  /* ── INK, NOT THE HOUSE TEAL ──
+     The teal reads well on a screen and washes out on a mono laser, which is
+     what this document is actually printed on. Every label and rule here is
+     near-black so a photocopy of a photocopy is still legible - a discharge
+     summary gets copied for the insurer, the employer and the family. */
+  .print-stage { --pr-primary: #101a18; --pr-accent: #8a5a14; --pr-ink: #0d1513;
+    --pr-line: #6f7c78; --pr-muted: #4a5754; --pr-hair: #c2ccc9; --pr-bg: #f2f5f4; }
+  .print-stage { background: #e8e6e1; min-height: 100vh; padding: 24px 12px 64px; }
+  #print-sheet { width: 210mm; margin: 0 auto; background: #fff; color: var(--pr-ink);
+    box-shadow: 0 8px 40px rgba(0,0,0,.18); padding: ${onStationery ? "40mm 13mm 46mm" : "10mm 11mm 12mm"};
+    font-family: var(--font-sans, "Instrument Sans"), "Noto Sans Telugu", "Nirmala UI", Arial, sans-serif;
+    font-size: 11.5px; line-height: 1.45; }
+
+  /* ── THE WHOLE DOCUMENT IS ONE TABLE ──
+     Not for layout - for pagination. A <thead> marked table-header-group is the
+     one thing every print engine repeats at the top of each printed page, so
+     sheet two of a long summary carries the patient's name instead of arriving
+     as a loose page of prose nobody can identify. */
+  .ds-doc { width: 100%; border-collapse: collapse; }
+  .ds-doc > thead { display: table-header-group; }
+  .ds-doc > tbody { display: table-row-group; }
+  .ds-doc > thead > tr > th { text-align: left; font-weight: 400; padding: 0; }
+  .ds-doc > tbody > tr > td { padding: 0; vertical-align: top; }
+
+  .ds-title { text-align: center; font-size: 15px; font-weight: 800; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--pr-ink); }
+  /* The identity strip sits between two solid rules, and it is what repeats. */
+  .ds-id { margin-top: 4px; padding: 5px 0; border-top: 1.2px solid var(--pr-ink);
+    border-bottom: 1.2px solid var(--pr-ink); display: grid; grid-template-columns: 1fr 1fr;
+    column-gap: 26px; }
+  .ds-id-col { display: grid; grid-template-columns: max-content 7px 1fr; align-items: baseline; }
+  .ds-k { font-size: 10.5px; line-height: 4mm; color: var(--pr-muted); }
+  .ds-c { font-size: 10.5px; line-height: 4mm; color: var(--pr-muted); }
+  .ds-v { font-size: 11px; font-weight: 700; line-height: 4mm; color: var(--pr-ink); }
+  /* Breathing room under the repeated header on every page. */
+  .ds-gap { height: 4px; }
+
+  /* A heading must never be the last thing on a page. */
+  .ds-sec { break-inside: avoid; margin-top: 9px; }
+  .ds-sec-t { font-size: 12.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em;
+    color: var(--pr-ink); border-bottom: 1px solid var(--pr-ink); padding-bottom: 1px; }
+  .ds-body { margin-top: 3px; font-size: 11.5px; line-height: 1.5; color: var(--pr-ink); }
+  .ds-pre { white-space: pre-wrap; }
+  .ds-muted { color: var(--pr-muted); }
+
+  /* Rules above and below the header, none inside - the lab report's table. */
+  .ds-tbl { width: 100%; border-collapse: collapse; margin-top: 5px; font-size: 11.5px; }
+  .ds-tbl thead th { border-top: 1px solid var(--pr-ink); border-bottom: 1px solid var(--pr-ink);
+    padding: 3px 6px 3px 0; text-align: left; font-size: 10px; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .03em; color: var(--pr-ink); }
+  .ds-tbl td { padding: 2.5px 6px 2.5px 0; vertical-align: baseline; color: var(--pr-ink); }
+  .ds-r { text-align: right; padding-right: 0 !important; }
+  .ds-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+  .ds-tot td { border-top: 1px solid var(--pr-ink); font-weight: 800; padding-top: 4px; }
+
+  /* Eight short readings as a grid: one per line is most of a sheet spent on
+     eight words. */
+  .ds-exam { margin-top: 4px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px 12px; }
+  .ds-exam-c { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
+  .ds-exam-k { flex: none; font-size: 9px; font-weight: 800; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--pr-muted); }
+  .ds-exam-v { min-width: 0; font-size: 11.5px; font-weight: 700; color: var(--pr-ink); }
+
+  .ds-note { margin-top: 4px; padding-left: 7px; border-left: 2px solid var(--pr-hair); }
+  .ds-note-m { font-size: 9px; color: var(--pr-muted); }
+  .ds-draft { margin: 5px 0 0; padding: 3px 8px; border: 1.2px dashed var(--pr-accent); border-radius: 3px;
+    text-align: center; font-size: 9px; font-weight: 800; letter-spacing: .16em; color: var(--pr-accent); }
+  .ds-sign { break-inside: avoid; }
+
+  @media print {
+    html, body { background: #fff !important; margin: 0 !important; padding: 0 !important; }
+    body > *:not(.print-stage) { display: none !important; }
+    .print-stage { background: #fff !important; padding: 0 !important; min-height: 0 !important; }
+    .screen-only { display: none !important; }
+    #print-sheet { width: auto; margin: 0; box-shadow: none; padding: 0; }
+    /* The reserved bands ARE the page margin on pre-printed paper, so the
+       repeated header lands under the printed logo on every sheet, not just
+       the first. */
+    @page { size: A4 portrait; margin: ${onStationery ? "40mm 13mm 46mm" : "13mm 12mm 14mm"}; }
+    /* Print black, not "almost black" - browsers lighten text to save toner
+       unless told otherwise. */
+    #print-sheet, #print-sheet * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+`;
+
 export function DischargeSummary() {
+  return (
+    <Suspense fallback={<div className="p-10 text-center text-[14px] text-[#5a6a66]">Preparing the summary…</div>}>
+      <DischargeSummaryInner />
+    </Suspense>
+  );
+}
+
+function DischargeSummaryInner() {
   const { admissionId } = useParams<{ admissionId: string }>();
+  const params = useSearchParams();
+  // Same default as the lab report: the tray usually has the hospital's own
+  // paper in it, and the desk unticks when it does not.
+  const [onStationery, setOnStationery] = useState(params.get("paper") !== "plain");
   const [d, setD] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,108 +201,166 @@ export function DischargeSummary() {
 
   const p = d.patient;
   const a = d.admission;
-  const ageSex = [p.age != null ? `${p.age}y` : null, p.gender ? GENDER[p.gender] ?? p.gender : null].filter(Boolean).join(" · ") || "-";
-  const hosp = d.hospital;
-  // isClosed, not `=== "DISCHARGED"`. On the old check a stay that ended as LAMA
-  // or EXPIRED printed with the "interim (still admitted)" banner across the top -
-  // a summary that contradicted itself on the one document a relative keeps.
   const closed = isClosed(a.status);
-  // Only an ordinary discharge is left unlabelled. Anything else has to say what
-  // it was: this is the document that gets read years later, and a death filed as
-  // a plain "Discharge Summary" is exactly the ambiguity to avoid.
-  const outcomeNote =
-    closed && a.status !== "DISCHARGED"
-      ? OUTCOME_LABEL[a.status as AdmissionStatusValue]
-      : null;
+  const outcomeNote = closed && a.status !== "DISCHARGED" ? OUTCOME_LABEL[a.status as AdmissionStatusValue] : null;
+
+  /** The typed value wins; the derived one is a fallback for stays written
+   *  before the shared record existed. */
+  const f = d.summary?.fields ?? {};
+  const say = (key: string, fallback?: string | null): string | null => {
+    const stored = (f[key] ?? "").trim();
+    if (stored) return stored;
+    return (fallback ?? "").trim() || null;
+  };
+  const drafting = d.summary?.status === "DRAFT";
+  /** The raised bill, when there is one. Carries the discount. */
+  const inv = d.bill.invoice;
+
+  const ageSex = [p.age != null ? `${p.age} Y` : null, p.gender ? GENDER[p.gender] ?? p.gender : null]
+    .filter(Boolean).join(" / ") || "-";
+
+  // Two colon-aligned columns, exactly as the lab report and the hospital's own
+  // discharge paper set the identity block.
+  const leftFields: { k: string; v: string; mono?: boolean }[] = [
+    { k: "IP No", v: a.ipNumber, mono: true },
+    { k: "UHID", v: p.displayId, mono: true },
+    { k: "Name", v: p.fullName },
+    { k: "Age / Sex", v: ageSex },
+    { k: "Ward / Bed", v: `${a.wardName} · ${a.bedNo}` },
+    { k: "Doctor", v: d.doctor.name },
+    { k: "H. Panel", v: a.payerType === "INSURANCE" ? (a.insurer || "Insurance") : "Self pay / Cash" },
+  ];
+  const rightFields: { k: string; v: string; mono?: boolean }[] = [
+    { k: "Admission Date", v: dateTime(a.admittedAt), mono: true },
+    { k: "Discharge Date", v: closed ? dateTime(a.dischargedAt) : "Still admitted", mono: true },
+    { k: "Type of Discharge", v: outcomeNote ?? (closed ? "Normal Discharge" : "Interim summary") },
+    { k: "Length of Stay", v: `${a.days} day${a.days === 1 ? "" : "s"}` },
+    { k: "Blood Group", v: p.bloodGroup ?? "-" },
+    { k: "Follow-up Date", v: d.summary?.followUpDate ? date(d.summary.followUpDate) : "-" },
+    { k: "Address", v: [p.address, p.city].filter(Boolean).join(", ") || "-" },
+  ];
+
+  const examShown = EXAM.filter(([k]) => say(k));
 
   return (
     <div className="print-stage">
-      <style dangerouslySetInnerHTML={{ __html: PRINT_CSS + EXTRA_CSS }} />
+      <style dangerouslySetInnerHTML={{ __html: DS_CSS(onStationery) }} />
       <PrintToolbar title={`Discharge summary · ${a.ipNumber} · ${p.fullName}`} />
 
-      <div id="print-sheet" className="ds">
-        {/* ── masthead ── */}
-        <header className="ds-head">
-          <div>
-            <h1 className="ds-hosp">{(hosp?.legalName ?? "Jeeva Multispeciality Hospital").toUpperCase()}</h1>
-            <p className="ds-hosp-sub">
-              {hosp ? `${hosp.addressLine}, ${hosp.city}, ${hosp.state} – ${hosp.pincode}` : "Hanamkonda, Telangana"}
-              {hosp?.phone && ` · ☏ ${hosp.phone}`}
-            </p>
-          </div>
-          <div className="ds-badge">
-            <span className="ds-badge-k">Discharge Summary</span>
-            <span className="ds-badge-v">{a.ipNumber}</span>
-          </div>
-        </header>
-        <div className="ds-titlebar">
-          DISCHARGE SUMMARY
-          {!closed && <span className="ds-interim"> · interim (still admitted)</span>}
-          {outcomeNote && <span className="ds-interim"> · {outcomeNote.toUpperCase()}</span>}
-        </div>
+      {/* Screen-only desk control: which paper is in the tray. Same control,
+          same place and same wording as the lab report. */}
+      <div className="mx-auto mb-3 flex w-full max-w-[210mm] flex-wrap items-center gap-x-5 gap-y-2 print:hidden">
+        <label className="flex items-center gap-2 text-[12.5px] text-[#3a4744]">
+          <input type="checkbox" checked={onStationery} onChange={(e) => setOnStationery(e.target.checked)} />
+          Printing on the hospital&apos;s pre-printed paper
+        </label>
+      </div>
 
-        {/* ── patient / stay grid ── */}
-        <section className="ds-info">
-          <Info k="Patient" v={p.fullName} wide />
-          <Info k="UHID" v={p.displayId} mono />
-          <Info k="Age / Sex" v={ageSex} />
-          <Info k="Blood group" v={p.bloodGroup ?? "-"} />
-          <Info k="Phone" v={p.phone} mono />
-          <Info k="Consultant" v={`${d.doctor.name}`} wide />
-          <Info k="Department" v={d.doctor.department} />
-          <Info k="Ward / Bed" v={`${a.wardName} · ${a.bedNo}`} />
-          <Info k="Admitted" v={dateTime(a.admittedAt)} />
-          <Info k={outcomeNote ?? "Discharged"} v={closed ? dateTime(a.dischargedAt) : "-"} />
-          <Info k="Length of stay" v={`${a.days} day${a.days === 1 ? "" : "s"}`} />
-          {/* ── THE PAYER PANEL ──
-              The hospital's own paper carries this as "H.Pannel : INSURANCE",
-              and it earns its place: a summary is filed with a claim or handed
-              across a counter, and those are two different desks. A reader who
-              cannot tell which from the page has to go and ask. */}
-          <Info
-            k="Payer"
-            v={
-              a.payerType === "INSURANCE"
-                ? [a.insurer || "Insurance", a.policyNo ? `Policy ${a.policyNo}` : null].filter(Boolean).join(" · ")
-                : "Self pay / cash"
-            }
-            wide
-          />
-          {p.address && <Info k="Address" v={[p.address, p.city].filter(Boolean).join(", ")} wide />}
-        </section>
+      <div id="print-sheet">
+        {/* Screen-only guide showing where the pre-printed ink already sits. */}
+        {onStationery && <PreprintedGuide />}
 
-        {/* ── clinical narrative ── */}
-        <Block title="Reason for admission">
-          <p className="ds-body">{a.reason || "Not recorded."}</p>
-        </Block>
+        {/* ── ONE TABLE FOR THE WHOLE DOCUMENT ──
+            The <thead> below is the only construct print engines reliably
+            repeat at the top of every page. So sheet two of a long summary
+            arrives carrying the patient's name and IP number instead of being
+            a loose page of prose nobody can match to a file. */}
+        <table className="ds-doc">
+          <thead>
+            <tr>
+              <th>
+                {/* On pre-printed paper the hospital header is already on the
+                    sheet - printing our own would double it on every page. */}
+                {!onStationery && <LetterHead hospital={d.hospital} doctor={null} />}
 
-        <Block title="Diagnosis">
-          <p className="ds-body">{d.clinical.diagnosis || "Not recorded on the stay's prescriptions."}</p>
-        </Block>
+                <div className={onStationery ? "ds-title" : "ds-title mt-2"}>Discharge Summary</div>
 
-        <Block title="Course in hospital / observations">
-          {a.observations.length > 0
-            ? (
-              <div className="ds-notes">
-                {a.observations.map((n) => (
-                  <div key={n.id} className="ds-note">
-                    <p className="ds-note-meta ds-mono">
-                      {dateTime(n.createdAt)} · {n.authorName ?? "author not recorded"}
-                      {n.kind === "DISCHARGE" ? " · on discharge" : ""}
-                    </p>
-                    <p className="ds-body ds-pre">{n.body}</p>
+                <div className="ds-id">
+                  <div className="ds-id-col">
+                    {leftFields.map((x) => <IdRow key={x.k} {...x} />)}
+                  </div>
+                  <div className="ds-id-col">
+                    {rightFields.map((x) => <IdRow key={x.k} {...x} />)}
+                  </div>
+                </div>
+                <div className="ds-gap" />
+              </th>
+            </tr>
+          </thead>
+
+          <tbody>
+            <tr>
+              <td>
+        {drafting && <div className="ds-draft">DRAFT &mdash; NOT YET COMPLETED</div>}
+
+        {a.reason && <Sec t="Reason for Admission"><p className="ds-body">{a.reason}</p></Sec>}
+
+        <Sec t="Diagnosis">
+          <p className="ds-body ds-pre">{say("diagnosis", d.clinical.diagnosis) ?? "Not recorded."}</p>
+        </Sec>
+
+        {say("historyPresenting") && (
+          <Sec t="History of Presenting Illness"><p className="ds-body ds-pre">{say("historyPresenting")}</p></Sec>
+        )}
+        {say("pastPersonalHistory") && (
+          <Sec t="Past & Personal History"><p className="ds-body ds-pre">{say("pastPersonalHistory")}</p></Sec>
+        )}
+        {say("clinicalFindings") && (
+          <Sec t="Clinical Finding"><p className="ds-body ds-pre">{say("clinicalFindings")}</p></Sec>
+        )}
+
+        {(examShown.length > 0 || say("physicalExamination") || say("systemicExamination")) && (
+          <Sec t="Examination at Admission">
+            {say("physicalExamination") && <p className="ds-body ds-pre">{say("physicalExamination")}</p>}
+            {examShown.length > 0 && (
+              <div className="ds-exam">
+                {examShown.map(([k, label]) => (
+                  <div key={k} className="ds-exam-c">
+                    <span className="ds-exam-k">{label}</span>
+                    <span className="ds-exam-v">{say(k)}</span>
                   </div>
                 ))}
               </div>
-            )
-            : <p className="ds-body ds-muted">No nursing / observation notes were recorded.</p>}
-        </Block>
+            )}
+            {say("systemicExamination") && (
+              <>
+                <p className="mt-[5px] text-[9px] font-bold uppercase tracking-[0.1em]" style={{ color: "var(--pr-muted)" }}>
+                  Systemic Examination
+                </p>
+                <p className="ds-body ds-pre">{say("systemicExamination")}</p>
+              </>
+            )}
+          </Sec>
+        )}
+
+        <Sec t="Course in Hospital">
+          {say("courseInHospital")
+            ? <p className="ds-body ds-pre">{say("courseInHospital")}</p>
+            : <p className="ds-body ds-muted">Not recorded.</p>}
+          {a.observations.map((n) => (
+            <div key={n.id} className="ds-note">
+              <p className="ds-note-m ds-mono">
+                {dateTime(n.createdAt)} · {n.authorName ?? "author not recorded"}
+                {n.kind === "DISCHARGE" ? " · on discharge" : ""}
+              </p>
+              <p className="ds-body ds-pre">{n.body}</p>
+            </div>
+          ))}
+        </Sec>
+
+        {say("procedureNotes") && (
+          <Sec t="Operation / Procedure Notes"><p className="ds-body ds-pre">{say("procedureNotes")}</p></Sec>
+        )}
+
+        <Sec t="Condition at Discharge">
+          <p className="ds-body ds-pre">{say("conditionAtDischarge") ?? "Not recorded."}</p>
+        </Sec>
 
         {(d.investigations.length > 0 || d.clinical.labsAdvised.length > 0) && (
-          <Block title="Investigations">
+          <Sec t="Investigations / Lab Summary">
             {d.investigations.length > 0 && (
-              <table className="ds-table">
-                <thead><tr><th>Test</th><th>Date</th><th className="ds-r">Status</th></tr></thead>
+              <table className="ds-tbl">
+                <thead><tr><th>Investigation</th><th>Date</th><th className="ds-r">Status</th></tr></thead>
                 <tbody>
                   {d.investigations.map((t, i) => (
                     <tr key={i}>
@@ -172,63 +373,68 @@ export function DischargeSummary() {
               </table>
             )}
             {d.clinical.labsAdvised.length > 0 && (
-              <p className="ds-body ds-sm">
+              <p className="ds-body">
                 <b>Advised:</b>{" "}
                 {d.clinical.labsAdvised.map((l, i) => (
                   <span key={i}>
-                    {i > 0 && ", "}
-                    {l.name}
+                    {i > 0 && ", "}{l.name}
                     {/* An advised test that was never ordered is exactly what a
-                        reader of this summary needs to see. The old free-text
-                        version could not tell it apart from one that was done. */}
+                        reader of this summary needs to see. */}
                     {!l.ordered && !l.declined && <b> (not ordered)</b>}
                     {l.declined && " (declined)"}
                   </span>
                 ))}
               </p>
             )}
-          </Block>
+          </Sec>
         )}
 
-        <Block title="Medications">
+        <Sec t="Medications Advised">
           {d.medicines.length > 0 ? (
-            <table className="ds-table">
-              <thead><tr><th className="ds-idx">#</th><th>Medicine</th><th className="ds-r">Qty</th><th>Dosage</th></tr></thead>
+            <table className="ds-tbl">
+              <thead>
+                <tr>
+                  <th className="w-[22px]">#</th><th>Medicine</th>
+                  <th className="w-[54px]">Qty</th><th className="w-[190px]">Dosage</th>
+                </tr>
+              </thead>
               <tbody>
                 {d.medicines.map((m, i) => (
                   <tr key={i}>
-                    <td className="ds-idx ds-mono">{i + 1}</td>
-                    <td>{m.name}</td>
-                    <td className="ds-r ds-mono">{m.qty}</td>
+                    <td className="ds-mono">{i + 1}.</td>
+                    <td className="font-semibold">{m.name}</td>
+                    <td className="ds-mono">{m.qty}</td>
                     <td className="ds-mono">{m.dosage ?? "-"}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          ) : <p className="ds-body ds-muted">No medicines were recorded against this stay.</p>}
-        </Block>
+          ) : <p className="ds-body ds-muted">No discharge medications recorded.</p>}
+        </Sec>
 
-        <div className="ds-two">
-          <Block title="Advice on discharge">
-            <p className="ds-body">{d.clinical.advice || "-"}</p>
-          </Block>
-          <Block title="Follow-up">
-            <p className="ds-body">{d.clinical.nextVisit || "As advised."}</p>
-          </Block>
-        </div>
+        <Sec t="Follow Up Instruction">
+          <p className="ds-body ds-pre">{say("followUpInstruction", d.clinical.advice) ?? "As advised."}</p>
+          {(d.summary?.followUpDate || d.clinical.nextVisit) && (
+            <p className="ds-body">
+              <b>Review on:</b>{" "}
+              {d.summary?.followUpDate ? date(d.summary.followUpDate) : d.clinical.nextVisit}
+            </p>
+          )}
+        </Sec>
 
-        {/* ── billing summary ── */}
-        <Block title="Billing summary">
-          <table className="ds-table">
+        {say("preventiveAdvice") && (
+          <Sec t="Preventive Advised"><p className="ds-body ds-pre">{say("preventiveAdvice")}</p></Sec>
+        )}
+
+        <Sec t="Billing Summary">
+          <table className="ds-tbl">
             <tbody>
               {d.bill.legs.length > 0 ? d.bill.legs.map((l, i) => (
                 <tr key={i}>
                   <td>Bed · {l.wardName} · {l.bedNo} <span className="ds-muted">({l.days}d × {money(l.dailyCharge)})</span></td>
                   <td className="ds-r ds-mono">{money(l.total)}</td>
                 </tr>
-              )) : (
-                <tr><td>Bed charges</td><td className="ds-r ds-mono">{money(d.bill.bedTotal)}</td></tr>
-              )}
+              )) : <tr><td>Bed charges</td><td className="ds-r ds-mono">{money(d.bill.bedTotal)}</td></tr>}
               <tr>
                 <td>Nursing care <span className="ds-muted">({a.days}d × {money(d.bill.nursePerDay)})</span></td>
                 <td className="ds-r ds-mono">{money(d.bill.nurseTotal)}</td>
@@ -239,102 +445,106 @@ export function DischargeSummary() {
                   <td className="ds-r ds-mono">{money(c.amount)}</td>
                 </tr>
               ))}
-              <tr className="ds-total">
-                <td>Grand total</td>
-                <td className="ds-r ds-mono">{money(d.bill.grandTotal)}</td>
-              </tr>
-              {Number(d.bill.advanceTotal) > 0 && (
+              {/* ── WHAT WAS ACTUALLY CHARGED ──
+                  The lines above are what the stay was made of. Once discharge
+                  raises the bill, THESE are the figures the family was asked
+                  for - and the discount is the difference between the two. A
+                  summary showing only the gross total sends a family back to the
+                  desk asking why their bill was lower than their summary. */}
+              {inv ? (
                 <>
-                  <tr><td>Advance received</td><td className="ds-r ds-mono">− {money(d.bill.advanceTotal)}</td></tr>
-                  <tr className="ds-total"><td>{Number(d.bill.balance) > 0 ? "Balance payable" : "Settled"}</td><td className="ds-r ds-mono">{money(d.bill.balance)}</td></tr>
+                  <tr className="ds-tot"><td>Gross total</td><td className="ds-r ds-mono">{money(inv.subtotal)}</td></tr>
+                  {Number(inv.discount) > 0 && (
+                    <tr><td>Discount</td><td className="ds-r ds-mono">− {money(inv.discount)}</td></tr>
+                  )}
+                  {Number(inv.gst) > 0 && (
+                    <tr><td>GST</td><td className="ds-r ds-mono">{money(inv.gst)}</td></tr>
+                  )}
+                  <tr className="ds-tot">
+                    <td>Net bill <span className="ds-muted">({inv.receiptNo})</span></td>
+                    <td className="ds-r ds-mono">{money(inv.total)}</td>
+                  </tr>
+                  {Number(d.bill.advanceTotal) > 0 && (
+                    <tr><td>Advance received</td><td className="ds-r ds-mono">− {money(d.bill.advanceTotal)}</td></tr>
+                  )}
+                  {Number(inv.paid) > 0 && (
+                    <tr><td>Paid</td><td className="ds-r ds-mono">− {money(inv.paid)}</td></tr>
+                  )}
+                  <tr className="ds-tot">
+                    <td>{Number(inv.balance) > 0 ? "Balance payable" : "Settled in full"}</td>
+                    <td className="ds-r ds-mono">{money(inv.balance)}</td>
+                  </tr>
+                </>
+              ) : (
+                <>
+                  <tr className="ds-tot"><td>Running total</td><td className="ds-r ds-mono">{money(d.bill.grandTotal)}</td></tr>
+                  {Number(d.bill.advanceTotal) > 0 && (
+                    <>
+                      <tr><td>Advance received</td><td className="ds-r ds-mono">− {money(d.bill.advanceTotal)}</td></tr>
+                      <tr className="ds-tot">
+                        <td>{Number(d.bill.balance) > 0 ? "Balance so far" : "Settled"}</td>
+                        <td className="ds-r ds-mono">{money(d.bill.balance)}</td>
+                      </tr>
+                    </>
+                  )}
                 </>
               )}
             </tbody>
           </table>
-        </Block>
+        </Sec>
 
-        {/* ── sign-off ── */}
-        <footer className="ds-foot">
-          <div>
-            <p className="ds-note">
-              Computer-generated discharge summary, printed {dateTime(d.generatedAt)}.
-              Keep this for your records and carry it to every follow-up visit.
-            </p>
+        {/* SIGN-OFF - the lab report's foot, with the two signatures the
+            hospital's discharge paper carries. The RMO line is left blank on
+            purpose: printing a name under a signature nobody signed would be
+            inventing one on a medico-legal document. */}
+        <div className="ds-sign mt-6 flex items-end justify-between gap-10">
+          <div className="w-[52mm] text-center">
+            <div className="h-[9mm] border-b" style={{ borderColor: "var(--pr-line)" }} />
+            <div className="mt-[2px] text-[10px] font-semibold" style={{ color: "var(--pr-ink)" }}>{d.doctor.name}</div>
+            <div className="text-[8px] uppercase tracking-[0.12em]" style={{ color: "var(--pr-muted)" }}>
+              Consultant Doctor
+            </div>
           </div>
-          <div className="ds-sign">
-            <div className="ds-sign-line" />
-            <div className="ds-sign-name">{d.doctor.name}</div>
-            <div className="ds-sign-sub">{d.doctor.specialization} · {d.doctor.department}</div>
+          <div className="w-[52mm] text-center">
+            <div className="h-[9mm] border-b" style={{ borderColor: "var(--pr-line)" }} />
+            <div className="mt-[2px] text-[10px] font-semibold">&nbsp;</div>
+            <div className="text-[8px] uppercase tracking-[0.12em]" style={{ color: "var(--pr-muted)" }}>
+              Resident Medical Officer
+            </div>
           </div>
-        </footer>
+        </div>
+
+        <p className="mt-[6px] text-[8px] italic leading-[1.4]" style={{ color: "var(--pr-muted)" }}>
+          Computer-generated discharge summary, printed {dateTime(d.generatedAt)}. Keep this for your records and
+          carry it to every follow-up visit.
+        </p>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   );
 }
 
-function Info({ k, v, wide, mono }: { k: string; v: string; wide?: boolean; mono?: boolean }) {
+/** Label, its own colon column, value - the lab report's identity row. The
+ *  colon has a column to itself so it cannot drift as values wrap. */
+function IdRow({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   return (
-    <div className={`ds-cell${wide ? " ds-cell-wide" : ""}`}>
-      <span className="ds-cell-k">{k}</span>
-      <span className={`ds-cell-v${mono ? " ds-mono" : ""}`}>{v}</span>
-    </div>
+    <>
+      <span className="ds-k">{k}</span>
+      <span className="ds-c">:</span>
+      <span className={`ds-v ${mono ? "font-mono tracking-tight" : ""}`}>{v || "-"}</span>
+    </>
   );
 }
-function Block({ title, children }: { title: string; children: React.ReactNode }) {
+
+/** A section: ruled heading in the lab report's idiom, then its body. */
+function Sec({ t, children }: { t: string; children: React.ReactNode }) {
   return (
-    <section className="ds-block">
-      <h2 className="ds-block-t">{title}</h2>
+    <section className="ds-sec">
+      <h2 className="ds-sec-t">{t}</h2>
       {children}
     </section>
   );
 }
-
-/* A layout of its own - not the OPD/invoice stationery. Ink stays within the
-   print colour vars so it prints clean on any office laser. */
-const EXTRA_CSS = `
-  #print-sheet.ds { padding: 12mm 12mm 0; font-size: 11px; color: #1c2624; }
-  .ds-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 8px; border-bottom: 2px solid var(--pr-primary); }
-  .ds-hosp { font-size: 18px; font-weight: 800; letter-spacing: .02em; color: var(--pr-primary); }
-  .ds-hosp-sub { margin-top: 2px; font-size: 9.5px; color: #55635e; }
-  .ds-badge { text-align: right; }
-  .ds-badge-k { display: block; font-size: 8.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; color: #7c8983; }
-  .ds-badge-v { display: block; font-family: var(--font-plex-mono, monospace); font-size: 14px; font-weight: 700; color: #1c2624; }
-  .ds-titlebar { margin-top: 10px; text-align: center; font-size: 13px; font-weight: 800; letter-spacing: .22em; color: var(--pr-primary); }
-  .ds-interim { font-weight: 600; letter-spacing: .04em; color: #a06414; text-transform: none; }
-
-  .ds-info { margin-top: 12px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: #dbe3e0; border: 1px solid #dbe3e0; border-radius: 6px; overflow: hidden; }
-  .ds-cell { background: #fff; padding: 6px 9px; }
-  .ds-cell-wide { grid-column: span 2; }
-  .ds-cell-k { display: block; font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: #7c8983; }
-  .ds-cell-v { display: block; margin-top: 1px; font-size: 11.5px; font-weight: 600; color: #1c2624; }
-  .ds-mono { font-family: var(--font-plex-mono, monospace); }
-
-  .ds-block { margin-top: 13px; break-inside: avoid; }
-  .ds-block-t { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .1em; color: var(--pr-primary); border-bottom: 1px solid #cfd8d4; padding-bottom: 3px; margin-bottom: 6px; }
-  .ds-body { font-size: 11px; line-height: 1.5; color: #26302d; }
-  .ds-pre { white-space: pre-wrap; }
-  .ds-sm { margin-top: 6px; font-size: 10.5px; }
-  .ds-muted { color: #7c8983; }
-  .ds-two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-
-  /* One entry per note, each keeping its own author and time on the printed
-     page - the whole point of the append-only record is that the summary can
-     be read as a chronology rather than one undated block of text. */
-  .ds-notes { display: flex; flex-direction: column; gap: 7px; }
-  .ds-note { break-inside: avoid; border-left: 1.5px solid #cfd8d4; padding-left: 7px; }
-  .ds-note-meta { font-size: 8.5px; color: #7c8983; margin-bottom: 1px; }
-
-  .ds-table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
-  .ds-table th { text-align: left; font-size: 8.5px; text-transform: uppercase; letter-spacing: .06em; color: #7c8983; border-bottom: 1.5px solid #cfd8d4; padding: 3px 4px; }
-  .ds-table td { padding: 4px 4px; border-bottom: 1px solid #e6ebe9; vertical-align: top; }
-  .ds-r { text-align: right; }
-  .ds-idx { width: 22px; color: #7c8983; }
-  .ds-total td { font-weight: 800; color: var(--pr-primary); border-top: 1.5px solid var(--pr-primary); border-bottom: none; }
-
-  .ds-foot { margin-top: 20px; padding-top: 10px; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
-  .ds-note { font-size: 8.5px; color: #7c8983; max-width: 62%; line-height: 1.5; }
-  .ds-sign { text-align: center; }
-  .ds-sign-line { width: 170px; border-bottom: 1px solid #1c2624; }
-  .ds-sign-name { margin-top: 3px; font-size: 11px; font-weight: 700; }
-  .ds-sign-sub { font-size: 8.5px; color: #55635e; }
-`;

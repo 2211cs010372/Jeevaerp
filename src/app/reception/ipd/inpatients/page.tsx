@@ -315,6 +315,11 @@ export default function InpatientsPage() {
                     className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
                     <Icon name="activity" size={14} /> History
                   </button>
+                  <a href={`/print/bill/${r.id}`} target="_blank" rel="noopener noreferrer"
+                    title="Itemised bill for the stay so far"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+                    <Icon name="receipt" size={14} /> Detailed bill
+                  </a>
                   <a href={`/print/discharge/${r.id}`} target="_blank" rel="noopener noreferrer"
                     title="The running bill for this stay - bed, nursing, pharmacy and charges"
                     className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
@@ -377,6 +382,16 @@ export default function InpatientsPage() {
                     className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
                     <Icon name="file" size={14} /> Summary
                   </a>
+                  {/* THE ITEMISED BILL - every bed night, charge, medicine and
+                      test on one sheet. The insurance desk has had this all
+                      along; a self-paying family asking "what am I paying for?"
+                      needs the same page, and the route already existed with
+                      nothing linking to it. */}
+                  <a href={`/print/bill/${d.id}`} target="_blank" rel="noopener noreferrer"
+                    title="Itemised bill for the whole stay"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+                    <Icon name="receipt" size={14} /> Detailed bill
+                  </a>
                   {d.invoice ? (
                     <a href={`/print/invoice/${d.invoice.id}`} target="_blank" rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--p-blue)] px-3.5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[var(--p-blue-deep)]">
@@ -437,6 +452,10 @@ export default function InpatientsPage() {
                       <Icon name="receipt" size={15} /> Print bill
                     </a>
                   )}
+                  <a href={`/print/bill/${dischargeOf.id}`} target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+                    <Icon name="receipt" size={15} /> Detailed bill
+                  </a>
                   <a href={`/print/discharge/${dischargeOf.id}`} target="_blank" rel="noopener noreferrer"
                     className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
                     <Icon name="file" size={15} /> Discharge summary

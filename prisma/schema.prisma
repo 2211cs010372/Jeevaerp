@@ -328,6 +328,10 @@ model User {
   requestsHandled AppointmentRequest[] @relation("BookingRequestHandledBy")
   eInvoicesRaised EInvoice[]           @relation("EInvoiceGeneratedBy")
   admissionNotes  AdmissionNote[]      @relation("AdmissionNoteAuthor")
+  /// Discharge summaries this user opened, edited or signed off.
+  dischargeSummariesCreated   DischargeSummary[] @relation("DischargeSummaryCreatedBy")
+  dischargeSummariesUpdated   DischargeSummary[] @relation("DischargeSummaryUpdatedBy")
+  dischargeSummariesCompleted DischargeSummary[] @relation("DischargeSummaryCompletedBy")
 }
 
 model Patient {
@@ -2055,6 +2059,8 @@ model Admission {
   labTests LabTest[]
   bedStays BedStay[]
   advances AdmissionAdvance[]
+  /// The stay's discharge summary. At most one - see DischargeSummary.
+  dischargeSummary DischargeSummary?
 
   @@index([status, admittedAt])
   @@index([patientId])
@@ -2342,6 +2348,96 @@ model InsuranceClaim {
 
   @@index([status, createdAt])
   @@index([patientId])
+}
+
+enum DischargeSummaryStatus {
+  DRAFT
+  COMPLETED
+}
+
+/// THE STAY'S DISCHARGE SUMMARY - one record, two desks.
+///
+/// Reception and the insurance desk both need this document, and before this
+/// model existed neither could write it: the summary was DERIVED at read time
+/// from admission notes, prescription uploads and lab rows. That works for the
+/// half a machine can know - who the patient is, what was dispensed, which
+/// tests ran - and not at all for the half only a doctor can write. There was
+/// nowhere in this schema to put a history of presenting illness.
+///
+/// ONE ROW PER ADMISSION, enforced by `@unique` on admissionId rather than by
+/// convention. Two portals writing the same document is exactly the shape that
+/// grows a ReceptionDischargeSummary and an InsuranceDischargeSummary a month
+/// apart, and then the two disagree and nobody can say which one the patient
+/// was given.
+///
+/// STORES ONLY WHAT IS TYPED. Patient name, UHID, ward, bed, consultant,
+/// insurer, medicines and investigations are all reachable through
+/// `admission` and are never copied here - a duplicated patient name is a
+/// patient name that goes stale the first time somebody corrects a spelling.
+model DischargeSummary {
+  id          String    @id @default(cuid())
+  /// THE SINGLE SOURCE OF TRUTH. Unique, so a second summary cannot exist.
+  admissionId String    @unique
+  admission   Admission @relation(fields: [admissionId], references: [id], onDelete: Cascade)
+
+  status DischargeSummaryStatus @default(DRAFT)
+
+  // ── THE CLINICAL NARRATIVE ── typed by a person, never generated.
+  //
+  // Text, not varchar: a course-in-hospital entry runs to paragraphs, and a
+  // length cap here shows up as a doctor's sentence silently truncated on a
+  // medico-legal document.
+  diagnosis            String? @db.Text
+  historyPresenting    String? @db.Text
+  pastPersonalHistory  String? @db.Text
+  clinicalFindings     String? @db.Text
+  physicalExamination  String? @db.Text
+  systemicExamination  String? @db.Text
+  courseInHospital     String? @db.Text
+  procedureNotes       String? @db.Text
+  conditionAtDischarge String? @db.Text
+  followUpInstruction  String? @db.Text
+  preventiveAdvice     String? @db.Text
+
+  // ── EXAMINATION AT ADMISSION ──
+  //
+  // STRINGS, DELIBERATELY, AND NOT NUMBERS. Real discharge summaries record
+  // "Afbrile" for temperature, "98% ON RA" for saturation, "S1, S2(+)" for CVS
+  // and "WFND" for CNS. A Decimal column would make the commonest true entries
+  // unstorable and push the doctor into writing them somewhere else.
+  //
+  // These do NOT touch the OPD `Vitals` model, which hangs off an appointment
+  // and has no CVS/RS/P-A/CNS at all. An admission has no vitals row to
+  // overwrite; this is the stay's own examination block.
+  vitalTemp  String?
+  vitalPulse String?
+  vitalBp    String?
+  vitalSpo2  String?
+  examCvs    String?
+  examRs     String?
+  examPa     String?
+  examCns    String?
+
+  /// The review date printed on the summary. The clinical instruction beside it
+  /// is free text - "REVIEW AFTER 5 DAYS" is not a date and must not be forced
+  /// into one.
+  followUpDate DateTime? @db.Date
+
+  createdById   String
+  createdBy     User      @relation("DischargeSummaryCreatedBy", fields: [createdById], references: [id])
+  updatedById   String?
+  updatedBy     User?     @relation("DischargeSummaryUpdatedBy", fields: [updatedById], references: [id])
+  completedById String?
+  completedBy   User?     @relation("DischargeSummaryCompletedBy", fields: [completedById], references: [id])
+  completedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  /// Drives optimistic concurrency: two portals edit this row, and a save that
+  /// carries a stale timestamp is refused rather than silently overwriting the
+  /// other desk's work. See saveDischargeSummary.
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
 }
 
 /// One entry on a claim's timeline - every submission, query, decision and

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
+import { DischargeSummaryForm } from "@/components/portal/ipd/discharge-summary-form";
 import { api, ApiClientError } from "@/lib/api-client";
 
 /** One row of the hospital's published rate card. See prisma ServiceCharge. */
@@ -183,6 +184,8 @@ export default function AdmissionSheetPage() {
   // ── LABS ── order tests straight onto the room tab.
   const [labCatalog, setLabCatalog] = useState<{ id: string; name: string; code: string | null; price: string }[]>([]);
   const [labsOpen, setLabsOpen] = useState(false);
+  /** The shared discharge summary - the same record the insurance desk edits. */
+  const [summaryOpen, setSummaryOpen] = useState(false);
   const [labPick, setLabPick] = useState<Set<string>>(new Set());
   const [labQuery, setLabQuery] = useState("");
 
@@ -347,10 +350,18 @@ export default function AdmissionSheetPage() {
               <Icon name="flask" size={15} /> Order labs
             </button>
           )}
-          <a href={`/print/discharge/${a.id}`} target="_blank" rel="noopener noreferrer"
-            title={discharged ? "The discharge summary for this stay" : "Interim summary - the discharge document, as it stands"}
+          {/* WRITE it here; the neighbour PRINTS it. Two separate acts on the
+              same record - and neither is the discharge-and-bill button, which
+              closes the stay and frees the bed. */}
+          <button onClick={() => setSummaryOpen(true)}
+            title="Write or edit this stay's discharge summary. The insurance desk edits the same record."
             className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
             <Icon name="file" size={15} /> Discharge summary
+          </button>
+          <a href={`/print/discharge/${a.id}`} target="_blank" rel="noopener noreferrer"
+            title={discharged ? "Print the discharge summary for this stay" : "Interim summary - the discharge document, as it stands"}
+            className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+            <Icon name="printer" size={15} /> Print summary
           </a>
           <Link href="/ipd/inpatients" className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
             Inpatients
@@ -1056,6 +1067,10 @@ export default function AdmissionSheetPage() {
           </div>
         </div>
       )}
+      {summaryOpen && (
+        <DischargeSummaryForm admissionId={a.id} onClose={() => setSummaryOpen(false)} />
+      )}
+
     </PortalScroll>
   );
 }

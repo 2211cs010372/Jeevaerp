@@ -1186,6 +1186,26 @@ export async function dischargeSummaryData(admissionId: string) {
 
   const hospital = await prisma.hospitalConfig.findFirst();
 
+  // THE DISCOUNT LIVES ON THE INVOICE, NOT ON THE RUNNING TAB.
+  //
+  // `admissionSheet` is what the stay has COST so far. A discount is agreed at
+  // the counter when the bill is raised, so it exists only on the IPD invoice -
+  // which is why this summary printed a grand total the family had never been
+  // asked for, with no line explaining the difference.
+  //
+  // Read here rather than recomputed: the invoice IS the tax document, and a
+  // summary that disagrees with it by a rupee is the one brought back to the desk.
+  const ipdInvoice = await prisma.invoice.findFirst({
+    where: { admissionId, source: "IPD", status: { not: "CANCELLED" } },
+    orderBy: { createdAt: "desc" },
+    select: {
+      receiptNo: true, subtotal: true, discountAmount: true, taxableAmount: true,
+      cgstAmount: true, sgstAmount: true, totalAmount: true,
+      payments: { select: { amount: true } },
+      refunds: { select: { amount: true } },
+    },
+  });
+
   // Lab tests ordered while the patient was in - the stay's investigations.
   const until = adm.dischargedAt ?? new Date();
   const labs = await prisma.labTest.findMany({
@@ -1258,11 +1278,34 @@ export async function dischargeSummaryData(admissionId: string) {
       testName: l.testName, status: l.status, reportReady: Boolean(l.reportFileUrl),
       date: l.createdAt.toISOString().slice(0, 10),
     })),
-    // The frozen bill - same numbers as the running sheet.
+    // The frozen bill - the running sheet's lines, plus the raised invoice's own
+    // totals where one exists. Both are shown because they answer different
+    // questions: the lines say what the stay was made of, the invoice says what
+    // was actually charged once a discount was agreed.
     bill: {
       legs: sheet.legs, bedTotal: sheet.bedTotal, nurseTotal: sheet.nurseTotal, nursePerDay: sheet.nursePerDay,
       charges: sheet.charges, chargesTotal: sheet.chargesTotal,
       grandTotal: sheet.grandTotal, advanceTotal: sheet.advanceTotal, balance: sheet.balance,
+      /** The IPD invoice, once a discharge has raised one. Null while the
+       *  patient is still in a bed: there is no discount to show before there
+       *  is a bill to discount. */
+      invoice: ipdInvoice ? (() => {
+        const paid = round2(
+          ipdInvoice.payments.reduce((t, x) => t + Number(x.amount), 0) -
+          ipdInvoice.refunds.reduce((t, x) => t + Number(x.amount), 0)
+        );
+        const total = Number(ipdInvoice.totalAmount);
+        return {
+          receiptNo: ipdInvoice.receiptNo,
+          subtotal: Number(ipdInvoice.subtotal).toFixed(2),
+          discount: Number(ipdInvoice.discountAmount).toFixed(2),
+          taxable: Number(ipdInvoice.taxableAmount).toFixed(2),
+          gst: (Number(ipdInvoice.cgstAmount) + Number(ipdInvoice.sgstAmount)).toFixed(2),
+          total: total.toFixed(2),
+          paid: paid.toFixed(2),
+          balance: Math.max(0, round2(total - paid)).toFixed(2),
+        };
+      })() : null,
     },
   };
 }

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
+import { DischargeSummaryForm } from "@/components/portal/ipd/discharge-summary-form";
 import { api, ApiClientError } from "@/lib/api-client";
 import { StatusPill } from "@/components/portal/insurance/claims-board";
 
@@ -134,6 +135,8 @@ export default function InsuranceAdmissionPage() {
   /** Every bill on the stay, in date order. Loaded on demand - most visits to
    *  this page never open it. */
   const [showBills, setShowBills] = useState(false);
+  /** The shared discharge summary - the same record reception edits. */
+  const [summaryOpen, setSummaryOpen] = useState(false);
   const [bills, setBills] = useState<StayBills | null>(null);
 
   const loadBills = useCallback(async () => {
@@ -286,6 +289,14 @@ export default function InsuranceAdmissionPage() {
                 {bills!.outsideCount}
               </span>
             )}
+          </button>
+          {/* THE SAME RECORD RECEPTION WRITES. Not a copy and not an
+              insurance-specific version - whichever desk opens it first creates
+              it, and both edit that one row. */}
+          <button onClick={() => setSummaryOpen(true)}
+            title="Write or edit this stay's discharge summary. Reception edits the same record."
+            className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-[13px] font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+            <Icon name="file" size={15} /> Discharge summary
           </button>
           <a href={`/print/bill/${a.id}`} target="_blank" rel="noreferrer"
             className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-[var(--p-blue-deep)]">
@@ -716,6 +727,10 @@ export default function InsuranceAdmissionPage() {
           </section>
         </div>
       </div>
+      {summaryOpen && (
+        <DischargeSummaryForm admissionId={a.id} onClose={() => setSummaryOpen(false)} />
+      )}
+
     </PortalScroll>
   );
 }
