@@ -1644,6 +1644,30 @@ model Invoice {
   /// close can group without joining through the claim.
   payerName String?
 
+  /// HOW MUCH OF THIS BILL THE INSURER AGREED TO PAY.
+  ///
+  /// `payer` above answers "who is this bill with" as a yes/no. It cannot
+  /// express the answer an insurer actually gives, which is a NUMBER: a
+  /// ₹2,00,000 stay approved at ₹1,80,000 leaves ₹20,000 that is the family's.
+  /// Before this column there was nowhere to put that ₹20,000, so the bill was
+  /// either wholly the insurer's (and the family was never asked) or wholly the
+  /// patient's (and a family promised cashless was billed two lakh).
+  ///
+  /// PATIENT PAYABLE = totalAmount − insuranceCoveredAmount. Everything else is
+  /// derived from the payments already on the bill: money in at mode INSURANCE
+  /// is the insurer's, anything else is the family's. See lib/insurance-split.
+  ///
+  /// Set when the insurer decides, not when the bill is raised - an approval is
+  /// what creates the split, and until they answer nobody knows it. Allocated
+  /// across a stay's bills oldest-first, the same way settlements already are.
+  ///
+  /// DEFAULT 0 IS THE HONEST DEFAULT for a self-pay bill: nothing is covered, so
+  /// the whole total is the patient's, which is exactly what it has always been.
+  /// Existing insurance bills were backfilled to their own total, which is what
+  /// "wholly the insurer's" meant before this column existed - so no bill in the
+  /// system changed meaning on the day it shipped.
+  insuranceCoveredAmount Decimal @default(0) @db.Decimal(10, 2)
+
   // ── WHO IS BEING BILLED, when it isn't the patient ────────────────────────
   //
   // All four are null for an ordinary counter bill, which is B2C - the patient

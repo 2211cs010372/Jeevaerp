@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
 import { nextId } from "@/lib/ids";
 import { logAudit } from "./audit.service";
+import { splitInvoice } from "@/lib/insurance-split";
 import { createInvoice, recordPayment, advancePaymentRef, type PaymentModeT } from "./billing.service";
 // One rounding definition across the whole system - money must not be
 // rounded two different ways in two different files.
@@ -496,39 +497,50 @@ export async function outstandingForAdmission(admissionId: string): Promise<{
       // outstanding prerequisite of it.
       source: { in: ["PHARMACY", "LAB", "OTHER"] },
       status: { not: "CANCELLED" },
-      // A bill sitting with an insurer is not money the family owes. Counting it
-      // here would stop every cashless discharge on a debt nobody at the desk can
-      // collect, and the only way through would be the dues override - which
-      // would then be used on every insurance patient until it meant nothing.
-      payer: "SELF_PAY",
+      // ── NO PAYER FILTER ──
+      //
+      // This was `payer: "SELF_PAY"`. The reasoning was sound - a bill sitting
+      // with an insurer is not money the family owes, and blocking every
+      // cashless discharge on it would have turned the dues override into a
+      // reflex. But it also hid the CO-PAY, so a family walked out owing a
+      // share their insurer had explicitly refused.
+      //
+      // The filter is now per-rupee instead of per-bill: `due` below is the
+      // patient's share alone, so the insurer's ₹1,80,000 still never blocks a
+      // discharge while the family's ₹20,000 now does.
     },
     orderBy: { createdAt: "asc" },
     select: {
       id: true, receiptNo: true, source: true, totalAmount: true, createdAt: true,
-      payments: { select: { amount: true } },
+      insuranceCoveredAmount: true,
+      payments: { select: { mode: true, amount: true } },
       refunds: { select: { amount: true } },
     },
   });
 
   type Row = {
     id: string; receiptNo: string; source: string; totalAmount: { toString(): string }; createdAt: Date;
-    payments: { amount: { toString(): string } }[];
+    insuranceCoveredAmount: { toString(): string };
+    payments: { mode: string; amount: { toString(): string } }[];
     refunds: { amount: { toString(): string } }[];
   };
 
   const bills = (rows as Row[]).map((i) => {
-    const total = Number(i.totalAmount.toString());
-    const paid = round2(
-      i.payments.reduce((s, x) => round2(s + Number(x.amount.toString())), 0) -
-      i.refunds.reduce((s, x) => round2(s + Number(x.amount.toString())), 0)
-    );
+    // The patient's share. An insurer's part of this bill is not a debt the
+    // discharge desk can collect and must never hold a family in the building.
+    const split = splitInvoice({
+      totalAmount: Number(i.totalAmount.toString()),
+      insuranceCoveredAmount: Number(i.insuranceCoveredAmount.toString()),
+      payments: i.payments.map((x) => ({ mode: String(x.mode), amount: Number(x.amount.toString()) })),
+      refunds: i.refunds.map((x) => ({ amount: Number(x.amount.toString()) })),
+    });
     return {
       id: i.id, receiptNo: i.receiptNo, source: i.source,
-      total: total.toFixed(2), paid: paid.toFixed(2),
-      due: Math.max(0, round2(total - paid)).toFixed(2),
+      total: split.total.toFixed(2), paid: split.patientPaid.toFixed(2),
+      due: split.patientBalance.toFixed(2),
       createdAt: i.createdAt.toISOString(),
     };
-  }).filter((b) => Number(b.due) > 0);
+  }).filter((b) => Number(b.due) > 0.01);
 
   return {
     bills,

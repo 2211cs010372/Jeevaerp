@@ -1,5 +1,157 @@
 import { describe, it, expect } from "vitest";
-import { approvalOf, splitStay, type ClaimLike } from "@/lib/insurance-split";
+import {
+  approvalOf, splitStay, splitInvoice, allocateCoverage, type ClaimLike,
+} from "@/lib/insurance-split";
+
+/**
+ * The scenario these were written against, in the hospital's own words:
+ * bill ₹2,00,000, insurer claims ₹1,80,000, the remaining ₹20,000 is the
+ * patient's and must show up as a due at reception under their name.
+ */
+describe("splitInvoice - one bill, two debtors", () => {
+  const bill = (o: Partial<Parameters<typeof splitInvoice>[0]> = {}) =>
+    splitInvoice({ totalAmount: 200000, insuranceCoveredAmount: 180000, payments: [], ...o });
+
+  it("₹2,00,000 bill with ₹1,80,000 covered leaves the patient ₹20,000", () => {
+    const s = bill();
+    expect(s.patientPayable).toBe(20000);
+    expect(s.patientBalance).toBe(20000);
+    expect(s.insuranceReceivable).toBe(180000);
+    expect(s.fullySettled).toBe(false);
+  });
+
+  it("the insurer settling in full does NOT clear the patient's ₹20,000", () => {
+    // The exact bug this column exists to fix: Invoice.status would read PAID
+    // here, and the family's share would vanish from every list.
+    const s = bill({ payments: [{ mode: "INSURANCE", amount: 180000 }] });
+    expect(s.insuranceReceivable).toBe(0);
+    expect(s.patientBalance).toBe(20000);
+    expect(s.fullySettled).toBe(false);
+  });
+
+  it("the patient paying does NOT reduce what the insurer owes", () => {
+    const s = bill({ payments: [{ mode: "CASH", amount: 20000 }] });
+    expect(s.patientBalance).toBe(0);
+    expect(s.insuranceReceivable).toBe(180000);
+  });
+
+  it("only both sides paying settles the bill", () => {
+    const s = bill({ payments: [{ mode: "INSURANCE", amount: 180000 }, { mode: "UPI", amount: 20000 }] });
+    expect(s.fullySettled).toBe(true);
+  });
+
+  it("a part payment from the family leaves the rest owed", () => {
+    const s = bill({ payments: [{ mode: "CASH", amount: 12000 }] });
+    expect(s.patientPaid).toBe(12000);
+    expect(s.patientBalance).toBe(8000);
+  });
+
+  it("counts every non-INSURANCE mode as the patient's money", () => {
+    const s = bill({
+      payments: [
+        { mode: "CASH", amount: 5000 }, { mode: "UPI", amount: 5000 },
+        { mode: "CARD", amount: 5000 }, { mode: "NETBANKING", amount: 5000 },
+      ],
+    });
+    expect(s.patientPaid).toBe(20000);
+    expect(s.patientBalance).toBe(0);
+  });
+
+  it("a refund is always the patient's, never the insurer's", () => {
+    const s = bill({
+      payments: [{ mode: "CASH", amount: 20000 }, { mode: "INSURANCE", amount: 180000 }],
+      refunds: [{ amount: 5000 }],
+    });
+    expect(s.patientPaid).toBe(15000);
+    expect(s.patientBalance).toBe(5000);
+    expect(s.insurerPaid).toBe(180000);
+    expect(s.insuranceReceivable).toBe(0);
+  });
+
+  it("an insurer overpayment does not quietly clear the family's share", () => {
+    const s = bill({ payments: [{ mode: "INSURANCE", amount: 195000 }] });
+    expect(s.patientBalance).toBe(20000);
+    expect(s.insuranceReceivable).toBe(0);
+  });
+
+  it("an ordinary self-pay bill is wholly the patient's", () => {
+    const s = splitInvoice({ totalAmount: 4000, payments: [] });
+    expect(s.insuranceCovered).toBe(0);
+    expect(s.patientPayable).toBe(4000);
+    expect(s.patientBalance).toBe(4000);
+  });
+
+  it("a fully covered bill asks the patient for nothing", () => {
+    const s = bill({ insuranceCoveredAmount: 200000 });
+    expect(s.patientPayable).toBe(0);
+    expect(s.patientBalance).toBe(0);
+  });
+
+  it("coverage above the bill never makes the payable negative", () => {
+    const s = bill({ insuranceCoveredAmount: 999999 });
+    expect(s.insuranceCovered).toBe(200000);
+    expect(s.patientPayable).toBe(0);
+  });
+
+  it("accepts Decimal-style strings straight off a Prisma row", () => {
+    const s = splitInvoice({
+      totalAmount: "200000.00", insuranceCoveredAmount: "180000.00",
+      payments: [{ mode: "CASH", amount: "12000.50" }],
+    });
+    expect(s.patientBalance).toBe(7999.5);
+  });
+
+  it("treats a paisa tail as settled, not owed", () => {
+    const s = splitInvoice({
+      totalAmount: 100, insuranceCoveredAmount: 0,
+      payments: [{ mode: "CASH", amount: 99.995 }],
+    });
+    expect(s.fullySettled).toBe(true);
+  });
+});
+
+describe("allocateCoverage - an approval spread across a stay's bills", () => {
+  const bills = [
+    { id: "ipd", totalAmount: 150000 },
+    { id: "pharmacy", totalAmount: 40000 },
+    { id: "lab", totalAmount: 10000 },
+  ];
+
+  it("fills oldest first, exactly like settlement does", () => {
+    expect(allocateCoverage(180000, bills)).toEqual([
+      { id: "ipd", covered: 150000 },
+      { id: "pharmacy", covered: 30000 },
+      { id: "lab", covered: 0 },
+    ]);
+  });
+
+  it("a bill past the end of the approval is wholly the patient's", () => {
+    const out = allocateCoverage(180000, bills);
+    expect(out.find((o) => o.id === "lab")!.covered).toBe(0);
+  });
+
+  it("covers everything when the approval matches the stay", () => {
+    expect(allocateCoverage(200000, bills).every((o, i) => o.covered === bills[i].totalAmount)).toBe(true);
+  });
+
+  it("never allocates more than a bill's own total", () => {
+    for (const o of allocateCoverage(999999, bills)) {
+      const b = bills.find((x) => x.id === o.id)!;
+      expect(o.covered).toBeLessThanOrEqual(b.totalAmount);
+    }
+  });
+
+  it("a rejection covers nothing", () => {
+    expect(allocateCoverage(0, bills).every((o) => o.covered === 0)).toBe(true);
+  });
+
+  it("allocated total never exceeds the approval", () => {
+    for (const approved of [0, 1, 55000, 180000, 200000, 250000]) {
+      const sum = allocateCoverage(approved, bills).reduce((s, o) => s + o.covered, 0);
+      expect(sum).toBeLessThanOrEqual(Math.min(approved, 200000) + 0.01);
+    }
+  });
+});
 
 /**
  * The cases below are the ones a hospital actually hits, in the order they hurt:

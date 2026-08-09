@@ -3,6 +3,7 @@ import { ApiError } from "@/lib/api";
 import { nextId } from "@/lib/ids";
 import { logAudit } from "./audit.service";
 import { currentInpatients } from "./ipd.service";
+import { allocateCoverage } from "@/lib/insurance-split";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, ClaimStatus } from "@prisma/client";
 
@@ -541,6 +542,36 @@ export async function actOnClaim(
             detail: "Closed unused - the stay was claimed on its final claim instead",
             byId: actor.id,
           },
+        });
+      }
+    }
+
+    // ── THE APPROVAL SPLITS THE STAY'S BILLS ──
+    //
+    // This is the moment the ₹20,000 comes into existence. The insurer answers
+    // with a NUMBER - "we'll pay ₹1,80,000 of your ₹2,00,000" - and until that
+    // number is written onto the bills, the difference is owed by nobody: the
+    // dues lists show the family nothing, because a cashless bill is excluded
+    // from them, and the hospital never collects it.
+    //
+    // Allocated oldest-first across the stay's insurance bills, the same order
+    // the settlement below uses. A bill past the end of the approval gets zero
+    // coverage and becomes wholly the patient's, which is the correct reading of
+    // a part-approval.
+    //
+    // A REJECTION COVERS NOTHING, so the whole stay lands on the family - and
+    // now actually shows up at the counter instead of sitting invisible.
+    if (["APPROVE", "REJECT"].includes(input.action) && claim.admissionId) {
+      const approved = input.action === "REJECT" ? 0 : (data.approvedAmount ? Number(data.approvedAmount) : 0);
+      const bills = await tx.invoice.findMany({
+        where: { admissionId: claim.admissionId, payer: "INSURANCE", status: { not: "CANCELLED" } },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, totalAmount: true },
+      });
+      for (const a of allocateCoverage(approved, bills.map((b) => ({ id: b.id, totalAmount: Number(b.totalAmount) })))) {
+        await tx.invoice.update({
+          where: { id: a.id },
+          data: { insuranceCoveredAmount: a.covered.toFixed(2) },
         });
       }
     }

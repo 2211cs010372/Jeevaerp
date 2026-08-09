@@ -26,6 +26,142 @@
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
+/* ════════════════════════════════════════════════════════════════════════════
+   ONE BILL, TWO DEBTORS
+   ════════════════════════════════════════════════════════════════════════════
+
+   A cashless bill is owed by two different people at once, and every screen in
+   the hospital needs to know which half it is looking at:
+
+     the INSURER owes `insuranceCoveredAmount`, and pays it by bank transfer
+     months later, recorded as a Payment at mode INSURANCE;
+
+     the PATIENT owes the rest, and pays it at a counter today.
+
+   Before this existed, `Invoice.status` was the only answer to "is this settled",
+   and it is derived from the SUM of both. So a bill the insurer had paid in full
+   read PAID even when the family still owed a co-pay nobody had collected - and
+   a bill where only the insurer's share had landed read PARTIALLY_PAID, which
+   sent a receptionist chasing a family who owed nothing.
+
+   These functions are the one place that separation is defined. The dues lists,
+   the discharge screen and the billing counter all read them, so none of them
+   can drift into its own idea of who owes what.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/** The fields of an Invoice this arithmetic needs. Structural, so a Prisma row
+ *  with Decimals and a DTO with strings both satisfy it. */
+export interface InvoiceMoney {
+  totalAmount: number | string;
+  insuranceCoveredAmount?: number | string | null;
+  /** Every payment on the bill. `mode` is what says whose money it was. */
+  payments: { mode: string; amount: number | string }[];
+  /** Money handed back. Always the patient's - an insurer reverses a settlement
+   *  by short-paying the next one, not by asking for cash at the counter. */
+  refunds?: { amount: number | string }[];
+}
+
+export interface InvoiceSplit {
+  total: number;
+  /** What the insurer agreed to. 0 on an ordinary counter bill. */
+  insuranceCovered: number;
+  /** THE HEADLINE: total − covered. What the family owes on this bill. */
+  patientPayable: number;
+  /** Counter money already taken from the family, net of refunds. */
+  patientPaid: number;
+  /** patientPayable − patientPaid. What a dues list must show. */
+  patientBalance: number;
+  /** Settlement money already received from the insurer. */
+  insurerPaid: number;
+  /** insuranceCovered − insurerPaid. What the hospital is still owed. */
+  insuranceReceivable: number;
+  /** True when nobody owes anything on this bill any more. */
+  fullySettled: boolean;
+}
+
+const n = (v: number | string | null | undefined): number =>
+  v == null ? 0 : typeof v === "number" ? v : Number(v);
+
+/**
+ * Split one bill between the family and the insurer.
+ *
+ * THE PAYMENT MODE IS WHAT DECIDES WHOSE MONEY IT WAS. `PaymentMode.INSURANCE`
+ * exists precisely so a bank transfer settling a claim is not confused with cash
+ * across a counter - the day close already excludes it from every till. Here it
+ * does the second half of that job: it keeps the insurer's money from paying
+ * down the patient's share.
+ *
+ * A REFUND IS ALWAYS THE PATIENT'S. An insurer that overpays does not ask for
+ * cash back; they short-pay the next settlement. So refunds come off patientPaid
+ * and never off insurerPaid.
+ *
+ * OVERPAYMENT BY THE INSURER DOES NOT SUBSIDISE THE PATIENT. If a settlement
+ * lands above the agreed coverage, the surplus stays on the insurer's side of
+ * the line rather than quietly clearing the family's balance - the family was
+ * never told their share was waived, and a balance that vanishes on its own is
+ * a balance nobody can explain.
+ */
+export function splitInvoice(inv: InvoiceMoney): InvoiceSplit {
+  const total = r2(n(inv.totalAmount));
+  // Never more than the bill: a stale coverage figure on a re-issued invoice
+  // must not turn into a negative patient payable.
+  const insuranceCovered = r2(Math.min(Math.max(0, n(inv.insuranceCoveredAmount)), total));
+
+  const insurerPaid = r2(
+    inv.payments.filter((p) => p.mode === "INSURANCE").reduce((s, p) => s + n(p.amount), 0)
+  );
+  const refunded = r2((inv.refunds ?? []).reduce((s, x) => s + n(x.amount), 0));
+  const patientPaid = r2(
+    inv.payments.filter((p) => p.mode !== "INSURANCE").reduce((s, p) => s + n(p.amount), 0) - refunded
+  );
+
+  const patientPayable = r2(Math.max(0, total - insuranceCovered));
+  const patientBalance = r2(Math.max(0, patientPayable - patientPaid));
+  const insuranceReceivable = r2(Math.max(0, insuranceCovered - insurerPaid));
+
+  return {
+    total,
+    insuranceCovered,
+    patientPayable,
+    patientPaid,
+    patientBalance,
+    insurerPaid,
+    insuranceReceivable,
+    // A rounding tail of a paisa is settled, not owed - the same threshold the
+    // dues lists have always used.
+    fullySettled: patientBalance <= 0.01 && insuranceReceivable <= 0.01,
+  };
+}
+
+/**
+ * ALLOCATE AN APPROVAL ACROSS A STAY'S BILLS.
+ *
+ * The insurer approves one number for the whole stay; the hospital holds several
+ * bills for it - the discharge invoice, the pharmacy's, the lab's. Somebody has
+ * to decide which rupee of the approval lands on which document.
+ *
+ * Oldest bill first, exactly like `settleDues` and like the settlement path in
+ * actOnClaim. Consistency matters more than cleverness here: three different
+ * allocation orders in one codebase is three different answers to "why is this
+ * bill only half covered", and nobody can reconcile any of them.
+ *
+ * A bill past the end of the approval gets ZERO coverage, which makes it wholly
+ * the patient's. That is the correct reading of a part-approval: the insurer
+ * agreed to a number, and everything beyond it is somebody else's problem.
+ */
+export function allocateCoverage(
+  approved: number,
+  bills: { id: string; totalAmount: number | string }[]
+): { id: string; covered: number }[] {
+  let left = r2(Math.max(0, approved));
+  return bills.map((b) => {
+    const total = r2(n(b.totalAmount));
+    const covered = r2(Math.min(total, left));
+    left = r2(left - covered);
+    return { id: b.id, covered };
+  });
+}
+
 /** The fields of an InsuranceClaim this arithmetic needs. Structural, so both
  *  the DTO the portal serves and a raw Prisma row satisfy it. */
 export interface ClaimLike {

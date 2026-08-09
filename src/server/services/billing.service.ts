@@ -4,6 +4,7 @@ import { nextId } from "@/lib/ids";
 import { ApiError } from "@/lib/api";
 import { logAudit } from "./audit.service";
 import { publishLive } from "@/server/realtime/publish";
+import { splitInvoice } from "@/lib/insurance-split";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, PaymentMode } from "@prisma/client";
@@ -688,7 +689,15 @@ export async function refundInvoice(
 
 export interface CounterDue {
   invoiceId: string; receiptNo: string; createdAt: string;
+  /** `total` is the whole bill; `paid` and `due` are the PATIENT'S side of it.
+   *  On a cashless bill total !== paid + due, and that is not a bug - the
+   *  difference is `insuranceCovered`, which the family is not being asked for. */
   total: string; paid: string; due: string;
+  /** What the insurer agreed to take off this bill. "0.00" on a counter bill. */
+  insuranceCovered: string;
+  /** The insurer, when this bill went to one - so the desk can explain to a
+   *  family who was promised cashless why they are being asked for anything. */
+  insurerName: string | null;
   patient: { id: string; displayId: string; fullName: string; phone: string | null };
   ipNumber: string | null; ward: string | null; bedNo: string | null;
   stillAdmitted: boolean;
@@ -703,6 +712,12 @@ export interface CounterIpdDue {
   bills: { invoiceId: string; receiptNo: string; due: string; createdAt: string; summary: string }[];
   billCount: number;
   due: string;
+  /** Total the insurer agreed to take off this patient's open bills. > 0 means
+   *  the amount owed is a SHARE, and the desk must be able to say so - a family
+   *  told the stay was cashless will ask why they are being billed at all. */
+  insuranceCovered: string;
+  /** The insurer behind that figure, when there is one. */
+  insurerName: string | null;
   /** The oldest open bill - what makes this row urgent. */
   oldestAt: string;
 }
@@ -727,14 +742,26 @@ export async function counterDues(source?: InvoiceSourceT): Promise<CounterDues>
     where: {
       ...(source ? { source } : { source: { in: ["LAB", "PHARMACY", "OTHER"] } }),
       status: { notIn: ["CANCELLED", "PAID"] },
-      // A cashless bill is with the insurer, not with anybody at this counter.
-      // Listing it here sends staff to chase a family who owes nothing.
-      payer: "SELF_PAY",
+      // ── NO LONGER FILTERED BY PAYER ──
+      //
+      // This used to be `payer: "SELF_PAY"`, on the reasoning that a cashless
+      // bill is with the insurer and chasing the family for it is wrong. That
+      // was right about the whole bill and wrong about the part of it the
+      // insurer refused: a ₹2,00,000 stay approved at ₹1,80,000 leaves ₹20,000
+      // that IS the family's, and this filter hid it from every collection
+      // screen in the hospital. Nobody chased it because nobody could see it.
+      //
+      // The payer question is now answered per-rupee by insuranceCoveredAmount
+      // rather than per-bill, so the filter below is the honest one: does this
+      // patient still owe money on this bill? An insurance bill whose coverage
+      // equals its total computes a zero patient balance and drops out here
+      // exactly as it did before.
     },
     orderBy: { createdAt: "asc" },
     select: {
       id: true, receiptNo: true, createdAt: true, totalAmount: true,
-      payments: { select: { amount: true } },
+      payer: true, payerName: true, insuranceCoveredAmount: true,
+      payments: { select: { mode: true, amount: true } },
       refunds: { select: { amount: true } },
       patient: { select: { id: true, displayId: true, fullName: true, phone: true } },
       items: { select: { description: true }, orderBy: { id: "asc" } },
@@ -746,14 +773,16 @@ export async function counterDues(source?: InvoiceSourceT): Promise<CounterDues>
 
   const dues: CounterDue[] = [];
   for (const inv of rows) {
-    const total = Number(inv.totalAmount);
-    const paid = r2(
-      inv.payments.reduce((s, x) => r2(s + Number(x.amount)), 0) -
-      inv.refunds.reduce((s, x) => r2(s + Number(x.amount)), 0)
-    );
-    const due = r2(total - paid);
+    // THE PATIENT'S SHARE, not the bill's balance. On a cashless bill those are
+    // two different numbers, and it is the first one this counter collects.
+    const split = splitInvoice({
+      totalAmount: Number(inv.totalAmount),
+      insuranceCoveredAmount: Number(inv.insuranceCoveredAmount),
+      payments: inv.payments.map((p) => ({ mode: String(p.mode), amount: Number(p.amount) })),
+      refunds: inv.refunds.map((x) => ({ amount: Number(x.amount) })),
+    });
     // A rounding tail of a paisa is settled, not owed.
-    if (due <= 0.01) continue;
+    if (split.patientBalance <= 0.01) continue;
     if (!inv.patient) continue;
 
     const first = inv.items[0];
@@ -762,7 +791,13 @@ export async function counterDues(source?: InvoiceSourceT): Promise<CounterDues>
       invoiceId: inv.id,
       receiptNo: inv.receiptNo,
       createdAt: inv.createdAt.toISOString(),
-      total: total.toFixed(2), paid: paid.toFixed(2), due: due.toFixed(2),
+      total: split.total.toFixed(2),
+      paid: split.patientPaid.toFixed(2),
+      due: split.patientBalance.toFixed(2),
+      // What the insurer took off this bill, so the desk can explain the figure
+      // to a family who was told the stay was cashless.
+      insuranceCovered: split.insuranceCovered.toFixed(2),
+      insurerName: inv.payer === "INSURANCE" ? inv.payerName : null,
       patient: inv.patient,
       ipNumber: inv.admission?.ipNumber ?? null,
       ward: inv.admission?.bed?.ward.name ?? null,
@@ -787,11 +822,16 @@ export async function counterDues(source?: InvoiceSourceT): Promise<CounterDues>
   for (const d of ipd) {
     const row = byPatient.get(d.patient.id) ?? {
       patient: d.patient, ipNumber: d.ipNumber, ward: d.ward, bedNo: d.bedNo,
-      stillAdmitted: d.stillAdmitted, bills: [], billCount: 0, due: "0.00", oldestAt: d.createdAt,
+      stillAdmitted: d.stillAdmitted, bills: [], billCount: 0, due: "0.00",
+      insuranceCovered: "0.00", insurerName: null as string | null,
+      oldestAt: d.createdAt,
     };
     row.bills.push({ invoiceId: d.invoiceId, receiptNo: d.receiptNo, due: d.due, createdAt: d.createdAt, summary: d.summary });
     row.billCount = row.bills.length;
     row.due = r2(Number(row.due) + Number(d.due)).toFixed(2);
+    row.insuranceCovered = r2(Number(row.insuranceCovered) + Number(d.insuranceCovered)).toFixed(2);
+    // First insurer wins - one stay is one insurer, and the rollup is per stay.
+    if (!row.insurerName && d.insurerName) row.insurerName = d.insurerName;
     if (d.createdAt < row.oldestAt) row.oldestAt = d.createdAt;
     // Any live stay makes the row a ward row, whichever slip we are on.
     if (d.stillAdmitted) {
@@ -848,30 +888,42 @@ export async function settleDues(
         patientId: input.patientId,
         ...(input.source ? { source: input.source } : {}),
         status: { notIn: ["CANCELLED", "PAID"] },
-        // Never take a family's money against a bill that is with their insurer.
-        payer: "SELF_PAY",
+        // ── NO PAYER FILTER ──
+        //
+        // This was `payer: "SELF_PAY"`, to stop a family's cash being taken
+        // against a bill their insurer was carrying. Right instinct, wrong
+        // instrument: it also refused the CO-PAY on that bill, which is money
+        // the family genuinely owes and the counter genuinely has to take.
+        //
+        // The protection is now exact rather than blanket - `due` below is the
+        // patient's share alone, so a tender can never be applied to the part
+        // of a bill the insurer agreed to pay.
       },
       orderBy: { createdAt: "asc" },
       select: {
-        id: true, receiptNo: true, totalAmount: true,
-        payments: { select: { amount: true } },
+        id: true, receiptNo: true, totalAmount: true, insuranceCoveredAmount: true,
+        payments: { select: { mode: true, amount: true } },
         refunds: { select: { amount: true } },
       },
     });
 
     const open = invoices
-      .map((i) => ({
-        id: i.id,
-        receiptNo: i.receiptNo,
-        total: Number(i.totalAmount),
-        due: r2(
-          Number(i.totalAmount) -
-          netPaid(
-            i.payments.map((p) => ({ amount: Number(p.amount) })),
-            i.refunds.map((p) => ({ amount: Number(p.amount) }))
-          )
-        ),
-      }))
+      .map((i) => {
+        const split = splitInvoice({
+          totalAmount: Number(i.totalAmount),
+          insuranceCoveredAmount: Number(i.insuranceCoveredAmount),
+          payments: i.payments.map((p) => ({ mode: String(p.mode), amount: Number(p.amount) })),
+          refunds: i.refunds.map((x) => ({ amount: Number(x.amount) })),
+        });
+        return {
+          id: i.id,
+          receiptNo: i.receiptNo,
+          total: split.total,
+          // THE PATIENT'S SHARE. Allocating against the whole balance would
+          // have the family paying down the insurer's ₹1,80,000.
+          due: split.patientBalance,
+        };
+      })
       // A rounding tail of a paisa is settled, not owed.
       .filter((i) => i.due > 0.01);
 
@@ -909,12 +961,30 @@ export async function settleDues(
         appliedHere = r2(appliedHere + take);
       }
       if (appliedHere > 0) {
+        // ── STATUS IS ABOUT THE WHOLE BILL, NOT THE FAMILY'S HALF ──
+        //
+        // `need` above reached zero when the PATIENT finished paying their
+        // share. Marking the invoice PAID there would have closed a bill on
+        // which the insurer still owed ₹1,80,000 - and a closed bill is one no
+        // settlement screen lists and nobody ever chases.
+        //
+        // So the status is recomputed from every payment on the bill, which is
+        // the same rule createInvoice and recordPayments use.
+        const after = await tx.invoice.findUnique({
+          where: { id: inv.id },
+          select: { totalAmount: true, cancelledAt: true, payments: { select: { amount: true } }, refunds: { select: { amount: true } } },
+        });
+        const status = after
+          ? invoiceStatusFrom(
+              Number(after.totalAmount),
+              after.payments.map((x) => ({ amount: Number(x.amount) })),
+              after.refunds.map((x) => ({ amount: Number(x.amount) })),
+              !!after.cancelledAt
+            )
+          : "PARTIALLY_PAID";
         await tx.invoice.update({
           where: { id: inv.id },
-          data: {
-            status: need <= 0.01 ? "PAID" : "PARTIALLY_PAID",
-            paidAt: need <= 0.01 ? new Date() : null,
-          },
+          data: { status, paidAt: status === "PAID" ? new Date() : null },
         });
         settled.push({ receiptNo: inv.receiptNo, applied: s2(appliedHere) });
       }

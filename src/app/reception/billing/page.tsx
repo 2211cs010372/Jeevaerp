@@ -32,6 +32,10 @@ interface IpdDue {
   stillAdmitted: boolean;
   bills: { invoiceId: string; receiptNo: string; due: string; createdAt: string; summary: string }[];
   billCount: number; due: string; oldestAt: string;
+  /** What the insurer agreed to take off these bills. > 0 means the amount owed
+   *  is the family's SHARE after a claim, not the whole bill. */
+  insuranceCovered?: string;
+  insurerName?: string | null;
 }
 
 const SOURCE: Record<string, string> = {
@@ -252,7 +256,23 @@ export default function BillingPage() {
                     {!p.stillAdmitted && (
                       <span className="rounded-full bg-[var(--p-rose-soft)] px-2 py-0.5 text-[10.5px] font-semibold uppercase text-[var(--p-rose)]">Discharged — unpaid</span>
                     )}
+                    {/* WHY A CASHLESS PATIENT OWES ANYTHING.
+                        Without this the desk is asking a family who was
+                        promised cashless for ₹20,000 with nothing on screen to
+                        explain it, and the argument that follows is one the
+                        receptionist cannot win. */}
+                    {Number(p.insuranceCovered ?? 0) > 0 && (
+                      <span title={`${p.insurerName ?? "The insurer"} covered ₹${money(p.insuranceCovered!)} of these bills. What is shown is the patient's share.`}
+                        className="rounded-full bg-[var(--p-blue-soft)] px-2 py-0.5 text-[10.5px] font-semibold uppercase text-[var(--p-blue-deep)]">
+                        after {p.insurerName ?? "insurance"}
+                      </span>
+                    )}
                   </div>
+                  {Number(p.insuranceCovered ?? 0) > 0 && (
+                    <div className="mt-1 text-[11.5px] text-[var(--p-muted)]">
+                      {p.insurerName ?? "Insurer"} covered ₹{money(p.insuranceCovered!)} — this is the patient&apos;s share.
+                    </div>
+                  )}
                   {/* The bills stay visible - somebody always asks what it is for. */}
                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[12px] text-[var(--p-muted)]">
                     {p.bills.map((b) => (
