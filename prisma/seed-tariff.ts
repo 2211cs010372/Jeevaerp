@@ -137,7 +137,7 @@ const ALIAS: Record<string, string> = {
   "CUE": "Complete Urine Examination (CUE)",
   "Dengue Check": "Dengue Check (NS1, IgM, IgG)",
   "Gravindex Test": "Gravindex Test (Urine Pregnancy)",
-  "LFT": "Liver Function Test (LFT)",
+  "LFT": "Liver Function Test (LFT)", 
   "Lipid Profile": "Lipid Profile (LP)",
   "RBS": "Random Blood Sugar (RBS)",
   "RFT": "Renal Function Tests (RFT)",

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { PrimaryButton } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner, Field } from "@/components/portal/ui/form-atoms";
@@ -9,6 +10,7 @@ import { BatchImport } from "@/components/portal/pharmacy/batch-import";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
+import { MASTER_KINDS, type MasterKind } from "@/lib/pharmacy/masters";
 
 interface Med {
   id: string; name: string; genericName: string | null; manufacturer: string | null;
@@ -17,6 +19,41 @@ interface Med {
   rackLocation: string | null; hsnCode: string | null; active: boolean; courseCritical: boolean;
   preferredSupplierId: string | null; preferredSupplierName: string | null;
   reorderQty: number | null; onOrder: number;
+  // ── MASTER DATA ──
+  // The four descriptor fields above are already RESOLVED by the server: the
+  // master's name when linked, the legacy free text when not. These say which,
+  // so the form can preselect and the list can show what is left to link.
+  categoryId: string | null; category: string | null;
+  genericId: string | null; manufacturerId: string | null;
+  dosageFormId: string | null; dosageForm: string | null;
+  unitId: string | null; hsnId: string | null; taxRateId: string | null;
+  scheduleId: string | null; schedule: string | null;
+  genericFromMaster: boolean; manufacturerFromMaster: boolean;
+  hsnFromMaster: boolean; unitFromMaster: boolean;
+  gstDiffersFromHsn: boolean; hsnDefaultGstRatePct: string | null;
+  needsMasterLink: boolean;
+}
+
+/** One row of any master, as the pickers need it. See pharmacy-masters.service. */
+interface MasterRow { id: string; label: string; detail: string | null; active: boolean }
+type MasterBundle = Record<MasterKind, MasterRow[]>;
+const EMPTY_MASTERS: MasterBundle = Object.fromEntries(
+  MASTER_KINDS.map((k) => [k, [] as MasterRow[]])
+) as MasterBundle;
+
+/**
+ * What this medicine still carries in the free-text column it used to live in.
+ *
+ * Shown only when nothing is linked yet. It is the difference between "this
+ * field is empty" and "this field has a value that no master knows about", and
+ * without it linking the catalogue up is guesswork.
+ */
+function LegacyHint({ value }: { value: string }) {
+  return (
+    <p className="mt-1 text-[11.5px] leading-relaxed text-[#8a6414]">
+      Currently free text: <b>{value}</b>. Pick one above to link it.
+    </p>
+  );
 }
 interface Batch {
   id: string; batchNo: string; expiryDate: string; quantity: number; mrp: string;
@@ -36,6 +73,12 @@ const blankMed = {
   id: "", name: "", genericName: "", manufacturer: "", hsnCode: "", gstRatePct: "5", unit: "tablet",
   reorderThreshold: "10", rackLocation: "", active: true, courseCritical: false,
   preferredSupplierId: "", reorderQty: "",
+  // Master links. Empty string is "not linked" and is what clears one.
+  categoryId: "", genericId: "", manufacturerId: "", dosageFormId: "",
+  unitId: "", hsnId: "", taxRateId: "", scheduleId: "",
+  // The legacy values this row still carries, kept so the form can show what is
+  // about to be superseded rather than silently dropping it.
+  legacyGeneric: "", legacyManufacturer: "", legacyHsn: "", legacyUnit: "",
 };
 // supplierId is required by the API: every batch on the shelf must trace to a
 // distributor, or a recall cannot be answered and a return goes to the wrong
@@ -89,12 +132,18 @@ export default function StockPage() {
   const [rmReason, setRmReason] = useState(REMOVE_REASONS[0]);
   const [busy, setBusy] = useState(false);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  /** Every master, for the medicine form's pickers. Empty until it loads, and
+   *  an empty list simply renders a picker with only "— not set —" in it. */
+  const [masters, setMasters] = useState<MasterBundle>(EMPTY_MASTERS);
 
   // The catalog's distributor list - needed the moment the edit modal opens, so
   // "who do we buy this from?" is a dropdown rather than a second screen.
   useEffect(() => {
     api.get<{ suppliers: Supplier[] }>("/pharmacy/suppliers")
       .then((r) => setSuppliers(r.suppliers)).catch(() => {});
+    // One call for all eight - see the masters route for why it is not eight.
+    api.get<{ masters: MasterBundle }>("/pharmacy/masters")
+      .then((r) => setMasters(r.masters)).catch(() => {});
   }, []);
 
   const load = useCallback(async () => {
@@ -142,6 +191,9 @@ export default function StockPage() {
     PULL: meds.filter((m) => m.expiredQty > 0).length,
     OUT: meds.filter((m) => m.inStock === 0).length,
   }), [meds]);
+
+  /** Medicines still describing themselves in free text. See the banner below. */
+  const unlinkedCount = useMemo(() => meds.filter((m) => m.needsMasterLink).length, [meds]);
 
   const shown = useMemo(() => {
     switch (tab) {
@@ -222,6 +274,12 @@ export default function StockPage() {
         courseCritical: editMed.courseCritical,
         preferredSupplierId: editMed.preferredSupplierId || "",
         reorderQty: editMed.reorderQty ? Number(editMed.reorderQty) : 0,
+        // Master links. Always sent, so clearing one in the form clears it on
+        // the record - "" is the explicit unlink the API expects.
+        categoryId: editMed.categoryId, genericId: editMed.genericId,
+        manufacturerId: editMed.manufacturerId, dosageFormId: editMed.dosageFormId,
+        unitId: editMed.unitId, hsnId: editMed.hsnId,
+        taxRateId: editMed.taxRateId, scheduleId: editMed.scheduleId,
       });
       setFlash(`${editMed.name} saved.`);
       setEditMed(null); await load();
@@ -230,14 +288,32 @@ export default function StockPage() {
   }
 
   const openEdit = (m: Med) => setEditMed({
-    id: m.id, name: m.name, genericName: m.genericName ?? "",
-    manufacturer: m.manufacturer ?? "",  // was hardcoded "" - every edit WIPED the manufacturer
-    hsnCode: m.hsnCode ?? "", gstRatePct: m.gstRatePct, unit: m.unit,
+    id: m.id, name: m.name,
+    // ── THE RESOLVED VALUE IS NOT ALWAYS THE LEGACY ONE ──
+    // The server sends `genericName` already resolved - it may be the MASTER's
+    // name. Writing that back into the free-text column would copy the master
+    // into the very field it replaces, and the row would then look linked when
+    // it wasn't. So the free-text columns are only ever refilled from a value
+    // that actually came from free text.
+    genericName: m.genericFromMaster ? "" : (m.genericName ?? ""),
+    manufacturer: m.manufacturerFromMaster ? "" : (m.manufacturer ?? ""),
+    hsnCode: m.hsnFromMaster ? "" : (m.hsnCode ?? ""),
+    unit: m.unitFromMaster ? "" : m.unit,
+    gstRatePct: m.gstRatePct,
     reorderThreshold: String(m.reorderThreshold), rackLocation: m.rackLocation ?? "",
     active: m.active,                    // was hardcoded true - a discontinued medicine silently came back
     courseCritical: m.courseCritical,
     preferredSupplierId: m.preferredSupplierId ?? "",
     reorderQty: m.reorderQty != null ? String(m.reorderQty) : "",
+    categoryId: m.categoryId ?? "", genericId: m.genericId ?? "",
+    manufacturerId: m.manufacturerId ?? "", dosageFormId: m.dosageFormId ?? "",
+    unitId: m.unitId ?? "", hsnId: m.hsnId ?? "",
+    taxRateId: m.taxRateId ?? "", scheduleId: m.scheduleId ?? "",
+    // What this row still carries in free text, for the "not linked yet" hints.
+    legacyGeneric: m.genericFromMaster ? "" : (m.genericName ?? ""),
+    legacyManufacturer: m.manufacturerFromMaster ? "" : (m.manufacturer ?? ""),
+    legacyHsn: m.hsnFromMaster ? "" : (m.hsnCode ?? ""),
+    legacyUnit: m.unitFromMaster ? "" : m.unit,
   });
 
   const fld = "w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm text-[var(--p-ink)] outline-none transition-colors focus:border-[var(--p-blue)]";
@@ -263,9 +339,35 @@ export default function StockPage() {
               <Icon name="pill" size={17} />
             </span>
             <span className="min-w-0">
-              <span className="rx-name block truncate text-[14px] font-semibold tracking-[-0.01em] text-[var(--p-ink)]">{m.name}</span>
+              <span className="rx-name flex min-w-0 items-center gap-1.5 text-[14px] font-semibold tracking-[-0.01em] text-[var(--p-ink)]">
+                <span className="truncate">{m.name}</span>
+                {/* A regulatory classification somebody has SET. Never inferred,
+                    so its presence here means a human put it there. */}
+                {m.schedule && (
+                  <span title={`Schedule ${m.schedule}`}
+                    className="shrink-0 rounded bg-[var(--p-rose-soft)] px-1.5 py-0.5 text-[10px] font-bold uppercase text-[var(--p-rose)]">
+                    {m.schedule}
+                  </span>
+                )}
+                {/* Still on free text. The changeover needs to be visible or it
+                    never finishes - see LegacyHint in the edit form. */}
+                {m.needsMasterLink && (
+                  <span title="Some details are still free text - open this medicine to link them to a master"
+                    className="shrink-0 rounded bg-[var(--p-amber-soft)] px-1.5 py-0.5 text-[10px] font-bold uppercase text-[#8a6414]">
+                    unlinked
+                  </span>
+                )}
+                {/* The product's rate and its HSN's default disagree. Shown, not
+                    resolved: repricing on a master edit is how a wrong bill happens. */}
+                {m.gstDiffersFromHsn && (
+                  <span title={`This medicine bills at ${m.gstRatePct}% but its HSN ordinarily attracts ${m.hsnDefaultGstRatePct}%`}
+                    className="shrink-0 rounded bg-[var(--p-amber-soft)] px-1.5 py-0.5 text-[10px] font-bold uppercase text-[#8a6414]">
+                    GST ≠ HSN
+                  </span>
+                )}
+              </span>
               <span className="block truncate text-[12px] text-[var(--p-muted)]">
-                {m.genericName || m.manufacturer || `GST ${m.gstRatePct}%`}
+                {[m.genericName, m.manufacturer, m.category].filter(Boolean).join(" · ") || `GST ${m.gstRatePct}%`}
               </span>
             </span>
           </button>
@@ -454,6 +556,36 @@ export default function StockPage() {
         />
       )}
 
+      {/* ── WHAT IS LEFT TO LINK ──
+          The per-row badge says which medicine; this says whether the job is
+          worth starting and gives it a door. Hidden once nothing is unlinked,
+          so it disappears the moment the catalogue is tidy rather than
+          becoming another banner people learn to scroll past. */}
+      {unlinkedCount > 0 && masters.generic.length + masters.manufacturer.length + masters.hsn.length === 0 ? (
+        <div data-rise className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] px-4 py-3">
+          <p className="text-[12.5px] leading-relaxed text-[var(--p-muted)]">
+            <b className="text-[var(--p-ink)]">No master data set up yet.</b> These {unlinkedCount} medicines
+            describe themselves in free text, which is fine until two of them spell the same manufacturer
+            differently. Set the vocabularies up once and every medicine picks from them.
+          </p>
+          <Link href="/masters"
+            className="shrink-0 inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-3.5 py-2 text-[13px] font-semibold text-[var(--p-blue)] hover:border-[var(--p-blue)]">
+            <Icon name="grid" size={14} /> Set up master data
+          </Link>
+        </div>
+      ) : unlinkedCount > 0 ? (
+        <div data-rise className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--p-amber)]/40 bg-[var(--p-amber-soft)] px-4 py-3">
+          <p className="text-[12.5px] leading-relaxed text-[#8a6414]">
+            <b>{unlinkedCount} of {meds.length} medicines</b> still describe themselves in free text.
+            Open one and pick from the masters to link it.
+          </p>
+          <Link href="/masters"
+            className="shrink-0 inline-flex items-center gap-2 rounded-lg border border-[var(--p-amber)] px-3.5 py-2 text-[13px] font-semibold text-[#8a6414] hover:bg-white/40">
+            <Icon name="grid" size={14} /> Master data
+          </Link>
+        </div>
+      ) : null}
+
       <div data-rise className="mb-4 flex flex-wrap items-center gap-2">
         {TABS.map((t) => {
           const n = counts[t.k];
@@ -639,11 +771,93 @@ export default function StockPage() {
             </div>
             <div className="grid gap-4 p-6 sm:grid-cols-2">
               <Field label="Name" span><input className={fld} value={editMed.name} onChange={(e) => setEditMed({ ...editMed, name: e.target.value })} autoFocus /></Field>
-              <Field label="Generic name"><input className={fld} value={editMed.genericName} onChange={(e) => setEditMed({ ...editMed, genericName: e.target.value })} /></Field>
-              <Field label="Manufacturer"><input className={fld} value={editMed.manufacturer} onChange={(e) => setEditMed({ ...editMed, manufacturer: e.target.value })} /></Field>
-              <Field label="HSN code"><input className={fld} value={editMed.hsnCode} onChange={(e) => setEditMed({ ...editMed, hsnCode: e.target.value })} /></Field>
-              <Field label="GST %"><input className={fld} value={editMed.gstRatePct} onChange={(e) => setEditMed({ ...editMed, gstRatePct: e.target.value.replace(/[^\d.]/g, "") })} inputMode="decimal" /></Field>
-              <Field label="Unit (tablet, bottle…)"><input className={fld} value={editMed.unit} onChange={(e) => setEditMed({ ...editMed, unit: e.target.value })} /></Field>
+
+              {/* ── THE MASTERS ──
+                  Pickers, not free text. Each one shows the legacy value
+                  underneath when this medicine is still running on it, so
+                  linking the catalogue up is a visible job with an end rather
+                  than an invisible one nobody finishes. */}
+              <Field label="Generic / salt">
+                <select className={fld} value={editMed.genericId}
+                  onChange={(e) => setEditMed({ ...editMed, genericId: e.target.value })}>
+                  <option value="">— not set —</option>
+                  {masters.generic.map((o) => <option key={o.id} value={o.id}>{o.label}{o.detail ? ` · ${o.detail}` : ""}</option>)}
+                </select>
+                {!editMed.genericId && editMed.legacyGeneric && <LegacyHint value={editMed.legacyGeneric} />}
+              </Field>
+
+              <Field label="Manufacturer">
+                <select className={fld} value={editMed.manufacturerId}
+                  onChange={(e) => setEditMed({ ...editMed, manufacturerId: e.target.value })}>
+                  <option value="">— not set —</option>
+                  {masters.manufacturer.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                </select>
+                {!editMed.manufacturerId && editMed.legacyManufacturer && <LegacyHint value={editMed.legacyManufacturer} />}
+              </Field>
+
+              <Field label="Category">
+                <select className={fld} value={editMed.categoryId}
+                  onChange={(e) => setEditMed({ ...editMed, categoryId: e.target.value })}>
+                  <option value="">— not set —</option>
+                  {masters.category.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                </select>
+              </Field>
+
+              <Field label="Dosage form">
+                <select className={fld} value={editMed.dosageFormId}
+                  onChange={(e) => setEditMed({ ...editMed, dosageFormId: e.target.value })}>
+                  <option value="">— not set —</option>
+                  {masters.dosageForm.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                </select>
+              </Field>
+
+              <Field label="HSN code">
+                <select className={fld} value={editMed.hsnId}
+                  onChange={(e) => {
+                    const hsnId = e.target.value;
+                    // The HSN SEEDS the rate on a product that has not had one
+                    // set deliberately. It never overwrites a rate already
+                    // chosen - see effectiveGstRate for why that matters.
+                    const picked = masters.hsn.find((h) => h.id === hsnId);
+                    const seeded = picked?.detail?.match(/([\d.]+)%/)?.[1];
+                    setEditMed({
+                      ...editMed, hsnId,
+                      gstRatePct: !editMed.id && seeded ? seeded : editMed.gstRatePct,
+                    });
+                  }}>
+                  <option value="">— not set —</option>
+                  {masters.hsn.map((o) => <option key={o.id} value={o.id}>{o.label}{o.detail ? ` · ${o.detail}` : ""}</option>)}
+                </select>
+                {!editMed.hsnId && editMed.legacyHsn && <LegacyHint value={editMed.legacyHsn} />}
+              </Field>
+
+              <Field label="GST %">
+                <input className={fld} value={editMed.gstRatePct} onChange={(e) => setEditMed({ ...editMed, gstRatePct: e.target.value.replace(/[^\d.]/g, "") })} inputMode="decimal" />
+                <p className="mt-1 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+                  This is the rate that bills. The HSN only suggests it.
+                </p>
+              </Field>
+
+              <Field label="Unit">
+                <select className={fld} value={editMed.unitId}
+                  onChange={(e) => setEditMed({ ...editMed, unitId: e.target.value })}>
+                  <option value="">— not set —</option>
+                  {masters.unit.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                </select>
+                {!editMed.unitId && editMed.legacyUnit && <LegacyHint value={editMed.legacyUnit} />}
+              </Field>
+
+              <Field label="Drug schedule">
+                <select className={fld} value={editMed.scheduleId}
+                  onChange={(e) => setEditMed({ ...editMed, scheduleId: e.target.value })}>
+                  <option value="">— none —</option>
+                  {masters.schedule.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                </select>
+                <p className="mt-1 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+                  Set this yourself from your licence paperwork. Nothing fills it in for you.
+                </p>
+              </Field>
+
               <Field label="Warn me below"><input className={fld} value={editMed.reorderThreshold} onChange={(e) => setEditMed({ ...editMed, reorderThreshold: e.target.value.replace(/\D/g, "") })} inputMode="numeric" /></Field>
               <Field label="Rack / box"><input className={fld} value={editMed.rackLocation} onChange={(e) => setEditMed({ ...editMed, rackLocation: e.target.value.toUpperCase() })} placeholder="A1" /></Field>
 

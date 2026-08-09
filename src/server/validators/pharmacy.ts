@@ -94,4 +94,18 @@ export const medicineSchema = z.object({
   /// for "no preferred supplier" rather than omitting the key.
   preferredSupplierId: z.string().trim().optional().or(z.literal("")),
   reorderQty: z.coerce.number().int().min(0).optional(),
+
+  // ── MASTER LINKS ──
+  // Optional throughout. Omitted entirely -> the existing link is left alone,
+  // so any caller written before these existed keeps working. Empty string ->
+  // the link is cleared. `scheduleId` is included for completeness but is only
+  // ever set by someone picking it: nothing infers a drug schedule.
+  categoryId: z.string().trim().optional().or(z.literal("")),
+  genericId: z.string().trim().optional().or(z.literal("")),
+  manufacturerId: z.string().trim().optional().or(z.literal("")),
+  dosageFormId: z.string().trim().optional().or(z.literal("")),
+  unitId: z.string().trim().optional().or(z.literal("")),
+  hsnId: z.string().trim().optional().or(z.literal("")),
+  taxRateId: z.string().trim().optional().or(z.literal("")),
+  scheduleId: z.string().trim().optional().or(z.literal("")),
 });

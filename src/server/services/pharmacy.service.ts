@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
 import { logAudit } from "./audit.service";
 import { parsePack, packsToUnits, perUnitPrice, describeStock } from "@/lib/pharmacy/pack";
+import { resolveMaster, effectiveGstRate } from "@/lib/pharmacy/masters";
 import { createInvoice, counterDues, type BillLineInput, type CounterDue, type CounterDues, type CounterIpdDue } from "./billing.service";
 import { getSettings } from "./admin.service";
 import { publishLive } from "@/server/realtime/publish";
@@ -23,6 +24,34 @@ export interface MedicineDTO {
   id: string; name: string; genericName: string | null; manufacturer: string | null;
   hsnCode: string | null; gstRatePct: string; unit: string; rackLocation: string | null;
   reorderThreshold: number; active: boolean;
+  // ── MASTER DATA ──────────────────────────────────────────────────────────
+  // The four descriptor fields above are RESOLVED: the master's name when one
+  // is linked, the legacy free-text column when it is not. See lib/pharmacy/
+  // masters. Callers that just want to show a manufacturer keep reading
+  // `manufacturer` and get the right answer either way.
+  //
+  // The ids and the `…FromMaster` flags are for the screens that have to act on
+  // the difference - the medicine form, which must preselect the right option,
+  // and the stock list, which marks rows still running on free text so the
+  // changeover is finishable rather than perpetual.
+  categoryId: string | null; category: string | null;
+  genericId: string | null; manufacturerId: string | null;
+  dosageFormId: string | null; dosageForm: string | null;
+  unitId: string | null; hsnId: string | null; taxRateId: string | null;
+  scheduleId: string | null;
+  /// Regulatory classification, or null. NEVER inferred - see DrugSchedule.
+  schedule: string | null;
+  genericFromMaster: boolean;
+  manufacturerFromMaster: boolean;
+  hsnFromMaster: boolean;
+  unitFromMaster: boolean;
+  /// True when the product's own GST rate differs from its HSN's default. Shown,
+  /// never auto-corrected: repricing on a master edit is how a wrong bill
+  /// happens. See effectiveGstRate.
+  gstDiffersFromHsn: boolean;
+  hsnDefaultGstRatePct: string | null;
+  /// Any descriptor still on free text. The "left to link" signal.
+  needsMasterLink: boolean;
   courseCritical: boolean;   // antibiotic / TB drug - a partial course is harmful
   inStock: number;              // sum of non-expired batch qty
   expiredQty: number;           // expired stock STILL PHYSICALLY ON THE SHELF - must be pulled
@@ -56,6 +85,12 @@ export async function listMedicines(query?: string): Promise<MedicineDTO[]> {
         ? { OR: [
             { name: { contains: query, mode: "insensitive" } },
             { genericName: { contains: query, mode: "insensitive" } },
+            // SEARCH REACHES THROUGH THE MASTER TOO. A pharmacist typing
+            // "paracetamol" against a product whose salt lives on a Generic row
+            // rather than in the legacy column would otherwise get nothing -
+            // which reads as "we don't stock it" at exactly the wrong moment.
+            { generic: { name: { contains: query, mode: "insensitive" } } },
+            { manufacturerRef: { name: { contains: query, mode: "insensitive" } } },
           ] }
         : {}),
     },
@@ -65,6 +100,15 @@ export async function listMedicines(query?: string): Promise<MedicineDTO[]> {
       id: true, name: true, genericName: true, manufacturer: true, hsnCode: true, defaultPackSize: true,
       gstRatePct: true, unit: true, rackLocation: true, reorderThreshold: true, active: true,
       courseCritical: true, reorderQty: true,
+      categoryId: true, genericId: true, manufacturerId: true, dosageFormId: true,
+      unitId: true, hsnId: true, taxRateId: true, scheduleId: true,
+      category: { select: { name: true } },
+      generic: { select: { name: true } },
+      manufacturerRef: { select: { name: true } },
+      dosageForm: { select: { name: true } },
+      unitRef: { select: { name: true } },
+      hsn: { select: { code: true, defaultTaxRate: { select: { ratePct: true } } } },
+      schedule: { select: { code: true } },
       preferredSupplier: { select: { id: true, name: true } },
       batches: {
         // ALL batches with stock - expired ones are split out below so the
@@ -87,6 +131,16 @@ export async function listMedicines(query?: string): Promise<MedicineDTO[]> {
     hsnCode: string | null; gstRatePct: { toString(): string }; unit: string;
     rackLocation: string | null; reorderThreshold: number; active: boolean; courseCritical: boolean;
     reorderQty: number | null;
+    categoryId: string | null; genericId: string | null; manufacturerId: string | null;
+    dosageFormId: string | null; unitId: string | null; hsnId: string | null;
+    taxRateId: string | null; scheduleId: string | null;
+    category: { name: string } | null;
+    generic: { name: string } | null;
+    manufacturerRef: { name: string } | null;
+    dosageForm: { name: string } | null;
+    unitRef: { name: string } | null;
+    hsn: { code: string; defaultTaxRate: { ratePct: { toString(): string } } | null } | null;
+    schedule: { code: string } | null;
     preferredSupplier: { id: string; name: string } | null;
     defaultPackSize: number;
     batches: { quantity: number; mrp: { toString(): string }; expiryDate: Date; packSize: number; pack: string | null }[];
@@ -98,11 +152,43 @@ export async function listMedicines(query?: string): Promise<MedicineDTO[]> {
     const expired = m.batches.filter((b) => b.expiryDate < today);
     const inStock = live.reduce((s, b) => s + b.quantity, 0);
     const first = live[0]; // FEFO: the batch we'd dispense next
+
+    // ── DUAL READ ── master first, legacy column second. One rule, one place.
+    const generic = resolveMaster(m.generic?.name, m.genericName);
+    const maker = resolveMaster(m.manufacturerRef?.name, m.manufacturer);
+    const hsn = resolveMaster(m.hsn?.code, m.hsnCode);
+    const unit = resolveMaster(m.unitRef?.name, m.unit);
+
+    const gstRate = Number(m.gstRatePct.toString());
+    const hsnDefault = m.hsn?.defaultTaxRate ? Number(m.hsn.defaultTaxRate.ratePct.toString()) : null;
+    const gst = effectiveGstRate({ medicineRatePct: gstRate, hsnDefaultRatePct: hsnDefault });
+
     return {
-      id: m.id, name: m.name, genericName: m.genericName, manufacturer: m.manufacturer,
-      hsnCode: m.hsnCode, gstRatePct: m.gstRatePct.toString(), unit: m.unit,
+      id: m.id, name: m.name,
+      genericName: generic.value, manufacturer: maker.value,
+      hsnCode: hsn.value, gstRatePct: m.gstRatePct.toString(),
+      // `unit` must never come back null - it is interpolated straight into
+      // dispense line descriptions and a blank there reads as a broken bill.
+      unit: unit.value ?? "unit",
       rackLocation: m.rackLocation, reorderThreshold: m.reorderThreshold, active: m.active,
       courseCritical: m.courseCritical,
+      categoryId: m.categoryId, category: m.category?.name ?? null,
+      genericId: m.genericId, manufacturerId: m.manufacturerId,
+      dosageFormId: m.dosageFormId, dosageForm: m.dosageForm?.name ?? null,
+      unitId: m.unitId, hsnId: m.hsnId, taxRateId: m.taxRateId,
+      scheduleId: m.scheduleId, schedule: m.schedule?.code ?? null,
+      genericFromMaster: generic.source === "master",
+      manufacturerFromMaster: maker.source === "master",
+      hsnFromMaster: hsn.source === "master",
+      unitFromMaster: unit.source === "master",
+      gstDiffersFromHsn: gst.disagreesWithHsn,
+      hsnDefaultGstRatePct: hsnDefault === null ? null : hsnDefault.toFixed(2),
+      // Only counts descriptors that HAVE a value still living in free text.
+      // A medicine with no manufacturer at all is incomplete, not unlinked, and
+      // flagging it here would make the list cry wolf on every blank field.
+      needsMasterLink:
+        generic.source === "legacy" || maker.source === "legacy" ||
+        hsn.source === "legacy" || unit.source === "legacy",
       inStock,
       expiredQty: expired.reduce((s, b) => s + b.quantity, 0),
       mrp: first ? first.mrp.toString() : null,
@@ -482,9 +568,20 @@ export async function dispense(
 
       const med = await tx.medicine.findUnique({
         where: { id: item.medicineId },
-        select: { id: true, name: true, unit: true, hsnCode: true, gstRatePct: true },
+        select: {
+          id: true, name: true, unit: true, hsnCode: true, gstRatePct: true,
+          // DUAL READ ON A TAX DOCUMENT. Once a product's HSN lives on the
+          // master, the legacy column may legitimately be blank - and an
+          // invoice line that lost its HSN because of a data-entry improvement
+          // is a GST return that no longer reconciles.
+          hsn: { select: { code: true } },
+          unitRef: { select: { name: true } },
+        },
       });
       if (!med) throw new ApiError(404, "Medicine not found");
+      const medHsn = resolveMaster(med.hsn?.code, med.hsnCode).value;
+      // Never blank: this is interpolated into the printed line description.
+      const medUnit = resolveMaster(med.unitRef?.name, med.unit).value ?? "unit";
 
       const picks = await pickBatchesFEFO(tx, item.medicineId, item.qty);
 
@@ -498,12 +595,14 @@ export async function dispense(
         // one bill line per batch, so the invoice shows the exact batch
         built.push({
           description: p.packSize > 1
-            ? `${med.name} · ${p.qty} ${med.unit}${p.qty === 1 ? "" : "s"} @ ₹${p.mrp} (pack of ${p.packSize} · MRP ₹${p.packMrp}) · Batch ${p.batchNo}`
-            : `${med.name} (${med.unit}) · Batch ${p.batchNo}`,
+            ? `${med.name} · ${p.qty} ${medUnit}${p.qty === 1 ? "" : "s"} @ ₹${p.mrp} (pack of ${p.packSize} · MRP ₹${p.packMrp}) · Batch ${p.batchNo}`
+            : `${med.name} (${medUnit}) · Batch ${p.batchNo}`,
           qty: p.qty,
           unitPrice: p.mrp, // Indian pharmacies bill at printed MRP
+          // The product's own rate stays the authority - the HSN's default
+          // seeds it, never overrides it. See effectiveGstRate.
           gstRatePct: Number(med.gstRatePct.toString()),
-          hsnSac: med.hsnCode ?? undefined,
+          hsnSac: medHsn ?? undefined,
           batchId: p.batchId,
         });
       }
@@ -650,7 +749,10 @@ export async function medicineBatches(medicineId: string) {
       // The distributor's own columns, so the shelf reads like the bill it
       // arrived on rather than a re-interpretation of it.
       pack: true, packSize: true, freeQty: true, oMrp: true,
-      medicine: { select: { hsnCode: true, gstRatePct: true } },
+      // Dual-read, same rule as everywhere else: once a product's HSN lives on
+      // the master the legacy column may be blank, and this panel would show an
+      // empty HSN next to a stock row showing the right one.
+      medicine: { select: { hsnCode: true, gstRatePct: true, hsn: { select: { code: true } } } },
       supplier: { select: { id: true, name: true } },
       // The receipt this batch arrived on - the answer to "where did this come
       // from?" when a recall notice names a batch number.
@@ -666,7 +768,7 @@ export async function medicineBatches(medicineId: string) {
     id: string; batchNo: string; expiryDate: Date; quantity: number;
     mrp: { toString(): string }; purchasePrice: { toString(): string } | null;
     pack: string | null; packSize: number; freeQty: number; oMrp: string | null;
-    medicine: { hsnCode: string | null; gstRatePct: { toString(): string } };
+    medicine: { hsnCode: string | null; gstRatePct: { toString(): string }; hsn: { code: string } | null };
     supplier: { id: string; name: string } | null;
     grnItems: { goodsReceipt: { id: string; grnNumber: string; invoiceNo: string | null; createdAt: Date } }[];
   };
@@ -688,7 +790,7 @@ export async function medicineBatches(medicineId: string) {
       unitRate: rate != null ? perUnitPrice(rate, b.packSize).toFixed(2) : null,
       freeQty: b.freeQty,
       oMrp: b.oMrp,
-      hsn: b.medicine.hsnCode,
+      hsn: resolveMaster(b.medicine.hsn?.code, b.medicine.hsnCode).value,
       gstRatePct: b.medicine.gstRatePct.toString(),
       mrp: b.mrp.toString(),
       rate: rate != null ? rate.toFixed(2) : null,

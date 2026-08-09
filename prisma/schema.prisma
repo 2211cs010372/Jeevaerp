@@ -966,6 +966,197 @@ model LabTest {
 }
 
 // ---------------------------------------------------------------------------
+// Pharmacy master data - the vocabularies a medicine is described in
+// ---------------------------------------------------------------------------
+// Until these existed, a medicine's generic, manufacturer, dosage form and HSN
+// were free text typed into the product row. Four consequences, all of which
+// only bite once the catalogue is bigger than a page:
+//
+//   The same thing spells several ways. "Cipla", "CIPLA", "Cipla Ltd" are three
+//   manufacturers to a GROUP BY and one to a human, so no report about them is
+//   ever right.
+//
+//   Nothing can be looked up BY them. "What else has paracetamol in it" is the
+//   question a pharmacist asks when the shelf is empty, and free text cannot
+//   answer it.
+//
+//   A correction has to be made in every row that repeats the value.
+//
+//   The GST rate sat on the product with no connection to the HSN it was filed
+//   under, so the two could disagree and nothing would notice.
+//
+// Every one of these is a LOOKUP, not a rewrite of the product model. Medicine
+// remains the single product model; these are the vocabularies it points at,
+// and each FK on it is NULLABLE so nothing that exists today stops working.
+// ---------------------------------------------------------------------------
+
+/// Therapeutic or shelf grouping - "Antibiotic", "Analgesic", "Surgical".
+/// Purely organisational: it drives filtering and reporting, never pricing.
+model MedicineCategory {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  medicines Medicine[]
+
+  @@index([active, name])
+}
+
+/// THE SALT. What is actually in the product, as opposed to what the brand
+/// calls it - "Paracetamol 500mg" behind "Dolo 650".
+///
+/// This is what makes substitution possible: a pharmacist facing an empty shelf
+/// needs everything sharing this row, and a brand name cannot tell them. It is
+/// also the only honest basis for a "cheaper alternative" list.
+model Generic {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  /// Free text on purpose - strengths are written a dozen ways on real cartons
+  /// and normalising them would invent precision the packaging never had.
+  strength    String?
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  medicines Medicine[]
+
+  @@index([active, name])
+}
+
+/// Who makes it. Distinct from Supplier, which is who SELLS it to this hospital
+/// - one manufacturer reaches the shelf through several distributors, and a
+/// recall is issued by the manufacturer while a return goes to the distributor.
+model Manufacturer {
+  id      String  @id @default(cuid())
+  name    String  @unique
+  /// The short code printed in the distributor invoice's OMrp column - ARIS,
+  /// AVEN, GLEN. StockBatch.oMrp already carries these as text; this is what
+  /// they resolve to.
+  shortCode String?
+  address String?
+  phone   String?
+  active  Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  medicines Medicine[]
+
+  @@index([active, name])
+}
+
+/// The FORM the medicine takes - tablet, capsule, syrup, injection, ointment.
+///
+/// Split from unit of measure below because they are not the same question and
+/// `Medicine.unit` was answering both at once. A syrup's form is "Syrup" and its
+/// dispensing unit is "ml"; a tablet's happen to coincide, which is exactly why
+/// one column seemed to work until it didn't.
+model DosageForm {
+  id     String  @id @default(cuid())
+  name   String  @unique
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  medicines Medicine[]
+
+  @@index([active, name])
+}
+
+/// The DISPENSING unit - what one of these is when handed to a patient.
+/// "tablet", "ml", "g". Never the pack: the pack lives on the batch.
+model UnitOfMeasure {
+  id     String  @id @default(cuid())
+  name   String  @unique
+  /// "ml" for millilitre - what prints on a label.
+  symbol String?
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  medicines Medicine[]
+
+  @@index([active, name])
+}
+
+/// A named GST rate - "GST 5%", "GST 12%", "Exempt".
+///
+/// A LOOKUP, NOT A SECOND AUTHORITY. The rate that reaches a bill is still
+/// Medicine.gstRatePct, and the rate that reaches a tax document is still the
+/// one snapshotted onto InvoiceItem at the moment of sale. This exists so the
+/// rate is PICKED from a list the hospital maintains rather than retyped, and
+/// so "which of our products are at 12%" is a join instead of a scan.
+///
+/// Changing a rate here deliberately does NOT reprice anything already sold.
+model TaxRate {
+  id      String  @id @default(cuid())
+  name    String  @unique
+  ratePct Decimal @db.Decimal(4, 2)
+  active  Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  medicines Medicine[]
+  hsnCodes  HsnCode[]
+
+  @@index([active, ratePct])
+}
+
+/// HSN - the government's classification of the goods, and what GST returns are
+/// filed against.
+///
+/// IN GST LAW THE RATE FOLLOWS THE HSN, which is why the default rate hangs
+/// here rather than being invented per product. A medicine inherits its rate
+/// from its HSN and may override it (products do straddle rates), but the
+/// override is then visible as a disagreement rather than being the only truth.
+model HsnCode {
+  id          String  @id @default(cuid())
+  code        String  @unique
+  description String?
+  /// The rate this classification ordinarily attracts. Seeds a new medicine.
+  defaultTaxRateId String?
+  defaultTaxRate   TaxRate? @relation(fields: [defaultTaxRateId], references: [id])
+  active      Boolean @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  medicines Medicine[]
+
+  @@index([active, code])
+  @@index([defaultTaxRateId])
+}
+
+/// Drug schedules under the Drugs and Cosmetics Rules - H, H1, X.
+///
+/// SHIPS EMPTY, AND IS NEVER POPULATED BY INFERENCE. Whether a molecule is
+/// Schedule H1 is a regulatory fact about a specific product, not something to
+/// be guessed from a name: marking a medicine H1 that isn't imposes a register
+/// the pharmacy doesn't need, and failing to mark one that IS breaks the law and
+/// hides it behind software that looked authoritative.
+///
+/// So rows here are entered by the hospital from its own licence documentation,
+/// and Medicine.scheduleId stays null until a human sets it.
+model DrugSchedule {
+  id          String  @id @default(cuid())
+  code        String  @unique
+  description String?
+  /// Whether dispensing lawfully requires a prescription on file.
+  requiresPrescription Boolean @default(true)
+  /// How long the register must be retained, in years. Null = not specified.
+  retentionYears Int?
+  active      Boolean @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  medicines Medicine[]
+
+  @@index([active, code])
+}
+
+// ---------------------------------------------------------------------------
 // Pharmacy - master + batches + ledger
 // ---------------------------------------------------------------------------
 
@@ -974,14 +1165,60 @@ model LabTest {
 model Medicine {
   id                  String    @id @default(cuid())
   name                String    @unique
+
+  // ── THE MASTERS THIS PRODUCT IS DESCRIBED BY ──────────────────────────────
+  //
+  // EVERY ONE IS NULLABLE, and every free-text column they replace is still
+  // below, still populated, still read. That is deliberate and not laziness:
+  //
+  //   Existing rows keep working untouched. A medicine catalogued before these
+  //   tables existed has no category and no manufacturer row, and must still
+  //   dispense, bill and report exactly as it did yesterday.
+  //
+  //   The strings are the FALLBACK during changeover. Services read the master
+  //   when it is set and the string when it is not, so the catalogue can be
+  //   linked up a row at a time by whoever knows the answer, rather than in one
+  //   migration that has to guess.
+  //
+  // The strings come out only once every row is linked, and that is a separate
+  // decision taken against real data - not a step of this migration.
+  categoryId     String?
+  category       MedicineCategory? @relation(fields: [categoryId], references: [id])
+  genericId      String?
+  generic        Generic?          @relation(fields: [genericId], references: [id])
+  manufacturerId String?
+  manufacturerRef Manufacturer?    @relation(fields: [manufacturerId], references: [id])
+  dosageFormId   String?
+  dosageForm     DosageForm?       @relation(fields: [dosageFormId], references: [id])
+  unitId         String?
+  unitRef        UnitOfMeasure?    @relation(fields: [unitId], references: [id])
+  hsnId          String?
+  hsn            HsnCode?          @relation(fields: [hsnId], references: [id])
+  taxRateId      String?
+  taxRate        TaxRate?          @relation(fields: [taxRateId], references: [id])
+  /// Regulatory classification. NULL until a human sets it - never inferred.
+  /// See DrugSchedule.
+  scheduleId     String?
+  schedule       DrugSchedule?     @relation(fields: [scheduleId], references: [id])
+
+  /// Superseded by `generic`. Still read as a fallback while the catalogue is
+  /// linked up; still written, so nothing that reads it breaks.
   genericName         String?
+  /// Superseded by `manufacturerRef`. Fallback, as above.
   manufacturer        String?
-  /// HSN code for GST filing.
+  /// HSN code for GST filing. Superseded by `hsn`. Fallback, as above.
   hsnCode             String?
-  /// Medicines are commonly 5% or 12% GST in India - set per item.
+  /// THE RATE THAT REACHES A BILL. Medicines are commonly 5% or 12% in India.
+  ///
+  /// Stays the effective rate even now that TaxRate and HsnCode exist: a
+  /// product may legitimately sit at a rate other than its HSN's default, and
+  /// InvoiceItem snapshots this figure at the moment of sale so a tax document
+  /// can never be altered by a later edit to a master.
   gstRatePct          Decimal   @default(5.00) @db.Decimal(4, 2)
   /// The DISPENSING unit - what one of these is when handed to a patient:
   /// "tablet", "ml", "capsule". Never the pack.
+  /// Superseded by `unitRef` (and `dosageForm`, which this column was also
+  /// silently answering). Fallback, as above.
   unit                String    @default("tablet")
   /// Default dispensing units per pack for this product ("15T" -> 15). A
   /// starting point for the receive screen; the batch records what actually
@@ -1013,6 +1250,17 @@ model Medicine {
   returnItems       PurchaseReturnItem[]
 
   @@index([preferredSupplierId])
+  /// Every master is an index: the point of them is filtering and grouping
+  /// ("what else has this salt", "everything by this manufacturer"), and
+  /// without these each such question is a full scan of the catalogue.
+  @@index([categoryId])
+  @@index([genericId])
+  @@index([manufacturerId])
+  @@index([dosageFormId])
+  @@index([unitId])
+  @@index([hsnId])
+  @@index([taxRateId])
+  @@index([scheduleId])
 }
 
 /// One row per physical batch on the shelf. Dispensing is FEFO:

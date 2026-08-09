@@ -28,6 +28,12 @@ export const POST = handler(async (req) => {
     rackLocation: i.rackLocation || undefined,
     preferredSupplierId: i.preferredSupplierId || null,
     reorderQty: i.reorderQty ?? null,
+    // Passed through as-is: `undefined` (key absent) must stay undefined so the
+    // service leaves the existing link alone, while "" clears it. Coercing to
+    // null here would unlink every master on every save from an older client.
+    categoryId: i.categoryId, genericId: i.genericId, manufacturerId: i.manufacturerId,
+    dosageFormId: i.dosageFormId, unitId: i.unitId, hsnId: i.hsnId,
+    taxRateId: i.taxRateId, scheduleId: i.scheduleId,
   }, auditContext(req));
   return NextResponse.json({ ok: true }, { status: 201 });
 });

@@ -456,7 +456,7 @@ export async function actOnClaim(
   input: { action: "SUBMIT" | "QUERY" | "APPROVE" | "REJECT" | "SETTLE" | "NOTE"; amount?: number; insurerRef?: string; detail?: string },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<ClaimDetailDTO> {
-  const claim = await prisma.insuranceClaim.findUnique({ where: { id }, select: { id: true, status: true, claimedAmount: true, approvedAmount: true, admissionId: true, insurer: true } });
+  const claim = await prisma.insuranceClaim.findUnique({ where: { id }, select: { id: true, status: true, stage: true, claimedAmount: true, approvedAmount: true, admissionId: true, insurer: true } });
   if (!claim) throw new ApiError(404, "Claim not found");
 
   const now = new Date();
@@ -516,6 +516,34 @@ export async function actOnClaim(
     await tx.claimEvent.create({
       data: { claimId: id, kind, detail: input.detail?.trim() || null, amount: eventAmount !== undefined ? eventAmount.toFixed(2) : null, byId: actor.id },
     });
+
+    // ── THE PRE-AUTH THAT NEVER HAPPENED ──
+    //
+    // Every insurance admission opens a ₹0 DRAFT pre-auth automatically. When
+    // the desk skips it - short stay, scheme patient, insurer that only wants a
+    // final claim - that draft is never used and never closed, so it sits on the
+    // "To raise" list for ever asking for an amount nobody is going to give it.
+    // Both settled stays in this hospital left one behind.
+    //
+    // Once a FINAL claim for the same admission is with the insurer, the pre-auth
+    // is moot: authorisation before the fact cannot be sought after the bill has
+    // been filed. Closed, not deleted - the row is the record that it was opened.
+    if (claim.admissionId && claim.stage === "FINAL" && ["SUBMIT", "APPROVE", "SETTLE"].includes(input.action)) {
+      const stale = await tx.insuranceClaim.findMany({
+        where: { admissionId: claim.admissionId, stage: "PRE_AUTH", status: "DRAFT", claimedAmount: 0 },
+        select: { id: true },
+      });
+      for (const s of stale) {
+        await tx.insuranceClaim.update({ where: { id: s.id }, data: { status: "CLOSED" } });
+        await tx.claimEvent.create({
+          data: {
+            claimId: s.id, kind: "CLOSED",
+            detail: "Closed unused - the stay was claimed on its final claim instead",
+            byId: actor.id,
+          },
+        });
+      }
+    }
 
     // ── THE INSURER'S MONEY LANDS ON THE BILLS IT PAID ──
     //

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Kpi, Pill } from "@/components/portal/ui/primitives";
-import { Icon } from "@/components/portal/ui/icons";
+import { Icon, type IconName } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api } from "@/lib/api-client";
@@ -276,6 +276,7 @@ export default function PharmacyDashboard() {
             <A href="/reorder" icon="trend" title="Reorder" sub="What to buy, priced and grouped by distributor" />
             <A href="/receive" icon="inbox" title="Receive goods" sub="Book a delivery in against the supplier's invoice" />
             <A href="/suppliers" icon="truck" title="Suppliers" sub="Distributors, drug licences and payment terms" />
+            <A href="/masters" icon="grid" title="Master data" sub="Generics, manufacturers, categories, HSN and tax - set once, picked everywhere" />
           </div>
         </section>
       </div>
@@ -301,7 +302,9 @@ function ProcTile({
   );
 }
 
-function A({ href, icon, title, sub }: { href: string; icon: "file" | "pill" | "bed" | "alert" | "trend" | "inbox" | "truck" | "rupee"; title: string; sub: string }) {
+// `icon` was a hand-kept subset of the icon set, which meant adding a tile here
+// required editing a union over there. It takes whatever Icon takes.
+function A({ href, icon, title, sub }: { href: string; icon: IconName; title: string; sub: string }) {
   return (
     <Link href={href} className="flex items-center gap-3 px-5 py-3.5 transition-colors hover:bg-[var(--p-bg)]">
       <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--p-blue-soft)] text-[var(--p-blue)]"><Icon name={icon} size={17} /></span>
