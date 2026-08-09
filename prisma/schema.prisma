@@ -908,6 +908,22 @@ model LabTest {
   /// from.
   referringDoctorId String?
   referringDoctor   Doctor?     @relation("LabTestReferrer", fields: [referringDoctorId], references: [id])
+  /// A REFERRER WHO IS NOT A DOCTOR ON THIS ROSTER.
+  ///
+  /// The column above is a foreign key, so it can only ever name someone who
+  /// works here. The hospital itself refers samples - a ward sends one down, a
+  /// camp collects one, the desk takes one against the hospital's own name - and
+  /// every one of those printed "Self / walk-in", which says the patient turned
+  /// up off the street.
+  ///
+  /// Held as text rather than as a second relation because there is nothing to
+  /// relate to: it is a name on a report line, not an entity anyone rosters,
+  /// schedules or pays. Faking a Doctor row for it would put "Jeeva
+  /// Multispeciality Hospital" into every booking dropdown in the building.
+  ///
+  /// At most one of the two is ever set, and the doctor wins if both somehow
+  /// are - see labReportData.
+  referringName     String?
   /// A lab test always belongs to a patient (direct link, survives no-appointment case).
   patientId     String?
   patient       Patient?        @relation(fields: [patientId], references: [id])
@@ -1220,6 +1236,22 @@ model Medicine {
   /// Superseded by `unitRef` (and `dosageForm`, which this column was also
   /// silently answering). Fallback, as above.
   unit                String    @default("tablet")
+  /// THE PACK THIS PRODUCT NORMALLY COMES IN, as printed - "10T", "15T",
+  /// "200ML", "10`S".
+  ///
+  /// `defaultPackSize` below is the NUMBER this decomposes to; this is the
+  /// LABEL. Both are kept because they answer different questions: the number
+  /// does the arithmetic, and the label is what a pharmacist matches against
+  /// the carton in their hand.
+  ///
+  /// Its real job is to catch a misread. An invoice scanned as "157" against a
+  /// product whose master says "15T" is an OCR error, not a 157-tablet strip -
+  /// and 1570 tablets at 12 paise each is what that mistake looks like on the
+  /// shelf. The receive and import screens compare the two and say so.
+  ///
+  /// Null means "no standard pack recorded", which is honest and common: a
+  /// product genuinely sold loose has no pack label to print.
+  defaultPack         String?
   /// Default dispensing units per pack for this product ("15T" -> 15). A
   /// starting point for the receive screen; the batch records what actually
   /// arrived, because a distributor can change pack size between consignments.

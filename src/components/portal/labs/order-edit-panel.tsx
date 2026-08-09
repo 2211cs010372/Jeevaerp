@@ -24,6 +24,7 @@ import { useState } from "react";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { ReferrerSelect, type RosterDoctor } from "@/components/portal/labs/referrer-select";
+import { IN_HOUSE_REFERRER } from "@/lib/labs/referrer";
 import { api, ApiClientError } from "@/lib/api-client";
 
 /** What the panel needs off a queue row - a subset of LabOrderDTO. */
@@ -33,6 +34,10 @@ export interface EditableOrder {
   orderedAt: string | null;
   appointment: { opNumber: string; doctorName: string; visitDate: string } | null;
   referringDoctor: { id: string; name: string } | null;
+  /** Set when the referrer is not a doctor - the hospital itself, most often.
+   *  Without it an in-house order re-opened here read as "Self / walk-in" and
+   *  a save would have quietly thrown the referrer away. */
+  referringName?: string | null;
 }
 
 /** "2026-08-04" in the browser's own calendar - what a date field wants. */
@@ -50,7 +55,11 @@ export function OrderEditPanel({ order, doctors, onSaved, onClose }: {
 }) {
   const entered = dateValue(order.createdAt);
   const [date, setDate] = useState(dateValue(order.orderedAt ?? order.createdAt));
-  const [doctorId, setDoctorId] = useState(order.referringDoctor?.id ?? "");
+  // The select's value is a doctor id, "" for self-referral, or the in-house
+  // sentinel. An order carrying a referringName is one the hospital referred.
+  const initialReferrer =
+    order.referringDoctor?.id ?? (order.referringName ? IN_HOUSE_REFERRER : "");
+  const [doctorId, setDoctorId] = useState(initialReferrer);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,7 +68,7 @@ export function OrderEditPanel({ order, doctors, onSaved, onClose }: {
   // can't I set this?" is on screen rather than in a rejected save.
   const fromVisit = !!order.appointment;
   const dirty = date !== dateValue(order.orderedAt ?? order.createdAt)
-    || (!fromVisit && doctorId !== (order.referringDoctor?.id ?? ""));
+    || (!fromVisit && doctorId !== initialReferrer);
 
   async function save() {
     setBusy(true); setError(null);

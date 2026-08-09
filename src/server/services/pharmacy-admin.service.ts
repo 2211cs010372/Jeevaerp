@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "./audit.service";
+import { parsePack } from "@/lib/pharmacy/pack";
 import type { AuthUser } from "@/lib/auth/types";
 
 /**
@@ -16,6 +17,11 @@ export async function upsertMedicine(
     /// Procurement defaults: who we buy this from, and how much to bring the
     /// shelf up to when it drops. Both feed the reorder screen.
     preferredSupplierId?: string | null; reorderQty?: number | null;
+    /// The printed pack label ("10T"). `defaultPackSize` is DERIVED from it
+    /// below rather than asked for separately - two fields for one fact is two
+    /// chances for them to disagree, and the label is the one a human can check
+    /// against the carton.
+    defaultPack?: string | null;
     // ── MASTER LINKS ──
     // All optional. A form that does not send them leaves the existing links
     // alone; an empty string clears one. Nothing here is ever inferred - in
@@ -49,6 +55,18 @@ export async function upsertMedicine(
     courseCritical: input.courseCritical ?? false,
     preferredSupplierId: input.preferredSupplierId || null,
     reorderQty: input.reorderQty && input.reorderQty > 0 ? input.reorderQty : null,
+    // ── PACK ──
+    // Only touched when the caller mentioned it, same rule as the master links:
+    // undefined means "not my business", "" means "clear it". The SIZE is
+    // derived from the label so the two can never disagree; an unreadable label
+    // gives 1, which is the honest "treat as loose units" answer rather than a
+    // guess that would silently multiply the shelf.
+    ...(input.defaultPack === undefined
+      ? {}
+      : {
+          defaultPack: input.defaultPack || null,
+          defaultPackSize: parsePack(input.defaultPack).size,
+        }),
     categoryId: link(input.categoryId),
     genericId: link(input.genericId),
     manufacturerId: link(input.manufacturerId),

@@ -1,0 +1,21 @@
+-- THE PACK A PRODUCT NORMALLY COMES IN, on the product itself.
+--
+-- Medicine already carried `defaultPackSize` - the NUMBER a pack decomposes to.
+-- What it had nowhere was the LABEL that number came from: "15T", "200ML",
+-- "10`S". The two are not redundant. The number does the arithmetic; the label
+-- is what a pharmacist matches against the carton in their hand, and it is the
+-- only thing that can catch a misread.
+--
+-- This hospital already has one on the shelf: a Dulcoflex batch imported from a
+-- photographed invoice as pack "157" - OCR reading "15T" with the T as a 7. It
+-- booked 1570 tablets at 12 paise each. With a default pack of "15T" on the
+-- product, the receive and import screens can say "that does not look like this
+-- product's usual pack" before it is saved rather than after a stock count.
+--
+-- Additive and nullable. NULL means "no standard pack recorded", which is both
+-- honest and common - a product genuinely sold loose has no pack label to print.
+-- Nothing is backfilled: a default guessed from one delivery would be exactly
+-- the false authority this column exists to prevent.
+
+-- AlterTable
+ALTER TABLE "Medicine" ADD COLUMN     "defaultPack" TEXT;

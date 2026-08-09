@@ -5,8 +5,17 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { api, ApiClientError } from "@/lib/api-client";
 import { parseInvoiceText, parseInvoiceHeader, toISODate, type SupplierRef, type ParsedRow } from "@/lib/pharmacy/invoice-parse";
+import { parsePack, packsToUnits, perUnitPrice } from "@/lib/pharmacy/pack";
 
-interface MedRef { id: string; name: string; genericName?: string | null }
+/**
+ * The catalogue entry a row can be matched to. `defaultPack` is what makes the
+ * pack column checkable: a line scanned as "157" against a product whose master
+ * says "15T" is an OCR misread, and this screen is the last place to catch it.
+ */
+interface MedRef {
+  id: string; name: string; genericName?: string | null;
+  defaultPack?: string | null; defaultPackSize?: number;
+}
 /** A grid row. Same shape the invoice parser produces, plus the edit state. */
 type Row = ParsedRow;
 interface ImportResult { row: number; medicine: string; batchNo: string; ok: boolean; error?: string; created?: boolean }
@@ -60,6 +69,46 @@ export function BatchImport({ meds, suppliers, onClose, onDone }: {
   }, [meds]);
 
   const today = todayISO();
+
+  /**
+   * WHAT THIS ROW ACTUALLY PUTS ON THE SHELF.
+   *
+   * The single most important number on this screen, and it was not here before:
+   * quantity is in PACKS, exactly as the invoice counts them, and the shelf
+   * holds UNITS. Three strips of 15T is forty-five tablets, and the MRP printed
+   * on the strip is for all fifteen.
+   *
+   * Without the pack column the import sent packSize 1 for every row, so three
+   * strips became three tablets and each was priced at the whole strip's MRP.
+   * Showing the derived numbers live is what makes a wrong pack label visible
+   * here rather than at a stock count months later.
+   */
+  const packOf = (r: Row) => {
+    const matched = resolve(r.medicine);
+    // The line's own label wins; the product's standard pack rescues a blank.
+    const label = r.pack?.trim() || matched?.defaultPack?.trim() || "";
+    const spec = parsePack(label);
+    const size = spec.known && spec.size > 1
+      ? spec.size
+      : Math.max(1, matched?.defaultPackSize ?? 1);
+    const packs = Number(r.qty || 0);
+    const free = Number(r.free || 0);
+    const units = packsToUnits(packs + free, size);
+    const mrpN = Number(r.mrp || 0);
+    // Flagged, never auto-corrected - only a person knows whether a differing
+    // pack is a misread or a genuine repack by the distributor.
+    const mismatch =
+      !!matched?.defaultPackSize && matched.defaultPackSize > 1 &&
+      spec.known && spec.size > 1 && spec.size !== matched.defaultPackSize;
+    return {
+      label, size, units, mismatch,
+      fromMaster: !r.pack?.trim() && !!matched?.defaultPack,
+      expected: matched?.defaultPack ?? null,
+      unitMrp: mrpN > 0 ? perUnitPrice(mrpN, size) : 0,
+      known: spec.known,
+    };
+  };
+
   const cellOk = (r: Row) => {
     const matched = !!resolve(r.medicine);
     return {
@@ -70,10 +119,13 @@ export function BatchImport({ meds, suppliers, onClose, onDone }: {
       qty: /^\d+$/.test(r.qty.trim()) && Number(r.qty) >= 1,
       mrp: r.mrp.trim() !== "" && Number(r.mrp) >= 0 && !Number.isNaN(Number(r.mrp)),
       rate: r.rate.trim() === "" || (Number(r.rate) >= 0 && !Number.isNaN(Number(r.rate))),
+      free: r.free.trim() === "" || (/^\d+$/.test(r.free.trim()) && Number(r.free) >= 0),
     };
   };
-  const rowValid = (r: Row) => { const o = cellOk(r); return o.med && o.batch && o.expiry && o.qty && o.mrp && o.rate; };
+  const rowValid = (r: Row) => { const o = cellOk(r); return o.med && o.batch && o.expiry && o.qty && o.mrp && o.rate && o.free; };
   const validCount = rows.filter(rowValid).length;
+  /** Rows whose pack disagrees with the product master - worth a look, not a block. */
+  const mismatchCount = rows.filter((r) => r.medicine.trim() && packOf(r).mismatch).length;
   const unmatchedCount = rows.filter((r) => r.medicine.trim() && !resolve(r.medicine) && !r.createNew).length;
   const newCount = rows.filter((r) => rowValid(r) && !resolve(r.medicine) && r.createNew).length;
 
@@ -165,11 +217,22 @@ export function BatchImport({ meds, suppliers, onClose, onDone }: {
   async function submit() {
     const payload = rows.filter(rowValid).map((r) => {
       const matched = resolve(r.medicine);
+      const p = packOf(r);
       const base = {
         batchNo: r.batchNo.trim(),
         expiryDate: r.expiry,
         quantity: Number(r.qty),
         mrp: Number(r.mrp),
+        // ── THE FIELDS THIS SCREEN USED TO DROP ──
+        // Every one of these was parsed off the invoice, shown to nobody, and
+        // thrown away at submit. packSize defaulting to 1 is why a strip of ten
+        // reached the shelf as one tablet priced at the whole strip's MRP.
+        // Sent as the SIZE the grid displayed, so what was confirmed on screen
+        // is exactly what is stored.
+        ...(p.label ? { pack: p.label } : {}),
+        packSize: p.size,
+        ...(r.free.trim() ? { freeQty: Number(r.free) } : {}),
+        ...(r.oMrp.trim() ? { oMrp: r.oMrp.trim() } : {}),
         ...(r.rate.trim() ? { purchasePrice: Number(r.rate) } : {}),
         ...(r.supplier.trim() ? { supplierRef: r.supplier.trim() } : {}),
       };
@@ -198,7 +261,7 @@ export function BatchImport({ meds, suppliers, onClose, onDone }: {
 
   return (
     <div className="import-veil" onClick={onClose}>
-      <div className="import-sheet flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white" onClick={(e) => e.stopPropagation()}>
+      <div className="import-sheet flex max-h-[94vh] w-full max-w-9xl flex-col overflow-hidden rounded-2xl bg-white" onClick={(e) => e.stopPropagation()}>
         {/* header */}
         <div className="flex items-center justify-between gap-3 border-b border-[var(--p-border)] px-6 py-4">
           <div>
@@ -368,25 +431,52 @@ export function BatchImport({ meds, suppliers, onClose, onDone }: {
                 </div>
               )}
 
+              {/* ── A PACK THAT DISAGREES WITH THE PRODUCT MASTER ──
+                  The single most expensive thing OCR gets wrong here: "15T"
+                  read as "157" books 1570 tablets at 12 paise each. Warned,
+                  never blocked and never auto-corrected - a distributor really
+                  does change pack size between consignments, and only the
+                  pharmacist holding the carton can tell the two apart. */}
+              {mismatchCount > 0 && (
+                <div className="mb-3 rounded-lg border border-[var(--p-amber)]/40 bg-[var(--p-amber-soft)] px-3.5 py-2.5">
+                  <p className="text-[12px] leading-relaxed text-[#8a5a14]">
+                    <b>{mismatchCount} {mismatchCount === 1 ? "row has" : "rows have"} a pack that isn&apos;t this product&apos;s usual one</b> (highlighted below).
+                    Check it against the carton - a &ldquo;15T&rdquo; strip scanned as &ldquo;157&rdquo; would put ten times
+                    the stock on the shelf at a tenth of the price. If the distributor really did change the
+                    pack, leave it and carry on.
+                  </p>
+                </div>
+              )}
+
               {/* the rows editor - shared by both tabs */}
               {rows.length > 0 && (
                 <div className="overflow-x-auto rounded-xl border border-[var(--p-border)]">
-                  <table className="w-full min-w-[820px] border-collapse text-[12px]">
+                  <table className="w-full min-w-[1180px] border-collapse text-[12px]">
                     <thead>
+                      {/* Column order follows the distributor's own invoice,
+                          exactly as the Receive screen does, so the paper and
+                          the screen are read left-to-right together. */}
                       <tr className="border-b border-[var(--p-border)] bg-[var(--p-bg)] text-left text-[10.5px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
-                        <th className="px-2 py-2">Medicine</th>
-                        <th className="px-2 py-2 w-28">Match</th>
-                        <th className="px-2 py-2">Batch</th>
-                        <th className="px-2 py-2">Expiry</th>
-                        <th className="px-2 py-2 w-16">Qty</th>
-                        <th className="px-2 py-2 w-20">MRP</th>
-                        <th className="px-2 py-2 w-20">Rate</th>
+                        <th className="px-2 py-2">Product name</th>
+                        <th className="px-2 py-2 w-24">Match</th>
+                        <th className="px-2 py-2 w-16">Pack</th>
+                        <th className="px-2 py-2 w-14 text-right">Qty<span className="block text-[9px] font-normal normal-case">packs</span></th>
+                        <th className="px-2 py-2 w-14 text-right">Free<span className="block text-[9px] font-normal normal-case">packs</span></th>
+                        <th className="px-2 py-2 w-20 text-right">Units<span className="block text-[9px] font-normal normal-case">on shelf</span></th>
+                        <th className="px-2 py-2 w-16">OMrp</th>
+                        <th className="px-2 py-2 w-24">Batch</th>
+                        <th className="px-2 py-2 w-20 text-right">MRP<span className="block text-[9px] font-normal normal-case">per pack</span></th>
+                        <th className="px-2 py-2 w-32">Expiry</th>
+                        <th className="px-2 py-2 w-20 text-right">Rate</th>
+                        <th className="px-2 py-2 w-14 text-right">GST%</th>
+                        <th className="px-2 py-2 w-20">HSN</th>
                         <th className="px-2 py-2 w-8" />
                       </tr>
                     </thead>
                     <tbody>
                       {rows.map((r, i) => {
                         const ok = cellOk(r);
+                        const p = packOf(r);
                         return (
                           <tr key={i} className="border-b border-[var(--p-border)] last:border-0">
                             <td className="px-1.5 py-1.5">
@@ -406,11 +496,36 @@ export function BatchImport({ meds, suppliers, onClose, onDone }: {
                                 <span className="text-[11px] text-[var(--p-muted)]">-</span>
                               )}
                             </td>
-                            <td className="px-1.5 py-1.5"><input value={r.batchNo} onChange={(e) => setCell(i, "batchNo", e.target.value)} placeholder="B123" className={`${inp} ${r.batchNo || !ok.batch ? (ok.batch ? "" : bad) : ""}`} /></td>
+                            {/* PACK - the field whose absence was the bug. */}
+                            <td className="px-1.5 py-1.5">
+                              <input value={r.pack} onChange={(e) => setCell(i, "pack", e.target.value.toUpperCase())}
+                                placeholder={p.expected ?? "15T"}
+                                className={`${inp} ${p.mismatch ? "!border-[var(--p-amber)] bg-[var(--p-amber-soft)]" : ""}`} />
+                              {p.fromMaster && p.label && (
+                                <div className="mt-0.5 text-[9.5px] text-[var(--p-muted)]">from master</div>
+                              )}
+                            </td>
+                            <td className="px-1.5 py-1.5"><input inputMode="numeric" value={r.qty} onChange={(e) => setCell(i, "qty", e.target.value.replace(/[^\d]/g, ""))} placeholder="0" className={`${inp} text-right ${r.qty && !ok.qty ? bad : ""}`} /></td>
+                            <td className="px-1.5 py-1.5"><input inputMode="numeric" value={r.free} onChange={(e) => setCell(i, "free", e.target.value.replace(/[^\d]/g, ""))} placeholder="0" className={`${inp} text-right ${r.free && !ok.free ? bad : ""}`} /></td>
+                            {/* WHAT ACTUALLY REACHES THE SHELF. 3 strips of 15T
+                                is 45 tablets. Live, so a wrong pack label is
+                                caught here rather than at a stock count. */}
+                            <td className="px-1.5 py-1.5 text-right">
+                              <div className="text-[12.5px] font-bold text-[var(--p-ink)]">{p.units || "-"}</div>
+                              <div className="text-[9.5px] text-[var(--p-muted)]">
+                                {p.size > 1 ? `${p.size}/pack` : "loose units"}
+                              </div>
+                              {p.unitMrp > 0 && p.size > 1 && (
+                                <div className="text-[9.5px] font-semibold text-[var(--p-cyan-deep)]">₹{p.unitMrp.toFixed(2)}/unit</div>
+                              )}
+                            </td>
+                            <td className="px-1.5 py-1.5"><input value={r.oMrp} onChange={(e) => setCell(i, "oMrp", e.target.value.toUpperCase())} placeholder="—" className={inp} /></td>
+                            <td className="px-1.5 py-1.5"><input value={r.batchNo} onChange={(e) => setCell(i, "batchNo", e.target.value.toUpperCase())} placeholder="On the strip" className={`${inp} ${r.batchNo || !ok.batch ? (ok.batch ? "" : bad) : ""}`} /></td>
+                            <td className="px-1.5 py-1.5"><input inputMode="decimal" value={r.mrp} onChange={(e) => setCell(i, "mrp", e.target.value.replace(/[^\d.]/g, ""))} placeholder="0.00" className={`${inp} text-right ${r.mrp && !ok.mrp ? bad : ""}`} /></td>
                             <td className="px-1.5 py-1.5"><input type="date" min={today} value={r.expiry} onChange={(e) => setCell(i, "expiry", e.target.value)} className={`${inp} ${r.expiry && !ok.expiry ? bad : ""}`} /></td>
-                            <td className="px-1.5 py-1.5"><input inputMode="numeric" value={r.qty} onChange={(e) => setCell(i, "qty", e.target.value.replace(/[^\d]/g, ""))} placeholder="0" className={`${inp} ${r.qty && !ok.qty ? bad : ""}`} /></td>
-                            <td className="px-1.5 py-1.5"><input inputMode="decimal" value={r.mrp} onChange={(e) => setCell(i, "mrp", e.target.value.replace(/[^\d.]/g, ""))} placeholder="0.00" className={`${inp} ${r.mrp && !ok.mrp ? bad : ""}`} /></td>
-                            <td className="px-1.5 py-1.5"><input inputMode="decimal" value={r.rate} onChange={(e) => setCell(i, "rate", e.target.value.replace(/[^\d.]/g, ""))} placeholder="-" className={`${inp} ${r.rate && !ok.rate ? bad : ""}`} /></td>
+                            <td className="px-1.5 py-1.5"><input inputMode="decimal" value={r.rate} onChange={(e) => setCell(i, "rate", e.target.value.replace(/[^\d.]/g, ""))} placeholder="-" className={`${inp} text-right ${r.rate && !ok.rate ? bad : ""}`} /></td>
+                            <td className="px-1.5 py-1.5"><input inputMode="decimal" value={r.gst} onChange={(e) => setCell(i, "gst", e.target.value.replace(/[^\d.]/g, ""))} placeholder="—" className={`${inp} text-right`} /></td>
+                            <td className="px-1.5 py-1.5"><input inputMode="numeric" value={r.hsn} onChange={(e) => setCell(i, "hsn", e.target.value.replace(/\D/g, ""))} placeholder="—" className={inp} /></td>
                             <td className="px-1.5 py-1.5 text-center"><button onClick={() => removeRow(i)} aria-label="Remove row" className="text-[var(--p-rose)] hover:opacity-70">✕</button></td>
                           </tr>
                         );

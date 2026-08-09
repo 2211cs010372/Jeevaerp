@@ -43,6 +43,10 @@ export const bulkAddBatchesSchema = z.object({
       quantity: z.coerce.number().int().min(1),
       pack: z.string().trim().max(20).optional().catch(undefined),
       packSize: z.coerce.number().int().min(1).max(5000).optional().catch(undefined),
+      /// Free goods, IN PACKS - the "10+1 free" schemes. Real stock at no cost.
+      freeQty: z.coerce.number().int().min(0).max(100000).optional().catch(undefined),
+      /// The invoice's OMrp column - the manufacturer's short code.
+      oMrp: z.string().trim().max(20).optional().catch(undefined),
       mrp: z.coerce.number().min(0),
       purchasePrice: z.coerce.number().min(0).optional(),
       supplierRef: z.string().trim().max(60).optional(),
@@ -94,6 +98,11 @@ export const medicineSchema = z.object({
   /// for "no preferred supplier" rather than omitting the key.
   preferredSupplierId: z.string().trim().optional().or(z.literal("")),
   reorderQty: z.coerce.number().int().min(0).optional(),
+
+  /// THE PACK THIS PRODUCT NORMALLY COMES IN, as printed: "10T", "200ML".
+  /// Empty string clears it. `defaultPackSize` is derived from this by the
+  /// service rather than typed twice - see upsertMedicine.
+  defaultPack: z.string().trim().max(20).optional().or(z.literal("")),
 
   // ── MASTER LINKS ──
   // Optional throughout. Omitted entirely -> the existing link is left alone,

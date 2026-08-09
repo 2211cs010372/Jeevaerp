@@ -11,6 +11,7 @@ import { publishLive } from "@/server/realtime/publish";
 import { parseLocalDate } from "@/lib/date";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import { linkAdvisedLabs } from "./prescriptions.service";
+import { isInHouseReferrer } from "@/lib/labs/referrer";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma } from "@prisma/client";
 
@@ -39,6 +40,9 @@ export interface LabTestDTO {
    * already on `appointment`.
    */
   referringDoctor: { id: string; name: string } | null;
+  /** A referrer that isn't a doctor on the roster - the hospital itself, most
+   *  often. Set only when `referringDoctor` is null. See lib/labs/referrer. */
+  referringName: string | null;
   billed: boolean;
   /**
    * The measured analyte values, when the bench entered them. Optional because
@@ -79,6 +83,7 @@ const testSelect = {
     },
   },
   referringDoctor: { select: { id: true, name: true } },
+  referringName: true,
   invoiceItems: { select: { id: true } },
 } as const;
 
@@ -93,6 +98,7 @@ type TestRow = {
     patient: { id: string; displayId: string; fullName: string; phone: string };
   } | null;
   referringDoctor: { id: string; name: string } | null;
+  referringName: string | null;
   invoiceItems: { id: string }[];
 };
 
@@ -112,6 +118,7 @@ function toTestDTO(t: TestRow): LabTestDTO {
       ? { opNumber: t.appointment.opNumber, doctorName: t.appointment.doctor?.name ?? DUTY_DOCTOR.name, visitDate: t.appointment.visitDate.toISOString().slice(0, 10) }
       : null,
     referringDoctor: t.referringDoctor,
+    referringName: t.referringName,
     billed: t.invoiceItems.length > 0,
     impression: t.impression,
   };
@@ -155,6 +162,8 @@ export interface LabOrderDTO {
   appointment: { opNumber: string; doctorName: string; visitDate: string } | null;
   /** Named on the order when no visit here named a doctor - a chit from outside. */
   referringDoctor: { id: string; name: string } | null;
+  /** A referrer that isn't on the roster - the hospital itself, most often. */
+  referringName: string | null;
   /** Every test on the order, in the sequence it was raised in. */
   tests: LabTestDTO[];
   /** PENDING while ANY test is still on the bench - the order isn't done until all of it is. */
@@ -252,6 +261,7 @@ function toOrderDTO(id: string, group: TestRow[]): LabOrderDTO {
     patient: tests[0].patient,
     appointment: tests[0].appointment,
     referringDoctor: tests[0].referringDoctor,
+    referringName: tests[0].referringName,
     tests,
     status: pending > 0 ? "PENDING" : "COMPLETED",
     pending,
@@ -287,14 +297,26 @@ async function readLabOrder(orderId: string): Promise<LabOrderDTO> {
 async function resolveReferrer(
   appointmentId: string | undefined,
   referringDoctorId: string | undefined,
-): Promise<string | null> {
-  if (appointmentId || !referringDoctorId) return null;
+): Promise<{ referringDoctorId: string | null; referringName: string | null }> {
+  const none = { referringDoctorId: null, referringName: null };
+  if (appointmentId || !referringDoctorId) return none;
+
+  // THE HOSPITAL REFERRING ITSELF. Not a doctor and not self-referral, so it
+  // goes to the text column instead of the foreign key. The name is read from
+  // config rather than hard-coded - it is the same name the letterhead prints,
+  // and a hospital that renames itself must not have old reports disagree with
+  // new ones on this line.
+  if (isInHouseReferrer(referringDoctorId)) {
+    const cfg = await prisma.hospitalConfig.findFirst({ select: { legalName: true } });
+    return { referringDoctorId: null, referringName: cfg?.legalName?.trim() || "This hospital" };
+  }
+
   const doctor = await prisma.doctor.findFirst({
     where: { id: referringDoctorId, active: true },
     select: { id: true },
   });
   if (!doctor) throw new ApiError(400, "That doctor is no longer on the roster");
-  return doctor.id;
+  return { referringDoctorId: doctor.id, referringName: null };
 }
 
 /** Order one or more tests for a patient (walk-in - no doctor visit needed). */
@@ -355,7 +377,7 @@ export async function orderTests(
   // The referring doctor only means anything where there is no visit to take
   // one from - a visit's own doctor IS the referrer, and storing a second name
   // beside it is how a report ends up citing two.
-  const referringDoctorId = await resolveReferrer(
+  const referrer = await resolveReferrer(
     admission ? undefined : input.appointmentId,
     input.referringDoctorId,
   );
@@ -378,7 +400,8 @@ export async function orderTests(
           // an inpatient's test hangs off the STAY; an outpatient's off the visit
           appointmentId: admission ? null : (input.appointmentId ?? null),
           admissionId: admission?.id ?? null,
-          referringDoctorId,
+          referringDoctorId: referrer.referringDoctorId,
+          referringName: referrer.referringName,
           catalogId: c.id,
           testName: c.name,
           priceAtOrder: c.price, // snapshot - survives catalog price changes
@@ -535,7 +558,7 @@ export async function updateLabOrder(
   });
   if (tests.length === 0) throw new ApiError(404, "Order not found");
 
-  const data: { referringDoctorId?: string | null; orderedAt?: Date | null } = {};
+  const data: { referringDoctorId?: string | null; referringName?: string | null; orderedAt?: Date | null } = {};
 
   if (input.referringDoctorId !== undefined) {
     // A test off a consultation already carries that doctor as its referrer -
@@ -544,9 +567,13 @@ export async function updateLabOrder(
     if (input.referringDoctorId && tests.some((t) => t.appointmentId)) {
       throw new ApiError(400, "This order came off a consultation - its doctor is the one who saw the patient");
     }
-    data.referringDoctorId = input.referringDoctorId
+    // BOTH are written every time, so switching between a doctor, the hospital
+    // and self-referral always clears whichever the previous answer had set.
+    const r = input.referringDoctorId
       ? await resolveReferrer(undefined, input.referringDoctorId)
-      : null;
+      : { referringDoctorId: null, referringName: null };
+    data.referringDoctorId = r.referringDoctorId;
+    data.referringName = r.referringName;
   }
 
   if (input.orderedAt !== undefined) {
@@ -842,6 +869,9 @@ export async function labReportData(labTestId: string): Promise<LabReportDTO> {
       catalog: { select: { code: true } },
       technician: { select: { name: true } },
       referringDoctor: { select: { name: true } },
+      // The non-doctor referrer - the hospital itself, most often. Feeds the
+      // Ref. Doctor line below when there is no doctor to name.
+      referringName: true,
       patient: {
         select: {
           displayId: true, fullName: true, age: true, gender: true,
@@ -905,9 +935,13 @@ export async function labReportData(labTestId: string): Promise<LabReportDTO> {
     // The visit's doctor first: where a consultation asked for the test, the
     // doctor who saw the patient IS the referrer, and the order's own field is
     // only ever filled in when there was no consultation to ask.
+    // The visit's doctor, then the named doctor, then whoever else was recorded
+    // as the referrer - the hospital itself, most often. Null prints as
+    // "Self / walk-in", which must now mean it, rather than meaning "we had
+    // nowhere to put the answer".
     refDoctorName: t.appointment
       ? (t.appointment.doctor?.name ?? DUTY_DOCTOR.name)
-      : (t.referringDoctor?.name ?? null),
+      : (t.referringDoctor?.name ?? t.referringName ?? null),
     results,
     abnormal: abnormalCount(results),
   };

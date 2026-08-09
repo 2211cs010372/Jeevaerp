@@ -11,6 +11,7 @@ import { api, ApiClientError } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import { MASTER_KINDS, type MasterKind } from "@/lib/pharmacy/masters";
+import { parsePack } from "@/lib/pharmacy/pack";
 
 interface Med {
   id: string; name: string; genericName: string | null; manufacturer: string | null;
@@ -19,6 +20,12 @@ interface Med {
   rackLocation: string | null; hsnCode: string | null; active: boolean; courseCritical: boolean;
   preferredSupplierId: string | null; preferredSupplierName: string | null;
   reorderQty: number | null; onOrder: number;
+  /** The pack this product normally comes in ("10T"), and the size it means. */
+  defaultPack: string | null; defaultPackSize: number;
+  /** The FEFO batch's own pack size - what the shelf is actually holding. */
+  packSize: number;
+  /** A batch on the shelf is packed differently from the product's standard. */
+  packMismatch: boolean;
   // ── MASTER DATA ──
   // The four descriptor fields above are already RESOLVED by the server: the
   // master's name when linked, the legacy free text when not. These say which,
@@ -72,7 +79,7 @@ interface Supplier { id: string; name: string }
 const blankMed = {
   id: "", name: "", genericName: "", manufacturer: "", hsnCode: "", gstRatePct: "5", unit: "tablet",
   reorderThreshold: "10", rackLocation: "", active: true, courseCritical: false,
-  preferredSupplierId: "", reorderQty: "",
+  preferredSupplierId: "", reorderQty: "", defaultPack: "",
   // Master links. Empty string is "not linked" and is what clears one.
   categoryId: "", genericId: "", manufacturerId: "", dosageFormId: "",
   unitId: "", hsnId: "", taxRateId: "", scheduleId: "",
@@ -140,10 +147,10 @@ export default function StockPage() {
   // "who do we buy this from?" is a dropdown rather than a second screen.
   useEffect(() => {
     api.get<{ suppliers: Supplier[] }>("/pharmacy/suppliers")
-      .then((r) => setSuppliers(r.suppliers)).catch(() => {});
+      .then((r) => setSuppliers(r.suppliers)).catch(() => { });
     // One call for all eight - see the masters route for why it is not eight.
     api.get<{ masters: MasterBundle }>("/pharmacy/masters")
-      .then((r) => setMasters(r.masters)).catch(() => {});
+      .then((r) => setMasters(r.masters)).catch(() => { });
   }, []);
 
   const load = useCallback(async () => {
@@ -274,6 +281,8 @@ export default function StockPage() {
         courseCritical: editMed.courseCritical,
         preferredSupplierId: editMed.preferredSupplierId || "",
         reorderQty: editMed.reorderQty ? Number(editMed.reorderQty) : 0,
+        // Always sent, so clearing the box clears the pack on the record.
+        defaultPack: editMed.defaultPack,
         // Master links. Always sent, so clearing one in the form clears it on
         // the record - "" is the explicit unlink the API expects.
         categoryId: editMed.categoryId, genericId: editMed.genericId,
@@ -305,6 +314,7 @@ export default function StockPage() {
     courseCritical: m.courseCritical,
     preferredSupplierId: m.preferredSupplierId ?? "",
     reorderQty: m.reorderQty != null ? String(m.reorderQty) : "",
+    defaultPack: m.defaultPack ?? "",
     categoryId: m.categoryId ?? "", genericId: m.genericId ?? "",
     manufacturerId: m.manufacturerId ?? "", dosageFormId: m.dosageFormId ?? "",
     unitId: m.unitId ?? "", hsnId: m.hsnId ?? "",
@@ -357,6 +367,17 @@ export default function StockPage() {
                     unlinked
                   </span>
                 )}
+                {/* THE PACK ON THE SHELF ISN'T THIS PRODUCT'S STANDARD ONE.
+                    Nearly always an OCR misread off a photographed invoice -
+                    "15T" scanned as "157" books ten times the stock at a tenth
+                    of the price. Flagged for a human; never auto-corrected,
+                    because a distributor really does change pack sometimes. */}
+                {m.packMismatch && (
+                  <span title={`Shelf batch is ${m.packSize}/pack but this product's standard pack is ${m.defaultPack ?? m.defaultPackSize}. Check the carton.`}
+                    className="shrink-0 rounded bg-[var(--p-rose-soft)] px-1.5 py-0.5 text-[10px] font-bold uppercase text-[var(--p-rose)]">
+                    pack?
+                  </span>
+                )}
                 {/* The product's rate and its HSN's default disagree. Shown, not
                     resolved: repricing on a master edit is how a wrong bill happens. */}
                 {m.gstDiffersFromHsn && (
@@ -393,8 +414,8 @@ export default function StockPage() {
                   Without the second one, a pharmacist orders it a second time. */}
               {m.onOrder > 0 ? <span className="text-[var(--p-blue)]">{m.onOrder} on order</span>
                 : out ? <span className="text-[var(--p-rose)]">Out of stock</span>
-                : m.lowStock ? <span className="text-[var(--p-amber)]">Below {m.reorderThreshold} - reorder</span>
-                : <>Reorder at {m.reorderThreshold}</>}
+                  : m.lowStock ? <span className="text-[var(--p-amber)]">Below {m.reorderThreshold} - reorder</span>
+                    : <>Reorder at {m.reorderThreshold}</>}
             </div>
           </div>
 
@@ -549,7 +570,12 @@ export default function StockPage() {
 
       {showImport && (
         <BatchImport
-          meds={meds.map((m) => ({ id: m.id, name: m.name, genericName: m.genericName }))}
+          meds={meds.map((m) => ({
+            id: m.id, name: m.name, genericName: m.genericName,
+            // The product's standard pack, so the import can fill a blank pack
+            // column and flag one that disagrees. See packOf in batch-import.
+            defaultPack: m.defaultPack, defaultPackSize: m.defaultPackSize,
+          }))}
           suppliers={suppliers}
           onClose={() => setShowImport(false)}
           onDone={(created) => { setFlash(`Imported ${created} ${created === 1 ? "batch" : "batches"} into stock.`); load(); }}
@@ -764,142 +790,187 @@ export default function StockPage() {
       {/* ADD / EDIT MEDICINE */}
       {editMed && (
         <div className="modal-veil" onClick={(e) => { if (e.target === e.currentTarget && !busy) setEditMed(null); }}>
-          <div className="surface w-full max-w-md bg-white">
-            <div className="border-b border-[var(--p-border)] px-6 py-4">
-              <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">{editMed.id ? "Edit medicine" : "Add medicine"}</h3>
-              <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">Details only - to change quantities use <b>Receive</b> or <b>Remove</b>.</p>
+          <div className="surface flex h-[95vh] max-h-[95vh] w-full max-w-5xl flex-col bg-white">
+
+            {/* ── HEADER (sticky) ── */}
+            <div className="flex shrink-0 items-start justify-between border-b border-[var(--p-border)] px-6 py-4">
+              <div>
+                <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">{editMed.id ? "Edit medicine" : "Add medicine"}</h3>
+                <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">Details only - to change quantities use <b>Receive</b> or <b>Remove</b>.</p>
+              </div>
+              <button
+                onClick={() => !busy && setEditMed(null)}
+                disabled={busy}
+                className="rounded-md p-1 text-[var(--p-muted)] hover:bg-[var(--p-border)]/40 disabled:opacity-40"
+                aria-label="Close"
+              >
+                <Icon name="x" size={16} />
+              </button>
             </div>
-            <div className="grid gap-4 p-6 sm:grid-cols-2">
-              <Field label="Name" span><input className={fld} value={editMed.name} onChange={(e) => setEditMed({ ...editMed, name: e.target.value })} autoFocus /></Field>
 
-              {/* ── THE MASTERS ──
-                  Pickers, not free text. Each one shows the legacy value
-                  underneath when this medicine is still running on it, so
-                  linking the catalogue up is a visible job with an end rather
-                  than an invisible one nobody finishes. */}
-              <Field label="Generic / salt">
-                <select className={fld} value={editMed.genericId}
-                  onChange={(e) => setEditMed({ ...editMed, genericId: e.target.value })}>
-                  <option value="">— not set —</option>
-                  {masters.generic.map((o) => <option key={o.id} value={o.id}>{o.label}{o.detail ? ` · ${o.detail}` : ""}</option>)}
-                </select>
-                {!editMed.genericId && editMed.legacyGeneric && <LegacyHint value={editMed.legacyGeneric} />}
-              </Field>
+            {/* ── BODY (only this scrolls) ── */}
+            <div className="flex-1 overflow-y-auto px-6 py-5">
+              <Field label="Name"><input className={fld} value={editMed.name} onChange={(e) => setEditMed({ ...editMed, name: e.target.value })} autoFocus /></Field>
 
-              <Field label="Manufacturer">
-                <select className={fld} value={editMed.manufacturerId}
-                  onChange={(e) => setEditMed({ ...editMed, manufacturerId: e.target.value })}>
-                  <option value="">— not set —</option>
-                  {masters.manufacturer.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-                </select>
-                {!editMed.manufacturerId && editMed.legacyManufacturer && <LegacyHint value={editMed.legacyManufacturer} />}
-              </Field>
+              <div className="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-2">
 
-              <Field label="Category">
-                <select className={fld} value={editMed.categoryId}
-                  onChange={(e) => setEditMed({ ...editMed, categoryId: e.target.value })}>
-                  <option value="">— not set —</option>
-                  {masters.category.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-                </select>
-              </Field>
+                {/* ── LEFT: Catalog & identity ── */}
+                <div className="space-y-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Catalog &amp; identity</p>
 
-              <Field label="Dosage form">
-                <select className={fld} value={editMed.dosageFormId}
-                  onChange={(e) => setEditMed({ ...editMed, dosageFormId: e.target.value })}>
-                  <option value="">— not set —</option>
-                  {masters.dosageForm.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-                </select>
-              </Field>
+                  <Field label="Generic / salt">
+                    <select className={fld} value={editMed.genericId}
+                      onChange={(e) => setEditMed({ ...editMed, genericId: e.target.value })}>
+                      <option value="">— not set —</option>
+                      {masters.generic.map((o) => <option key={o.id} value={o.id}>{o.label}{o.detail ? ` · ${o.detail}` : ""}</option>)}
+                    </select>
+                    {!editMed.genericId && editMed.legacyGeneric && <LegacyHint value={editMed.legacyGeneric} />}
+                  </Field>
 
-              <Field label="HSN code">
-                <select className={fld} value={editMed.hsnId}
-                  onChange={(e) => {
-                    const hsnId = e.target.value;
-                    // The HSN SEEDS the rate on a product that has not had one
-                    // set deliberately. It never overwrites a rate already
-                    // chosen - see effectiveGstRate for why that matters.
-                    const picked = masters.hsn.find((h) => h.id === hsnId);
-                    const seeded = picked?.detail?.match(/([\d.]+)%/)?.[1];
-                    setEditMed({
-                      ...editMed, hsnId,
-                      gstRatePct: !editMed.id && seeded ? seeded : editMed.gstRatePct,
-                    });
-                  }}>
-                  <option value="">— not set —</option>
-                  {masters.hsn.map((o) => <option key={o.id} value={o.id}>{o.label}{o.detail ? ` · ${o.detail}` : ""}</option>)}
-                </select>
-                {!editMed.hsnId && editMed.legacyHsn && <LegacyHint value={editMed.legacyHsn} />}
-              </Field>
+                  <Field label="Manufacturer">
+                    <select className={fld} value={editMed.manufacturerId}
+                      onChange={(e) => setEditMed({ ...editMed, manufacturerId: e.target.value })}>
+                      <option value="">— not set —</option>
+                      {masters.manufacturer.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                    </select>
+                    {!editMed.manufacturerId && editMed.legacyManufacturer && <LegacyHint value={editMed.legacyManufacturer} />}
+                  </Field>
 
-              <Field label="GST %">
-                <input className={fld} value={editMed.gstRatePct} onChange={(e) => setEditMed({ ...editMed, gstRatePct: e.target.value.replace(/[^\d.]/g, "") })} inputMode="decimal" />
+                  <Field label="Category">
+                    <select className={fld} value={editMed.categoryId}
+                      onChange={(e) => setEditMed({ ...editMed, categoryId: e.target.value })}>
+                      <option value="">— not set —</option>
+                      {masters.category.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                    </select>
+                  </Field>
+
+                  <Field label="Dosage form">
+                    <select className={fld} value={editMed.dosageFormId}
+                      onChange={(e) => setEditMed({ ...editMed, dosageFormId: e.target.value })}>
+                      <option value="">— not set —</option>
+                      {masters.dosageForm.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                    </select>
+                  </Field>
+
+                  <Field label="Unit">
+                    <select className={fld} value={editMed.unitId}
+                      onChange={(e) => setEditMed({ ...editMed, unitId: e.target.value })}>
+                      <option value="">— not set —</option>
+                      {masters.unit.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                    </select>
+                    {!editMed.unitId && editMed.legacyUnit && <LegacyHint value={editMed.legacyUnit} />}
+                  </Field>
+                </div>
+
+                {/* ── RIGHT: Tax, stock & procurement ── */}
+                <div className="space-y-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Tax, stock &amp; procurement</p>
+
+                  <Field label="HSN code">
+                    <select className={fld} value={editMed.hsnId}
+                      onChange={(e) => {
+                        const hsnId = e.target.value;
+                        // The HSN SEEDS the rate on a product that has not had one
+                        // set deliberately. It never overwrites a rate already
+                        // chosen - see effectiveGstRate for why that matters.
+                        const picked = masters.hsn.find((h) => h.id === hsnId);
+                        const seeded = picked?.detail?.match(/([\d.]+)%/)?.[1];
+                        setEditMed({
+                          ...editMed, hsnId,
+                          gstRatePct: !editMed.id && seeded ? seeded : editMed.gstRatePct,
+                        });
+                      }}>
+                      <option value="">— not set —</option>
+                      {masters.hsn.map((o) => <option key={o.id} value={o.id}>{o.label}{o.detail ? ` · ${o.detail}` : ""}</option>)}
+                    </select>
+                    {!editMed.hsnId && editMed.legacyHsn && <LegacyHint value={editMed.legacyHsn} />}
+                  </Field>
+
+                  <Field label="GST %">
+                    <input className={fld} value={editMed.gstRatePct} onChange={(e) => setEditMed({ ...editMed, gstRatePct: e.target.value.replace(/[^\d.]/g, "") })} inputMode="decimal" />
+                    <p className="mt-1 text-[11.5px] leading-relaxed text-[var(--p-muted)]">This is the rate that bills. The HSN only suggests it.</p>
+                  </Field>
+
+                  <Field label="Drug schedule">
+                    <select className={fld} value={editMed.scheduleId}
+                      onChange={(e) => setEditMed({ ...editMed, scheduleId: e.target.value })}>
+                      <option value="">— none —</option>
+                      {masters.schedule.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                    </select>
+                    <p className="mt-1 text-[11.5px] leading-relaxed text-[var(--p-muted)]">Set this yourself from your licence paperwork. Nothing fills it in for you.</p>
+                  </Field>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* ── THE STANDARD PACK ──
+                  Its real job is to catch a misread. An invoice scanned as
+                  "157" against a product whose master says "15T" books 1570
+                  tablets at a tenth of the price - the receive and import
+                  screens compare against this and say so before it is saved. */}
+              <Field label="Standard pack">
+                <input className={fld} value={editMed.defaultPack} placeholder="10T"
+                  onChange={(e) => setEditMed({ ...editMed, defaultPack: e.target.value.toUpperCase() })} />
                 <p className="mt-1 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
-                  This is the rate that bills. The HSN only suggests it.
-                </p>
-              </Field>
-
-              <Field label="Unit">
-                <select className={fld} value={editMed.unitId}
-                  onChange={(e) => setEditMed({ ...editMed, unitId: e.target.value })}>
-                  <option value="">— not set —</option>
-                  {masters.unit.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-                </select>
-                {!editMed.unitId && editMed.legacyUnit && <LegacyHint value={editMed.legacyUnit} />}
-              </Field>
-
-              <Field label="Drug schedule">
-                <select className={fld} value={editMed.scheduleId}
-                  onChange={(e) => setEditMed({ ...editMed, scheduleId: e.target.value })}>
-                  <option value="">— none —</option>
-                  {masters.schedule.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-                </select>
-                <p className="mt-1 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
-                  Set this yourself from your licence paperwork. Nothing fills it in for you.
+                  {(() => {
+                    const spec = parsePack(editMed.defaultPack);
+                    if (!editMed.defaultPack.trim()) return "As printed - 10T, 15T, 200ML, 10`S. Leave blank if sold loose.";
+                    return spec.known && spec.size > 1
+                      ? `${spec.size} ${spec.unit}${spec.size === 1 ? "" : "s"} per pack. MRP below is for the whole pack.`
+                      : "Not recognised - this will be treated as loose units.";
+                  })()}
                 </p>
               </Field>
 
               <Field label="Warn me below"><input className={fld} value={editMed.reorderThreshold} onChange={(e) => setEditMed({ ...editMed, reorderThreshold: e.target.value.replace(/\D/g, "") })} inputMode="numeric" /></Field>
-              <Field label="Rack / box"><input className={fld} value={editMed.rackLocation} onChange={(e) => setEditMed({ ...editMed, rackLocation: e.target.value.toUpperCase() })} placeholder="A1" /></Field>
+                    <Field label="Rack / box"><input className={fld} value={editMed.rackLocation} onChange={(e) => setEditMed({ ...editMed, rackLocation: e.target.value.toUpperCase() })} placeholder="A1" /></Field>
+                  </div>
 
-              {/* Procurement defaults. These two are what let the reorder screen
-                  produce a real order instead of a to-do list. */}
-              <Field label="Buy from" span>
-                <select className={fld} value={editMed.preferredSupplierId}
-                  onChange={(e) => setEditMed({ ...editMed, preferredSupplierId: e.target.value })}>
-                  <option value="">No preferred supplier</option>
-                  {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-              </Field>
-              <Field label="Top up to" span>
-                <input className={fld} value={editMed.reorderQty} inputMode="numeric"
-                  onChange={(e) => setEditMed({ ...editMed, reorderQty: e.target.value.replace(/\D/g, "") })}
-                  placeholder={`Blank = ${Math.max(1, Number(editMed.reorderThreshold || 10) * 3)} (3× the warn level)`} />
-              </Field>
+                  <Field label="Buy from">
+                    <select className={fld} value={editMed.preferredSupplierId}
+                      onChange={(e) => setEditMed({ ...editMed, preferredSupplierId: e.target.value })}>
+                      <option value="">No preferred supplier</option>
+                      {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </Field>
+
+                  <Field label="Top up to">
+                    <input className={fld} value={editMed.reorderQty} inputMode="numeric"
+                      onChange={(e) => setEditMed({ ...editMed, reorderQty: e.target.value.replace(/\D/g, "") })}
+                      placeholder={`Blank = ${Math.max(1, Number(editMed.reorderThreshold || 10) * 3)} (3× the warn level)`} />
+                    <p className="mt-1 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+                      Ordering back up to the warn level just puts you on the reorder list again next week. <b>Top up to</b> is the month&apos;s cover the reorder screen aims for.
+                    </p>
+                  </Field>
+                </div>
+              </div>
+
+              {/* ── Full-width flags & notices ── */}
+              <div className="mt-5 space-y-3">
+                {editMed.id && (
+                  <label className="flex items-start gap-2.5 rounded-lg border border-[var(--p-border)] px-3 py-2.5 text-[12px] leading-relaxed text-[var(--p-text)]">
+                    <input type="checkbox" checked={editMed.active} onChange={(e) => setEditMed({ ...editMed, active: e.target.checked })} className="mt-0.5 h-4 w-4 accent-[var(--p-blue)]" />
+                    <span>Still stocked. Untick to discontinue - it leaves the counter, but its billing history stays intact.</span>
+                  </label>
+                )}
+
+                <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-[var(--p-border)] px-3 py-2.5 text-[12px] leading-relaxed text-[var(--p-text)]">
+                  <input type="checkbox" checked={editMed.courseCritical}
+                    onChange={(e) => setEditMed({ ...editMed, courseCritical: e.target.checked })}
+                    className="mt-0.5 h-4 w-4 accent-[var(--p-rose)]" />
+                  <span>
+                    <b>Full course required</b> - antibiotic, TB or antimalarial drug. The dispense scratchpad
+                    will warn loudly if anyone tries to give a patient fewer days than the doctor prescribed.
+                  </span>
+                </label>
+
+                <p className="rounded-lg bg-[var(--p-amber-soft)] px-3 py-2 text-[11px] leading-relaxed text-[#8a6414]">
+                  <strong>Medicines ARE taxable</strong> - usually 5%, some at 12%. Unlike lab tests, which are exempt. Confirm rates with your CA.
+                </p>
+              </div>
             </div>
-            <p className="mx-6 -mt-1 mb-4 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
-              Ordering back up to the warn level just puts you on the reorder list again next week.
-              <b> Top up to</b> is the month&apos;s cover the reorder screen aims for.
-            </p>
-            {editMed.id && (
-              <label className="mx-6 mb-4 flex items-start gap-2.5 rounded-lg border border-[var(--p-border)] px-3 py-2.5 text-[12px] leading-relaxed text-[var(--p-text)]">
-                <input type="checkbox" checked={editMed.active} onChange={(e) => setEditMed({ ...editMed, active: e.target.checked })} className="mt-0.5 h-4 w-4 accent-[var(--p-blue)]" />
-                <span>Still stocked. Untick to discontinue - it leaves the counter, but its billing history stays intact.</span>
-              </label>
-            )}
-            <label className="mx-6 mb-3 flex cursor-pointer items-start gap-2.5 rounded-lg border border-[var(--p-border)] px-3 py-2.5 text-[12px] leading-relaxed text-[var(--p-text)]">
-              <input type="checkbox" checked={editMed.courseCritical}
-                onChange={(e) => setEditMed({ ...editMed, courseCritical: e.target.checked })}
-                className="mt-0.5 h-4 w-4 accent-[var(--p-rose)]" />
-              <span>
-                <b>Full course required</b> - antibiotic, TB or antimalarial drug. The dispense scratchpad
-                will warn loudly if anyone tries to give a patient fewer days than the doctor prescribed.
-              </span>
-            </label>
-            <p className="mx-6 mb-4 rounded-lg bg-[var(--p-amber-soft)] px-3 py-2 text-[11px] leading-relaxed text-[#8a6414]">
-              <strong>Medicines ARE taxable</strong> - usually 5%, some at 12%. Unlike lab tests, which are exempt. Confirm rates with your CA.
-            </p>
-            <div className="flex justify-end gap-3 border-t border-[var(--p-border)] p-5">
-              <button onClick={() => setEditMed(null)} className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm text-[var(--p-text)]">Cancel</button>
+
+            {/* ── FOOTER (sticky) ── */}
+            <div className="flex shrink-0 justify-end gap-3 border-t border-[var(--p-border)] p-5">
+              <button onClick={() => setEditMed(null)} disabled={busy} className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm text-[var(--p-text)] disabled:opacity-50">Cancel</button>
               <PrimaryButton onClick={saveMed} disabled={busy || !editMed.name}>{busy ? <><Spinner /> Saving…</> : <><Icon name="check" size={15} /> Save</>}</PrimaryButton>
             </div>
           </div>

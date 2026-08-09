@@ -64,6 +64,13 @@ export interface MedicineDTO {
   /** Dispensing units in one pack of that batch, and its printed label. */
   packSize: number;
   packLabel: string | null;
+  /** The product master's own standard pack - "10T". What a delivery is checked
+   *  against, and the fallback when an invoice line does not state one. */
+  defaultPack: string | null;
+  defaultPackSize: number;
+  /** The shelf's pack label disagrees with the product's standard pack. Usually
+   *  an OCR misread ("15T" scanned as "157"), occasionally a genuine repack. */
+  packMismatch: boolean;
   nearestExpiry: string | null; // that batch's expiry
   lowStock: boolean;
   // ── Procurement ──────────────────────────────────────────────────────────
@@ -97,7 +104,8 @@ export async function listMedicines(query?: string): Promise<MedicineDTO[]> {
     orderBy: { name: "asc" },
     take: 200,
     select: {
-      id: true, name: true, genericName: true, manufacturer: true, hsnCode: true, defaultPackSize: true,
+      id: true, name: true, genericName: true, manufacturer: true, hsnCode: true,
+      defaultPack: true, defaultPackSize: true,
       gstRatePct: true, unit: true, rackLocation: true, reorderThreshold: true, active: true,
       courseCritical: true, reorderQty: true,
       categoryId: true, genericId: true, manufacturerId: true, dosageFormId: true,
@@ -142,6 +150,7 @@ export async function listMedicines(query?: string): Promise<MedicineDTO[]> {
     hsn: { code: string; defaultTaxRate: { ratePct: { toString(): string } } | null } | null;
     schedule: { code: string } | null;
     preferredSupplier: { id: string; name: string } | null;
+    defaultPack: string | null;
     defaultPackSize: number;
     batches: { quantity: number; mrp: { toString(): string }; expiryDate: Date; packSize: number; pack: string | null }[];
     poItems: { qtyOrdered: number; qtyReceived: number }[];
@@ -195,6 +204,15 @@ export async function listMedicines(query?: string): Promise<MedicineDTO[]> {
       unitMrp: first ? perUnitPrice(Number(first.mrp.toString()), first.packSize).toFixed(2) : null,
       packSize: first?.packSize ?? m.defaultPackSize ?? 1,
       packLabel: first?.pack ?? null,
+      defaultPack: m.defaultPack,
+      defaultPackSize: m.defaultPackSize,
+      // A pack size on the shelf that is not the product's own, flagged rather
+      // than corrected. "15T" scanned as "157" books 1570 tablets at 12 paise;
+      // only a person can say whether that is a misread or a genuine repack.
+      // Compared on SIZE, not on the label text - "15s" and "15T" are the same
+      // fifteen and disagreeing about the suffix would cry wolf constantly.
+      packMismatch:
+        !!first && m.defaultPackSize > 1 && first.packSize !== m.defaultPackSize,
       nearestExpiry: first ? first.expiryDate.toISOString().slice(0, 10) : null,
       lowStock: inStock <= m.reorderThreshold,
       preferredSupplierId: m.preferredSupplier?.id ?? null,
@@ -332,6 +350,12 @@ export interface BulkBatchRow {
   /// Printed pack label ("15T"); packSize overrides it when known explicitly.
   pack?: string;
   packSize?: number;
+  /// FREE GOODS, IN PACKS - the "10+1 free" schemes that are standard in Indian
+  /// pharma distribution. Real stock that costs nothing, so it reaches the shelf
+  /// like any other pack but is held separately to keep landed cost honest.
+  freeQty?: number;
+  /// The invoice's OMrp column - the manufacturer's short code (ARIS, AVEN).
+  oMrp?: string;
   mrp: number;
   purchasePrice?: number;
   supplierRef?: string;
@@ -356,13 +380,21 @@ export async function bulkAddBatches(
   const rows = input.rows;
   const invoiceNo = input.invoiceNo?.trim() || null;
 
-  const meds = await prisma.medicine.findMany({ where: { active: true }, select: { id: true, name: true, genericName: true } });
+  const meds = await prisma.medicine.findMany({
+    where: { active: true },
+    select: { id: true, name: true, genericName: true, defaultPack: true, defaultPackSize: true },
+  });
   const byName = new Map<string, { id: string; name: string }>();
   for (const m of meds) {
     byName.set(m.name.trim().toLowerCase(), { id: m.id, name: m.name });
     if (m.genericName) byName.set(m.genericName.trim().toLowerCase(), { id: m.id, name: m.name });
   }
   const byId = new Map(meds.map((m) => [m.id, m.name]));
+  /** The product master's own idea of how this thing is packed - the fallback
+   *  when an invoice line does not say, and the cross-check when it does. */
+  const medDefaults = new Map(
+    meds.map((m) => [m.id, { defaultPack: m.defaultPack, defaultPackSize: m.defaultPackSize }])
+  );
   const today = new Date(); today.setHours(0, 0, 0, 0);
 
   const results: BulkBatchResult[] = [];
@@ -387,17 +419,39 @@ export async function bulkAddBatches(
           medId = found.id; medName = found.name;
         } else if (r.createNew && (r.medicine || "").trim().length > 1) {
           // New product off the invoice - create it, then stock it. name is unique.
+          //
+          // THE PACK IT ARRIVED IN BECOMES THE PRODUCT'S DEFAULT. This is the
+          // only moment the information is to hand: the invoice line says "15T"
+          // and that is very likely how this product is always sold. Recorded
+          // now, the next delivery whose pack column is blank or misread has
+          // something to fall back on and be checked against.
+          //
+          // The dispensing unit comes from the same label - "15T" is tablets,
+          // "200ML" is ml. Defaulting every new product to the literal string
+          // "unit" is why this catalogue has rows reading "3 units" of a syrup.
           const nm = r.medicine!.trim();
+          const spec = parsePack(r.pack);
           const med = await prisma.medicine.upsert({
             where: { name: nm },
             update: {},
-            create: { name: nm, hsnCode: r.hsn?.trim() || null, gstRatePct: (r.gstRatePct ?? 5).toFixed(2), unit: "unit" },
+            create: {
+              name: nm,
+              hsnCode: r.hsn?.trim() || null,
+              gstRatePct: (r.gstRatePct ?? 5).toFixed(2),
+              unit: spec.known ? spec.unit : "unit",
+              defaultPack: r.pack?.trim() || null,
+              defaultPackSize: spec.known ? spec.size : 1,
+            },
             select: { id: true },
           });
           medId = med.id; medName = nm;
           if (!byId.has(med.id)) {
             createdMedicines++; medNew = true;
             byId.set(med.id, nm); byName.set(nameKey, { id: med.id, name: nm });
+            medDefaults.set(med.id, {
+              defaultPack: r.pack?.trim() || null,
+              defaultPackSize: spec.known ? spec.size : 1,
+            });
             await logAudit(actor, { action: "MEDICINE_CREATED", targetTable: "Medicine", targetId: med.id, meta: { name: nm, source: "invoice-import" }, ...ctx });
           }
         } else {
@@ -408,8 +462,28 @@ export async function bulkAddBatches(
       // Rows are counted in PACKS, like the invoice they were keyed from.
       const packs = Math.floor(r.quantity);
       if (!(packs > 0)) throw new Error("Quantity must be at least 1");
-      const packSize = Math.max(1, Math.floor(r.packSize ?? parsePack(r.pack).size));
-      const qty = packsToUnits(packs, packSize);
+      const freePacks = Math.max(0, Math.floor(r.freeQty ?? 0));
+
+      /**
+       * THE PACK SIZE, IN ORDER OF WHO ACTUALLY KNOWS.
+       *
+       * An explicit packSize wins - the screen worked it out and showed the
+       * pharmacist the resulting shelf count. Then the label on this invoice
+       * line. Then the PRODUCT'S OWN default pack, which is what rescues a row
+       * whose pack column the invoice left blank or the OCR could not read.
+       *
+       * Falling back to 1 without consulting the master is how a strip of ten
+       * becomes one tablet on the shelf, priced at the whole strip's MRP.
+       */
+      const master = medDefaults.get(medId!);
+      const fromRow = r.packSize ?? (r.pack ? parsePack(r.pack).size : undefined);
+      const packSize = Math.max(
+        1,
+        Math.floor(fromRow && fromRow > 1 ? fromRow : (master?.defaultPackSize ?? 1))
+      );
+      // Free goods reach the shelf too - they are stock, they just cost nothing.
+      const qty = packsToUnits(packs + freePacks, packSize);
+      const freeUnits = packsToUnits(freePacks, packSize);
       const expiry = new Date(r.expiryDate);
       if (Number.isNaN(expiry.getTime())) throw new Error("Invalid expiry date");
       if (expiry < today) throw new Error("Batch has already expired");
@@ -428,6 +502,11 @@ export async function bulkAddBatches(
             packSize,
             mrp: r.mrp.toFixed(2),
             ...(r.pack?.trim() ? { pack: r.pack.trim() } : {}),
+            // Free goods accumulate with the stock they arrived alongside, so a
+            // second consignment on the same batch does not erase the first
+            // delivery's scheme units and overstate the landed cost.
+            ...(freeUnits > 0 ? { freeQty: { increment: freeUnits } } : {}),
+            ...(r.oMrp?.trim() ? { oMrp: r.oMrp.trim() } : {}),
             ...(r.purchasePrice !== undefined ? { purchasePrice: r.purchasePrice.toFixed(2) } : {}),
           },
           create: {
@@ -437,7 +516,11 @@ export async function bulkAddBatches(
             expiryDate: expiry,
             quantity: qty,
             packSize,
-            pack: r.pack?.trim() || null,
+            // The label the invoice printed, or the product's own if it was
+            // silent. Never a number dressed up as a label.
+            pack: r.pack?.trim() || master?.defaultPack || null,
+            freeQty: freeUnits,
+            oMrp: r.oMrp?.trim() || null,
             mrp: r.mrp.toFixed(2),
             purchasePrice: r.purchasePrice !== undefined ? r.purchasePrice.toFixed(2) : null,
           },

@@ -69,21 +69,33 @@ const pretty = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("
 const num = (n: number | null | undefined) => (n == null ? null : String(Number(n.toFixed(1))));
 
 /**
- * The four triage vitals, in the order the hospital's own paper lists them,
- * stacked down the clinical rail. Reception types the handwritten numbers back
- * in; anything not typed prints as blank paper for the pen.
+ * The six measurements, on the patient block's own three columns:
  *
- * Height and weight are NOT here - they print on the patient block's third row,
- * beside the address, which is where the client's sheet puts them: they are
- * measured at the desk with the rest of the identity block, not taken at triage
- * with the pulse.
+ *   BP      Height   Weight
+ *   Temp    Pulse    SpO₂
  *
- * BMI / BSA are deliberately absent too: a derived number is worth less on this
+ * Height and weight used to sit up in the identity block beside the address, on
+ * the reasoning that they are taken at the desk rather than at triage. In
+ * practice they are read together with the blood pressure - a doctor scanning
+ * this sheet wants the build and the BP in one glance - so they now lead the
+ * measurement strip instead, immediately beside BP.
+ *
+ * That also gives the address its full width back, which is what it wanted: it
+ * was clamped to two lines to make room for two numbers.
+ *
+ * Unstacked on purpose. Four vitals stacked down a full-width strip was four
+ * nearly-empty lines; on three columns the six sit in two rows and cost the
+ * sheet LESS height than the four did, which is where the extra breathing room
+ * below comes from.
+ *
+ * BMI / BSA are deliberately absent: a derived number is worth less on this
  * sheet than the writing space it would cost.
  */
 function vitalsBoxes(v: Data["vitals"]): { label: string; value: string | null }[] {
   return [
     { label: "BP (mmHg)", value: v?.bpSystolic != null && v?.bpDiastolic != null ? `${v.bpSystolic}/${v.bpDiastolic}` : null },
+    { label: "Height (cm)", value: num(v?.heightCm) },
+    { label: "Weight (kg)", value: num(v?.weightKg) },
     { label: "Temp (°F)", value: num(v?.tempF) },
     { label: "Pulse (bpm)", value: v?.pulse != null ? String(v.pulse) : null },
     { label: "SpO₂ (%)", value: num(v?.spo2) },
@@ -237,17 +249,16 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
   );
 
   /**
-   * The client's own grid, three rows of three:
+   * The client's own grid, three rows:
    *
    *   Name      Age     Date
    *   Phone     UHID    OP No
-   *   Address   Weight  Height
+   *   Address ─────────────────
    *
-   * The address no longer runs the full width - it gives its last two thirds to
-   * the two measurements the desk takes with it - so it wraps to a second line
-   * rather than truncating.
+   * The address has the full width back. It shared its row with Weight and
+   * Height until those moved down beside the BP - which is where a doctor reads
+   * them anyway - so it no longer needs clamping to two lines to fit.
    */
-  const measured = isBlank ? null : v;
   const patientFields = headed
     ? [
       { k: "Name", v: headed.fullName },
@@ -256,16 +267,13 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
       { k: "Phone", v: headed.phone, mono: true as const },
       { k: "UHID", v: headed.displayId, mono: true as const },
       { k: "OP No", v: "" },
-      { k: "Address", v: [headed.address, headed.city].filter(Boolean).join(", "), wrap: true as const },
-      { k: "Weight", v: "", mono: true as const },
-      { k: "Height", v: "", mono: true as const },
+      { k: "Address", v: [headed.address, headed.city].filter(Boolean).join(", "), wrap: true as const, span: 3 as const },
     ]
     : isBlank
       ? [
         { k: "Name", v: "" }, { k: "Age", v: "" }, { k: "Date", v: "" },
         { k: "Phone", v: "" }, { k: "UHID", v: "" }, { k: "OP No", v: "" },
-        { k: "Address", v: "", wrap: true as const },
-        { k: "Weight", v: "" }, { k: "Height", v: "" },
+        { k: "Address", v: "", wrap: true as const, span: 3 as const },
       ]
       : [
         { k: "Name", v: p!.fullName },
@@ -274,9 +282,7 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
         { k: "Phone", v: p!.phone, mono: true as const },
         { k: "UHID", v: p!.displayId, mono: true as const },
         { k: "OP No", v: a!.opNumber, mono: true as const },
-        { k: "Address", v: [p!.address, p!.city].filter(Boolean).join(", "), wrap: true as const },
-        { k: "Weight", v: measured?.weightKg != null ? `${num(measured.weightKg)} kg` : "", mono: true as const },
-        { k: "Height", v: measured?.heightCm != null ? `${num(measured.heightCm)} cm` : "", mono: true as const },
+        { k: "Address", v: [p!.address, p!.city].filter(Boolean).join(", "), wrap: true as const, span: 3 as const },
       ];
 
   return (
@@ -367,8 +373,11 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
             the preview and another in the tray, and the overflow warning above
             measures the preview's. A px value is the same on both. */}
 
-        <div className="mt-[1.2vw]">
-          <VitalsGrid items={vitalsBoxes(isBlank ? null : v)} stack />
+        {/* On the patient block's own three columns, so BP · Height · Weight
+            sit directly under Address on the same tracks and read as that strip
+            continuing - not as a second grid of their own. */}
+        <div className="mt-[1.9vw]">
+          <VitalsGrid items={vitalsBoxes(isBlank ? null : v)} />
         </div>
 
         <div className="mt-[0.3vw]">

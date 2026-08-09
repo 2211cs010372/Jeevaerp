@@ -28,6 +28,9 @@ export const POST = handler(async (req) => {
     rackLocation: i.rackLocation || undefined,
     preferredSupplierId: i.preferredSupplierId || null,
     reorderQty: i.reorderQty ?? null,
+    // Passed through undefined-vs-"" intact: the service uses that distinction
+    // to tell "leave the pack alone" from "clear it".
+    defaultPack: i.defaultPack,
     // Passed through as-is: `undefined` (key absent) must stay undefined so the
     // service leaves the existing link alone, while "" clears it. Coercing to
     // null here would unlink every master on every save from an older client.
