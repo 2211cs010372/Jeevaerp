@@ -17,15 +17,25 @@ import { isClosed, OUTCOME_LABEL, type AdmissionStatusValue } from "@/lib/admiss
  *
  * So this now uses the lab report's typography: the same pre-printed / blank
  * paper toggle, the same colon-aligned identity block in two columns, the same
- * rules above and below a table and none inside it, the same signature foot.
- * What differs is only what has to - a discharge summary is prose where a report
- * is analytes.
+ * signature foot. What differs is only what has to - a discharge summary is
+ * prose where a report is analytes.
  *
- * ONE DELIBERATE DIFFERENCE: this document FLOWS across pages instead of being
- * paginated into fixed-height sheets. A lab report knows how many analytes it
- * has and can measure them; a course-in-hospital entry is whatever the doctor
- * wrote, and pinning it to a fixed sheet would clip the end of a sentence off a
- * medico-legal document.
+ * STRUCTURE WITHOUT RULES. The identity block, table headers, totals, and
+ * exam readings used to be marked off with 1px border rules. Those are gone.
+ * Structure now comes from tinted fills, weight, and letter-spacing instead -
+ * a shaded band reads as clearly as a stroke and never leaves a stray hairline
+ * if a browser or print driver rounds a sub-pixel border away. Section
+ * headings carry a small solid accent mark instead of an underline, for the
+ * same reason. One trade-off worth knowing: a light fill can flatten out
+ * after several photocopy generations the way a solid black rule would not -
+ * fine for a first-generation print or a PDF, worth another look if this
+ * is handed out as a photocopied handout past that.
+ *
+ * ONE DELIBERATE DIFFERENCE FROM THE LAB REPORT: this document FLOWS across
+ * pages instead of being paginated into fixed-height sheets. A lab report
+ * knows how many analytes it has and can measure them; a course-in-hospital
+ * entry is whatever the doctor wrote, and pinning it to a fixed sheet would
+ * clip the end of a sentence off a medico-legal document.
  */
 
 interface Data {
@@ -90,11 +100,13 @@ const EXAM: [string, string][] = [
 const DS_CSS = (onStationery: boolean) => `
   /* ── INK, NOT THE HOUSE TEAL ──
      The teal reads well on a screen and washes out on a mono laser, which is
-     what this document is actually printed on. Every label and rule here is
-     near-black so a photocopy of a photocopy is still legible - a discharge
-     summary gets copied for the insurer, the employer and the family. */
+     what this document is actually printed on. Every label here is near-black
+     so a photocopy of a photocopy is still legible - a discharge summary gets
+     copied for the insurer, the employer and the family. The two band tints
+     below are deliberately close to white for the same reason: enough to
+     separate a header row on screen, faint enough not to muddy a scan. */
   .print-stage { --pr-primary: #101a18; --pr-accent: #8a5a14; --pr-ink: #0d1513;
-    --pr-line: #6f7c78; --pr-muted: #4a5754; --pr-hair: #c2ccc9; --pr-bg: #f2f5f4; }
+    --pr-line: #6f7c78; --pr-muted: #4a5754; --pr-bg: #f2f5f4; --pr-band: #edf1ef; }
   .print-stage { background: #e8e6e1; min-height: 100vh; padding: 24px 12px 64px; }
   #print-sheet { width: 210mm; margin: 0 auto; background: #fff; color: var(--pr-ink);
     box-shadow: 0 8px 40px rgba(0,0,0,.18); padding: ${onStationery ? "40mm 13mm 46mm" : "10mm 11mm 12mm"};
@@ -106,56 +118,73 @@ const DS_CSS = (onStationery: boolean) => `
      one thing every print engine repeats at the top of each printed page, so
      sheet two of a long summary carries the patient's name instead of arriving
      as a loose page of prose nobody can identify. */
-  .ds-doc { width: 100%; border-collapse: collapse; }
+  /* table-layout: fixed pins the single column to the full 100% width
+     deterministically. Left on "auto" (the default), some print/PDF engines
+     size that one column to its widest line of content instead of stretching
+     it to fill the table - which is exactly what makes a paragraph render at
+     roughly half the page even though nothing in it says to. */
+  .ds-doc { width: 100%; table-layout: fixed; border-collapse: collapse; }
   .ds-doc > thead { display: table-header-group; }
   .ds-doc > tbody { display: table-row-group; }
-  .ds-doc > thead > tr > th { text-align: left; font-weight: 400; padding: 0; }
-  .ds-doc > tbody > tr > td { padding: 0; vertical-align: top; }
+  .ds-doc > thead > tr > th { width: 100%; box-sizing: border-box; text-align: left; font-weight: 400; padding: 0; }
+  .ds-doc > tbody > tr > td { width: 100%; box-sizing: border-box; padding: 0; vertical-align: top; }
+  .ds-sec, .ds-body, .ds-tbl, .ds-id, .ds-exam { width: 100%; box-sizing: border-box; }
 
-  .ds-title { text-align: center; font-size: 15px; font-weight: 800; letter-spacing: .06em;
+  .ds-title { text-align: center; font-size: 15px; font-weight: 800; letter-spacing: .08em;
     text-transform: uppercase; color: var(--pr-ink); }
-  /* The identity strip sits between two solid rules, and it is what repeats. */
-  .ds-id { margin-top: 4px; padding: 5px 0; border-top: 1.2px solid var(--pr-ink);
-    border-bottom: 1.2px solid var(--pr-ink); display: grid; grid-template-columns: 1fr 1fr;
-    column-gap: 26px; }
+
+  /* Identity strip: a tinted panel instead of a ruled box - the fill itself
+     marks the boundary, so nothing needs a stroke to draw it. */
+  .ds-id { margin-top: 6px; padding: 7px 10px; border-radius: 3px; background: var(--pr-band);
+    display: grid; grid-template-columns: 1fr 1fr; column-gap: 26px; }
   .ds-id-col { display: grid; grid-template-columns: max-content 7px 1fr; align-items: baseline; }
   .ds-k { font-size: 10.5px; line-height: 4mm; color: var(--pr-muted); }
   .ds-c { font-size: 10.5px; line-height: 4mm; color: var(--pr-muted); }
   .ds-v { font-size: 11px; font-weight: 700; line-height: 4mm; color: var(--pr-ink); }
   /* Breathing room under the repeated header on every page. */
-  .ds-gap { height: 4px; }
+  .ds-gap { height: 6px; }
 
   /* A heading must never be the last thing on a page. */
-  .ds-sec { break-inside: avoid; margin-top: 9px; }
-  .ds-sec-t { font-size: 12.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em;
-    color: var(--pr-ink); border-bottom: 1px solid var(--pr-ink); padding-bottom: 1px; }
-  .ds-body { margin-top: 3px; font-size: 11.5px; line-height: 1.5; color: var(--pr-ink); }
+  .ds-sec { break-inside: avoid; margin-top: 11px; }
+  /* Weight, uppercase and letter-spacing carry the heading instead of an
+     underline - no rule, no side mark. */
+  .ds-sec-t { font-size: 12px; font-weight: 800; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--pr-ink); }
+  .ds-body { margin-top: 4px; font-size: 11.5px; line-height: 1.5; color: var(--pr-ink); }
   .ds-pre { white-space: pre-wrap; }
   .ds-muted { color: var(--pr-muted); }
 
-  /* Rules above and below the header, none inside - the lab report's table. */
-  .ds-tbl { width: 100%; border-collapse: collapse; margin-top: 5px; font-size: 11.5px; }
-  .ds-tbl thead th { border-top: 1px solid var(--pr-ink); border-bottom: 1px solid var(--pr-ink);
-    padding: 3px 6px 3px 0; text-align: left; font-size: 10px; font-weight: 800;
-    text-transform: uppercase; letter-spacing: .03em; color: var(--pr-ink); }
-  .ds-tbl td { padding: 2.5px 6px 2.5px 0; vertical-align: baseline; color: var(--pr-ink); }
-  .ds-r { text-align: right; padding-right: 0 !important; }
+  /* A shaded header band carries the column labels, a shaded row carries each
+     total - the fill marks the row the way a rule used to. */
+  .ds-tbl { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 11.5px; }
+  .ds-tbl thead th { background: var(--pr-band); padding: 4px 6px; text-align: left; font-size: 10px;
+    font-weight: 800; text-transform: uppercase; letter-spacing: .03em; color: var(--pr-ink); }
+  .ds-tbl td { padding: 3px 6px; vertical-align: baseline; color: var(--pr-ink); }
+  .ds-r { text-align: right; }
   .ds-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
-  .ds-tot td { border-top: 1px solid var(--pr-ink); font-weight: 800; padding-top: 4px; }
+  .ds-tot td { background: var(--pr-band); font-weight: 800; padding-top: 5px; padding-bottom: 5px; }
 
   /* Eight short readings as a grid: one per line is most of a sheet spent on
-     eight words. */
-  .ds-exam { margin-top: 4px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px 12px; }
-  .ds-exam-c { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
+     eight words. Each reading sits in its own tinted chip instead of a boxed
+     grid of rules. */
+  .ds-exam { margin-top: 5px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px 10px; }
+  .ds-exam-c { display: flex; align-items: baseline; gap: 5px; min-width: 0; background: var(--pr-band);
+    border-radius: 2px; padding: 2.5px 7px; }
   .ds-exam-k { flex: none; font-size: 9px; font-weight: 800; text-transform: uppercase;
     letter-spacing: .08em; color: var(--pr-muted); }
   .ds-exam-v { min-width: 0; font-size: 11.5px; font-weight: 700; color: var(--pr-ink); }
 
-  .ds-note { margin-top: 4px; padding-left: 7px; border-left: 2px solid var(--pr-hair); }
+  .ds-note { margin-top: 5px; padding: 4px 8px; background: var(--pr-bg); border-radius: 2px; }
   .ds-note-m { font-size: 9px; color: var(--pr-muted); }
-  .ds-draft { margin: 5px 0 0; padding: 3px 8px; border: 1.2px dashed var(--pr-accent); border-radius: 3px;
-    text-align: center; font-size: 9px; font-weight: 800; letter-spacing: .16em; color: var(--pr-accent); }
+  /* A solid filled banner reads as clearly as a dashed box, and survives a
+     photocopy generation better than a hairline dash pattern does. */
+  .ds-draft { margin: 6px 0 0; padding: 4px 8px; border-radius: 3px; background: var(--pr-accent);
+    text-align: center; font-size: 9px; font-weight: 800; letter-spacing: .16em; color: #fff; }
   .ds-sign { break-inside: avoid; }
+  /* The one line a signature genuinely needs - a mark to sign above - drawn
+     as a thin filled bar rather than a border so it prints the same weight
+     every time regardless of renderer. */
+  .ds-sign-line { height: 1.1px; background: var(--pr-line); }
 
   @media print {
     html, body { background: #fff !important; margin: 0 !important; padding: 0 !important; }
@@ -167,8 +196,8 @@ const DS_CSS = (onStationery: boolean) => `
        repeated header lands under the printed logo on every sheet, not just
        the first. */
     @page { size: A4 portrait; margin: ${onStationery ? "40mm 13mm 46mm" : "13mm 12mm 14mm"}; }
-    /* Print black, not "almost black" - browsers lighten text to save toner
-       unless told otherwise. */
+    /* Print the fills and the ink, not a lightened approximation - browsers
+       drop background color and darken-to-toner unless told otherwise. */
     #print-sheet, #print-sheet * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
 `;
@@ -360,13 +389,12 @@ function DischargeSummaryInner() {
           <Sec t="Investigations / Lab Summary">
             {d.investigations.length > 0 && (
               <table className="ds-tbl">
-                <thead><tr><th>Investigation</th><th>Date</th><th className="ds-r">Status</th></tr></thead>
+                <thead><tr><th>Investigation</th><th>Date</th></tr></thead>
                 <tbody>
                   {d.investigations.map((t, i) => (
                     <tr key={i}>
                       <td>{t.testName}</td>
                       <td className="ds-mono">{date(t.date)}</td>
-                      <td className="ds-r">{t.reportReady ? "Report ready" : t.status === "COMPLETED" ? "Completed" : "Pending"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -395,7 +423,7 @@ function DischargeSummaryInner() {
               <thead>
                 <tr>
                   <th className="w-[22px]">#</th><th>Medicine</th>
-                  <th className="w-[54px]">Qty</th><th className="w-[190px]">Dosage</th>
+                  <th className="w-[54px]">Qty</th>
                 </tr>
               </thead>
               <tbody>
@@ -404,7 +432,6 @@ function DischargeSummaryInner() {
                     <td className="ds-mono">{i + 1}.</td>
                     <td className="font-semibold">{m.name}</td>
                     <td className="ds-mono">{m.qty}</td>
-                    <td className="ds-mono">{m.dosage ?? "-"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -468,12 +495,9 @@ function DischargeSummaryInner() {
                     <tr><td>Advance received</td><td className="ds-r ds-mono">− {money(d.bill.advanceTotal)}</td></tr>
                   )}
                   {Number(inv.paid) > 0 && (
-                    <tr><td>Paid</td><td className="ds-r ds-mono">− {money(inv.paid)}</td></tr>
+                    <tr><td>Paid</td><td className="ds-r ds-mono"> {money(inv.paid)}</td></tr>
                   )}
-                  <tr className="ds-tot">
-                    <td>{Number(inv.balance) > 0 ? "Balance payable" : "Settled in full"}</td>
-                    <td className="ds-r ds-mono">{money(inv.balance)}</td>
-                  </tr>
+                  
                 </>
               ) : (
                 <>
@@ -496,17 +520,19 @@ function DischargeSummaryInner() {
         {/* SIGN-OFF - the lab report's foot, with the two signatures the
             hospital's discharge paper carries. The RMO line is left blank on
             purpose: printing a name under a signature nobody signed would be
-            inventing one on a medico-legal document. */}
+            inventing one on a medico-legal document. The mark to sign above is
+            a filled bar, not a border, so it holds the same weight everywhere
+            it prints. */}
         <div className="ds-sign mt-6 flex items-end justify-between gap-10">
           <div className="w-[52mm] text-center">
-            <div className="h-[9mm] border-b" style={{ borderColor: "var(--pr-line)" }} />
+            <div className="ds-sign-line h-[9mm]" />
             <div className="mt-[2px] text-[10px] font-semibold" style={{ color: "var(--pr-ink)" }}>{d.doctor.name}</div>
             <div className="text-[8px] uppercase tracking-[0.12em]" style={{ color: "var(--pr-muted)" }}>
               Consultant Doctor
             </div>
           </div>
           <div className="w-[52mm] text-center">
-            <div className="h-[9mm] border-b" style={{ borderColor: "var(--pr-line)" }} />
+            <div className="ds-sign-line h-[9mm]" />
             <div className="mt-[2px] text-[10px] font-semibold">&nbsp;</div>
             <div className="text-[8px] uppercase tracking-[0.12em]" style={{ color: "var(--pr-muted)" }}>
               Resident Medical Officer
@@ -539,7 +565,8 @@ function IdRow({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   );
 }
 
-/** A section: ruled heading in the lab report's idiom, then its body. */
+/** A section: a small filled accent mark and weight in the lab report's
+ *  idiom, then its body - no underline. */
 function Sec({ t, children }: { t: string; children: React.ReactNode }) {
   return (
     <section className="ds-sec">
