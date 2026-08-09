@@ -1160,6 +1160,11 @@ export async function dischargeSummaryData(admissionId: string) {
     where: { id: admissionId },
     select: {
       ipNumber: true, status: true, admittedAt: true, dischargedAt: true, reason: true,
+      // WHO SETTLES THIS STAY. Printed on the summary as its own field, the way
+      // the hospital's own paper does it ("H.Pannel : INSURANCE"). A reader
+      // picking up a discharge summary needs to know whether it belongs with a
+      // claim file or with a counter receipt, and the two go to different desks.
+      payerType: true, insurer: true, policyNo: true,
       patient: {
         select: {
           displayId: true, fullName: true, age: true, gender: true, phone: true,
@@ -1235,6 +1240,10 @@ export async function dischargeSummaryData(admissionId: string) {
       reason: adm.reason,
       /** The full chronology, each entry with its author and time. */
       observations: sheet.notes,
+      /** SELF_PAY or INSURANCE - the summary's "H.Pannel" line. */
+      payerType: adm.payerType,
+      insurer: adm.insurer,
+      policyNo: adm.policyNo,
     },
     patient: {
       displayId: adm.patient.displayId, fullName: adm.patient.fullName, age: adm.patient.age,

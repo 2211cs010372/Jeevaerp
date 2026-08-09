@@ -809,14 +809,8 @@ export function VitalsGrid({ items, stack = false }: {
   // Unstacked: same tracks and gutter as FieldGrid above it, so the vitals land
   // on the patient block's own columns rather than on a second grid of their
   // own - which is the whole reason they no longer need a box.
-  //
-  // The row gap is deliberately looser than FieldGrid's 5px. These are numbers
-  // read one at a time under a pen, not a paragraph of identity read top to
-  // bottom, and set at the identity block's rhythm they ran together into a
-  // block of digits. The extra air is affordable: six of these on two rows take
-  // less height than four did stacked down the full width.
   return (
-    <div className={stack ? "flex flex-col gap-y-[14px]" : "grid grid-cols-[1.15fr_0.85fr_1fr]  gap-x-5 gap-y-[16px]"}>
+    <div className={stack ? "flex flex-col gap-y-[8px]" : "grid grid-cols-[1.15fr_0.85fr_1fr]  gap-x-5 gap-y-[8px]"}>
       {items.map((b) => (
         <div key={b.label} className="flex min-w-0 items-baseline gap-2">
           <span className={`shrink-0 ${CAPS_LABEL}`} style={{ color: "var(--pr-primary)" }}>{b.label}: </span>

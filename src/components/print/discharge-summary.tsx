@@ -15,6 +15,10 @@ interface Data {
     wardName: string; bedNo: string; reason: string | null;
     /** The stay's chronology - each entry with who wrote it and when. */
     observations: { id: string; body: string; kind: "NURSING" | "DISCHARGE"; authorName: string | null; createdAt: string }[];
+    /** SELF_PAY or INSURANCE - printed as the summary's payer panel. */
+    payerType?: string;
+    insurer?: string | null;
+    policyNo?: string | null;
   };
   patient: { displayId: string; fullName: string; age: number | null; gender: string | null; phone: string; address: string | null; city: string | null; bloodGroup: string | null; dob: string | null };
   doctor: { name: string; specialization: string; department: string };
@@ -107,6 +111,20 @@ export function DischargeSummary() {
           <Info k="Admitted" v={dateTime(a.admittedAt)} />
           <Info k={outcomeNote ?? "Discharged"} v={closed ? dateTime(a.dischargedAt) : "-"} />
           <Info k="Length of stay" v={`${a.days} day${a.days === 1 ? "" : "s"}`} />
+          {/* ── THE PAYER PANEL ──
+              The hospital's own paper carries this as "H.Pannel : INSURANCE",
+              and it earns its place: a summary is filed with a claim or handed
+              across a counter, and those are two different desks. A reader who
+              cannot tell which from the page has to go and ask. */}
+          <Info
+            k="Payer"
+            v={
+              a.payerType === "INSURANCE"
+                ? [a.insurer || "Insurance", a.policyNo ? `Policy ${a.policyNo}` : null].filter(Boolean).join(" · ")
+                : "Self pay / cash"
+            }
+            wide
+          />
           {p.address && <Info k="Address" v={[p.address, p.city].filter(Boolean).join(", ")} wide />}
         </section>
 

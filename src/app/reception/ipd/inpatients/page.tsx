@@ -15,6 +15,7 @@ import {
 import { useLive } from "@/lib/realtime/use-live";
 import { TOPICS } from "@/lib/realtime/topics";
 import { approvalOf, splitStay, type ClaimLike } from "@/lib/insurance-split";
+import { portalUrl } from "@/lib/auth/portal-url";
 
 interface Inpatient {
   bedCharge: string; extrasCharge: string; extras: number;
@@ -190,8 +191,10 @@ export default function InpatientsPage() {
   });
   const { stayTotal, insuranceApproved: insApproved, patientPayable, patientDue, refundDue } = split;
   const insReceivable = split.insuranceReceivable;
-  /** What the counter is being asked to take right now. */
-  const est = isInsurance ? Math.min(copay, patientDue) : patientDue;
+  /** What the counter is being asked to take RIGHT NOW.
+   *  Always zero on a cashless stay - that money is collected at Billing after
+   *  the insurer decides, not at this desk before they have. */
+  const est = isInsurance ? 0 : patientDue;
   const toInsurer = insApproved;
 
   /**
@@ -216,8 +219,11 @@ export default function InpatientsPage() {
       const res = await api.post<{ ipNumber: string; days: number; invoice: { id: string; receiptNo: string; totalAmount: string } }>(
         `/ipd/admissions/${dischargeOf.id}/discharge`,
         {
-          discountAmount: disc || undefined,
-          payments: payNow && payments.length ? payments : undefined,
+          // A cashless stay is forwarded, not settled: no discount off the
+          // hospital's own claim and no money taken at this desk. The patient's
+          // share is collected at Billing once the insurer has decided it.
+          discountAmount: isInsurance ? undefined : (disc || undefined),
+          payments: !isInsurance && payNow && payments.length ? payments : undefined,
           notes: notes || undefined,
           // Only ever sent from the explicit override below - never a default.
           ...(allowOutstanding ? { allowOutstanding: true } : {}),
@@ -401,11 +407,29 @@ export default function InpatientsPage() {
             {done ? (
               <div className="flex flex-col items-center px-6 py-12 text-center">
                 <span className="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--p-cyan-soft)] text-[var(--p-cyan-deep)]"><Icon name="check" size={26} /></span>
-                <h3 className="mt-4 font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Discharged</h3>
+                <h3 className="mt-4 font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">
+                  {isInsurance ? "Discharged · with the insurer" : "Discharged"}
+                </h3>
                 <p className="mt-1 text-[14px] text-[var(--p-muted)]">
                   {done.days} day{done.days > 1 ? "s" : ""} · Receipt <span className="font-mono font-semibold text-[var(--p-ink)]">{done.receiptNo}</span> · ₹{done.total}
                 </p>
                 <p className="mt-1 text-[13px] text-[var(--p-muted)]">The bed is free again on the board.</p>
+                {/* ── WHERE THIS BILL GOES NEXT ──
+                    Two different desks, and the desk that just pressed the
+                    button is only one of them. A cashless bill now needs a
+                    claim raised against it, and nothing on this screen said so
+                    - the receptionist had to know to switch portals. */}
+                {isInsurance ? (
+                  <p className="mt-3 max-w-sm text-[12.5px] leading-relaxed text-[var(--p-blue-deep)]">
+                    This bill is with <b>{dischargeOf?.insurer ?? "the insurer"}</b>. Raise the claim on the
+                    <b> Insurance</b> desk. Whatever they refuse comes back as the patient&apos;s share on
+                    <b> Billing</b>, under this patient&apos;s name.
+                  </p>
+                ) : Number(done.total) > 0 && (
+                  <p className="mt-3 max-w-sm text-[12.5px] leading-relaxed text-[var(--p-muted)]">
+                    Anything still unpaid is on <b>Billing</b> under this patient&apos;s name.
+                  </p>
+                )}
                 <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
                   {done.invoiceId && (
                     <a href={`/print/invoice/${done.invoiceId}`} target="_blank" rel="noopener noreferrer"
@@ -417,6 +441,18 @@ export default function InpatientsPage() {
                     className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
                     <Icon name="file" size={15} /> Discharge summary
                   </a>
+                  {/* The next desk, one click away rather than one portal away. */}
+                  {isInsurance ? (
+                    <a href={portalUrl("insurance", `/admissions/${dischargeOf.id}`)} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-blue)] px-4 py-2.5 text-sm font-semibold text-[var(--p-blue)] transition-colors hover:bg-[var(--p-blue-soft)]">
+                      <Icon name="shield" size={15} /> Open on Insurance
+                    </a>
+                  ) : (
+                    <Link href="/billing"
+                      className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
+                      <Icon name="rupee" size={15} /> Go to Billing
+                    </Link>
+                  )}
                   <button onClick={closeModal} className="rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)]">Done</button>
                 </div>
               </div>
@@ -518,23 +554,16 @@ export default function InpatientsPage() {
                               </div>
                             )}
 
-                            <label className="mt-2.5 block">
-                              <span className="text-[11.5px] font-semibold uppercase tracking-wide text-[var(--p-blue-deep)]">
-                                Collecting from patient now
-                              </span>
-                              <input
-                                inputMode="numeric" value={copay || ""} placeholder="0"
-                                onChange={(e) => { setCopayTouched(true); setCopay(Math.min(patientDue, Number(e.target.value.replace(/[^\d.]/g, "")) || 0)); }}
-                                className="mt-1 w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 font-mono text-[14px] text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]"
-                              />
-                            </label>
-                            {/* A short collection is legitimate - families pay the
-                                rest later - but it must be stated, not inferred
-                                from two numbers not adding up. */}
-                            {approval.decided && patientDue - est > 0.01 && (
-                              <p className="mt-1.5 text-[12px] font-semibold text-[#8a6414]">
-                                ₹{money((patientDue - est).toFixed(2))} of the patient&apos;s share stays
-                                outstanding after this discharge.
+                            {/* The share is STATED here and COLLECTED at Billing.
+                                There is no input: at discharge on a cashless
+                                stay the insurer has usually not decided yet, and
+                                a box asking for money against an undecided claim
+                                is how a family gets charged for cover they were
+                                promised. */}
+                            {approval.decided && patientDue > 0.01 && (
+                              <p className="mt-2 text-[12px] leading-relaxed text-[#8a6414]">
+                                <b>₹{money(patientDue.toFixed(2))} is the patient&apos;s to pay.</b> It appears on
+                                Billing under their name after this discharge - collect it there.
                               </p>
                             )}
 
@@ -607,13 +636,39 @@ export default function InpatientsPage() {
                     )}
                   </div>
 
-                  <DiscountInput subtotal={grand} accent="blue" onChange={(d) => setDisc(d.amount)} />
+                  {/* ══ TWO DISCHARGES, NOT ONE ══
+                      A self-paying family settles at this desk, so the desk
+                      needs a discount box and a payment box. A cashless stay
+                      settles nowhere near this desk - the bill goes to the
+                      insurer, they decide an amount, and only then does anyone
+                      know what the family owes.
+                      Showing the same two controls for both was asking the
+                      receptionist to discount and collect on a bill whose value
+                      to the hospital had not been agreed yet. */}
+                  {isInsurance ? (
+                    <div className="rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] px-4 py-3">
+                      <p className="text-[12.5px] leading-relaxed text-[var(--p-muted)]">
+                        <b className="text-[var(--p-ink)]">No discount and no payment here.</b>{" "}
+                        A cashless bill is not this desk&apos;s to reduce - a discount would come
+                        straight off the hospital&apos;s claim, not off the family. This stay is
+                        forwarded to <b>{dischargeOf?.insurer ?? "the insurer"}</b> to be claimed.
+                      </p>
+                      <p className="mt-1.5 text-[12.5px] leading-relaxed text-[var(--p-muted)]">
+                        Whatever they refuse becomes the patient&apos;s share and appears on{" "}
+                        <b>Billing</b> under this patient&apos;s name, ready to collect.
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <DiscountInput subtotal={grand} accent="blue" onChange={(d) => setDisc(d.amount)} />
 
-                  <label className="flex items-center gap-2 text-[14px] text-[var(--p-text)]">
-                    <input type="checkbox" checked={payNow} onChange={(e) => setPayNow(e.target.checked)} className="h-4 w-4 accent-[var(--p-blue)]" /> Collect payment now
-                  </label>
-                  {payNow && est > 0 && (
-                    <PaymentSection total={est} accent="blue" onChange={(r) => { setPayments(r.payments); setPayValid(r.valid); }} />
+                      <label className="flex items-center gap-2 text-[14px] text-[var(--p-text)]">
+                        <input type="checkbox" checked={payNow} onChange={(e) => setPayNow(e.target.checked)} className="h-4 w-4 accent-[var(--p-blue)]" /> Collect payment now
+                      </label>
+                      {payNow && est > 0 && (
+                        <PaymentSection total={est} accent="blue" onChange={(r) => { setPayments(r.payments); setPayValid(r.valid); }} />
+                      )}
+                    </>
                   )}
 
                   {/* HOW THE STAY ENDED.
@@ -648,8 +703,13 @@ export default function InpatientsPage() {
                       Discharge leaving ₹{money(sheet!.outstandingTotal)} unpaid
                     </button>
                   )}
-                  <PrimaryButton onClick={() => discharge(false)} disabled={busy || !sheet || (payNow && est > 0 && !payValid)}>
-                    {busy ? <><Spinner /> Discharging…</> : <><Icon name="check" size={15} /> Discharge &amp; bill</>}
+                  {/* The verb names what actually happens next, and the two
+                      are not the same act: a self-pay discharge ends at this
+                      desk, a cashless one hands the stay to the claims desk. */}
+                  <PrimaryButton onClick={() => discharge(false)} disabled={busy || !sheet || (!isInsurance && payNow && est > 0 && !payValid)}>
+                    {busy
+                      ? <><Spinner /> {isInsurance ? "Forwarding…" : "Discharging…"}</>
+                      : <><Icon name="check" size={15} /> {isInsurance ? "Discharge & forward to insurance" : "Discharge & bill"}</>}
                   </PrimaryButton>
                 </div>
               </>
