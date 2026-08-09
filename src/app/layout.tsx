@@ -62,11 +62,6 @@ export const metadata: Metadata = {
     "paediatrician Hanamkonda", "gynaecologist Hanamkonda", "cardiologist Warangal",
   ],
   alternates: { canonical: "/" },
-  // The tab icon an admin uploaded under Settings. A fixed same-origin path, so
-  // this stays a static metadata object - the database lookup happens inside the
-  // route, once, and is then cached by the browser. Serves a 404 until somebody
-  // uploads one, which leaves the browser's own default mark in place.
-  icons: { icon: [{ url: "/api/v1/public/favicon" }] },
   openGraph: {
     type: "website",
     siteName: "Jeeva Multispeciality Hospital",
@@ -74,10 +69,30 @@ export const metadata: Metadata = {
     url: "/",
     title: TITLE,
     description: DESCRIPTION,
+    // Without this, most scrapers (WhatsApp, Facebook, Telegram) can't build
+    // a card and fall back to showing the bare domain instead of the
+    // hospital name - this is what fixes a shared link showing "domain.com".
+    images: [{ url: "/og-image.jpg", width: 1200, height: 630, alt: TITLE }],
   },
-  twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION },
+  twitter: {
+    card: "summary_large_image",
+    title: TITLE,
+    description: DESCRIPTION,
+    images: ["/og-image.jpg"],
+  },
   robots: { index: true, follow: true },
   formatDetection: { telephone: true, address: true },
+  // The tab icon an admin uploaded under Settings. A fixed same-origin path, so
+  // this stays a static metadata object - the database lookup happens inside the
+  // route, once, and is then cached by the browser. Serves a 404 until somebody
+  // uploads one, which leaves the browser's own default mark in place.
+  // "shortcut" covers older browsers that ignore "icon", and "apple" is what
+  // shows up when someone adds the site to an iPhone home screen.
+  icons: {
+    icon: [{ url: "/api/v1/public/favicon", type: "image/x-icon" }],
+    shortcut: [{ url: "/api/v1/public/favicon" }],
+    apple: [{ url: "/api/v1/public/favicon" }],
+  },
 };
 
 export default function RootLayout({
@@ -88,7 +103,6 @@ export default function RootLayout({
       lang="en"
       className={`${bricolage.variable} ${instrument.variable} ${plexMono.variable} ${fraunces.variable} ${geist.variable} ${geistMono.variable}`}
     >
-      
       <body>{children}</body>
     </html>
   );
