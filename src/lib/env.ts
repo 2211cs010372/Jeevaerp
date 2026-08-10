@@ -38,6 +38,31 @@ const schema = z.object({
   SMS_APPOINTMENT_TEMPLATE: z.string().optional(),
   /** DLT-approved 6-character sender header, e.g. JEEVAH. */
   SMS_SENDER_ID: z.string().optional(),
+  // ---- Event notification templates (src/server/services/notify.service.ts) ----
+  //
+  // Every one is a SEPARATE DLT registration with its own Message ID. All are
+  // optional and all are independent: an unregistered one logs its message
+  // instead of sending, so the hospital can switch notifications on a few at a
+  // time as approvals come back, rather than waiting for the whole set.
+  //
+  // The variable ORDER each template must use is documented beside its sender
+  // in notify.service.ts. Nothing validates it - see the warning there.
+  // No SMS_TPL_OP_BOOKED: both booking paths reuse SMS_APPOINTMENT_TEMPLATE,
+  // because a patient cannot tell whether reception or the website typed it.
+  SMS_TPL_OP_CANCELLED: z.string().optional(),
+  SMS_TPL_BILL: z.string().optional(),
+  SMS_TPL_PHARMACY_BILL: z.string().optional(),
+  SMS_TPL_LAB_REPORT: z.string().optional(),
+  SMS_TPL_ADMITTED: z.string().optional(),
+  SMS_TPL_DISCHARGED: z.string().optional(),
+  SMS_TPL_ADVANCE: z.string().optional(),
+  SMS_TPL_SUPPLIER_PO: z.string().optional(),
+  SMS_TPL_STOCK_RECEIVED: z.string().optional(),
+  SMS_TPL_LOW_STOCK: z.string().optional(),
+  /** Comma-separated mobile numbers that receive the stock/admin alerts. */
+  SMS_ADMIN_NUMBERS: z.string().optional(),
+  /** Set to "off" to stop every notification SMS. Never affects OTP. */
+  SMS_NOTIFICATIONS: z.string().optional(),
 });
 
 /**

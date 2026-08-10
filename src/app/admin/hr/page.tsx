@@ -390,7 +390,7 @@ export default function HrPage() {
                   </div>
                   <div className="grid grid-cols-3 gap-3">
                     <Field label="Fee (₹)">
-                      <input className={fld} inputMode="numeric" value={d.consultationFee} onChange={(e) => setD({ ...d, consultationFee: e.target.value.replace(/[^\d.]/g, "") })} placeholder="600" />
+                      <input className={fld} inputMode="numeric" value={d.consultationFee} onChange={(e) => setD({ ...d, consultationFee: e.target.value.replace(/[^\d.]/g, "") })} placeholder="400" />
                     </Field>
                     <Field label="Experience (yrs)">
                       <input className={fld} inputMode="numeric" value={d.experienceYears} onChange={(e) => setD({ ...d, experienceYears: e.target.value.replace(/\D/g, "").slice(0, 2) })} placeholder="12" />

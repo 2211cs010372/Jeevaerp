@@ -3,6 +3,7 @@ import { ApiError } from "@/lib/api";
 import { nextId } from "@/lib/ids";
 import { parsePack, packsToUnits } from "@/lib/pharmacy/pack";
 import { logAudit } from "./audit.service";
+import { notifySupplierPo, notifyStockReceived } from "./notify.service";
 import { publishLive } from "@/server/realtime/publish";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import {
@@ -497,7 +498,10 @@ export async function sendPurchaseOrder(
 ): Promise<void> {
   const po = await prisma.purchaseOrder.findUnique({
     where: { id },
-    select: { id: true, status: true, poNumber: true, _count: { select: { items: true } } },
+    select: {
+      id: true, status: true, poNumber: true, _count: { select: { items: true } },
+      supplier: { select: { name: true, phone: true } },
+    },
   });
   if (!po) throw new ApiError(404, "Purchase order not found");
   if (po.status !== "DRAFT") throw new ApiError(400, `${po.poNumber} has already been sent`);
@@ -505,6 +509,19 @@ export async function sendPurchaseOrder(
 
   await prisma.purchaseOrder.update({ where: { id }, data: { status: "SENT", sentAt: new Date() } });
   await logAudit(actor, { action: "PO_SENT", targetTable: "PurchaseOrder", targetId: id, meta: { poNumber: po.poNumber }, ...ctx });
+
+  // Tell the distributor an order is waiting. Fires once - the DRAFT guard above
+  // means a second "Send" is a 400, so a supplier is never texted twice for the
+  // same PO no matter how many times the button is pressed.
+  //
+  // Supplier.phone is optional in the schema and plenty of distributors are on
+  // record with a landline, so this is frequently a no-op. That is correct: the
+  // PO document, not the text, is the order.
+  await notifySupplierPo(po.supplier.phone, {
+    supplierName: po.supplier.name,
+    poNumber: po.poNumber,
+    lineCount: po._count.items,
+  });
 }
 
 export async function cancelPurchaseOrder(
@@ -1016,6 +1033,16 @@ export async function receiveGoods(
   // Stock just went up. The alerts screen, the reorder list and the admin
   // pharmacy tab were all computed against the shelf as it was a minute ago.
   await publishLive([TOPICS.PHARMACY, TOPICS.ADMIN], EVENTS.STOCK_RECEIVED);
+
+  // The owner's copy. Deliberately not sent to the pharmacy: the pharmacist is
+  // the person who just typed this in. Goods received is the moment inventory
+  // and money move in opposite directions, and the person who reconciles those
+  // is usually not in the building.
+  await notifyStockReceived({
+    grnNumber: result.grnNumber,
+    supplierName: supplier.name,
+    value: result.receivedValue,
+  });
 
   return {
     id: result.id,

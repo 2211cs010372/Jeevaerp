@@ -3,6 +3,7 @@ import { computeInvoiceTotals, assertRefundable, assertPaymentsWithinTotal, invo
 import { nextId } from "@/lib/ids";
 import { ApiError } from "@/lib/api";
 import { logAudit } from "./audit.service";
+import { notifyBillGenerated } from "./notify.service";
 import { publishLive } from "@/server/realtime/publish";
 import { splitInvoice } from "@/lib/insurance-split";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
@@ -124,6 +125,17 @@ export async function createInvoice(
      * rows against the one bill. Takes precedence over `payment` when present.
      */
     payments?: PaymentInput[];
+    /**
+     * Text the patient that this bill exists. Defaults ON, because this is the
+     * single place every counter's bill passes through and a per-counter opt-in
+     * would guarantee one of them is forgotten.
+     *
+     * Pass false where a bill is one half of an event the patient is already
+     * being told about - the IPD discharge is the case that exists today, where
+     * the final bill and the discharge are one moment and two texts would be
+     * two charges for one piece of news.
+     */
+    notify?: boolean;
   },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<InvoiceDTO> {
@@ -254,7 +266,24 @@ export async function createInvoice(
     return invoice.id;
   });
 
-  return getInvoice(invoiceId);
+  const dto = await getInvoice(invoiceId);
+
+  // ── the patient's copy, after the bill is safely committed ───────────────
+  //
+  // Outside the transaction on purpose. A provider timeout is ten seconds, and
+  // ten seconds of held row locks on the invoice table at a billing counter is
+  // a queue. The receipt on the printer is the real receipt; this is a copy.
+  if (input.notify !== false) {
+    await notifyBillGenerated(dto.patient.phone, {
+      name: dto.patient.fullName,
+      receiptNo: dto.receiptNo,
+      total: dto.totalAmount,
+      balanceDue: dto.balanceDue,
+      source: dto.source,
+    });
+  }
+
+  return dto;
 }
 
 /**

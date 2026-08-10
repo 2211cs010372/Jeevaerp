@@ -3,7 +3,8 @@ import { ApiError } from "@/lib/api";
 import { nextId } from "@/lib/ids";
 import { logAudit } from "./audit.service";
 import { splitInvoice } from "@/lib/insurance-split";
-import { createInvoice, recordPayment, advancePaymentRef, type PaymentModeT } from "./billing.service";
+import { createInvoice, recordPayment, getInvoice, advancePaymentRef, type PaymentModeT } from "./billing.service";
+import { notifyAdmitted, notifyDischarged, notifyAdvanceReceived } from "./notify.service";
 // One rounding definition across the whole system - money must not be
 // rounded two different ways in two different files.
 import { r2 as round2 } from "@/server/billing/calc";
@@ -213,7 +214,7 @@ export async function admitPatient(
   const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const patient = await tx.patient.findUnique({
       where: { displayId: input.patientDisplayId.toUpperCase() },
-      select: { id: true, displayId: true, fullName: true, mergedIntoId: true, deletedAt: true },
+      select: { id: true, displayId: true, fullName: true, phone: true, mergedIntoId: true, deletedAt: true },
     });
     if (!patient || patient.mergedIntoId || patient.deletedAt) throw new ApiError(404, "Patient not found - check the Jeeva ID");
 
@@ -346,7 +347,10 @@ export async function admitPatient(
       }, ...ctx,
     }, tx);
 
-    return { admissionId: adm.id, ipNumber, bedNo: bed.bedNo, ward: bed.ward.name };
+    return {
+      admissionId: adm.id, ipNumber, bedNo: bed.bedNo, ward: bed.ward.name,
+      patientName: patient.fullName, patientPhone: patient.phone,
+    };
   });
 
   // A bed just went from free to occupied. Every ward board in the building is
@@ -357,7 +361,25 @@ export async function admitPatient(
     [TOPICS.IPD, TOPICS.RECEPTION, TOPICS.ADMIN, TOPICS.INSURANCE],
     EVENTS.ADMISSION_OPENED
   );
-  return result;
+
+  // TO THE ATTENDANT WHEN THERE IS ONE, otherwise the patient's own number.
+  // The person being admitted may be in no state to read a text; the attendant
+  // is the number the desk just wrote down precisely because they are the one
+  // who will be asked for the IP number at every counter for the rest of the
+  // stay. Only one of the two is texted - both is two charges for one fact.
+  await notifyAdmitted(input.attendantPhone?.trim() || result.patientPhone, {
+    name: result.patientName,
+    ipNumber: result.ipNumber,
+    ward: result.ward,
+    bedNo: result.bedNo,
+  });
+
+  return {
+    admissionId: result.admissionId,
+    ipNumber: result.ipNumber,
+    bedNo: result.bedNo,
+    ward: result.ward,
+  };
 }
 
 /** Everyone currently in a bed, with the running charge so far. */
@@ -606,8 +628,11 @@ export async function dischargePatient(
           orderBy: { createdAt: "asc" },
           select: { description: true, qty: true, unitPrice: true, gstRatePct: true, category: true },
         },
-        patientId: true, patient: { select: { displayId: true } },
+        patientId: true, patient: { select: { displayId: true, fullName: true, phone: true } },
         bed: { select: { bedNo: true } },
+        // Whoever the desk recorded as the contact for this stay gets the
+        // discharge text, same rule as the admission one.
+        attendantPhone: true,
       },
     });
     if (!a) throw new ApiError(404, "Admission not found");
@@ -730,6 +755,11 @@ export async function dischargePatient(
       discountAmount: input.discountAmount,
       payment: input.payment,
       payments: input.payments,
+      // The discharge text below carries this bill's balance already, and it is
+      // sent AFTER the admission deposit has been applied a few lines down. A
+      // bill SMS here would quote the balance before the advance came off it -
+      // a larger number, sent first, about the same money.
+      notify: false,
     },
     ctx
   );
@@ -778,6 +808,26 @@ export async function dischargePatient(
     [TOPICS.IPD, TOPICS.RECEPTION, TOPICS.ADMIN, TOPICS.INSURANCE],
     EVENTS.ADMISSION_CLOSED
   );
+
+  // RE-READ THE BILL, do not reuse `invoice` above. That copy was taken before
+  // the admission deposit was applied to it, so its balanceDue is the figure
+  // BEFORE the money the hospital already held came off - texting it would tell
+  // a family they owe several thousand rupees they have already paid.
+  const settled = await getInvoice(invoice.id).catch(() => null);
+
+  // An EXPIRED stay is not texted "get well soon", and no automated message is
+  // the right way for a family to hear anything about it. The outcome check is
+  // the whole point: a death and a discharge are both "the stay closed" to the
+  // billing code and are not remotely the same event to the person reading it.
+  if (outcome !== "EXPIRED") {
+    await notifyDischarged(adm.attendantPhone?.trim() || adm.patient.phone, {
+      name: adm.patient.fullName,
+      ipNumber: adm.ipNumber,
+      days,
+      balanceDue: settled ? settled.balanceDue : invoice.balanceDue,
+    });
+  }
+
   return { ipNumber: adm.ipNumber, days, invoice };
 }
 
@@ -1753,7 +1803,11 @@ export async function addAdvance(
 
   const adm = await prisma.admission.findUnique({
     where: { id: input.admissionId },
-    select: { id: true, ipNumber: true, status: true },
+    select: {
+      id: true, ipNumber: true, status: true,
+      attendantPhone: true,
+      patient: { select: { fullName: true, phone: true } },
+    },
   });
   if (!adm) throw new ApiError(404, "Admission not found");
   if (adm.status !== "ADMITTED") throw new ApiError(400, "That patient has already been discharged");
@@ -1789,6 +1843,15 @@ export async function addAdvance(
     targetId: adm.id,
     meta: { ipNumber: adm.ipNumber, receiptNo: created.receiptNo, amount: input.amount, mode: input.mode },
     ...ctx,
+  });
+
+  // A deposit is the one payment with no bill behind it - the family hands over
+  // cash and gets a slip that lives in a ward bag for a week. This is the copy
+  // that survives, and the figure it names is what comes off the final bill.
+  await notifyAdvanceReceived(adm.attendantPhone?.trim() || adm.patient.phone, {
+    name: adm.patient.fullName,
+    amount: input.amount,
+    ipNumber: adm.ipNumber,
   });
 
   return {

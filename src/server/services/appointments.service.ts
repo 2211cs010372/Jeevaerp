@@ -5,6 +5,7 @@ import { localDateISO, parseDateOnly } from "@/lib/date";
 import { opFeeFor } from "@/lib/after-hours";
 import { logAudit } from "./audit.service";
 import { createInvoice } from "./billing.service";
+import { notifyOpBooked, notifyOpCancelled } from "./notify.service";
 import { getAfterHoursOpPolicy } from "./op-pricing.service";
 import { publishLive } from "@/server/realtime/publish";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
@@ -252,7 +253,11 @@ export async function bookAppointment(
       select: {
         id: true, opNumber: true, status: true, type: true, priceAtBooking: true,
         timeAtBooking: true, checkedInAt: true,
-        patient: { select: { id: true, displayId: true, fullName: true } },
+        // visitDate and phone are here for the confirmation SMS below, which
+        // runs after this transaction has closed and cannot reach the local
+        // `visitDate` variable.
+        visitDate: true,
+        patient: { select: { id: true, displayId: true, fullName: true, phone: true } },
         doctor: { select: { id: true, name: true, department: true } },
       },
     });
@@ -284,6 +289,25 @@ export async function bookAppointment(
     doctor: appt.doctor,
   };
 
+  // ── confirmation, after the row is safely committed ──────────────────────
+  //
+  // The desk's booking gets the same text the website's does, from the same DLT
+  // template - the patient cannot tell which counter typed it.
+  //
+  // NOT SENT FOR A CASUALTY / EMERGENCY OP. That patient is already through the
+  // door, so "your appointment is confirmed for today at 14:32" is a message
+  // about something that has already happened, sent to a phone that is in the
+  // building. The OP number they need is on the sheet in their hand.
+  if (!unscheduled) {
+    await notifyOpBooked(appt.patient.phone, {
+      name: appt.patient.fullName,
+      opNumber: appt.opNumber,
+      doctor: appt.doctor ? appt.doctor.name : DUTY_DOCTOR.name,
+      date: appt.visitDate,
+      time: appt.timeAtBooking,
+    });
+  }
+
   // Book + bill in one motion. The consultation invoice reuses the same
   // engine as labs/pharmacy - consultation is GST-exempt by default.
   //
@@ -311,6 +335,11 @@ export async function bookAppointment(
         discountAmount: input.billNow.discountAmount,
         payment: input.billNow.payment,
         payments: input.billNow.payments,
+        // The booking SMS above already went out for this same visit, and the
+        // counter is handing over a printed receipt as it sends. A second text
+        // saying the consultation was billed is a second charge for news the
+        // patient is holding in their hand.
+        notify: false,
       },
       ctx
     );
@@ -750,6 +779,9 @@ export async function cancelAppointment(
       where: { id: input.appointmentId },
       select: {
         id: true, opNumber: true, status: true, slotId: true,
+        // For the "your visit is cancelled" text sent after this closes.
+        visitDate: true,
+        patient: { select: { fullName: true, phone: true } },
         invoices: {
           where: { status: { not: "CANCELLED" } },
           select: { receiptNo: true, totalAmount: true, payments: { select: { amount: true } } },
@@ -792,13 +824,29 @@ export async function cancelAppointment(
       id: appt.id,
       opNumber: appt.opNumber,
       paidInvoice: paid ? { receiptNo: paid.receiptNo, amountPaid: paid.amountPaid.toFixed(2) } : null,
+      patient: appt.patient,
+      visitDate: appt.visitDate,
     };
   });
 
   // A cancelled visit has to leave the doctor's queue too, or they call for a
   // patient who went home.
   await announceVisitChange();
-  return result;
+
+  // The one notification whose ABSENCE costs the patient a morning: without it
+  // they travel in for a visit that no longer exists. Sent after the commit, so
+  // a provider outage cannot leave the slot locked to a cancelled booking.
+  await notifyOpCancelled(result.patient.phone, {
+    name: result.patient.fullName,
+    opNumber: result.opNumber,
+    date: result.visitDate,
+  });
+
+  return {
+    id: result.id,
+    opNumber: result.opNumber,
+    paidInvoice: result.paidInvoice,
+  };
 }
 
 /**

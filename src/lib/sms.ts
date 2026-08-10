@@ -302,6 +302,106 @@ export async function sendAppointmentSms(
   }
 }
 
+/**
+ * Send one DLT-templated transactional message. The generic form of
+ * `sendAppointmentSms` above, for every other event the hospital notifies on.
+ *
+ * THREE RULES, all of them learned from the appointment path:
+ *
+ * 1. NEVER THROWS. Every caller sits after a committed transaction - a bill is
+ *    raised, a patient is admitted, a report is signed. A provider outage must
+ *    not roll any of that back, so failure is a logged `{ sent: false }` and
+ *    never an exception. The printed receipt is the real receipt.
+ *
+ * 2. NEVER GUESSES A TEMPLATE. India rejects free-text transactional SMS, so a
+ *    message with no registered DLT id is logged, not sent through some other
+ *    route that happens to work today. `preview` is what WOULD have gone out,
+ *    so the log is readable by whoever is registering the templates.
+ *
+ * 3. ORDER OF `vars` IS THE TEMPLATE'S ORDER, and no provider validates it. A
+ *    template whose {#var#} slots are in a different order sends a confidently
+ *    wrong message - "your bill 4500 for Rs INV-1029" - which is worse than not
+ *    sending. Every caller in notify.service.ts documents its own order.
+ */
+export async function sendTemplatedSms(
+  phone: string,
+  spec: {
+    /** Fast2SMS Message ID / 2Factor template name. Undefined = not registered yet. */
+    templateId?: string;
+    /** Values for the template's {#var#} slots, IN THE TEMPLATE'S OWN ORDER. */
+    vars: string[];
+    /** Human-readable rendering, for the log when the template is missing. */
+    preview: string;
+    /** Short event name, so a failure in the log says which message it was. */
+    label: string;
+  }
+): Promise<{ sent: boolean; reason?: string }> {
+  // The kill switch. Notifications are a per-message COST at a hospital that
+  // bills a few hundred times a day, so there has to be a way to stop the
+  // firehose that does not need a redeploy. Deliberately does not touch
+  // sendOtpSms: OTP is authentication, not notification, and switching it off
+  // would lock every patient out of the portal.
+  if (process.env.SMS_NOTIFICATIONS?.trim().toLowerCase() === "off") {
+    return { sent: false, reason: "disabled" };
+  }
+
+  const picked = pickProvider();
+  const senderId = process.env.SMS_SENDER_ID?.trim() || "JEEVAH";
+  const template = spec.templateId?.trim();
+
+  if (!picked || !template) {
+    console.log(
+      `[sms:dev] ${spec.label} -> ${toBare10(phone)}: ${spec.preview}` +
+      (picked ? "  (no DLT template registered)" : "  (no SMS provider configured)")
+    );
+    return { sent: false, reason: picked ? "no-template" : "not-configured" };
+  }
+
+  if (!isIndianMobile(toBare10(phone))) {
+    // A landline or a junk number in the patient record. Worth a line in the log
+    // - "the SMS never arrived" is otherwise investigated as a provider fault.
+    console.warn(`[sms] ${spec.label}: not a mobile number, skipped`, { phone: toBare10(phone) });
+    return { sent: false, reason: "not-mobile" };
+  }
+
+  if (picked.provider === "fast2sms") {
+    const result = await sendViaFast2Sms(picked.apiKey, {
+      route: "dlt",
+      sender_id: senderId,
+      message: template,
+      variables_values: spec.vars.join("|"),
+      numbers: toBare10(phone),
+      flash: 0,
+    });
+    if (!result.ok) {
+      console.error(`[sms:fast2sms] ${spec.label} failed`, { phone: toBare10(phone), ...result });
+      return { sent: false, reason: result.reason === "network" ? "network" : "provider-error" };
+    }
+    return { sent: true };
+  }
+
+  // ── 2Factor ──────────────────────────────────────────────────────────────
+  const target = toMsisdn(phone);
+  const varQuery = spec.vars.map((v, i) => `&VAR${i + 1}=${encodeURIComponent(v)}`).join("");
+  const url =
+    `${TWO_FACTOR_BASE}/${picked.apiKey}/ADDON_SERVICES/SEND/TSMS` +
+    `?From=${encodeURIComponent(senderId)}` +
+    `&To=${target}&TemplateName=${encodeURIComponent(template)}${varQuery}`;
+
+  try {
+    const r = await fetch(url, { method: "GET", signal: AbortSignal.timeout(10_000) });
+    const b: { Status?: string } | null = await r.json().catch(() => null);
+    if (!r.ok || b?.Status !== "Success") {
+      console.error(`[sms:2factor] ${spec.label} failed`, { phone: target, httpStatus: r.status, body: b });
+      return { sent: false, reason: "provider-error" };
+    }
+    return { sent: true };
+  } catch (err) {
+    console.error(`[sms:2factor] ${spec.label} network error`, err);
+    return { sent: false, reason: "network" };
+  }
+}
+
 /** Which provider is live right now - surfaced by the doctor script and admin health. */
 export function smsStatus(): {
   configured: boolean;

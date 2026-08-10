@@ -6,6 +6,7 @@ import { logAudit } from "./audit.service";
 import { DUTY_DOCTOR } from "./appointments.service";
 import { createInvoice, type BillLineInput, type InvoiceDTO } from "./billing.service";
 import { registerPatient } from "./reception.service";
+import { notifyLabReportReady } from "./notify.service";
 import { collectionByMode, type ModeTotal } from "./reports.service";
 import { publishLive } from "@/server/realtime/publish";
 import { parseLocalDate } from "@/lib/date";
@@ -642,7 +643,13 @@ export async function uploadReport(
 
 /** Mark a test completed without a file (result given on paper). */
 export async function completeTest(actor: AuthUser, labTestId: string, ctx: { ipAddress?: string; userAgent?: string }): Promise<LabTestDTO> {
-  const test = await prisma.labTest.findUnique({ where: { id: labTestId }, select: { id: true, status: true } });
+  const test = await prisma.labTest.findUnique({
+    where: { id: labTestId },
+    select: {
+      id: true, status: true, testName: true,
+      patient: { select: { displayId: true, fullName: true, phone: true } },
+    },
+  });
   if (!test) throw new ApiError(404, "Test not found");
   if (test.status === "COMPLETED") throw new ApiError(400, "This test is already completed");
 
@@ -654,6 +661,21 @@ export async function completeTest(actor: AuthUser, labTestId: string, ctx: { ip
 
   // A finished result is something reception is actively waiting on.
   await publishLive([TOPICS.LABS, TOPICS.RECEPTION, TOPICS.DOCTOR, TOPICS.ADMIN], EVENTS.LAB_RESULTED);
+
+  // "Come and collect it" - never the value itself. See notifyLabReportReady.
+  // The guard above means this fires once per test: a second call is a 400.
+  //
+  // `patient` is nullable on LabTest despite the schema comment saying otherwise,
+  // so there is genuinely nobody to text on a row that lost its link. Silent skip
+  // rather than a crash: the result is saved either way, and a failed text must
+  // never be the thing that stops a report being signed off.
+  if (test.patient) {
+    await notifyLabReportReady(test.patient.phone, {
+      name: test.patient.fullName,
+      testName: test.testName,
+      reference: test.patient.displayId,
+    });
+  }
 
   const row: TestRow | null = await prisma.labTest.findUnique({ where: { id: labTestId }, select: testSelect });
   if (!row) throw new ApiError(404, "Test not found");
@@ -998,7 +1020,14 @@ export async function saveLabResults(
 ): Promise<{ results: LabResultDTO[]; abnormal: number; impression: string | null }> {
   const test = await prisma.labTest.findUnique({
     where: { id: input.labTestId },
-    select: { id: true, testName: true, patientId: true },
+    select: {
+      id: true, testName: true, patientId: true,
+      // `status` decides whether the "ready for collection" text goes out below:
+      // a technician correcting a typo on an already-completed report must not
+      // text the patient a second time.
+      status: true,
+      patient: { select: { displayId: true, fullName: true, phone: true } },
+    },
   });
   if (!test) throw new ApiError(404, "Test not found");
 
@@ -1059,6 +1088,19 @@ export async function saveLabResults(
   // the bench is only useful if it reaches the consulting room before the
   // patient does.
   await publishLive([TOPICS.LABS, TOPICS.RECEPTION, TOPICS.DOCTOR, TOPICS.ADMIN], EVENTS.LAB_RESULTED);
+
+  // Only on the transition into COMPLETED. Saving results without completing is
+  // a bench in progress, and re-saving a completed report is a correction -
+  // neither is news to the patient, and texting on every save would send four
+  // messages for one report.
+  if (input.complete && test.status !== "COMPLETED" && test.patient) {
+    await notifyLabReportReady(test.patient.phone, {
+      name: test.patient.fullName,
+      testName: test.testName,
+      reference: test.patient.displayId,
+    });
+  }
+
   return { results: sheet.results, abnormal, impression: sheet.test.impression };
 }
 
