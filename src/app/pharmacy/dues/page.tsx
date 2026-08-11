@@ -10,6 +10,7 @@ import { PaymentSection, type Tender } from "@/components/portal/ui/bill-fields"
 import { api } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
 import { TOPICS } from "@/lib/realtime/topics";
+import { bedLabel } from "@/lib/beds";
 
 /**
  * THE COUNTER'S DEBTORS.
@@ -186,7 +187,7 @@ function WardDueSection({ rows, onCollect }: { rows: IpdDue[]; onCollect: (p: Ip
                 </div>
                 <div className="mt-1 text-[12px] text-[var(--p-muted)]">
                   {p.ipNumber && <><span className="font-mono">{p.ipNumber}</span>{" · "}</>}
-                  {p.ward && `${p.ward}${p.bedNo ? ` bed ${p.bedNo}` : ""} · `}
+                  {p.ward && `${bedLabel(p.ward, p.bedNo)} · `}
                   {p.billCount} bill{p.billCount === 1 ? "" : "s"} · oldest {day(p.oldestAt)}
                   {ageInDays(p.oldestAt) >= 1 && ` (${ageInDays(p.oldestAt)}d ago)`}
                 </div>
@@ -286,7 +287,7 @@ function DueSection({
                 {" · "}{day(d.createdAt)}
                 {ageInDays(d.createdAt) >= 1 && ` (${ageInDays(d.createdAt)}d ago)`}
                 {d.ipNumber && <> · <span className="font-mono">{d.ipNumber}</span></>}
-                {d.ward && ` · ${d.ward}${d.bedNo ? ` bed ${d.bedNo}` : ""}`}
+                {d.ward && ` · ${bedLabel(d.ward, d.bedNo)}`}
               </div>
               <div className="mt-0.5 truncate text-[12px] text-[var(--p-muted)]">{d.summary}</div>
             </div>

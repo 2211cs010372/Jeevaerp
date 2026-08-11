@@ -9,6 +9,7 @@ import { PortalScroll } from "@/components/portal/portal-scroll";
 import { DischargeSummaryForm } from "@/components/portal/ipd/discharge-summary-form";
 import { api, ApiClientError } from "@/lib/api-client";
 import { StatusPill } from "@/components/portal/insurance/claims-board";
+import { bedLabel } from "@/lib/beds";
 
 /**
  * THE ADMITTED PATIENT'S BILL, as the insurance desk needs it.
@@ -377,7 +378,7 @@ export default function InsuranceAdmissionPage() {
             {" · "}<span className="font-mono font-semibold text-[var(--p-blue-deep)]">{a.ipNumber}</span>
           </p>
           <p className="mt-1 text-[13px] text-[var(--p-muted)]">
-            {a.wardName} · {a.bedNo} · day {s.days} · {withDr(a.doctor.name)} ({a.doctor.department})
+            {bedLabel(a.wardName, a.bedNo)} · day {s.days} · {withDr(a.doctor.name)} ({a.doctor.department})
           </p>
         </div>
         <div className="rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] px-4 py-3 text-[13px]">
@@ -510,7 +511,7 @@ export default function InsuranceAdmissionPage() {
               <p className="mt-0.5 text-[12.5px] text-[var(--p-muted)]">Computed from the bed and the days. Not editable here.</p>
             </div>
             <div className="divide-y divide-[var(--p-border)] text-[13.5px]">
-              <Fixed k={`${a.wardName} · ${a.bedNo}`} sub={`₹${money(a.dailyCharge)}/day × ${s.days}`} v={s.bedTotal} />
+              <Fixed k={bedLabel(a.wardName, a.bedNo)} sub={`₹${money(a.dailyCharge)}/day × ${s.days}`} v={s.bedTotal} />
               <Fixed k="Nursing care" sub={`${s.days} day${s.days === 1 ? "" : "s"}`} v={s.nurseTotal} />
             </div>
           </section>

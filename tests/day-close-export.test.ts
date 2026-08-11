@@ -24,12 +24,12 @@ const sample: DayCloseExport = {
   refundCount: 1,
   byCounter: [{ name: "Ravi (Reception)", count: 15, amount: 20800.5 }],
   refunds: [{
-    receiptNo: "INV-2026-000312", patient: "Ramesh Kumar", amount: 500,
+    receiptNo: "JMH20260312", patient: "Ramesh Kumar", amount: 500,
     mode: "CASH", reason: "Test cancelled", by: "Ravi (Reception)",
     at: "2026-07-26T10:30:00.000Z",
   }],
-  outstanding: [{ receiptNo: "INV-2026-000315", patient: "Divya Prasad", total: 2400, paid: 1000, due: 1400 }],
-  insurance: [{ receiptNo: "INV-2026-000318", patient: "Sunita Rao", insurer: "Star Health", total: 46000 }],
+  outstanding: [{ receiptNo: "JMH20260315", patient: "Divya Prasad", total: 2400, paid: 1000, due: 1400 }],
+  insurance: [{ receiptNo: "JMH20260318", patient: "Sunita Rao", insurer: "Star Health", total: 46000 }],
   insuranceTotal: 46000,
 };
 

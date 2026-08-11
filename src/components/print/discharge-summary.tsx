@@ -7,6 +7,7 @@ import {
   PrintToolbar, LetterHead, PreprintedGuide, type HospitalInfo,
 } from "@/components/print/stationery";
 import { isClosed, OUTCOME_LABEL, type AdmissionStatusValue } from "@/lib/admission-outcome";
+import { bedLabel } from "@/lib/beds";
 
 /**
  * THE DISCHARGE SUMMARY, SET LIKE THE LAB REPORT.
@@ -255,7 +256,7 @@ function DischargeSummaryInner() {
     { k: "UHID", v: p.displayId, mono: true },
     { k: "Name", v: p.fullName },
     { k: "Age / Sex", v: ageSex },
-    { k: "Ward / Bed", v: `${a.wardName} · ${a.bedNo}` },
+    { k: "Ward / Bed", v: bedLabel(a.wardName, a.bedNo) },
     { k: "Doctor", v: d.doctor.name },
     { k: "H. Panel", v: a.payerType === "INSURANCE" ? (a.insurer || "Insurance") : "Self pay / Cash" },
   ];
@@ -458,7 +459,7 @@ function DischargeSummaryInner() {
             <tbody>
               {d.bill.legs.length > 0 ? d.bill.legs.map((l, i) => (
                 <tr key={i}>
-                  <td>Bed · {l.wardName} · {l.bedNo} <span className="ds-muted">({l.days}d × {money(l.dailyCharge)})</span></td>
+                  <td>Bed · {bedLabel(l.wardName, l.bedNo)} <span className="ds-muted">({l.days}d × {money(l.dailyCharge)})</span></td>
                   <td className="ds-r ds-mono">{money(l.total)}</td>
                 </tr>
               )) : <tr><td>Bed charges</td><td className="ds-r ds-mono">{money(d.bill.bedTotal)}</td></tr>}

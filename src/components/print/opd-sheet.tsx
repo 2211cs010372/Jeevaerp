@@ -377,10 +377,20 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
             sit directly under Address on the same tracks and read as that strip
             continuing - not as a second grid of their own. */}
         <div className="mt-[1.9vw]">
-          <VitalsGrid items={vitalsBoxes(isBlank ? null : v)} />
+          {/* BP, Height, Weight → same row */}
+          <VitalsGrid
+            items={vitalsBoxes(isBlank ? null : v).slice(0, 3)}
+          />
+
+          {/* Temperature, Pulse, SpO₂ → vertical */}
+          <VitalsGrid
+            items={vitalsBoxes(isBlank ? null : v).slice(3)}
+            stack
+            className="mt-[8px] gap-y-[5px] "
+          />
         </div>
 
-        <div className="mt-[0.3vw]">
+        <div className="pt-[2vw]">
 
           {/* grow: history and investigation share whatever the rail has left,
                 so a light visit turns into writing room under these two headings

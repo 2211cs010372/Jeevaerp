@@ -8,6 +8,7 @@ import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { DischargeSummaryForm } from "@/components/portal/ipd/discharge-summary-form";
 import { api, ApiClientError } from "@/lib/api-client";
+import { bedLabel } from "@/lib/beds";
 
 /** One row of the hospital's published rate card. See prisma ServiceCharge. */
 interface ServiceCharge {
@@ -311,7 +312,7 @@ export default function AdmissionSheetPage() {
             {discharged && <span className="rounded bg-[var(--p-bg)] px-2 py-0.5 text-[12px] font-semibold uppercase text-[var(--p-muted)]">Discharged</span>}
           </div>
           <p className="mt-1 text-[14px] text-[var(--p-muted)]">
-            <span className="font-mono">{a.patient.displayId}</span> · {a.wardName} · Bed <b className="text-[var(--p-ink)]">{a.bedNo}</b> ·
+            <span className="font-mono">{a.patient.displayId}</span> · <b className="text-[var(--p-ink)]">{bedLabel(a.wardName, a.bedNo)}</b> ·
             Dr. {a.doctor.name} ({a.doctor.department})
           </p>
           {a.reason && <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">Reason: {a.reason}</p>}
@@ -406,7 +407,7 @@ export default function AdmissionSheetPage() {
             <div className="flex items-center justify-between gap-3 bg-[var(--p-bg)] px-5 py-3.5">
               <div className="min-w-0">
                 <div className="text-[14px] font-semibold text-[var(--p-ink)]">
-                  Bed charges · {a.wardName} · {a.bedNo}
+                  Bed charges · {bedLabel(a.wardName, a.bedNo)}
                 </div>
                 <div className="text-[12px] text-[var(--p-muted)]">
                   {sheet.days} day{sheet.days === 1 ? "" : "s"} × ₹{money(a.dailyCharge)}
@@ -706,7 +707,7 @@ export default function AdmissionSheetPage() {
               sheet.legs.map((l, i) => (
                 <div key={i} className="flex items-center justify-between text-[14px]">
                   <span className="min-w-0 text-[var(--p-muted)]">
-                    <span className="text-[var(--p-ink)]">{l.wardName}</span> · {l.bedNo}
+                    <span className="text-[var(--p-ink)]">{bedLabel(l.wardName, l.bedNo)}</span>
                     <span className="ml-1 text-[12px]">({l.days}d × ₹{money(l.dailyCharge)})</span>
                     {l.current && <span className="ml-1 rounded bg-[var(--p-blue-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--p-blue)]">now</span>}
                   </span>
@@ -966,7 +967,7 @@ export default function AdmissionSheetPage() {
             <div className="border-b border-[var(--p-border)] px-5 py-4">
               <h3 className="text-[15px] font-semibold text-[var(--p-ink)]">Move to another bed</h3>
               <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">
-                Currently {a.wardName} · {a.bedNo}. Only free beds are offered.
+                Currently {bedLabel(a.wardName, a.bedNo)}. Only free beds are offered.
               </p>
             </div>
 
@@ -983,7 +984,7 @@ export default function AdmissionSheetPage() {
                       className="w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]">
                       {xferWards.map((w) => (
                         <optgroup key={w.id} label={`${w.name} - ₹${Number(w.dailyCharge).toLocaleString("en-IN")}/day`}>
-                          {w.beds.map((b) => <option key={b.id} value={b.id}>{w.name} · {b.bedNo}</option>)}
+                          {w.beds.map((b) => <option key={b.id} value={b.id}>{bedLabel(w.name, b.bedNo)}</option>)}
                         </optgroup>
                       ))}
                     </select>

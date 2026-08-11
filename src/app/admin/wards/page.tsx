@@ -6,6 +6,7 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { bedShort } from "@/lib/beds";
 
 interface Bed {
   id: string; bedNo: string; status: string;
@@ -187,7 +188,7 @@ export default function WardsPage() {
                           : "border-[var(--p-cyan)]/40 bg-[var(--p-cyan-soft)] hover:border-[var(--p-cyan)]"
                         }`}>
                         <div className="flex w-full items-center justify-between">
-                          <span className="font-mono text-[13px] font-bold" style={{ color: tone }}>{b.bedNo}</span>
+                          <span className="font-mono text-[13px] font-bold" style={{ color: tone }}>{bedShort(b.bedNo)}</span>
                           <BedIcon tone={tone} />
                         </div>
                         {occ && b.patient ? (

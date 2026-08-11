@@ -9,6 +9,7 @@ import { api, ApiClientError } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
 import { TOPICS } from "@/lib/realtime/topics";
 import { StatusPill } from "@/components/portal/insurance/claims-board";
+import { bedLabel } from "@/lib/beds";
 
 /**
  * INSURANCE STAYS - every patient this desk is responsible for.
@@ -135,7 +136,7 @@ export default function StaysPage() {
                   <div className="mt-0.5 truncate text-[12.5px] text-[var(--p-muted)]">
                     {s.insurer ?? "Insurer not recorded"}
                     {s.policyNo && <> · <span className="font-mono">{s.policyNo}</span></>}
-                    {" · "}{s.ward} {s.bedNo}
+                    {" · "}{bedLabel(s.ward, s.bedNo)}
                     {" · "}
                     {s.dischargedAt ? `discharged ${day(s.dischargedAt)}` : `admitted ${day(s.admittedAt)}`}
                   </div>

@@ -5,6 +5,7 @@ import { PrimaryButton } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { api, ApiClientError } from "@/lib/api-client";
+import { bedLabel } from "@/lib/beds";
 
 /**
  * THE DISCHARGE SUMMARY, WRITTEN FROM EITHER DESK.
@@ -190,7 +191,7 @@ export function DischargeSummaryForm({ admissionId, onClose }: {
             {d && (
               <p className="mt-0.5 truncate text-[12.5px] text-[var(--p-muted)]">
                 {d.patient.fullName} · <span className="font-mono">{d.patient.displayId}</span> ·{" "}
-                <span className="font-mono">{d.admission.ipNumber}</span> · {d.admission.wardName} {d.admission.bedNo}
+                <span className="font-mono">{d.admission.ipNumber}</span> · {bedLabel(d.admission.wardName, d.admission.bedNo)}
               </p>
             )}
           </div>

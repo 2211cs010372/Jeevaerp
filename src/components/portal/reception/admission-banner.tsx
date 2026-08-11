@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/portal/ui/icons";
 import { api } from "@/lib/api-client";
+import { bedLabel } from "@/lib/beds";
 
 /**
  * THE IP/OP SWITCH
@@ -105,7 +106,7 @@ export function AdmissionBanner({
               </span>
             </p>
             <p className="mt-0.5 truncate text-[12px] text-white/85">
-              {admission.wardName} · <b>{admission.bedNo}</b> · Dr. {admission.doctorName} · day {days(admission.admittedAt)}
+              <b>{bedLabel(admission.wardName, admission.bedNo)}</b> · Dr. {admission.doctorName} · day {days(admission.admittedAt)}
               {admission.reason && <> · {admission.reason}</>}
             </p>
           </div>

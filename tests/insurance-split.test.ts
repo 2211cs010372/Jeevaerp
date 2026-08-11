@@ -165,7 +165,7 @@ const claim = (o: Partial<ClaimLike>): ClaimLike => ({
   claimedAmount: "250000",
   approvedAmount: "180000",
   settledAmount: null,
-  claimNo: "CLM-2026-000001",
+  claimNo: "JMH2026CLM0001",
   ...o,
 });
 
@@ -194,7 +194,7 @@ describe("approvalOf", () => {
     const a = approvalOf([claim({ status: "SUBMITTED" })]);
     expect(a.pending).toBe(true);
     expect(a.approved).toBe(0);
-    expect(a.claimNo).toBe("CLM-2026-000001");
+    expect(a.claimNo).toBe("JMH2026CLM0001");
   });
 
   it("does not count a queried or draft claim either", () => {

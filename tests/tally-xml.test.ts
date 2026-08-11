@@ -20,7 +20,7 @@ import {
 const sale = (over: Partial<TallyVoucher> = {}): TallyVoucher => ({
   type: "Sales",
   date: "20260728",
-  voucherNo: "JMH2026-1042",
+  voucherNo: "JMH20261042",
   partyName: "Ravi Kumar",
   narration: "PHARMACY - JMH2026OP00001",
   entries: [
@@ -125,7 +125,7 @@ describe("document shape", () => {
     expect(xml).toContain("<TALLYREQUEST>Import Data</TALLYREQUEST>");
     expect(xml).toContain("<REPORTNAME>Vouchers</REPORTNAME>");
     expect(xml).toContain('<VOUCHER VCHTYPE="Sales" ACTION="Create"');
-    expect(xml).toContain("<VOUCHERNUMBER>JMH2026-1042</VOUCHERNUMBER>");
+    expect(xml).toContain("<VOUCHERNUMBER>JMH20261042</VOUCHERNUMBER>");
   });
 
   it("emits a valid empty document when nothing was billed", () => {
@@ -137,8 +137,8 @@ describe("document shape", () => {
   it("carries all three voucher types", () => {
     const xml = wrap([
       sale(),
-      sale({ type: "Receipt", voucherNo: "JMH2026-1042-R1", entries: [{ ledger: "Cash", amount: -56 }, { ledger: "Sundry Debtors", amount: 56 }] }),
-      sale({ type: "Credit Note", voucherNo: "JMH2026-1042-CN1", entries: [{ ledger: "Pharmacy Sales", amount: -56 }, { ledger: "Cash", amount: 56 }] }),
+      sale({ type: "Receipt", voucherNo: "JMH20261042-R1", entries: [{ ledger: "Cash", amount: -56 }, { ledger: "Sundry Debtors", amount: 56 }] }),
+      sale({ type: "Credit Note", voucherNo: "JMH20261042-CN1", entries: [{ ledger: "Pharmacy Sales", amount: -56 }, { ledger: "Cash", amount: 56 }] }),
     ]);
     expect(xml).toContain('VCHTYPE="Sales"');
     expect(xml).toContain('VCHTYPE="Receipt"');

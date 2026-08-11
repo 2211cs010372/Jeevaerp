@@ -23,7 +23,9 @@ import { prisma } from "@/lib/prisma";
  * the phone-number rule and stops being recognizable as an ID at all.
  */
 const REDACTIONS: [RegExp, string][] = [
-  // JMH2026OP00123 / JMH2026IP00007 - see src/lib/ids.ts
+  // JMH2026OP00123 / JMH2026IP00007 - see src/lib/id-formats.ts. Bill numbers
+  // (JMH20260312) are deliberately NOT redacted: a document number is not a
+  // patient, and it is the one thing that makes a billing error traceable.
   [/\bJMH\d{4}(?:OP|IP)\d{5}\b/g, "[uhid]"],
   [/\b[\w.+-]+@[\w-]+\.[\w.]{2,}\b/gi, "[email]"],
   // 10-digit Indian mobile, with or without +91 / 0 prefix

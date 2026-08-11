@@ -1611,6 +1611,9 @@ model PurchaseReturnItem {
 /// revenue is GROUP BY source.
 model Invoice {
   id                   String              @id @default(cuid())
+  /// JMH20260312 - one series for every counter, so the GST return has one
+  /// unbroken run of numbers. Rows issued before this scheme keep their old
+  /// INV-2026-000312 form; nothing already filed was renumbered.
   receiptNo            String              @unique
   patientId            String
   patient              Patient             @relation(fields: [patientId], references: [id])
@@ -1882,7 +1885,8 @@ model RefreshToken {
 }
 
 /// Year-scoped atomic counters behind every human-facing ID
-/// (JMH-2026-000123, OP-2026-000045, INV-2026-000312).
+/// (JMH2026OP00123, JMH2026AP0045, JMH20260312). Shapes live in
+/// src/lib/id-formats.ts - read the header there before adding a kind.
 model Counter {
   key   String @id
   value Int    @default(0)
@@ -2289,7 +2293,7 @@ model AdmissionAdvance {
   id           String      @id @default(cuid())
   admissionId  String
   admission    Admission   @relation(fields: [admissionId], references: [id])
-  /// Human-facing number on the slip handed to the family - ADV-2026-000012.
+  /// Human-facing number on the slip handed to the family - JMH2026ADV0012.
   /// NULLABLE only for rows taken before receipts existed; every new advance
   /// gets one. Its own Counter series, never the tax-invoice series: a deposit
   /// is money held against a stay, not a supply.

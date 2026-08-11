@@ -9,6 +9,7 @@ import { api, ApiClientError } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
 import { TOPICS } from "@/lib/realtime/topics";
 import { NewClaim, type ClaimPrefill } from "@/components/portal/insurance/claims-board";
+import { bedLabel } from "@/lib/beds";
 
 /**
  * TO RAISE - stays that reception flagged as insurance and nobody has claimed for.
@@ -225,7 +226,7 @@ function Group({ title, blurb, items, onRaise }: {
                   </div>
                   <div className="mt-0.5 truncate text-[12.5px] text-[var(--p-muted)]">
                     {it.insurer} · policy <span className="font-mono">{it.policyNo}</span>
-                    {" · "}{it.ward} {it.bedNo}
+                    {" · "}{bedLabel(it.ward, it.bedNo)}
                     {" · "}
                     {it.dischargedAt
                       ? <>discharged {day(it.dischargedAt)}{it.invoiceNo && <> · bill <span className="font-mono">{it.invoiceNo}</span></>}</>

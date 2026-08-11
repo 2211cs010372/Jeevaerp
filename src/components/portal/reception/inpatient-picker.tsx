@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/portal/ui/icons";
 import { api } from "@/lib/api-client";
+import { bedShort } from "@/lib/beds";
 
 /**
  * PICK BY BED, NOT BY NAME.
@@ -110,7 +111,7 @@ export function InpatientPicker({
                       <span className="shrink-0 text-[var(--p-blue)]"><BedMark /></span>
                       <span className="min-w-0 flex-1">
                         <span className="flex items-center gap-1.5">
-                          <span className="font-mono text-[12px] font-bold text-[var(--p-blue-deep)]">{ip.bedNo}</span>
+                          <span className="font-mono text-[12px] font-bold text-[var(--p-blue-deep)]">{bedShort(ip.bedNo)}</span>
                           {on && <Icon name="check" size={12} />}
                         </span>
                         <span className="block truncate text-[13.5px] font-semibold text-[var(--p-ink)]">

@@ -10,6 +10,7 @@ import { AbnormalPill, LabResultTable, type LabResultRow } from "@/components/po
 import { api, ApiClientError } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
 import { TOPICS } from "@/lib/realtime/topics";
+import { bedLabel } from "@/lib/beds";
 
 interface Q {
   appointmentId: string; opNumber: string; time: string; status: string;
@@ -293,7 +294,7 @@ export default function DoctorToday() {
                       <span className="truncate text-[13.5px] font-medium text-[var(--p-ink)]">{i.patient.fullName}</span>
                       <span className="shrink-0 font-mono text-[11px] text-[var(--p-blue)]">{i.ipNumber}</span>
                     </div>
-                    <div className="text-[12px] text-[var(--p-muted)]">{i.wardName} · {i.bedNo} · day {i.days} · <span className="tabular">{i.patient.displayId}</span></div>
+                    <div className="text-[12px] text-[var(--p-muted)]">{bedLabel(i.wardName, i.bedNo)} · day {i.days} · <span className="tabular">{i.patient.displayId}</span></div>
                   </div>
                   <Link href={`/patients?id=${i.patient.displayId}`} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--p-blue)] hover:border-[var(--p-blue)]">Chart</Link>
                 </div>

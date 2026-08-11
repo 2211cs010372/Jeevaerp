@@ -50,7 +50,7 @@ const buyer: EInvoiceBuyer = {
 };
 
 const doc = (over: Partial<EInvoiceSourceDoc> = {}): EInvoiceSourceDoc => ({
-  receiptNo: "JMH2026-1042",
+  receiptNo: "JMH20261042",
   invoiceDate: new Date("2026-07-28T10:30:00"),
   lines: [
     { description: "Paracetamol 500mg", hsnSac: "30049099", qty: 10, unitPrice: 5, amount: 50, gstRatePct: 12, isService: false },
@@ -103,7 +103,7 @@ describe("portal formatting rules", () => {
   });
 
   it("accepts document numbers the portal allows", () => {
-    expect(isValidDocNo("JMH2026-1042")).toBe(true);
+    expect(isValidDocNo("JMH20261042")).toBe(true);
     expect(isValidDocNo("INV/2026/01")).toBe(true);
   });
 
@@ -172,7 +172,7 @@ describe("payload", () => {
     const p = buildEInvoicePayload(doc(), seller, buyer);
     expect(p.Version).toBe("1.1");
     expect(p.TranDtls.SupTyp).toBe("B2B");
-    expect(p.DocDtls).toEqual({ Typ: "INV", No: "JMH2026-1042", Dt: "28/07/2026" });
+    expect(p.DocDtls).toEqual({ Typ: "INV", No: "JMH20261042", Dt: "28/07/2026" });
     expect(p.SellerDtls.Gstin).toBe(SELLER_GSTIN);
     expect(p.BuyerDtls.Gstin).toBe(BUYER_GSTIN);
   });

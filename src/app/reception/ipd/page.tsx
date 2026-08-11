@@ -10,6 +10,7 @@ import { api, ApiClientError } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
 import { TOPICS } from "@/lib/realtime/topics";
 import { INSURERS } from "@/lib/insurers";
+import { bedLabel, bedShort } from "@/lib/beds";
 
 interface Bed {
   id: string; bedNo: string; status: string;
@@ -307,7 +308,7 @@ export default function BedBoardPage() {
                           disabled={b.status === "MAINTENANCE"}
                           className={`bed-card bed-${st} ${picked ? "is-picked" : ""} ${shown ? "is-shown" : ""}`}>
                           <BedGlyph status={b.status} />
-                          <span className="bed-no">{b.bedNo}</span>
+                          <span className="bed-no">{bedShort(b.bedNo)}</span>
                           {b.patient ? (
                             <>
                               <span className="bed-who">{b.patient.fullName}</span>
@@ -361,7 +362,7 @@ export default function BedBoardPage() {
 
                   <dl className="divide-y divide-[var(--p-border)] text-[14px]">
                     <Row k="IP number" v={<span className="font-mono font-semibold text-[var(--p-ink)]">{occupant.admission.ipNumber}</span>} />
-                    <Row k="Bed" v={<>{occupant.admission.wardName} · <b className="text-[var(--p-ink)]">{occupant.admission.bedNo}</b></>} />
+                    <Row k="Bed" v={<b className="text-[var(--p-ink)]">{bedLabel(occupant.admission.wardName, occupant.admission.bedNo)}</b>} />
                     <Row k="Attending" v={<>Dr. {occupant.admission.doctor.name} <span className="text-[var(--p-muted)]">({occupant.admission.doctor.department})</span></>} />
                     <Row k="Admitted" v={<>{new Date(occupant.admission.admittedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} · <b className="text-[var(--p-ink)]">day {occupant.days}</b></>} />
                     {/* The desk asks the family for money at discharge. It has to
@@ -434,7 +435,7 @@ export default function BedBoardPage() {
                 <h3 className="mt-3 font-serif-p text-[19px] font-semibold text-[var(--p-ink)]">Admitted</h3>
                 <p className="mt-1 text-[14px] text-[var(--p-muted)]">
                   <span className="font-mono font-semibold text-[var(--p-ink)]">{doneIp.ipNumber}</span><br />
-                  {doneIp.ward} · {doneIp.bedNo}
+                  {bedLabel(doneIp.ward, doneIp.bedNo)}
                 </p>
                 <p className="mt-2 text-[12px] leading-relaxed text-[var(--p-muted)]">
                   Bed charges start today. Add procedures and prescriptions on the sheet.
@@ -491,7 +492,7 @@ export default function BedBoardPage() {
                     <label className={lbl}>Bed <span className="text-[var(--p-rose)]">*</span></label>
                     <select className={fld} value={bedId} onChange={(e) => setBedId(e.target.value)} disabled={!selectedWard}>
                       {!selectedWard && <option value="">-</option>}
-                      {selectedWard?.beds.map((b) => <option key={b.id} value={b.id}>{b.bedNo}</option>)}
+                      {selectedWard?.beds.map((b) => <option key={b.id} value={b.id}>{bedShort(b.bedNo)}</option>)}
                     </select>
                   </div>
                 </div>

@@ -13,6 +13,7 @@ import { AdmissionBanner, useAdmission } from "@/components/portal/reception/adm
 import { InpatientPicker } from "@/components/portal/reception/inpatient-picker";
 import { PRINT_CSS, RxTable } from "@/components/print/stationery";
 import { parsePrescriptionText, isEmptyParse, describeParse, type ParsedVitals } from "@/lib/prescription-parse";
+import { bedLabel } from "@/lib/beds";
 
 interface Patient { id: string; displayId: string; fullName: string; phone: string; }
 interface Visit { id: string; opNumber: string; visitDate: string; doctorName: string; department: string; }
@@ -770,7 +771,7 @@ export default function UploadPrescriptionPage() {
                   </span>
                   <div className="min-w-0">
                     <p className="text-[14px] font-semibold text-[var(--p-ink)]">
-                      <span className="font-mono">{admission.ipNumber}</span> - {admission.wardName} · {admission.bedNo}
+                      <span className="font-mono">{admission.ipNumber}</span> - {bedLabel(admission.wardName, admission.bedNo)}
                     </p>
                     <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">
                       Under Dr. {admission.doctorName}. The pharmacy will charge these medicines to the room.

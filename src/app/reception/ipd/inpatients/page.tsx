@@ -16,6 +16,7 @@ import { useLive } from "@/lib/realtime/use-live";
 import { TOPICS } from "@/lib/realtime/topics";
 import { approvalOf, splitStay, type ClaimLike } from "@/lib/insurance-split";
 import { portalUrl } from "@/lib/auth/portal-url";
+import { bedLabel } from "@/lib/beds";
 
 interface Inpatient {
   bedCharge: string; extrasCharge: string; extras: number;
@@ -289,7 +290,7 @@ export default function InpatientsPage() {
                         {r.insurer ?? "Insurance"}
                       </span>
                     )}
-                    <Pill tone="checkedin">{r.ward} · {r.bedNo}</Pill>
+                    <Pill tone="checkedin">{bedLabel(r.ward, r.bedNo)}</Pill>
                   </div>
                   <div className="mt-1 text-[13px] text-[var(--p-muted)]">
                     <span className="tabular">{r.patient.displayId}</span>
@@ -414,7 +415,7 @@ export default function InpatientsPage() {
             <div className="flex items-center justify-between border-b border-[var(--p-border)] px-6 py-4">
               <div>
                 <h3 className="text-[15px] font-semibold text-[var(--p-ink)]">Discharge {dischargeOf.patient.fullName}</h3>
-                <p className="text-[13px] text-[var(--p-muted)]"><span className="font-mono">{dischargeOf.ipNumber}</span> · {dischargeOf.ward} · {dischargeOf.bedNo}</p>
+                <p className="text-[13px] text-[var(--p-muted)]"><span className="font-mono">{dischargeOf.ipNumber}</span> · {bedLabel(dischargeOf.ward, dischargeOf.bedNo)}</p>
               </div>
               <button onClick={closeModal} className="text-[var(--p-muted)] hover:text-[var(--p-ink)]">✕</button>
             </div>

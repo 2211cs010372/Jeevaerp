@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import JsBarcode from "jsbarcode";
 import { api, ApiClientError } from "@/lib/api-client";
 import { amountInWords } from "@/lib/amount-words";
+import { bedLabel } from "@/lib/beds";
 import { INVOICE_PRINT_CSS, PrintToolbar, BillHead, type HospitalInfo } from "@/components/print/stationery";
 
 /**
@@ -117,7 +118,7 @@ export function AdvanceReceipt() {
           <div className="space-y-0.5">
             <Meta k="Age/Sex" v={ageSex} />
             <Meta k="Phone" v={d.patient.phone} />
-            <Meta k="Ward / Bed" v={`${d.admission.ward} · ${d.admission.bedNo}`} />
+            <Meta k="Ward / Bed" v={bedLabel(d.admission.ward, d.admission.bedNo)} />
           </div>
         </div>
 

@@ -541,6 +541,7 @@ export function RxTable({ items, blankRows = 0, note }: {
  */
 const CAPS_HEAD = "text-[12.5px] uppercase font-semibold";
 const CAPS_LABEL = "text-[10.5px] uppercase font-semibold tracking-[0.09em]";
+const CAPS_DOC = "text-[14.5px]  font-semibold tracking-[0.02em]";
 
 /**
  * The sheet's own masthead - a title on the left, the visit classification on
@@ -606,17 +607,20 @@ export function DoctorHead({ doctor, inset = false }: {
   // The degree line the hospital hand-writes ("MBBS  M.D Pediatrics"). Falls
   // back to the specialization so the sheet never prints a nameless credential
   // gap for a doctor whose profile has no qualification typed in yet.
-  const credentials = doctor.qualification?.trim() || doctor.specialization;
+  const credentials = doctor.qualification?.trim();
   // Name in ink, degrees in the metadata voice - the same pairing the patient
   // block uses, so the consultant reads as the sheet's first field rather than
   // as a second letterhead competing with the printed one above it.
   const body = (
     <div className="flex flex-col items-center  h-[100px] justify-end leading-tight">
-      <div className="text-[24px] font-medium tracking-[-0.01em]" style={{ color: "var(--pr-ink)" }}>
+      <div className="text-[24px] font-bold tracking-[-0.01em]" style={{ color: "var(--pr-ink)" }}>
         {doctor.name}
       </div>
-      <div className={`mt-[3px] ${CAPS_LABEL}`} style={{ color: "var(--pr-muted)" }}>
+      <div className={`mt-[3px] font-semibold ${CAPS_DOC}`} style={{ color: "var(--pr-ink)" }}>
         {credentials}
+      </div>
+      <div className={`mt-[3px] font-semibold ${CAPS_DOC}`} style={{ color: "var(--pr-ink)" }}>
+        {doctor.specialization}
       </div>
     </div>
   );
@@ -802,22 +806,36 @@ export function FieldGrid({ fields }: {
  * BP, Temp, Pulse, SpO₂ running down the margin beside the ℞. Unstacked they
  * lie three across on the patient block's own tracks.
  */
-export function VitalsGrid({ items, stack = false }: {
+export function VitalsGrid({
+  items,
+  stack = false,
+  className = "",
+}: {
   items: { label: string; value: string | null }[];
   stack?: boolean;
+  className?: string;
 }) {
-  // Unstacked: same tracks and gutter as FieldGrid above it, so the vitals land
-  // on the patient block's own columns rather than on a second grid of their
-  // own - which is the whole reason they no longer need a box.
   return (
-    <div className={stack ? "flex flex-col gap-y-[8px]" : "grid grid-cols-[1.15fr_0.85fr_1fr]  gap-x-5 gap-y-[8px]"}>
+    <div
+      className={`${stack
+        ? "flex flex-col gap-y-[8px]"
+        : "grid grid-cols-[1.15fr_0.85fr_1fr] gap-x-5 gap-y-[8px]"
+        } ${className}`}
+    >
       {items.map((b) => (
-        <div key={b.label} className="flex min-w-0 items-baseline gap-2">
-          <span className={`shrink-0 ${CAPS_LABEL}`} style={{ color: "var(--pr-primary)" }}>{b.label}: </span>
-          <span className="font-mono text-[12px] font-semibold leading-[4.2mm]" style={{ color: "var(--pr-ink)" }}>
-              {b.value || " "}
+        <span
+          key={b.label}
+          className={`shrink-0 ${CAPS_LABEL}`}
+          style={{ color: "var(--pr-primary)" }}
+        >
+          {b.label}:{" "}
+          <span
+            className="font-mono text-[12px] font-semibold leading-[4.2mm]"
+            style={{ color: "var(--pr-ink)" }}
+          >
+            {b.value || "\u00A0"}
           </span>
-        </div>
+        </span>
       ))}
     </div>
   );
@@ -867,7 +885,7 @@ export function OpenBlock({ label, value, minHeight = "14mm", footnote, inline =
       <section className="mt-[7px]">
         <div className="flex items-baseline gap-2.5">
           <h3 className={`shrink-0 ${CAPS_HEAD}`} style={{ color: "var(--pr-primary)" }}>
-            {label}: 
+            {label}:
           </h3>
           <p className="min-w-0 flex-1 whitespace-pre-line pt-[2px] text-[14.5px]  font-medium leading-snug"
             style={{ color: "var(--pr-ink)" }}>
@@ -967,7 +985,7 @@ export function RxPad({ items, slots = 9 }: {
                  the header is what fits between the pre-printed bands. */
               <tr key={i} className="border-b border-dotted pt-1 align-baseline" style={{ borderColor: "var(--pr-hair)", height: "8.5mm" }}>
                 {/* No full stop after the serial - it is a tally, not a sentence. */}
-                
+
                 <td className="pr-2 pt-2 text-[14.5px] font-semibold" style={{ color: "var(--pr-ink)" }}>
                   {it ? <>{it.medicineName}{it.qty > 1 ? <span className="ml-1 font-normal text-[#57655f]">× {it.qty}</span> : null}</> : " "}
                 </td>

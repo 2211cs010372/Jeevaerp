@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import JsBarcode from "jsbarcode";
 import { api, ApiClientError } from "@/lib/api-client";
 import { amountInWords } from "@/lib/amount-words";
+import { bedLabel } from "@/lib/beds";
 import { BillHead, PrintToolbar, type HospitalInfo } from "@/components/print/stationery";
 
 /**
@@ -158,7 +159,7 @@ export function DetailedBillSheet() {
             <F k="Mobile No" v={b.patient.phone} />
             <F k="Doctor" v={withDr(b.admission.doctor)} />
             <F k="Department" v={b.admission.department} />
-            <F k="Ward/Bed No" v={`${b.admission.ward} / ${b.admission.bedNo}`} />
+            <F k="Ward/Bed No" v={bedLabel(b.admission.ward, b.admission.bedNo)} />
             <F k="Source Type" v={b.sourceType} strong />
           </div>
           <div className="p-1.5">

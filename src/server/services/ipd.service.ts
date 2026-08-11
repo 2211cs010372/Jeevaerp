@@ -14,6 +14,7 @@ import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import { mergeAdvice } from "@/lib/advised-lab";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, PaymentMode, ChargeCategory } from "@prisma/client";
+import { bedLabel } from "@/lib/beds";
 import {
   CLOSED_STATUS_LIST, isClosed, OUTCOME_LABEL,
   type AdmissionStatusValue, type DischargeOutcome,
@@ -705,7 +706,7 @@ export async function dischargePatient(
     ? (stays as StayRow[]).map((st) => {
         const days = stayDays(st.fromDate, st.toDate ?? adm.dischargedAt);
         return {
-          description: `Bed · ${st.wardName} · ${st.bed?.bedNo ?? "-"} · ${days} day${days > 1 ? "s" : ""}`,
+          description: `Bed · ${bedLabel(st.wardName, st.bed?.bedNo)} · ${days} day${days > 1 ? "s" : ""}`,
           qty: days,
           unitPrice: Number(st.dailyCharge.toString()),
           gstRatePct: Number(st.gstRatePct.toString()),
@@ -865,11 +866,14 @@ export async function setupStandardWards(
   actor: AuthUser,
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<{ wards: number; beds: number }> {
+  // 30 beds total - the size Jeeva actually runs, so a fresh setup lands on the
+  // same shape as the live hospital instead of a 24-bed guess somebody then has
+  // to top up by hand.
   const PLAN = [
     { name: "General Ward", category: "GENERAL",      floor: "1st Floor", dailyCharge: 1500, gstRatePct: 0, beds: 10, prefix: "GW" },
     { name: "Semi-Private", category: "SEMI_PRIVATE", floor: "2nd Floor", dailyCharge: 3000, gstRatePct: 0, beds: 6,  prefix: "SP" },
     { name: "Private Room", category: "PRIVATE",      floor: "2nd Floor", dailyCharge: 5500, gstRatePct: 5, beds: 4,  prefix: "PR" },
-    { name: "ICU",          category: "ICU",          floor: "3rd Floor", dailyCharge: 8000, gstRatePct: 0, beds: 4,  prefix: "ICU" },
+    { name: "ICU",          category: "ICU",          floor: "3rd Floor", dailyCharge: 8000, gstRatePct: 0, beds: 10, prefix: "ICU" },
   ];
 
   let bedCount = 0;

@@ -1,4 +1,5 @@
 import { sendTemplatedSms, sendAppointmentSms } from "@/lib/sms";
+import { bedLabel } from "@/lib/beds";
 
 /**
  * Every SMS the hospital sends a patient, a supplier or an administrator that
@@ -108,7 +109,7 @@ export async function notifyOpBooked(
  *
  * TEMPLATE (SMS_TPL_OP_CANCELLED):
  *   Dear {#var#}, your appointment {#var#} on {#var#} at Jeeva Hospital has
- *   been cancelled. Please call the desk to rebook. - Jeeva Hospital
+ *   been cancelled. Please call the desk to rebook.
  */
 export async function notifyOpCancelled(
   phone: string,
@@ -145,11 +146,11 @@ export async function notifyOpCancelled(
  *
  * TEMPLATE (SMS_TPL_BILL):
  *   Dear {#var#}, bill {#var#} for Rs {#var#} has been generated at Jeeva
- *   Hospital. Balance Rs {#var#}. - Jeeva Hospital
+ *   Hospital. Balance Rs {#var#}.
  *
  * TEMPLATE (SMS_TPL_PHARMACY_BILL):
  *   Dear {#var#}, pharmacy bill {#var#} for Rs {#var#} has been generated at
- *   Jeeva Hospital. Balance Rs {#var#}. - Jeeva Hospital
+ *   Jeeva Hospital. Balance Rs {#var#}.
  */
 export async function notifyBillGenerated(
   phone: string,
@@ -187,7 +188,7 @@ export async function notifyBillGenerated(
  *
  * TEMPLATE (SMS_TPL_ADVANCE):
  *   Dear {#var#}, advance of Rs {#var#} received against admission {#var#} at
- *   Jeeva Hospital. - Jeeva Hospital
+ *   Jeeva Hospital.
  */
 export async function notifyAdvanceReceived(
   phone: string,
@@ -223,7 +224,7 @@ export async function notifyAdvanceReceived(
  *
  * TEMPLATE (SMS_TPL_LAB_REPORT):
  *   Dear {#var#}, your {#var#} report ({#var#}) is ready for collection at
- *   Jeeva Hospital. - Jeeva Hospital
+ *   Jeeva Hospital.
  */
 export async function notifyLabReportReady(
   phone: string,
@@ -252,9 +253,12 @@ export async function notifyLabReportReady(
  * Admitted to a bed. The IP number is the thing a family is asked for at every
  * counter for the rest of the stay, so it goes on a phone rather than a slip.
  *
+ * The bed is ONE variable, not ward + number. `bedLabel` already renders
+ * "ICU BED 2", and splitting it back into two slots reintroduces the "ICU ·
+ * ICU-02" stutter this template used to send.
+ *
  * TEMPLATE (SMS_TPL_ADMITTED):
- *   Dear {#var#}, admission {#var#} is confirmed at Jeeva Hospital. Ward
- *   {#var#}, bed {#var#}. - Jeeva Hospital
+ *   Dear {#var#}, admission {#var#} is confirmed at Jeeva Hospital, {#var#}.
  */
 export async function notifyAdmitted(
   phone: string,
@@ -263,10 +267,11 @@ export async function notifyAdmitted(
   try {
     if (!phone) return skipped("no-phone");
     const name = firstName(v.name);
+    const bed = bedLabel(v.ward, v.bedNo);
     return await sendTemplatedSms(phone, {
       templateId: process.env.SMS_TPL_ADMITTED,
-      vars: [name, v.ipNumber, v.ward, v.bedNo],
-      preview: `Dear ${name}, admission ${v.ipNumber} is confirmed at Jeeva Hospital. Ward ${v.ward}, bed ${v.bedNo}.`,
+      vars: [name, v.ipNumber, bed],
+      preview: `Dear ${name}, admission ${v.ipNumber} is confirmed at Jeeva Hospital, ${bed}.`,
       label: "admitted",
     });
   } catch (err) {
@@ -295,7 +300,7 @@ export async function notifyDischarged(
     return await sendTemplatedSms(phone, {
       templateId: process.env.SMS_TPL_DISCHARGED,
       vars: [name, v.ipNumber, days, balance],
-      preview: `Dear ${name}, discharge for admission ${v.ipNumber} is complete. Stay ${days} day(s), balance Rs ${balance}. Get well soon.`,
+      preview: `Dear ${name}, discharge for admission ${v.ipNumber} is complete. Stay ${days} day(s), balance Rs ${balance}. Get well soon. - Jeeva Hospital`,
       label: "discharged",
     });
   } catch (err) {
@@ -318,7 +323,7 @@ export async function notifyDischarged(
  *
  * TEMPLATE (SMS_TPL_SUPPLIER_PO):
  *   {#var#}: purchase order {#var#} ({#var#} items) has been raised by Jeeva
- *   Hospital. Please confirm dispatch. - Jeeva Hospital
+ *   Hospital. Please confirm dispatch.
  */
 export async function notifySupplierPo(
   phone: string | null | undefined,
@@ -371,7 +376,6 @@ async function fanOutToAdmins(
  *
  * TEMPLATE (SMS_TPL_STOCK_RECEIVED):
  *   Jeeva Hospital: stock received {#var#} from {#var#}, value Rs {#var#}.
- *   - Jeeva Hospital
  */
 export async function notifyStockReceived(
   v: { grnNumber: string; supplierName: string; value: number | string }
@@ -409,7 +413,7 @@ export async function notifyStockReceived(
  *
  * TEMPLATE (SMS_TPL_LOW_STOCK):
  *   Jeeva Hospital: {#var#} item(s) are at or below reorder level, {#var#} out
- *   of stock. Please review purchase. - Jeeva Hospital
+ *   of stock. Please review purchase.
  */
 export async function notifyLowStock(
   v: { belowReorder: number; outOfStock: number }
