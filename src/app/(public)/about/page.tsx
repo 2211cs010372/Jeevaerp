@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowUpRight, Clock, MapPin, Phone } from "lucide-react";
+import { ArrowUpRight, Clock, MapPin, Phone } from "@/components/ui/hugeicons";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { SmartImage } from "@/components/ui/smart-image";
 import { Chapter, ChapterHead } from "@/components/marketing/section";

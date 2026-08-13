@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight } from "@/components/ui/hugeicons";
 import { SmartImage } from "@/components/ui/smart-image";
 import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
 import { DEPARTMENTS, DOCTORS, HOSPITAL } from "@/lib/data";

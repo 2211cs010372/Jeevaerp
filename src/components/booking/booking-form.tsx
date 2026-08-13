@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight } from "@/components/ui/hugeicons";
 import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
 import { OpdBand } from "@/components/marketing/opd-band";
 import { DoctorSlots } from "@/components/marketing/doctor-slots";

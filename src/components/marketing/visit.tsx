@@ -1,4 +1,4 @@
-import { ArrowUpRight, Clock, Mail, MapPin, Phone } from "lucide-react";
+import { ArrowUpRight, Clock, Mail, MapPin, Phone } from "@/components/ui/hugeicons";
 import { SmartImage } from "@/components/ui/smart-image";
 import { Vitals } from "@/components/marketing/vitals";
 import { HOSPITAL } from "@/lib/data";

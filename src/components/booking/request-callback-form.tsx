@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { PhoneCall, Check, ArrowRight, Loader2 } from "lucide-react";
+import { PhoneCall, Check, ArrowRight, Loader2 } from "@/components/ui/hugeicons";
 import { DOCTORS } from "@/lib/data";
 import { api, ApiClientError } from "@/lib/api-client";
 

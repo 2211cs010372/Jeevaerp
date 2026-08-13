@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight } from "@/components/ui/hugeicons";
 import { WARDS, DEPARTMENTS, DOCTORS, HOSPITAL } from "@/lib/data";
 import { Chapter } from "./section";
 import { Counter, Parallax, Reveal, Stagger } from "./motion";

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight } from "@/components/ui/hugeicons";
 import { WARDS } from "@/lib/data";
 import { Chapter } from "./section";
 import { Reveal, SplitLead, Stagger } from "./motion";

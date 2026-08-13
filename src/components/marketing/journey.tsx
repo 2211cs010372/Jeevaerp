@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight } from "@/components/ui/hugeicons";
 import { JOURNEY } from "@/lib/data";
 import { Chapter, ChapterHead } from "./section";
 import { Reveal, Stagger } from "./motion";

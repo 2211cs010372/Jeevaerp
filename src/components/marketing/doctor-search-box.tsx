@@ -3,7 +3,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Search, ArrowRight, CornerDownLeft } from "lucide-react";
+import { Search, ArrowRight, CornerDownLeft } from "@/components/ui/hugeicons";
 import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
 import { searchDoctors } from "@/lib/doctor-search";
 import { DOCTORS } from "@/lib/data";

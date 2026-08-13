@@ -2,7 +2,7 @@
 
 import { Fragment } from "react";
 import Link from "next/link";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight } from "@/components/ui/hugeicons";
 import { DeptVisual } from "@/components/marketing/dept-visual";
 import {
   CARE_AREAS,

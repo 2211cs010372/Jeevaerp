@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowUpRight, Phone } from "lucide-react";
+import { ArrowUpRight, Phone } from "@/components/ui/hugeicons";
 import { HOSPITAL, CARE_AREAS } from "@/lib/data";
 import { careHref } from "@/lib/care";
 import { Reveal, SplitLead, Stagger } from "./motion";

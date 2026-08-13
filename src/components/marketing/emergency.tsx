@@ -1,4 +1,4 @@
-import { Phone } from "lucide-react";
+import { Phone } from "@/components/ui/hugeicons";
 import { HOSPITAL } from "@/lib/data";
 import { Reveal, SplitLead } from "./motion";
 

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { PhoneCall, User, ChevronDown, ArrowRight, ArrowUpRight } from "lucide-react";
+import { PhoneCall, User, ChevronDown, ArrowRight, ArrowUpRight } from "@/components/ui/hugeicons";
 import { DeptIcon } from "@/components/marketing/dept-icon";
 import { MenuIcon } from "@/components/marketing/menu-icon";
 import { DoctorSearchBox } from "@/components/marketing/doctor-search-box";

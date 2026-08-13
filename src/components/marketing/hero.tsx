@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { ArrowUpRight, Phone } from "lucide-react";
+import { ArrowUpRight, Phone } from "@/components/ui/hugeicons";
 import { SmartImage } from "../ui/smart-image";
 import { IMAGES, HOSPITAL, DEPARTMENTS } from "@/lib/data";
 import { Magnetic, Parallax, Reveal, SplitLead, Stagger } from "./motion";

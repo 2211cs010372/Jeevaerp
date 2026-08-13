@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowUpRight, Check, Phone } from "lucide-react";
+import { ArrowUpRight, Check, Phone } from "@/components/ui/hugeicons";
 import { allowedDays, clockLabel, isByAppointment } from "@/lib/opd";
 import { HOSPITAL } from "@/lib/data";
 

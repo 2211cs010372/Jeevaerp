@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, ArrowRight, Quote } from "lucide-react";
+import { ArrowLeft, ArrowRight, Quote } from "@/components/ui/hugeicons";
 import { Chapter, ChapterHead } from "./section";
 import { Stagger } from "./motion";
 

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Search } from "lucide-react";
+import { Search } from "@/components/ui/hugeicons";
 import type { Doctor } from "@/lib/data";
 import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
 import { DoctorCard } from "@/components/marketing/doctor-card";

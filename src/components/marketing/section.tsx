@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight } from "@/components/ui/hugeicons";
 import type { CSSProperties, ReactNode } from "react";
 import { Reveal, SplitLead, type LeadLine } from "./motion";
 

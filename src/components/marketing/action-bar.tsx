@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Search, CalendarCheck, Bed, PhoneCall, ArrowUpRight } from "lucide-react";
+import { Search, CalendarCheck, Bed, PhoneCall, ArrowUpRight } from "@/components/ui/hugeicons";
 import { HOSPITAL, DOCTORS } from "@/lib/data";
 import { Stagger } from "./motion";
 

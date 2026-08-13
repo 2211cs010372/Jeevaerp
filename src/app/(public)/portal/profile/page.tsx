@@ -9,7 +9,7 @@ import {
   Calendar, FileText, FlaskConical, Receipt, User, LogOut, Plus, Download,
   ArrowRight, Activity, Stethoscope, MapPin, Phone, Clock, CheckCircle2,
   FolderOpen, Eye,
-} from "lucide-react";
+} from "@/components/ui/hugeicons";
 
 /* ── types ─────────────────────────────────────────────────────────────── */
 interface Profile {

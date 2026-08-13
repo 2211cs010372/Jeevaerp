@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowUpRight, Check, Clock, Phone, Utensils } from "lucide-react";
+import { ArrowUpRight, Check, Clock, Phone, Utensils } from "@/components/ui/hugeicons";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { Chapter, ChapterHead } from "@/components/marketing/section";
 import { Reveal, Stagger } from "@/components/marketing/motion";

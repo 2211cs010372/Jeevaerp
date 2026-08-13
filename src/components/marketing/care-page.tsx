@@ -8,7 +8,7 @@ import {
   Phone,
   ShieldCheck,
   Stethoscope,
-} from "lucide-react";
+} from "@/components/ui/hugeicons";
 import { SmartImage } from "@/components/ui/smart-image";
 import { DeptIcon } from "@/components/marketing/dept-icon";
 import { DoctorAvatar } from "@/components/marketing/doctor-avatar";

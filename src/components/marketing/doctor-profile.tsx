@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import {
   ArrowLeft, ArrowUpRight, Check, GraduationCap, MapPin, Phone, Plus,
-} from "lucide-react";
+} from "@/components/ui/hugeicons";
 import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
 import { DoctorCard } from "@/components/marketing/doctor-card";
 import { DoctorIndex, type ProfileSection } from "@/components/marketing/doctor-index";
