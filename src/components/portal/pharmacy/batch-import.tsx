@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { api, ApiClientError } from "@/lib/api-client";
-import { parseInvoiceText, parseInvoiceHeader, toISODate, type SupplierRef, type ParsedRow } from "@/lib/pharmacy/invoice-parse";
+import { parseInvoiceHeader, type SupplierRef, type ParsedRow } from "@/lib/pharmacy/invoice-parse";
 import { parsePack, packsToUnits, perUnitPrice } from "@/lib/pharmacy/pack";
 
 /**
@@ -28,10 +28,27 @@ const blankRow = (): Row => ({
 const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
 const HEADER_TEMPLATE = [
-  "Medicine,Batch No,Expiry (YYYY-MM-DD or MM/YYYY),Quantity,MRP,Purchase Rate,Supplier Ref",
-  "Paracetamol 500mg,B1234,2027-06-30,100,18.50,12.00,INV-2024-001",
+  "Medicine,Pack,Batch No,Expiry (YYYY-MM-DD or MM/YYYY),Quantity,Free,MRP,Purchase Rate,GST%,HSN,Supplier Ref",
+  "Paracetamol 500mg,15T,B1234,2027-06-30,100,0,18.50,12.00,5,300490,INV-2024-001",
   "",
 ].join("\n");
+
+/** Anything this screen knows how to open. */
+const ACCEPT = [
+  "image/*", "application/pdf", ".pdf",
+  ".xlsx", ".xls", ".xlsm", ".csv", ".tsv",
+  "text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+].join(",");
+
+const squash = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/** Which of the three readers a dropped file needs. */
+function kindOf(f: File): "SHEET" | "PDF" | "IMAGE" {
+  if (f.type === "application/pdf" || /\.pdf$/i.test(f.name)) return "PDF";
+  if (/\.(xlsx|xlsm|xlsb|xls|csv|tsv|ods)$/i.test(f.name)) return "SHEET";
+  if (/spreadsheet|excel|ms-excel|csv/i.test(f.type)) return "SHEET";
+  return "IMAGE";
+}
 
 export function BatchImport({ meds, suppliers, onClose, onDone }: {
   meds: MedRef[];
@@ -47,17 +64,36 @@ export function BatchImport({ meds, suppliers, onClose, onDone }: {
   const [invoiceDate, setInvoiceDate] = useState("");
   /** True when the supplier below was read off the invoice rather than chosen. */
   const [supplierDetected, setSupplierDetected] = useState(false);
+  /**
+   * A distributor named on the invoice that isn't on file. Never auto-created -
+   * a misread character would mint a second "Vishwanalh Medical Stores" and
+   * split the ledger - but saying so beats leaving the field mysteriously blank.
+   */
+  const [supplierMissing, setSupplierMissing] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [scanUrl, setScanUrl] = useState<string | null>(null);
   const [scanFile, setScanFile] = useState<File | null>(null);
   const [scanPdf, setScanPdf] = useState(false);
   const [ocrBusy, setOcrBusy] = useState(false);
   const [ocrPct, setOcrPct] = useState(0);
+  /** What the reader is doing right now - a bare percentage that pauses reads as a crash. */
+  const [ocrStage, setOcrStage] = useState("");
+  /** The cleaned-up image recognition actually saw, for the before/after view. */
+  const [preparedUrl, setPreparedUrl] = useState<string | null>(null);
+  const [showPrepared, setShowPrepared] = useState(false);
+  /** How the rows arrived - shown once, so nobody wonders what the machine did. */
+  const [readNote, setReadNote] = useState<string | null>(null);
   const [parsing, setParsing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<ImportReport | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Object URLs outlive the component unless revoked, and a scan is a few MB.
+  useEffect(() => () => {
+    if (scanUrl) URL.revokeObjectURL(scanUrl);
+    if (preparedUrl) URL.revokeObjectURL(preparedUrl);
+  }, [scanUrl, preparedUrl]);
 
   const resolve = useMemo(() => {
     const map = new Map<string, MedRef>();
@@ -127,6 +163,8 @@ export function BatchImport({ meds, suppliers, onClose, onDone }: {
   /** Rows whose pack disagrees with the product master - worth a look, not a block. */
   const mismatchCount = rows.filter((r) => r.medicine.trim() && packOf(r).mismatch).length;
   const unmatchedCount = rows.filter((r) => r.medicine.trim() && !resolve(r.medicine) && !r.createNew).length;
+  /** Rows the reader had to guess at - worth a second look before importing. */
+  const lowConfidenceCount = rows.filter((r) => r.confidence === "low").length;
   const newCount = rows.filter((r) => rowValid(r) && !resolve(r.medicine) && r.createNew).length;
 
   const setCell = (i: number, key: keyof Row, v: string) =>
@@ -135,75 +173,145 @@ export function BatchImport({ meds, suppliers, onClose, onDone }: {
   const markAllNew = () => setRows((p) => p.map((r) => (r.medicine.trim() && !resolve(r.medicine) ? { ...r, createNew: true } : r)));
   const removeRow = (i: number) => setRows((p) => p.filter((_, idx) => idx !== i));
 
+  /**
+   * The invoice's own header - whoever sent it, its number and its date.
+   *
+   * The supplier is MATCHED, never created: an OCR slip in a distributor's name
+   * would otherwise open a second account for the same firm and split every
+   * report that reads by supplier. When nothing matches, the printed name is
+   * held so the screen can say which distributor it couldn't find.
+   */
+  function applyHeader(h: { invoiceNo?: string; invoiceDate?: string; supplierId?: string; supplierName?: string }) {
+    if (h.supplierId) {
+      setSupplierId(h.supplierId); setSupplierDetected(true); setSupplierMissing(null);
+    } else if (h.supplierName) {
+      const flat = squash(h.supplierName);
+      const hit = [...suppliers].sort((a, b) => b.name.length - a.name.length)
+        .find((s) => squash(s.name).length >= 5 && flat.includes(squash(s.name)));
+      if (hit) { setSupplierId(hit.id); setSupplierDetected(true); setSupplierMissing(null); }
+      else setSupplierMissing(h.supplierName);
+    }
+    if (h.invoiceNo) setInvoiceNo(h.invoiceNo);
+    if (h.invoiceDate) setInvoiceDate(h.invoiceDate);
+  }
+
+  /** One entry point for all three file types - the tab follows the file. */
+  function onFile(f: File) {
+    const kind = kindOf(f);
+    setError(null); setReadNote(null); setSupplierMissing(null);
+    if (kind === "SHEET") { setTab("SHEET"); void onSheet(f); return; }
+    setTab("SCAN");
+    onScan(f);
+  }
+
   async function onSheet(f: File) {
-    setError(null); setParsing(true); setFileName(f.name);
+    setError(null); setParsing(true); setFileName(f.name); setReadNote(null);
     try {
-      const XLSX = await import("xlsx");
-      const buf = await f.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array", cellDates: true });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      // raw:true keeps date cells as real Date objects (toISODate handles them)
-      // instead of letting the sheet reformat ISO dates into ambiguous m/d/yy text.
-      const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "", raw: true });
-      const pick = (o: Record<string, unknown>, re: RegExp) => {
-        for (const k of Object.keys(o)) if (re.test(k.toLowerCase().replace(/[^a-z0-9]/g, ""))) return o[k];
-        return "";
-      };
-      // Columns follow the distributor's own invoice layout, so a sheet keyed
-      // off one imports without re-mapping anything by hand.
-      const mapped: Row[] = json.map((o) => ({
-        medicine: String(pick(o, /^(medicine|item|product|drug|brand|name)/) ?? "").trim(),
-        pack: String(pick(o, /^(pack|packing|packsize)/) ?? "").trim(),
-        qty: String(pick(o, /(quantity|qty|units|count|stock|nos|pcs)/) ?? "").replace(/[^\d.]/g, ""),
-        free: String(pick(o, /^(free|freeqty|scheme)/) ?? "").replace(/[^\d.]/g, ""),
-        oMrp: String(pick(o, /^(omrp|company|comp|mfr|manufacturer)/) ?? "").trim(),
-        batchNo: String(pick(o, /(batch|lot)/) ?? "").trim(),
-        mrp: String(pick(o, /^(mrp|retailprice|saleprice)/) ?? "").replace(/[^\d.]/g, ""),
-        expiry: toISODate(pick(o, /(expiry|exp|bestbefore)/)),
-        rate: String(pick(o, /(purchase|rate|cost|buyingprice|ptr)/) ?? "").replace(/[^\d.]/g, ""),
-        amount: String(pick(o, /^(amount|value|total)/) ?? "").replace(/[^\d.]/g, ""),
-        gst: String(pick(o, /^(gst|g%|gstrate|tax)/) ?? "").replace(/[^\d.]/g, ""),
-        hsn: String(pick(o, /^(hsn|hsncode|sac)/) ?? "").replace(/[^\d]/g, ""),
-        supplier: String(pick(o, /(supplierref|invoiceno|vendor|billno|ref)/) ?? "").trim(),
-      })).filter((r) => r.medicine || r.batchNo);
-      if (!mapped.length) setError("Couldn't find any rows. Check the column headers against the template.");
-      setRows(mapped.length ? mapped : []);
+      const { readWorkbook } = await import("@/lib/pharmacy/sheet-parse");
+      const res = await readWorkbook(f);
+      if (!res.rows.length) {
+        setRows([]);
+        setError("Couldn't find any line items in that file. Check the column headings against the template - or upload the invoice as a PDF or a photo instead, which doesn't need headings at all.");
+        return;
+      }
+      applyHeader(res);
+      setRows(res.rows);
+      setReadNote(
+        res.inferred
+          ? `${res.rows.length} rows from "${res.sheetName}". That sheet has no column headings, so the columns were worked out from the values themselves - check every one before importing.`
+          : `${res.rows.length} rows from "${res.sheetName}".`,
+      );
     } catch {
-      setError("Couldn't read that file. Use .xlsx or .csv, matching the template.");
+      setError("Couldn't read that file. Use .xlsx, .xls or .csv.");
     } finally { setParsing(false); }
   }
 
   function onScan(f: File) {
     setError(null);
     if (scanUrl) URL.revokeObjectURL(scanUrl);
+    if (preparedUrl) URL.revokeObjectURL(preparedUrl);
+    setPreparedUrl(null); setShowPrepared(false); setReadNote(null);
     setScanUrl(URL.createObjectURL(f));
     setScanFile(f);
-    setScanPdf(f.type === "application/pdf" || /\.pdf$/i.test(f.name));
+    setFileName(f.name);
+    setScanPdf(kindOf(f) === "PDF");
     if (!rows.length) setRows([blankRow(), blankRow(), blankRow()]);
   }
 
-  async function runOcr() {
+  /**
+   * Photo or PDF, into rows.
+   *
+   * A PDF exported by the distributor's billing software already CONTAINS every
+   * character, positioned. Reading that text directly is instant and cannot
+   * misread a digit, so it is always tried first; recognition is only for a PDF
+   * that turns out to be a photograph in a wrapper.
+   */
+  async function runScan() {
     if (!scanFile) return;
-    setError(null); setOcrBusy(true); setOcrPct(0);
+    setError(null); setOcrBusy(true); setOcrPct(0); setOcrStage("Opening the file"); setReadNote(null);
     try {
-      const { recognize } = await import("tesseract.js");
-      const { data } = await recognize(scanFile, "eng", {
-        logger: (m: { status: string; progress: number }) => {
-          if (m.status === "recognizing text") setOcrPct(Math.round(m.progress * 100));
-        },
-      });
-      // Header first: the supplier, invoice number and date sit above the lines.
-      const head = parseInvoiceHeader(data.text, suppliers);
-      if (head.supplierId) { setSupplierId(head.supplierId); setSupplierDetected(true); }
-      if (head.invoiceNo) setInvoiceNo(head.invoiceNo);
-      if (head.invoiceDate) setInvoiceDate(head.invoiceDate);
+      let sources: (Blob | HTMLCanvasElement)[] = [scanFile];
 
-      const parsed = parseInvoiceText(data.text);
-      if (!parsed.length) setError("Couldn't read any line items - try a sharper, straighter photo, or key the rows in below.");
-      else setRows(parsed);
+      if (scanPdf) {
+        const { readPdfText, renderPdfPages } = await import("@/lib/pharmacy/pdf-extract");
+        setOcrStage("Reading the PDF"); setOcrPct(6);
+        const doc = await readPdfText(scanFile);
+        if (doc.hasTextLayer) {
+          const { parseInvoiceText } = await import("@/lib/pharmacy/invoice-parse");
+          const parsed = parseInvoiceText(doc.text);
+          if (parsed.length) {
+            applyHeader(parseInvoiceHeader(doc.text, suppliers));
+            setRows(parsed);
+            setOcrPct(100); setOcrStage("Done");
+            setReadNote(`${parsed.length} rows read straight out of the PDF's own text${doc.pageCount > 1 ? ` across ${doc.pageCount} pages` : ""} - no recognition involved, so no misread digits.`);
+            return;
+          }
+        }
+        setOcrStage("Scanned PDF - rendering the pages"); setOcrPct(10);
+        sources = await renderPdfPages(scanFile, {
+          onPage: (p, total) => setOcrStage(`Rendering page ${p} of ${total}`),
+        });
+        if (!sources.length) { setError("That PDF has no pages to read."); return; }
+        // Recognition is capped at ten pages. Said out loud rather than left to
+        // be discovered by a short delivery: pages nobody was told about are
+        // stock nobody knows is missing.
+        if (doc.pageCount > sources.length) {
+          setError(`This PDF has ${doc.pageCount} pages and only the first ${sources.length} were read. Split it and import the rest separately.`);
+        }
+      }
+
+      const { recognizeInvoice } = await import("@/lib/pharmacy/ocr");
+      const res = await recognizeInvoice(sources, {
+        onProgress: (p) => { setOcrPct(p.pct); setOcrStage(p.stage); },
+      });
+
+      // Show what recognition actually saw. A pharmacist looking at a black
+      // rectangle knows instantly why nothing came out, which a percentage
+      // never told them.
+      const first = res.prepared[0];
+      if (first) {
+        const { canvasToBlob } = await import("@/lib/pharmacy/image-prep");
+        setPreparedUrl(URL.createObjectURL(await canvasToBlob(first)));
+      }
+
+      applyHeader(parseInvoiceHeader(res.text, suppliers));
+      if (!res.rows.length) {
+        setError("Couldn't make out any line items. Look at the sharpened image (“what the reader saw”) - if the text is illegible there, retake the photo straight-on in better light. Otherwise key the rows in below.");
+      } else {
+        setRows(res.rows);
+        const low = res.rows.filter((r) => r.confidence === "low").length;
+        setReadNote([
+          `${res.rows.length} rows read`,
+          res.skewDeg ? `page straightened by ${Math.abs(res.skewDeg).toFixed(1)}°` : "",
+          res.passes > 1 ? `took ${res.passes} passes - the scan was hard to read` : "",
+          low ? `${low} without an expiry date - fill those in from the strip` : "",
+        ].filter(Boolean).join(" · ") + ".");
+      }
     } catch {
-      setError("OCR couldn't run on this file. Key the rows in below instead.");
-    } finally { setOcrBusy(false); }
+      const { resetOcr } = await import("@/lib/pharmacy/ocr");
+      await resetOcr();
+      setError("The reader couldn't run on this file. Try a JPG or PNG photo, or key the rows in below.");
+    } finally { setOcrBusy(false); setOcrStage(""); }
   }
 
   function downloadTemplate() {
@@ -306,6 +414,16 @@ export function BatchImport({ meds, suppliers, onClose, onDone }: {
               className="w-full rounded-md border border-[var(--p-border)] bg-white px-2 py-1.5 text-[12.5px] text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]" />
           </label>
 
+          {/* The invoice named a distributor we don't have. Never created from
+              a scan - said out loud instead, so the blank field is explained. */}
+          {supplierMissing && !supplierId && (
+            <p className="text-[11.5px] leading-relaxed text-[#8a5a14] sm:col-span-3">
+              This invoice says it&apos;s from <b>{supplierMissing}</b>, which isn&apos;t on your distributor list.
+              Pick the right one above, or add them under <b>Suppliers</b> first - a distributor is never created
+              off a scan, because one misread letter would open a second account for the same firm.
+            </p>
+          )}
+
           {suppliers.length === 0 && (
             <p className="text-[11.5px] text-[var(--p-rose)] sm:col-span-3">
               No distributors on file. Add one under <b>Suppliers</b> before importing - every batch has to trace to one.
@@ -359,62 +477,131 @@ export function BatchImport({ meds, suppliers, onClose, onDone }: {
             <div className="flex-1 overflow-y-auto p-5">
               {tab === "SHEET" ? (
                 <div className="mb-4 flex flex-wrap items-center gap-3">
+                  {/* Accepts everything, on either tab. A file dropped on the
+                      wrong one switches the tab rather than refusing - nobody
+                      should have to know which reader their file needs. */}
                   <label className="btn-primary inline-flex cursor-pointer items-center gap-2 rounded-md px-4 py-2.5 text-[13px] font-semibold text-white">
-                    <Icon name="file" size={14} /> {fileName ? "Replace file" : "Choose .xlsx / .csv"}
-                    <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden"
-                      onChange={(e) => e.target.files?.[0] && onSheet(e.target.files[0])} />
+                    <Icon name="file" size={14} /> {fileName ? "Replace file" : "Choose a file"}
+                    <input ref={fileRef} type="file" accept={ACCEPT} className="hidden"
+                      onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
                   </label>
                   <button onClick={downloadTemplate} className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--p-blue)] hover:underline">
                     <Icon name="file" size={13} /> Download template
                   </button>
                   {parsing && <span className="flex items-center gap-1.5 text-[12px] text-[var(--p-muted)]"><Spinner size={13} /> Reading…</span>}
                   {fileName && !parsing && <span className="text-[12px] text-[var(--p-muted)]">{fileName} · {rows.length} rows</span>}
+                  <p className="w-full text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+                    Excel or CSV, in whatever layout your distributor sends. Every sheet in the workbook is
+                    searched, the headings are found wherever they sit, and a sheet with no headings at all has
+                    its columns worked out from the values. A PDF or a photo works here too.
+                  </p>
                 </div>
               ) : (
                 <div className="mb-4 grid gap-4 lg:grid-cols-2">
                   <div>
-                    <label className="btn-primary inline-flex cursor-pointer items-center gap-2 rounded-md px-4 py-2.5 text-[13px] font-semibold text-white">
-                      <Icon name="file" size={14} /> {scanUrl ? "Replace scan" : "Upload scanned invoice"}
-                      <input type="file" accept="image/*,application/pdf" className="hidden"
-                        onChange={(e) => e.target.files?.[0] && onScan(e.target.files[0])} />
-                    </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="btn-primary inline-flex cursor-pointer items-center gap-2 rounded-md px-4 py-2.5 text-[13px] font-semibold text-white">
+                        <Icon name="file" size={14} /> {scanUrl ? "Replace scan" : "Upload invoice"}
+                        <input type="file" accept={ACCEPT} className="hidden"
+                          onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
+                      </label>
+                      {/* WHAT THE READER SAW. The single most useful thing on
+                          this screen when extraction comes back thin: a glance
+                          at the sharpened image says "the photo was the
+                          problem" or "the photo was fine", which no percentage
+                          and no error message ever could. */}
+                      {preparedUrl && (
+                        <button onClick={() => setShowPrepared((v) => !v)}
+                          className="rounded-md px-3 py-2 text-[12px] font-semibold text-[var(--p-blue)] ring-1 ring-[var(--p-border-strong)] hover:ring-[var(--p-blue)]">
+                          {showPrepared ? "Show my photo" : "What the reader saw"}
+                        </button>
+                      )}
+                    </div>
+
                     {scanUrl ? (
-                      scanPdf
-                        ? <iframe src={scanUrl} title="Invoice" className="mt-3 h-[300px] w-full rounded-lg border border-[var(--p-border)]" />
+                      showPrepared && preparedUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        : <img src={scanUrl} alt="Scanned invoice" className="mt-3 max-h-[300px] w-full rounded-lg border border-[var(--p-border)] object-contain" />
+                        <img src={preparedUrl} alt="Sharpened for reading" className="mt-3 max-h-[300px] w-full rounded-lg border border-[var(--p-border)] bg-white object-contain" />
+                      ) : scanPdf ? (
+                        <iframe src={scanUrl} title="Invoice" className="mt-3 h-[300px] w-full rounded-lg border border-[var(--p-border)]" />
+                      ) : (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={scanUrl} alt="Scanned invoice" className="mt-3 max-h-[300px] w-full rounded-lg border border-[var(--p-border)] object-contain" />
+                      )
                     ) : (
                       <div className="mt-3 flex h-[160px] items-center justify-center rounded-lg border border-dashed border-[var(--p-border-strong)] px-4 text-center text-[12px] text-[var(--p-muted)]">
-                        Upload a photo of the supplier&apos;s invoice, then extract the rows automatically.
+                        A photo of the invoice, a PDF from the distributor, or a spreadsheet - whichever you have.
                       </div>
                     )}
                   </div>
+
                   <div className="lg:pt-1">
-                    {scanUrl && !scanPdf ? (
+                    {scanUrl ? (
                       <>
-                        <button onClick={runOcr} disabled={ocrBusy}
-                          className="btn-primary inline-flex items-center gap-2 rounded-md px-4 py-2.5 text-[13px] font-semibold text-white disabled:opacity-50">
-                          {ocrBusy ? <><Spinner size={14} /> Reading invoice… {ocrPct}%</> : <><Icon name="search" size={14} /> Extract rows from invoice</>}
+                        <button onClick={runScan} disabled={ocrBusy}
+                          className="btn-primary inline-flex items-center gap-2 rounded-md px-4 py-2.5 text-[13px] font-semibold text-white disabled:opacity-60">
+                          {ocrBusy ? <><Spinner size={14} /> {ocrStage || "Reading"}… {ocrPct}%</> : <><Icon name="search" size={14} /> Extract rows from invoice</>}
                         </button>
+
+                        {/* A BAR THAT MOVES. The old one only listened for the
+                            recognition stage, so it sat at nothing through a
+                            12MB model download and then stalled at 70 on the
+                            last block of layout - which reads as a crash, and
+                            people reloaded seconds before it would have
+                            finished. Every stage reports now, and each one
+                            says what it is doing. */}
+                        {ocrBusy && (
+                          <div className="mt-3">
+                            <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--p-border)]">
+                              <div className="h-full rounded-full bg-[var(--p-blue)] transition-[width] duration-300"
+                                style={{ width: `${Math.max(3, ocrPct)}%` }} />
+                            </div>
+                            <p className="mt-1.5 text-[11.5px] text-[var(--p-muted)]">
+                              {ocrStage}. A big photo takes 20-40 seconds - leave it running.
+                            </p>
+                          </div>
+                        )}
+
                         <p className="mt-3 text-[12px] leading-relaxed text-[var(--p-muted)]">
-                          Reads the batch numbers, expiry, quantity, MRP and rate straight off the scan. It runs on
-                          this computer - nothing is uploaded. <b className="text-[var(--p-ink)]">Always check the rows</b> -
-                          OCR can misread a digit, and the invoice&apos;s product names won&apos;t match your catalog,
-                          so pick the matching medicine for each (red = not matched yet).
+                          {scanPdf
+                            ? <>A PDF from the distributor&apos;s billing software is read <b className="text-[var(--p-ink)]">directly</b>, character for character - instant, and no digit can be misread. A scanned PDF falls back to recognition, page by page.</>
+                            : <>The photo is straightened, sharpened and re-lit before reading, which is most of the difference between a full grid and an empty one.</>}
+                          {" "}It all runs on this computer - nothing is uploaded.{" "}
+                          <b className="text-[var(--p-ink)]">Always check the rows</b> - the invoice&apos;s product
+                          names won&apos;t match your catalog, so pick the matching medicine for each (red = not
+                          matched yet).
                         </p>
                       </>
-                    ) : scanPdf ? (
-                      <p className="text-[12px] leading-relaxed text-[var(--p-muted)]">
-                        OCR works on a <b>photo or image</b> of the invoice. For a PDF, export a page as an image -
-                        or key the rows into the grid below.
-                      </p>
                     ) : (
                       <p className="text-[12px] leading-relaxed text-[var(--p-muted)]">
                         Upload a clear, straight photo of the invoice and press <b>Extract</b> - the batch lines fill
-                        in automatically. You can also type rows by hand below.
+                        in automatically. PDFs and spreadsheets work here too. You can also type rows by hand below.
                       </p>
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* What the reader made of it, in one line. */}
+              {readNote && !ocrBusy && (
+                <div className="mb-3 rounded-lg border border-[var(--p-cyan)]/25 bg-[var(--p-cyan-soft)] px-3.5 py-2.5">
+                  <p className="text-[12px] leading-relaxed text-[var(--p-cyan-deep)]">{readNote}</p>
+                </div>
+              )}
+
+              {/* ── ROWS THE READER WASN'T SURE OF ──
+                  A row recovered without its expiry is still worth having: the
+                  name, the batch, the quantity and the prices are all typed for
+                  you. But an expiry is what pulls stock off a shelf, so it is
+                  left blank on purpose and the import stays blocked until a
+                  person reads it off the strip. */}
+              {lowConfidenceCount > 0 && (
+                <div className="mb-3 rounded-lg border border-[var(--p-amber)]/40 bg-[var(--p-amber-soft)] px-3.5 py-2.5">
+                  <p className="text-[12px] leading-relaxed text-[#8a5a14]">
+                    <b>{lowConfidenceCount} {lowConfidenceCount === 1 ? "row was" : "rows were"} recovered from a hard-to-read part of the scan</b> (marked
+                    &ldquo;check&rdquo; below). Their expiry dates couldn&apos;t be made out at all and were left
+                    empty - read those off the strips and key them in. Check the batch numbers on those rows too.
+                  </p>
                 </div>
               )}
 
@@ -482,6 +669,9 @@ export function BatchImport({ meds, suppliers, onClose, onDone }: {
                             <td className="px-1.5 py-1.5">
                               <input list="jeeva-med-names" value={r.medicine} onChange={(e) => setCell(i, "medicine", e.target.value)}
                                 placeholder="Medicine name" className={`${inp} min-w-[160px] ${r.medicine && !ok.med ? bad : ""}`} />
+                              {r.confidence === "low" && (
+                                <div className="mt-0.5 text-[9.5px] font-semibold text-[#8a5a14]">check — read from a blurred line</div>
+                              )}
                             </td>
                             <td className="px-1.5 py-1.5 whitespace-nowrap">
                               {ok.matched ? (

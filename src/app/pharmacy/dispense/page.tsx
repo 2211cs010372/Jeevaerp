@@ -8,6 +8,7 @@ import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 import { DispenseScratchpad, type PadLine } from "@/components/portal/pharmacy/scratchpad";
 import { DiscountInput, PaymentSection, type Tender } from "@/components/portal/ui/bill-fields";
+import { AdmissionBanner, useAdmission } from "@/components/portal/reception/admission-banner";
 
 interface Patient { id: string; displayId: string; fullName: string; phone: string; }
 interface Med {
@@ -41,7 +42,19 @@ export default function DispensePage() {
   // An admitted patient's medicines are charged to their room, so there is no
   // receipt at the counter. Both outcomes must be renderable.
   const [done, setDone] = useState<{ id?: string; receiptNo: string; total: string } | null>(null);
-  const [toRoom, setToRoom] = useState<{ ipNumber: string } | null>(null);
+  // A ward dispense still raises a real pharmacy bill - it is just left unpaid
+  // until discharge. Carrying it here is what lets the counter show the family
+  // what was added to the tab instead of "trust us, it's on the room".
+  const [toRoom, setToRoom] = useState<{ ipNumber: string; invoiceId?: string; total?: string } | null>(null);
+
+  // ── THE IP/OP SWITCH, ASKED AT THE COUNTER ────────────────────────────────
+  // A ward patient's chit now comes STRAIGHT here - it does not go past
+  // reception first - so this counter is the only place the question gets asked.
+  // The moment a patient is picked we ask the bed board, and the answer decides
+  // both halves of what happens next: whether money is taken, and whether the
+  // prescription files against the stay or against the person.
+  const { admission, checking: checkingAdm } = useAdmission(patient?.id);
+  const isInpatient = !!admission;
 
   const [patientTab, setPatientTab] = useState<"search" | "direct">("search");
   const [directName, setDirectName] = useState("");
@@ -139,9 +152,12 @@ export default function DispensePage() {
         patientId: patient.id,
         items: lines.map((l) => ({ medicineId: l.medicineId, qty: l.qty })),
         discountAmount: disc || undefined,
-        payments: payNow && payments.length ? payments : undefined,
+        // An admitted patient settles at discharge. Sending a tender here would
+        // be a payment the server is obliged to throw away - better not to
+        // collect one in the first place.
+        payments: !isInpatient && payNow && payments.length ? payments : undefined,
       });
-      if (res.chargedToRoom) setToRoom({ ipNumber: res.ipNumber ?? "" });
+      if (res.chargedToRoom) setToRoom({ ipNumber: res.ipNumber ?? "", invoiceId: res.invoice?.id, total: res.invoice?.totalAmount });
       else if (res.invoice) setDone({ id: res.invoice.id, receiptNo: res.invoice.receiptNo, total: res.invoice.totalAmount });
     } catch (e) { setError(e instanceof ApiClientError ? e.message : "Could not dispense."); }
     finally { setBusy(false); }
@@ -162,12 +178,29 @@ export default function DispensePage() {
           <p className="mt-1 text-[13px] text-[var(--p-muted)]">
             Admitted patient - <span className="font-mono font-semibold text-[var(--p-ink)]">{toRoom.ipNumber}</span>
           </p>
+          {toRoom.total && (
+            <p className="mt-1 text-[13px] text-[var(--p-muted)]">Added to the tab · <span className="font-mono font-semibold text-[var(--p-ink)]">₹{toRoom.total}</span></p>
+          )}
           <p className="mt-4 rounded-lg bg-[var(--p-amber-soft)] px-4 py-2.5 text-left text-[12px] leading-relaxed text-[#8a6414]">
             <b>Do not take money.</b> These medicines are on the patient&apos;s room tab and settle in the
-            discharge bill. No receipt is printed here.
+            discharge bill. Nothing is collected here.
           </p>
-          <p className="mt-2 text-[12px] text-[var(--p-muted)]">Stock decremented FEFO.</p>
-          <div className="mt-6"><PrimaryButton onClick={reset}><Icon name="plus" size={15} /> New sale</PrimaryButton></div>
+          <p className="mt-2 text-[12px] text-[var(--p-muted)]">
+            Stock decremented FEFO. The prescription is filed against {toRoom.ipNumber} and shows on the patient&apos;s record.
+          </p>
+          <div className="mt-6 flex w-full flex-col gap-2.5">
+            {toRoom.invoiceId && (
+              <a
+                href={`/pharmacy/print/invoice/${toRoom.invoiceId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-primary flex items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-[13px] font-semibold text-white shadow-sm"
+              >
+                <Icon name="file" size={16} /> View the ward bill
+              </a>
+            )}
+            <PrimaryButton onClick={reset}><Icon name="plus" size={15} /> New sale</PrimaryButton>
+          </div>
         </div>
       </div>
     );
@@ -361,6 +394,13 @@ export default function DispensePage() {
                   <button onClick={() => setPatient(null)} className="rounded-lg border border-[var(--p-border)] bg-white px-3 py-1.5 text-[12px] font-medium text-[var(--p-blue)] hover:bg-gray-50">Change</button>
                 </div>
               )}
+              {/* Read, not decided. The pharmacist never has to remember which
+                  patients are upstairs. */}
+              {patient && (
+                <div className="mt-4">
+                  <AdmissionBanner admission={admission} checking={checkingAdm} what="These medicines" />
+                </div>
+              )}
             </div>
           </section>
 
@@ -457,11 +497,24 @@ export default function DispensePage() {
             </div>
             <div className="space-y-3 border-t border-[var(--p-border)] p-5">
               <DiscountInput subtotal={subtotal} accent="blue" onChange={(d) => setDisc(d.amount)} />
-              <label className="flex items-center gap-2 text-[13px] text-[var(--p-text)]">
-                <input type="checkbox" checked={payNow} onChange={(e) => setPayNow(e.target.checked)} className="h-4 w-4 accent-[var(--p-blue)]" /> Collect payment now
-              </label>
-              {payNow && (
-                <PaymentSection total={total} accent="blue" onChange={(r) => { setPayments(r.payments); setPayValid(r.valid); }} />
+              {/* THE TILL IS CLOSED FOR AN INPATIENT. Not disabled - absent.
+                  A greyed-out payment box still invites the question "can I
+                  override this?"; a bill line saying the money is due at
+                  discharge does not. */}
+              {isInpatient ? (
+                <div className="rounded-lg bg-[var(--p-amber-soft)] px-3.5 py-2.5 text-[12px] leading-relaxed text-[#8a6414]">
+                  <b>Do not take money.</b> {admission?.ipNumber} is in a bed - this bill is
+                  raised against the stay and settles in the discharge bill.
+                </div>
+              ) : (
+                <>
+                  <label className="flex items-center gap-2 text-[13px] text-[var(--p-text)]">
+                    <input type="checkbox" checked={payNow} onChange={(e) => setPayNow(e.target.checked)} className="h-4 w-4 accent-[var(--p-blue)]" /> Collect payment now
+                  </label>
+                  {payNow && (
+                    <PaymentSection total={total} accent="blue" onChange={(r) => { setPayments(r.payments); setPayValid(r.valid); }} />
+                  )}
+                </>
               )}
               {lines.length > 0 && (
                 <div className="border-t border-[var(--p-border)] pt-3">
@@ -480,8 +533,10 @@ export default function DispensePage() {
             </div>
             {error && <div className="border-t border-[var(--p-border)] bg-[var(--p-rose-soft)] px-5 py-3 text-[12px] text-[var(--p-rose)]">{error}</div>}
             <div className="border-t border-[var(--p-border)] p-5">
-              <PrimaryButton onClick={submit} disabled={!patient || lines.length === 0 || busy || (payNow && !payValid)} full>
-                {busy ? <><Spinner /> Dispensing…</> : <><Icon name="pill" size={15} /> Dispense &amp; bill</>}
+              <PrimaryButton onClick={submit} disabled={!patient || lines.length === 0 || busy || checkingAdm || (!isInpatient && payNow && !payValid)} full>
+                {busy ? <><Spinner /> Dispensing…</>
+                  : isInpatient ? <><Icon name="bed" size={15} /> Dispense &amp; charge to room</>
+                  : <><Icon name="pill" size={15} /> Dispense &amp; bill</>}
               </PrimaryButton>
               <p className="mt-2 text-center text-[10px] text-[var(--p-muted)]">Medicines are taxable (5%/12%). Batches picked FEFO.</p>
             </div>

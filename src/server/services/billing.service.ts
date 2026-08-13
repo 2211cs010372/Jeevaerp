@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { computeInvoiceTotals, assertRefundable, assertPaymentsWithinTotal, invoiceStatusFrom, netPaid, totalRefunded, refundable, r2 } from "@/server/billing/calc";
+import { computeInvoiceTotals, assertRefundable, assertPaymentsWithinTotal, invoiceStatusFrom, netPaid, totalRefunded, refundable, r2, resolveBillDate, BillDateError, assertTotalCoversCollected, InvoiceMathError } from "@/server/billing/calc";
 import { nextId } from "@/lib/ids";
 import { ApiError } from "@/lib/api";
 import { logAudit } from "./audit.service";
@@ -52,7 +52,16 @@ export interface InvoiceDTO {
   receiptNo: string;
   source: string;
   status: string;
+  /** When the row was actually written. What the day close and GST returns count. */
   createdAt: string;
+  /**
+   * The corrected date this bill PRINTS, or null if nobody has corrected it.
+   *
+   * Never substituted for createdAt in this DTO - both are here, so a screen that
+   * needs the real clock still has it and a sheet that needs the printed date
+   * does not have to guess which one it is holding.
+   */
+  billDate: string | null;
   /** SELF_PAY (money at a counter) or INSURANCE (billed to an insurer/TPA). */
   payer: string;
   /** The insurer/TPA, when `payer` is INSURANCE. */
@@ -373,7 +382,7 @@ export async function getInvoice(invoiceId: string): Promise<InvoiceDTO> {
   const inv = await prisma.invoice.findUnique({
     where: { id: invoiceId },
     select: {
-      id: true, receiptNo: true, source: true, status: true, createdAt: true,
+      id: true, receiptNo: true, source: true, status: true, createdAt: true, billDate: true,
       payer: true, payerName: true,
       subtotal: true, discountAmount: true, taxableAmount: true,
       cgstAmount: true, sgstAmount: true, totalAmount: true,
@@ -412,6 +421,7 @@ export async function getInvoice(invoiceId: string): Promise<InvoiceDTO> {
     source: inv.source,
     status: inv.status,
     createdAt: inv.createdAt.toISOString(),
+    billDate: inv.billDate ? inv.billDate.toISOString() : null,
     payer: inv.payer,
     payerName: inv.payerName,
     patient: inv.patient,
@@ -468,24 +478,140 @@ export async function getInvoice(invoiceId: string): Promise<InvoiceDTO> {
 // This preserves the audit trail instead of silently rewriting history.
 // ---------------------------------------------------------------------------
 
-/** Replace the line items / discount of an invoice that has NOT been paid. */
+/**
+ * THE COUNTER DESKS EDIT BILLS ONLY IF THE HOSPITAL HAS SAID THEY MAY.
+ *
+ * Reception and the insurance room got bill editing behind an admin switch,
+ * off by default - see HospitalConfig.billEditingEnabled. The check lives HERE
+ * rather than in the route because hiding a button is not a permission: the
+ * PATCH endpoint is reachable with a session and a URL, and a switch that only
+ * dims the UI protects nobody.
+ *
+ * ADMIN and LAB_TECH are deliberately outside it. An admin who cannot correct a
+ * bill has no way to fix the very mistake the switch guards against, and the lab
+ * counter had this before the switch existed - taking it away by default would
+ * be a regression dressed up as a safety feature.
+ */
+const EDIT_GATED_ROLES = new Set(["RECEPTIONIST", "INSURANCE_DESK"]);
+
+async function assertMayEditBills(actor: AuthUser): Promise<void> {
+  if (!EDIT_GATED_ROLES.has(actor.role)) return;
+  // Read the column directly rather than through admin.service's getSettings().
+  // admin.service imports pharmacy.service which imports this file, so pulling
+  // it in here would close an import cycle - and a cycle whose failure mode is
+  // an undefined createInvoice at module init is not one to introduce for the
+  // sake of reusing a five-line query.
+  const c = await prisma.hospitalConfig.findFirst({ select: { billEditingEnabled: true } });
+  // Fails CLOSED: no config row must never be the reason a desk can rewrite a
+  // tax document.
+  if (!c?.billEditingEnabled) {
+    throw new ApiError(
+      403,
+      "Bill editing is switched off for this desk. An admin can turn it on in Settings → Behaviour. Until then, cancel the bill and reissue it."
+    );
+  }
+}
+
+/**
+ * The printed date, as a timestamp - or a 400 the desk can act on.
+ *
+ * The rule itself lives in billing/calc, pure and tested (noon anchoring, no
+ * future dates, no 31st of February). This only translates its error into the
+ * HTTP one, the same division of labour computeInvoiceTotals already has.
+ */
+function billDateOrThrow(input: string | null | undefined): Date | null | undefined {
+  try {
+    return resolveBillDate(input);
+  } catch (e) {
+    if (e instanceof BillDateError) throw new ApiError(400, e.message);
+    throw e;
+  }
+}
+
+/**
+ * Replace the line items / discount / printed date of a live invoice.
+ *
+ * PAID BILLS ARE EDITABLE, which they were not before. The desk asked for it and
+ * the reason is a real one: a counter that billed the wrong test to a patient who
+ * has already paid needs to correct the paperwork, and voiding a settled bill to
+ * reissue it puts two documents in the ledger for one visit and a cancelled
+ * receipt in the patient's hand.
+ *
+ * What holds the money story together instead is three narrower rules, each of
+ * which refuses something specific rather than refusing everything:
+ *
+ *   1. A CANCELLED bill is finished and stays finished.
+ *   2. A bill with a live IRN is the government's copy - credit note only.
+ *   3. The total may not fall BELOW what has already been collected. Money in
+ *      the drawer is real; a bill that says less than was taken is an
+ *      over-collection that nothing records. Refund first, then edit.
+ *
+ * Everything above the floor recomputes cleanly: the total moves, the status is
+ * re-derived, the balance comes back, and the edit lands in the audit log under
+ * its own action name.
+ */
 export async function updateInvoice(
   actor: AuthUser,
-  input: { invoiceId: string; lines: BillLineInput[]; discountAmount?: number; notes?: string },
+  input: {
+    invoiceId: string; lines: BillLineInput[]; discountAmount?: number; notes?: string;
+    /** "YYYY-MM-DD" to correct the printed date, null to clear it, absent to leave it. */
+    billDate?: string | null;
+  },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<InvoiceDTO> {
   if (!input.lines.length) throw new ApiError(400, "An invoice needs at least one item");
+  await assertMayEditBills(actor);
+  const billDate = billDateOrThrow(input.billDate);
 
   await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const inv = await tx.invoice.findUnique({
       where: { id: input.invoiceId },
-      select: { id: true, status: true, payments: { select: { id: true } } },
+      select: {
+        id: true, status: true, totalAmount: true,
+        payments: { select: { amount: true } },
+        refunds: { select: { amount: true } },
+        eInvoice: { select: { status: true } },
+      },
     });
     if (!inv) throw new ApiError(404, "Invoice not found");
     if (inv.status === "CANCELLED") throw new ApiError(400, "This invoice was cancelled and can't be edited");
-    if (inv.payments.length > 0 || inv.status === "PAID" || inv.status === "PARTIALLY_PAID") {
-      throw new ApiError(400, "A paid invoice can't be edited. Cancel it and issue a new one.");
+
+    // ── A REGISTERED BILL IS THE GOVERNMENT'S COPY, NOT OURS ──
+    //
+    // A live IRN means these exact figures were filed with the IRP and a QR
+    // carrying them is printed on the patient's copy. Rewriting the bill under
+    // that QR leaves a document whose face and whose registration disagree, and
+    // the only lawful correction is a credit note.
+    //
+    // This guard is NEW because it used to be free: nothing with an IRN was
+    // editable, since e-invoicing only happens on bills that have been paid, and
+    // paid bills were refused outright. Allowing paid edits removed the accident
+    // that was protecting it.
+    if (inv.eInvoice?.status === "GENERATED") {
+      throw new ApiError(
+        400,
+        "This bill is registered with an IRN and can't be edited. Cancel the e-invoice, or cancel the bill and reissue it."
+      );
     }
+
+    // ── WHAT HAS ALREADY BEEN COLLECTED IS THE FLOOR ──
+    //
+    // Editing a PAID bill is allowed - a desk that billed the wrong test for a
+    // patient who has already paid needs to correct the paperwork, and voiding
+    // and reissuing a settled bill is a heavier instrument than that mistake
+    // deserves. What is NOT allowed is dropping the total below the money in the
+    // drawer: that money is real, the patient handed it over, and a bill that
+    // says less than was taken is an over-collection with nothing anywhere
+    // recording it. The refund flow exists precisely for giving it back, and it
+    // writes a Refund row somebody can find later.
+    //
+    // Above the floor there is no problem: the total goes up, the balance
+    // reappears, the status drops back to PARTIALLY_PAID and the desk collects
+    // the difference.
+    const collected = netPaid(
+      inv.payments.map((p: { amount: { toString(): string } }) => ({ amount: Number(p.amount.toString()) })),
+      inv.refunds.map((r: { amount: { toString(): string } }) => ({ amount: Number(r.amount.toString()) })),
+    );
 
     // recompute
     let subtotal = 0;
@@ -509,6 +635,30 @@ export async function updateInvoice(
     }
     const total = r2(taxable + cgst + sgst);
 
+    // The floor, checked now that there is a new total to check it against. The
+    // rule and its wording live in billing/calc, where they are tested.
+    try {
+      assertTotalCoversCollected(total, collected);
+    } catch (e) {
+      if (e instanceof InvoiceMathError) throw new ApiError(400, e.message);
+      throw e;
+    }
+
+    // ── THE STATUS HAS TO BE RE-DERIVED, NOT LEFT ALONE ──
+    //
+    // This did not matter while only unpaid bills were editable: PENDING in,
+    // PENDING out. Now a PAID bill whose total goes up is PART paid, and leaving
+    // the column saying PAID would drop it off the desk's "due" list with money
+    // still owed on it - the bill would simply stop being chased.
+    //
+    // Derived by the same function every other money path uses, so a bill edited
+    // here and a bill paid at the counter cannot disagree about what PAID means.
+    const status = invoiceStatusFrom(
+      total,
+      inv.payments.map((p: { amount: { toString(): string } }) => ({ amount: Number(p.amount.toString()) })),
+      inv.refunds.map((r: { amount: { toString(): string } }) => ({ amount: Number(r.amount.toString()) })),
+    );
+
     // swap the items wholesale (receiptNo is preserved - same invoice, corrected)
     await tx.invoiceItem.deleteMany({ where: { invoiceId: inv.id } });
     await tx.invoice.update({
@@ -516,7 +666,16 @@ export async function updateInvoice(
       data: {
         subtotal: s2(subtotal), discountAmount: s2(discount), taxableAmount: s2(taxable),
         cgstAmount: s2(cgst), sgstAmount: s2(sgst), totalAmount: s2(total),
+        status,
+        // paidAt belongs to the moment the bill was settled, not to this edit.
+        // Cleared only where the bill has stopped being settled - a re-opened
+        // bill carrying the date it was "paid" is a contradiction on its face.
+        ...(status === "PAID" ? {} : { paidAt: null }),
         notes: input.notes?.trim() || null,
+        // `undefined` is Prisma's "leave this column alone", which is exactly
+        // what a caller that did not send a date means. `createdAt` is never
+        // among these fields - see the schema note on billDate.
+        ...(billDate === undefined ? {} : { billDate }),
         items: {
           create: items.map((it) => ({
             description: it.description, hsnSac: it.hsnSac ?? null, qty: it.qty,
@@ -527,7 +686,27 @@ export async function updateInvoice(
       },
     });
 
-    await logAudit(actor, { action: "INVOICE_EDITED", targetTable: "Invoice", targetId: inv.id, meta: { newTotal: s2(total) }, ...ctx }, tx);
+    await logAudit(actor, {
+      // A SETTLED bill being rewritten is its own action, not a variant of the
+      // ordinary one. Editing an unpaid bill is routine paperwork; editing a
+      // bill somebody has already paid changes a document that is in their
+      // hands, and it should be findable in the log by searching for exactly
+      // that rather than by reading the meta of every edit ever made.
+      action: collected > 0 ? "INVOICE_EDITED_AFTER_PAYMENT" : "INVOICE_EDITED",
+      targetTable: "Invoice", targetId: inv.id,
+      // The before-figure and the date both go in because they are the parts an
+      // edit leaves no other trace of: afterwards the row simply holds the new
+      // values, and "what was this bill before, and who moved it" is otherwise
+      // unanswerable.
+      meta: {
+        oldTotal: inv.totalAmount.toString(),
+        newTotal: s2(total),
+        collected: s2(collected),
+        status,
+        ...(billDate === undefined ? {} : { billDate: billDate ? billDate.toISOString() : null }),
+      },
+      ...ctx,
+    }, tx);
   });
 
   return getInvoice(input.invoiceId);
@@ -583,15 +762,23 @@ export async function listInvoices(source?: InvoiceSourceT, limit = 50): Promise
    */
   payer: string;
   payerName: string | null;
-  createdAt: string; patient: { displayId: string; fullName: string };
+  createdAt: string;
+  /** The corrected date this bill prints, when a desk has set one. */
+  billDate: string | null;
+  patient: { displayId: string; fullName: string };
 }[]> {
   const MODE_ORDER = ["CASH", "UPI", "CARD", "NETBANKING", "OTHER"];
   const rows = await prisma.invoice.findMany({
     where: source ? { source } : {},
+    // Ordered by when it was RAISED, not by the printed date. The list is the
+    // desk's working queue - most recent work first - and a bill back-dated to
+    // last month would otherwise fall to the bottom of the screen the moment
+    // somebody corrected its date.
     orderBy: { createdAt: "desc" },
     take: limit,
     select: {
-      id: true, receiptNo: true, source: true, status: true, totalAmount: true, createdAt: true,
+      id: true, receiptNo: true, source: true, status: true, totalAmount: true,
+      createdAt: true, billDate: true,
       payer: true, payerName: true,
       patient: { select: { displayId: true, fullName: true } },
       payments: { select: { amount: true, mode: true } },
@@ -600,7 +787,7 @@ export async function listInvoices(source?: InvoiceSourceT, limit = 50): Promise
   });
   return rows.map((i: {
     id: string; receiptNo: string; source: string; status: string;
-    totalAmount: { toString(): string }; createdAt: Date;
+    totalAmount: { toString(): string }; createdAt: Date; billDate: Date | null;
     payer: string; payerName: string | null;
     patient: { displayId: string; fullName: string };
     payments: { amount: { toString(): string }; mode: string }[];
@@ -621,6 +808,7 @@ export async function listInvoices(source?: InvoiceSourceT, limit = 50): Promise
       paymentModes,
       payer: i.payer, payerName: i.payerName,
       createdAt: i.createdAt.toISOString(),
+      billDate: i.billDate ? i.billDate.toISOString() : null,
       patient: i.patient,
     };
   });

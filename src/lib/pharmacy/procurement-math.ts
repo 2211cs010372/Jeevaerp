@@ -95,7 +95,29 @@ export function daysOfCover(inStock: number, dispensedPerDay: number): number | 
 }
 
 /**
+ * What the supplier's invoice should say: the goods plus the tax charged on
+ * them.
+ *
+ * THE BUG THIS FUNCTION EXISTS TO PREVENT. A distributor's invoice total is GST
+ * inclusive. Comparing it against goods value alone makes the tax look like a
+ * shortfall, so every delivery of a taxable product was flagged "Invoice
+ * differs" when nothing was wrong with it - and a warning that fires on correct
+ * receipts is a warning the counter learns to click past, which is exactly when
+ * a real short supply slips through.
+ *
+ * Kept separate from `receivedValue` rather than folded into it because the
+ * goods value is the cost basis: margin, stock value and supplier spend are all
+ * read off it ex-GST.
+ */
+export function receiptTotal(receivedValue: number, receivedTax: number): number {
+  return round2(receivedValue + receivedTax);
+}
+
+/**
  * Does the supplier's invoice agree with what came out of the carton?
+ *
+ * `receivedTotal` must be GST INCLUSIVE - use `receiptTotal()` to build it.
+ * Passing bare goods value here is the mistake described above.
  *
  * A tolerance exists because rounding on a 12-line invoice legitimately drifts a
  * rupee or two. Anything past that is a short supply, a rate change nobody
@@ -104,10 +126,10 @@ export function daysOfCover(inStock: number, dispensedPerDay: number): number | 
  */
 export function invoiceVariance(
   invoiceAmount: number | null | undefined,
-  receivedValue: number,
+  receivedTotal: number,
   tolerance = 1
 ): { variance: number; mismatch: boolean } | null {
   if (invoiceAmount == null) return null;
-  const variance = round2(invoiceAmount - receivedValue);
+  const variance = round2(invoiceAmount - receivedTotal);
   return { variance, mismatch: Math.abs(variance) > tolerance };
 }

@@ -1,0 +1,24 @@
+-- WHO MAY REWRITE A BILL.
+--
+-- Editing an invoice rewrites a GST document that a patient is holding a printed
+-- copy of. billing.service already refuses to touch a bill once money has been
+-- taken against it or an IRN has been issued - but an UNPAID bill is freely
+-- rewritable, and at a busy counter "just fix the amount" is one keystroke away
+-- from a bill that no longer matches the receipt in somebody's hand.
+--
+-- So this makes it a decision the hospital takes once, in daylight, instead of a
+-- capability every desk simply has.
+--
+-- ── DEFAULT FALSE IS THE POINT OF THE COLUMN ──
+--
+-- Reception and the insurance desk could not edit bills before this migration,
+-- so FALSE is exactly the behaviour they have today: nothing changes on the day
+-- this ships, and the new capability begins only when an admin turns it on with
+-- their name against it in the audit log.
+--
+-- The switch does NOT gate ADMIN - an admin who cannot correct a bill has no way
+-- to fix the mistake this column was protecting against - and it does not gate
+-- the lab counter, which already had bill editing and keeps it.
+
+-- AlterTable
+ALTER TABLE "HospitalConfig" ADD COLUMN     "billEditingEnabled" BOOLEAN NOT NULL DEFAULT false;

@@ -6,6 +6,7 @@ import { Icon } from "@/components/portal/ui/icons";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
+import { EditBillDialog } from "@/components/portal/billing/edit-bill-dialog";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 
 interface Bill {
@@ -60,6 +61,15 @@ export default function AdminBillsPage() {
   const [source, setSource] = useState<"ALL" | (typeof SOURCES)[number]>("ALL");
   const [pay, setPay] = useState<(typeof PAY_FILTERS)[number]>("ALL");
   const [q, setQ] = useState("");
+  /**
+   * The bill open for correction.
+   *
+   * No useBillEditing() check here, unlike reception and the insurance room.
+   * HospitalConfig.billEditingEnabled gates the COUNTER DESKS; an admin who
+   * could not correct a bill would have no way to fix the mistake that switch
+   * exists to prevent. The server agrees - see EDIT_GATED_ROLES.
+   */
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const r = await api.get<{ invoices: Bill[] }>("/admin/bills");
@@ -72,6 +82,9 @@ export default function AdminBillsPage() {
   // them, so it is the one that most needs to not be stale.
   useLive([TOPICS.ADMIN], load, {
     events: [EVENTS.INVOICE_RAISED, EVENTS.PAYMENT_TAKEN],
+    // Not while a bill is open for correction - a list that reloads under an
+    // open dialog takes a half-typed amendment with it.
+    enabled: !editingId,
   });
 
   const matchPay = (b: Bill) => {
@@ -187,11 +200,38 @@ export default function AdminBillsPage() {
                     className="inline-flex items-center gap-1 rounded-md border border-[var(--p-border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--p-blue)] transition-colors hover:border-[var(--p-blue)]">
                     <Icon name="printer" size={13} /> Bill
                   </a>
+                  {/* Paid bills included - the counters can correct those now,
+                      and an admin who could do less than a receptionist would be
+                      an odd console. Only a cancelled bill is excluded, because
+                      it is finished and the row already says so. The remaining
+                      limits (a live IRN, never below what was collected) are
+                      enforced server-side. */}
+                  {b.status !== "CANCELLED" && (
+                    <button onClick={() => setEditingId(b.id)}
+                      title={Number(b.amountPaid) > 0
+                        ? `Correct this bill — ${inr2(Number(b.amountPaid))} already collected`
+                        : "Correct this bill's date, lines or amount"}
+                      className="inline-flex items-center gap-1 rounded-md border border-[var(--p-border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--p-blue)] transition-colors hover:border-[var(--p-blue)]">
+                      <Icon name="file" size={13} /> Edit
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
           </section>
         </>
+      )}
+
+      {/* The same dialog every other desk corrects a bill with. Blue here to sit
+          with the admin console, teal at the counters - the accent is the only
+          thing that differs. */}
+      {editingId && (
+        <EditBillDialog
+          invoiceId={editingId}
+          accent="blue"
+          onClose={() => setEditingId(null)}
+          onSaved={() => { setEditingId(null); load(); }}
+        />
       )}
     </PortalScroll>
   );

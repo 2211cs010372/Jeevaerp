@@ -1510,11 +1510,22 @@ model GoodsReceipt {
   /// The distributor's own invoice - what accounts pays against.
   invoiceNo     String?
   invoiceDate   DateTime? @db.Date
-  /// What the supplier billed. Compared against `receivedValue` below; a gap
-  /// means the invoice and the carton disagree, and somebody must look.
+  /// What the supplier billed - GST INCLUSIVE, because that is what is printed
+  /// on a distributor's invoice and what accounts pays. Compared against
+  /// `receivedValue + receivedTax`; a gap means the invoice and the carton
+  /// disagree, and somebody must look.
   invoiceAmount Decimal?  @db.Decimal(12, 2)
-  /// What actually came out of the carton, valued at the receipt's own rates.
+  /// What actually came out of the carton, valued at the receipt's own rates,
+  /// EXCLUDING tax. This is the cost basis - margin and stock value are read
+  /// off it, so it must stay ex-GST.
   receivedValue Decimal   @default(0) @db.Decimal(12, 2)
+  /// Tax charged on this delivery, held apart from the goods value so the
+  /// comparison against the supplier's bill can add the two back together.
+  ///
+  /// Rows written before this column existed carry 0 - the tax on those
+  /// deliveries was never captured, and inventing it would put a number on a
+  /// purchase record that nobody ever billed. Their variance stays as it was.
+  receivedTax   Decimal   @default(0) @db.Decimal(12, 2)
   notes         String?
 
   receivedById String
@@ -1548,6 +1559,11 @@ model GoodsReceiptItem {
   freeQty    Int      @default(0)
   unitCost   Decimal  @db.Decimal(10, 2)
   mrp        Decimal  @db.Decimal(10, 2)
+  /// The rate tax was actually charged at ON THIS DELIVERY, snapshotted rather
+  /// than read back through Medicine - a product's catalogue rate can be
+  /// corrected later, and re-deriving an old receipt's tax through the new rate
+  /// would silently restate a purchase that was already paid and filed.
+  gstRatePct Decimal  @default(0) @db.Decimal(4, 2)
 
   @@index([goodsReceiptId])
   @@index([medicineId])
@@ -1699,6 +1715,27 @@ model Invoice {
   notes       String?
   paidAt      DateTime?
   cancelledAt DateTime?
+  /// THE DATE THE BILL SAYS, when that is not the moment it was typed in.
+  ///
+  /// A treatment given on Saturday and billed on Monday printed "Bill Date:
+  /// Monday" - a date the patient can see is wrong on a document they hand to an
+  /// insurer, and one an insurer can reject the claim over.
+  ///
+  /// A SEPARATE COLUMN, and that is the whole point of it. `createdAt` is what
+  /// the day close, the collection report and every GST return group money by
+  /// (see reports.service - they all filter `createdAt` between two dates), so
+  /// editing it to correct a printed date would silently move that bill's money
+  /// out of one day's takings and into another's. The till would stop matching
+  /// the drawer for two days at once, and nothing on any screen would say why.
+  ///
+  /// So `createdAt` stays the untouched record of when the row was actually
+  /// written, and this is the date the SHEET prints. Null on every bill nobody
+  /// has had to correct - the sheet falls back to createdAt - which is also why
+  /// it needed no backfill.
+  ///
+  /// Exactly the arrangement LabTest.orderedAt already uses for the same problem
+  /// on a lab report; see the note there.
+  billDate    DateTime?
   createdById String
   createdBy   User      @relation("InvoiceCreatedBy", fields: [createdById], references: [id])
   createdAt   DateTime  @default(now())
@@ -2201,6 +2238,26 @@ model HospitalConfig {
   /// which suits a fast-moving retail counter and not a hospital that buys in
   /// bulk twice a year.
   expiryAlertDays Int @default(90)
+
+  // ── WHO MAY REWRITE A BILL ────────────────────────────────────────────────
+  //
+  // Editing an invoice rewrites a GST document that a patient is holding a
+  // printed copy of. The service already refuses to touch a bill once money has
+  // been taken or an IRN issued - but an UNPAID bill is freely rewritable, and
+  // at a busy counter "just fix the amount" is one keystroke away from a bill
+  // that no longer matches the receipt in somebody's hand.
+  //
+  // So it is a decision the hospital makes once, in daylight, rather than a
+  // capability every desk simply has. OFF by default: a hospital that has never
+  // opened this page keeps the safer of the two behaviours, and turning it on is
+  // an act somebody's name is against in the audit log.
+  //
+  // Scope is the COUNTER DESKS - reception and the insurance room. Admin is
+  // never gated by it (an admin who cannot correct a bill has no way to fix the
+  // mistake this switch was protecting against), and the lab counter keeps the
+  // editing it already had.
+  /// Let reception and the insurance desk edit unpaid bills.
+  billEditingEnabled Boolean @default(false)
 
   // ── WARD BEHAVIOUR ────────────────────────────────────────────────────────
   /// Refuse a discharge while pharmacy or lab bills on that stay are unpaid.

@@ -10,6 +10,7 @@ import bcrypt from "bcryptjs";
 import type { Role, Prisma } from "@prisma/client";
 import type { AuthUser } from "@/lib/auth/types";
 import type { DoctorProfileInput } from "@/server/validators/admin";
+import { priceChanges, duplicateId } from "@/lib/lab-price";
 import {
   buildAuditWhere, clampLimit, clampOffset, type AuditQuery,
 } from "@/lib/audit-query";
@@ -695,6 +696,84 @@ export async function upsertCatalogItem(
   }
 }
 
+/**
+ * CORRECT MANY PRICES IN ONE SUBMIT.
+ *
+ * The catalogue was seeded from the lab's own report forms, and a report form
+ * carries no rate - so every test the seed could not carry a price over for
+ * landed at ₹0. A test at ₹0 is not obviously broken on any screen: it orders,
+ * it bills, it prints, and the patient is charged nothing for it. There were
+ * forty of them, and fixing forty through a modal that reloads the whole
+ * catalogue between each one is how the last five never get done.
+ *
+ * WHY THIS IS NOT A LOOP OVER upsertCatalogItem. That function writes the name,
+ * the code and the active flag as well, so driving it from a price grid would
+ * mean the grid holding - and re-asserting - four fields it does not show. A row
+ * the technician never touched would be rewritten with whatever the browser
+ * happened to be told about it when the page loaded, which is how a rename made
+ * on the catalogue screen in another tab gets silently reverted by someone
+ * fixing an unrelated price. This touches ONE column.
+ *
+ * UNCHANGED PRICES ARE NOT WRITTEN. The grid posts every row it is holding, but
+ * only the ones that actually moved reach the database. Otherwise opening the
+ * screen and pressing Save would stamp sixty rows and bury the audit log under
+ * corrections nobody made.
+ *
+ * IT DOES NOT TOUCH TESTS ALREADY ORDERED. `LabTest.priceAtOrder` is a snapshot
+ * taken when the sample was raised, on purpose - a bill already handed to a
+ * patient must not change because somebody edited the menu afterwards. So this
+ * fixes what gets billed from now on, and the zero-rated tests already sitting
+ * in the queue stay zero. Those have to be corrected on the bill itself.
+ */
+export async function bulkUpdateCatalogPrices(
+  actor: AuthUser,
+  items: { id: string; price: number }[],
+  ctx: { ipAddress?: string; userAgent?: string }
+): Promise<{ updated: number }> {
+  const ids = items.map((i) => i.id);
+  if (duplicateId(ids)) throw new ApiError(400, "The same test was sent twice");
+
+  const existing = await prisma.labTestCatalog.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, name: true, price: true },
+  });
+  if (existing.length !== ids.length) {
+    throw new ApiError(400, "One of these tests no longer exists - reload the page");
+  }
+
+  const changed = priceChanges(
+    existing.map((e) => ({ id: e.id, name: e.name, price: e.price.toString() })),
+    items,
+  );
+  if (!changed.length) return { updated: 0 };
+
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    for (const c of changed) {
+      await tx.labTestCatalog.update({
+        where: { id: c.id },
+        data: { price: c.to.toFixed(2) },
+      });
+    }
+    // ONE entry for the submit, not one per row. A price correction round is a
+    // single decision by a single person; forty rows in the log describing it
+    // would push everything else off the first page of the audit screen. The
+    // before-and-after of every test is in the meta, which is where somebody
+    // asking "who dropped the CBP to 50" actually looks.
+    await logAudit(actor, {
+      action: "CATALOG_PRICES_UPDATED",
+      targetTable: "LabTestCatalog",
+      targetId: changed[0].id,
+      meta: {
+        count: changed.length,
+        changes: changed.map((c) => ({ id: c.id, name: c.name, from: c.from, to: c.to })),
+      },
+      ...ctx,
+    }, tx);
+  });
+
+  return { updated: changed.length };
+}
+
 export interface CatalogAnalyteDTO {
   name: string; unit: string | null;
   refLow: string | null; refHigh: string | null; refText: string | null;
@@ -826,12 +905,16 @@ export interface OperationalSettings {
   onlineBookingEnabled: boolean;
   callbackRequestsEnabled: boolean;
   invoiceFooterNote: string | null;
+  /** Reception and the insurance desk may edit unpaid bills. Off by default -
+   *  see the column comment in schema.prisma for why. */
+  billEditingEnabled: boolean;
 }
 export async function getSettings(): Promise<OperationalSettings> {
   const c = await prisma.hospitalConfig.findFirst({
     select: {
       expiryAlertDays: true, blockDischargeOnDues: true,
       onlineBookingEnabled: true, callbackRequestsEnabled: true, invoiceFooterNote: true,
+      billEditingEnabled: true,
     },
   });
   return {
@@ -840,6 +923,9 @@ export async function getSettings(): Promise<OperationalSettings> {
     onlineBookingEnabled: c?.onlineBookingEnabled ?? true,
     callbackRequestsEnabled: c?.callbackRequestsEnabled ?? true,
     invoiceFooterNote: c?.invoiceFooterNote?.trim() || null,
+    // Fails CLOSED, unlike every other fallback here. A missing config row must
+    // not be the reason a desk can rewrite a GST document.
+    billEditingEnabled: c?.billEditingEnabled ?? false,
   };
 }
 
@@ -870,6 +956,7 @@ export async function updateHospitalConfig(
     expiryAlertDays?: number; blockDischargeOnDues?: boolean;
     onlineBookingEnabled?: boolean; callbackRequestsEnabled?: boolean;
     accountsTabEnabled?: boolean;
+    billEditingEnabled?: boolean;
     afterHoursOpEnabled?: boolean; afterHoursOpStart?: string;
     afterHoursOpEnd?: string; afterHoursOpMultiplier?: number;
   },
@@ -879,7 +966,7 @@ export async function updateHospitalConfig(
     select: {
       id: true, logoDataUrl: true, faviconDataUrl: true, blockDischargeOnDues: true,
       onlineBookingEnabled: true, callbackRequestsEnabled: true, expiryAlertDays: true,
-      accountsTabEnabled: true,
+      accountsTabEnabled: true, billEditingEnabled: true,
       afterHoursOpEnabled: true, afterHoursOpStart: true,
       afterHoursOpEnd: true, afterHoursOpMultiplier: true,
     },
@@ -922,6 +1009,12 @@ export async function updateHospitalConfig(
     }
     if (input.accountsTabEnabled !== undefined && input.accountsTabEnabled !== existing.accountsTabEnabled) {
       changes.accountsTabEnabled = `${existing.accountsTabEnabled} -> ${input.accountsTabEnabled}`;
+    }
+    // The one switch on this page that hands a desk the ability to rewrite a tax
+    // document. "Who turned bill editing on, and when" is the first question
+    // asked when a printed receipt stops matching the ledger.
+    if (input.billEditingEnabled !== undefined && input.billEditingEnabled !== existing.billEditingEnabled) {
+      changes.billEditingEnabled = `${existing.billEditingEnabled} -> ${input.billEditingEnabled}`;
     }
     // After-hours pricing changes what a patient is charged, so each part of it
     // is named individually. "The night rate went from 2x to 3x on the 14th, by

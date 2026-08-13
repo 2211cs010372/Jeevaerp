@@ -4,6 +4,9 @@ import { nextId } from "@/lib/ids";
 import { logAudit } from "./audit.service";
 import { currentInpatients } from "./ipd.service";
 import { allocateCoverage } from "@/lib/insurance-split";
+// One definition of what a corrected bill date is, shared with billing.service
+// so the Edit dialog and this page's date control cannot disagree.
+import { resolveBillDate, BillDateError } from "@/server/billing/calc";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, ClaimStatus } from "@prisma/client";
 
@@ -934,23 +937,55 @@ export async function stayBills(admissionId: string): Promise<{
   dischargedAt: string | null;
   bills: StayBillDTO[];
   outsideCount: number;
+  /**
+   * THE SAME PATIENT'S OTHER BILLS - the outpatient half of the same person.
+   *
+   * The claim is the stay, but the file an insurer asks for rarely stops there:
+   * the OP consultation where the condition was first diagnosed, the scan billed
+   * at the counter a week before admission, the walk-in pharmacy sale on the way
+   * home, an earlier admission on a readmission claim. None of those carry this
+   * admissionId, so none of them appeared on this screen at all - and the desk
+   * either printed them out of reception's login or did not attach them.
+   *
+   * Deliberately a SEPARATE list, not folded into `bills`. That list is the
+   * claim, and every row on it is checked against the admission window; mixing
+   * in bills that are *supposed* to fall outside that window would turn the
+   * `outsideStay` flag - the entire point of the list - into noise.
+   */
+  otherBills: StayBillDTO[];
 }> {
   const adm = await prisma.admission.findUnique({
     where: { id: admissionId },
-    select: { admittedAt: true, dischargedAt: true },
+    select: { admittedAt: true, dischargedAt: true, patientId: true },
   });
   if (!adm) throw new ApiError(404, "Admission not found");
 
-  const rows = await prisma.invoice.findMany({
-    where: { admissionId, status: { not: "CANCELLED" } },
-    orderBy: { createdAt: "asc" },
-    select: {
-      id: true, receiptNo: true, source: true, payer: true, status: true,
-      totalAmount: true, createdAt: true,
-      payments: { select: { amount: true } },
-      items: { select: { description: true }, orderBy: { id: "asc" } },
-    },
-  });
+  const billSelect = {
+    id: true, receiptNo: true, source: true, payer: true, status: true,
+    totalAmount: true, createdAt: true, billDate: true,
+    payments: { select: { amount: true } },
+    items: { select: { description: true }, orderBy: { id: "asc" } },
+  } as const;
+
+  const [rows, others] = await Promise.all([
+    prisma.invoice.findMany({
+      where: { admissionId, status: { not: "CANCELLED" } },
+      orderBy: { createdAt: "asc" },
+      select: billSelect,
+    }),
+    prisma.invoice.findMany({
+      where: {
+        patientId: adm.patientId,
+        status: { not: "CANCELLED" },
+        OR: [{ admissionId: null }, { admissionId: { not: admissionId } }],
+      },
+      // Newest first - on this list the relevant bill is the recent one, which
+      // is the opposite of the claim list where the story reads forwards.
+      orderBy: { createdAt: "desc" },
+      take: 60,
+      select: billSelect,
+    }),
+  ]);
 
   // The window a bill has to fall inside. Open-ended while the patient is still
   // in a bed - nothing raised today can be "after discharge" if there has been
@@ -958,28 +993,41 @@ export async function stayBills(admissionId: string): Promise<{
   const from = adm.admittedAt;
   const to = adm.dischargedAt;
 
-  const bills: StayBillDTO[] = rows.map((r) => {
+  /** One invoice, flattened for the screen. A null `window` means this bill was
+   *  never claimed to be on the stay, so it cannot be "outside" it. */
+  const flatten = (r: (typeof rows)[number], window: { from: Date; to: Date | null } | null): StayBillDTO => {
     const first = r.items[0];
     const more = r.items.length - 1;
+    // THE DATE THE ASSESSOR WILL SEE. A corrected billDate is what the printed
+    // bill in the claim file carries, so it is what this screen shows and what
+    // the outside-the-stay flag has to judge - flagging on `createdAt` would
+    // mark a bill as outside the stay that the assessor is holding proof is
+    // inside it, and leave a genuinely stray one unflagged the moment somebody
+    // re-dated it.
+    const effective = r.billDate ?? r.createdAt;
     return {
       id: r.id, receiptNo: r.receiptNo, source: r.source, payer: r.payer, status: r.status,
       total: Number(r.totalAmount).toFixed(2),
       paid: r.payments.reduce((s, p) => s + Number(p.amount), 0).toFixed(2),
-      createdAt: r.createdAt.toISOString(),
+      createdAt: effective.toISOString(),
       // Compared on the DAY, not the instant: a bill raised at 23:55 on the
       // discharge date is inside the stay by any reading an assessor would use.
-      outsideStay:
-        r.createdAt < startOfDay(from) || (to !== null && r.createdAt > endOfDay(to)),
+      outsideStay: window
+        ? effective < startOfDay(window.from) || (window.to !== null && effective > endOfDay(window.to))
+        : false,
       lines: r.items.length,
       summary: first ? `${first.description.split("·")[0].trim()}${more > 0 ? ` + ${more} more` : ""}` : "\u2014",
     };
-  });
+  };
+
+  const bills: StayBillDTO[] = rows.map((r) => flatten(r, { from, to }));
 
   return {
     admittedAt: adm.admittedAt.toISOString(),
     dischargedAt: adm.dischargedAt?.toISOString() ?? null,
     bills,
     outsideCount: bills.filter((b) => b.outsideStay).length,
+    otherBills: others.map((r) => flatten(r, null)),
   };
 }
 
@@ -989,10 +1037,26 @@ const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(
 /**
  * Correct the date a bill is dated.
  *
- * Deliberately narrow: it moves `createdAt` and nothing else. It cannot be used
- * on a bill that has been paid or that carries an IRN - a settled receipt and a
- * government-registered invoice are both documents somebody else is holding a
- * copy of, and re-dating them here would put this system out of step with theirs.
+ * Deliberately narrow: it moves the bill's DATE and nothing else. It cannot be
+ * used on a bill that carries an IRN - a government-registered invoice is a
+ * document somebody else holds a copy of, and re-dating it here would put this
+ * system out of step with theirs.
+ *
+ * ── IT WRITES billDate, NOT createdAt ──
+ *
+ * It used to assign `createdAt` directly, and that was a quiet way to lose
+ * money. `createdAt` is what the day close, the collection report and every GST
+ * return group by (reports.service filters it between two dates), so re-dating a
+ * bill by three days moved its money out of one day's takings and into
+ * another's - the till stopped matching the drawer for two days at once, and
+ * nothing on any screen said why. An insurance desk tidying a claim file has no
+ * reason to be rewriting the hospital's daily collection.
+ *
+ * `billDate` is the column that exists for exactly this: it is what the printed
+ * sheet shows, `createdAt` stays the untouched record of when the bill was
+ * really raised, and the two are separately visible. It is also the same column
+ * the Edit dialog writes, so the date control on this page and the date field in
+ * that dialog now mean one thing rather than two.
  *
  * The old date is kept in the audit log, because "the bill was re-dated after
  * the treatment" is a question an insurer is entitled to ask.
@@ -1005,41 +1069,48 @@ export async function redateBill(
   const inv = await prisma.invoice.findUnique({
     where: { id: input.invoiceId },
     select: {
-      id: true, receiptNo: true, createdAt: true, status: true,
-      payments: { select: { id: true } },
+      id: true, receiptNo: true, createdAt: true, billDate: true, status: true,
       eInvoice: { select: { status: true } },
     },
   });
   if (!inv) throw new ApiError(404, "Bill not found");
   if (inv.status === "CANCELLED") throw new ApiError(409, "That bill is cancelled");
-  if (inv.payments.length > 0) {
-    throw new ApiError(409, "Money has been taken against this bill - its date can't be changed. Cancel and reissue it.");
-  }
   if (inv.eInvoice?.status === "GENERATED") {
     throw new ApiError(409, "This bill is registered with an IRN. Its date is fixed with the government, not here.");
   }
+  // The paid-bill refusal that used to sit here is GONE, and deliberately. It
+  // existed because this wrote `createdAt` - moving a settled bill's money to a
+  // different day really was indefensible. Writing `billDate` moves no money at
+  // all: it corrects the date on the paper and leaves the takings where they
+  // were. The desk that may now correct a paid bill's lines had no way to
+  // correct its date, which was the odd half of the rule rather than the safe
+  // one. The Edit dialog and this control now agree.
 
-  // Date only. The time of day is meaningless on a corrected bill and keeping the
-  // original clock time makes the ordering read sensibly against its neighbours.
-  const parts = input.date.split("-").map(Number);
-  if (parts.length !== 3 || parts.some(Number.isNaN)) throw new ApiError(400, "Enter a valid date");
-  const next = new Date(
-    parts[0], parts[1] - 1, parts[2],
-    inv.createdAt.getHours(), inv.createdAt.getMinutes(), inv.createdAt.getSeconds()
-  );
-  if (next > new Date()) throw new ApiError(400, "A bill can't be dated in the future");
+  // Date only. The corrected date is a DAY, not a moment - see resolveBillDate
+  // for why it is anchored at noon rather than at midnight.
+  let next: Date;
+  try {
+    next = resolveBillDate(input.date)!;
+  } catch (e) {
+    if (e instanceof BillDateError) throw new ApiError(400, e.message);
+    throw e;
+  }
 
-  await prisma.invoice.update({ where: { id: inv.id }, data: { createdAt: next } });
+  const before = inv.billDate ?? inv.createdAt;
+  await prisma.invoice.update({ where: { id: inv.id }, data: { billDate: next } });
   await logAudit(actor, {
     action: "INVOICE_REDATED", targetTable: "Invoice", targetId: inv.id,
     meta: {
       receiptNo: inv.receiptNo,
-      from: inv.createdAt.toISOString(),
+      from: before.toISOString(),
       to: next.toISOString(),
+      // The real clock, recorded alongside, so the log answers "was this bill
+      // re-dated away from the day it was actually raised" without a join.
+      raisedAt: inv.createdAt.toISOString(),
       reason: input.reason?.trim() || null,
     },
     ...ctx,
   });
 
-  return { receiptNo: inv.receiptNo, from: inv.createdAt.toISOString(), to: next.toISOString() };
+  return { receiptNo: inv.receiptNo, from: before.toISOString(), to: next.toISOString() };
 }

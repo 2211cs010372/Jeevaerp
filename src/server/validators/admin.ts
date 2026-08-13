@@ -147,6 +147,9 @@ export const hospitalConfigSchema = z.object({
   onlineBookingEnabled: z.boolean().optional(),
   callbackRequestsEnabled: z.boolean().optional(),
   accountsTabEnabled: z.boolean().optional(),
+  /// Hands reception and the insurance desk the ability to rewrite an unpaid
+  /// bill. See the HospitalConfig column comment for why it defaults off.
+  billEditingEnabled: z.boolean().optional(),
 
   // After-hours OP pricing. The times are "HH:MM" on a 24-hour clock; end may be
   // earlier than start, which means the window crosses midnight.

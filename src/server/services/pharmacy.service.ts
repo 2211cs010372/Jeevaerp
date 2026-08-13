@@ -631,7 +631,7 @@ export async function dispense(
   input: {
     patientId: string;
     prescriptionUploadId?: string;
-    items: { medicineId: string; qty: number }[];
+    items: { medicineId: string; qty: number; dosage?: string }[];
     discountAmount?: number;
     /** Set when the patient is taking less than was prescribed - recorded on the bill. */
     shortSupplyReason?: string;
@@ -643,8 +643,14 @@ export async function dispense(
   if (!input.items.length) throw new ApiError(400, "Add at least one medicine");
 
   // Resolve batches + build bill lines inside a transaction so stock can't race.
-  const lines = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  const { lines, rxItems } = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const built: BillLineInput[] = [];
+    // ONE ROW PER MEDICINE, AS ASKED FOR - not per batch. The bill splits by
+    // batch because a tax document has to be traceable to the strip; the
+    // prescription record has to read back like the chit the patient was
+    // handed, and "Amoxicillin x 10" written twice because FEFO crossed a
+    // batch boundary is not that.
+    const rx: { medicineName: string; medicineId: string; qty: number; dosage: string | null }[] = [];
 
     for (const item of input.items) {
       if (item.qty <= 0) throw new ApiError(400, "Quantity must be at least 1");
@@ -668,6 +674,13 @@ export async function dispense(
 
       const picks = await pickBatchesFEFO(tx, item.medicineId, item.qty);
 
+      rx.push({
+        medicineName: med.name,
+        medicineId: med.id,
+        qty: item.qty,
+        dosage: item.dosage?.trim() || null,
+      });
+
       for (const p of picks) {
         // decrement stock
         await tx.stockBatch.update({ where: { id: p.batchId }, data: { quantity: { decrement: p.qty } } });
@@ -690,7 +703,7 @@ export async function dispense(
         });
       }
     }
-    return built;
+    return { lines: built, rxItems: rx };
   });
 
   // ── Is this patient lying in a bed upstairs? ────────────────────────────────
@@ -699,8 +712,47 @@ export async function dispense(
   // make them pay twice - once at the window, once at discharge.
   const liveAdmission = await prisma.admission.findFirst({
     where: { patientId: input.patientId, status: "ADMITTED" },
-    select: { id: true, ipNumber: true },
+    select: { id: true, ipNumber: true, doctor: { select: { name: true } } },
   });
+
+  // ── THE COUNTER FILES ITS OWN PRESCRIPTION ─────────────────────────────────
+  //
+  // A ward chit reaches this counter WITHOUT passing through reception - the
+  // nurse walks it down, the pharmacist reads it and dispenses. Nothing upstream
+  // has filed a ℞ for it, so until now the medicines existed only as invoice
+  // lines: the patient's record showed a bill and no prescription, and the
+  // prescriptions tab reception and admin actually look at was empty for exactly
+  // the patients who are taking the most medicine.
+  //
+  // So the counter files it itself, the same way reception would - against the
+  // STAY when the patient is in a bed, against the patient alone when they are
+  // not. Written straight to DISPENSED, because it is being recorded at the
+  // moment of dispensing: there is no queue step to wait for.
+  //
+  // Only when nothing was dispensed against: a chit reception already sent up
+  // has a record, and filing a second one would show the same medicines twice.
+  let prescriptionUploadId = input.prescriptionUploadId ?? null;
+  if (!prescriptionUploadId && rxItems.length) {
+    const filed = await prisma.prescriptionUpload.create({
+      data: {
+        patientId: input.patientId,
+        admissionId: liveAdmission?.id ?? null,
+        uploadedById: actor.id,
+        // Whose instruction this was. For a ward dispense that is the attending
+        // doctor; for a counter sale nobody wrote it, and saying so is honest.
+        doctorName: liveAdmission?.doctor?.name ?? null,
+        title: liveAdmission
+          ? `Ward dispense · ${liveAdmission.ipNumber}`
+          : "Pharmacy counter",
+        status: "DISPENSED",
+        dispensedAt: new Date(),
+        dispensedById: actor.id,
+        items: { create: rxItems },
+      },
+      select: { id: true },
+    });
+    prescriptionUploadId = filed.id;
+  }
 
   // AN INPATIENT'S MEDICINES GET THEIR OWN PHARMACY BILL.
   //
@@ -728,7 +780,10 @@ export async function dispense(
     {
       patientId: input.patientId,
       source: "PHARMACY",
-      prescriptionUploadId: input.prescriptionUploadId,
+      // The bill points at the ℞ it fulfils - the one reception sent up, or the
+      // one this counter just filed. Either way the two halves of the event are
+      // findable from each other.
+      prescriptionUploadId: prescriptionUploadId ?? undefined,
       ...(liveAdmission ? { admissionId: liveAdmission.id } : {}),
       lines,
       discountAmount: input.discountAmount,
@@ -750,7 +805,7 @@ export async function dispense(
     }
     await logAudit(actor, {
       action: "PHARMACY_BILLED_TO_INPATIENT", targetTable: "Admission", targetId: liveAdmission.id,
-      meta: { ipNumber: liveAdmission.ipNumber, lines: lines.length, receiptNo: invoice.receiptNo, due: invoice.balanceDue },
+      meta: { ipNumber: liveAdmission.ipNumber, lines: lines.length, receiptNo: invoice.receiptNo, due: invoice.balanceDue, prescriptionUploadId },
       ...ctx,
     });
 
@@ -775,7 +830,7 @@ export async function dispense(
     });
   }
 
-  await logAudit(actor, { action: "MEDICINES_DISPENSED", targetTable: "Invoice", targetId: invoice.id, meta: { lines: lines.length, prescriptionUploadId: input.prescriptionUploadId ?? null }, ...ctx });
+  await logAudit(actor, { action: "MEDICINES_DISPENSED", targetTable: "Invoice", targetId: invoice.id, meta: { lines: lines.length, prescriptionUploadId, filedHere: !input.prescriptionUploadId }, ...ctx });
 
   // Reception watches this to see a chit clear off the queue; stock levels moved
   // too, so the counter's own alerts are stale as of now.

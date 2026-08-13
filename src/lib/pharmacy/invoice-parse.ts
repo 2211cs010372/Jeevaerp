@@ -15,12 +15,40 @@
  *   SNO · PRODUCT NAME · PACK · QTY · FREE · OMrp · BATCH · M.R.P · EXP ·
  *   RATE · AMOUNT · G% · HSN
  *
- * Only PRODUCT NAME has a variable width, and FREE is usually blank. So the
- * columns are read RIGHT TO LEFT from HSN, which is the most reliable anchor on
- * the line - a 6-digit code in a fixed position. Anchoring on the MM/YY expiry
- * instead breaks the moment a product name contains a number, and these are
- * full of them: "ISTAMET 50/500", "TELMA CT40/6.25MG", "ECOSPRIN AV 75/20".
+ * Only PRODUCT NAME has a variable width, and FREE is usually blank.
+ *
+ * ── WHY THERE ARE THREE PARSERS AND NOT ONE ──
+ *
+ * The first version anchored every line on HSN, the rightmost fixed-width field:
+ * a 6-digit code in a fixed position, by far the most reliable landmark on a
+ * clean scan. That is still tier 1, because when it fires it reads all thirteen
+ * columns correctly.
+ *
+ * But it is ALL-OR-NOTHING. HSN sits at the far right edge of the paper, which
+ * is exactly the part a phone photo loses - to shadow, to the curl of the page,
+ * to being cropped a centimetre short. Miss HSN and the line returns null; miss
+ * it on every line and a 23-item invoice imports as an empty grid while the
+ * header (matched by loose regex over the whole page) still fills in perfectly.
+ * That is the "it only got the supplier and the date" failure, and it is a
+ * parser failure, not an OCR failure - the text was there.
+ *
+ * So the anchors now degrade:
+ *
+ *   tier 1  HSN        all 13 columns, high confidence
+ *   tier 2  EXPIRY     right edge lost; everything but HSN/G% still read
+ *   tier 3  BATCH      expiry unreadable too; name, qty and money recovered,
+ *                      expiry left BLANK for a human to key
+ *
+ * Tier 3 runs only when tiers 1 and 2 have found almost nothing across the whole
+ * page, because it is the one that can hallucinate a row out of a totals line.
+ * A blank expiry is deliberate: the grid marks it red and refuses the import
+ * until a person types it off the strip. Saving them the product name, the batch
+ * and the prices while insisting on the one field that expires stock is the
+ * whole trade.
  */
+
+/** How the row was read - drives the "check this one" flag in the grid. */
+export type RowConfidence = "high" | "medium" | "low";
 
 /** One line item read off an invoice, in the shape the import grid uses. */
 export interface ParsedRow {
@@ -43,6 +71,8 @@ export interface ParsedRow {
   hsn: string;
   supplier: string;
   createNew?: boolean;
+  /** Which anchor found this row. Absent on hand-keyed and spreadsheet rows. */
+  confidence?: RowConfidence;
 }
 
 export interface SupplierRef { id: string; name: string }
@@ -98,61 +128,148 @@ export function toISODate(v: unknown): string {
 /** OCR leaves table borders and stray punctuation glued to numbers. */
 const clean = (s: string) => (s || "").replace(/[^\d.]/g, "");
 const isNum = (s: string) => { const c = clean(s); return c !== "" && /^\d+(\.\d+)?$/.test(c); };
-const isMonthYear = (s: string) => {
-  const m = s.match(/^(\d{1,2})[/\-](\d{2,4})$/);
-  return !!m && +m[1] >= 1 && +m[1] <= 12;
-};
 
 /**
- * One line of the item table.
+ * The letters tesseract hands back when it meant digits.
  *
- * Returns null for anything that isn't an item row - headers, the bank line,
- * totals, and the forest of `|` border fragments OCR emits for empty cells.
+ * Applied ONLY where the column is numeric by definition - a quantity, an MRP,
+ * an expiry. Never to a batch number: "SIHO887A" is a real batch and rewriting
+ * its S and O into 5 and 0 would invent a consignment that does not exist.
  */
-function parseLine(raw: string): ParsedRow | null {
-  // Table borders become noise tokens; drop them before splitting.
-  const line = raw.replace(/[|]/g, " ").replace(/\s+/g, " ").trim();
+const OCR_DIGITS: Record<string, string> = {
+  O: "0", o: "0", Q: "0", D: "0",
+  l: "1", I: "1", i: "1", "|": "1", "!": "1",
+  Z: "2", z: "2",
+  S: "5", s: "5",
+  b: "6", G: "6",
+  T: "7", "?": "7",
+  B: "8",
+  g: "9", q: "9",
+};
+const digitsOnly = (s: string) => s.replace(/[A-Za-z|!?]/g, (c) => OCR_DIGITS[c] ?? "");
+
+/**
+ * A numeric cell, with the OCR alphabet folded back into digits.
+ *
+ * Guarded by shape: the token has to be mostly digits already. Without that
+ * guard a product name like "TAB" folds into "748" and becomes a price.
+ */
+function asNumber(tok: string): string {
+  const raw = (tok || "").replace(/[^\dA-Za-z.,]/g, "");
+  if (!raw) return "";
+  const digits = (raw.match(/\d/g) ?? []).length;
+  if (digits === 0 || digits < raw.length / 2) return "";
+
+  // The separators, in the order that stops them destroying each other.
+  // "1,371.40" is one thousand three hundred; "148.70," is a price with the
+  // table's comma still stuck to it. Reading the comma as a decimal point in
+  // either case turns a rate of 148.70 into nothing at all, and a blank rate on
+  // a goods receipt is a purchase booked at zero cost.
+  let s = digitsOnly(raw);
+  s = s.replace(/,(?=\d{3}\b)/g, "");     // thousands separator
+  s = s.replace(/,/g, ".");               // European decimal comma
+  s = s.replace(/[.]+$/, "");             // trailing punctuation off the table
+  return /^\d+(\.\d+)?$/.test(s) ? s : "";
+}
+
+const THIS_YEAR = new Date().getFullYear();
+
+/**
+ * An MM/YY expiry, with the separator and the digits repaired.
+ *
+ * `strict` is the difference between scanning for the anchor and reading a cell
+ * whose position is already known. When SEARCHING we insist on a real separator
+ * and a plausible year, because a bare four digits is also a batch number, an
+ * amount, and half the serial numbers on the page. Once the column is pinned by
+ * a stronger anchor we accept "0128" printed without the slash.
+ */
+function asExpiry(tok: string, strict = true): string {
+  const raw = (tok || "").replace(/[^\dA-Za-z/\-.]/g, "");
+  if (!raw) return "";
+  const fixed = digitsOnly(raw).replace(/[.\-]/g, "/");
+  let mo = 0, yTxt = "";
+
+  const m = fixed.match(/^(\d{1,2})\/(\d{2}|\d{4})$/);
+  if (m) {
+    mo = Number(m[1]);
+    yTxt = m[2];
+  } else if (!strict) {
+    // "0128" / "062028" - the slash didn't survive the scan.
+    const d = fixed.replace(/\D/g, "");
+    if (d.length !== 4 && d.length !== 6) return "";
+    mo = Number(d.slice(0, 2));
+    yTxt = d.slice(2);
+  } else return "";
+
+  if (mo < 1 || mo > 12) return "";
+  const year = yTxt.length === 2 ? 2000 + Number(yTxt) : Number(yTxt);
+  // Stock on an invoice expires soon-ish. This bound is what stops a product
+  // name like "AZORAN 10/325" from being mistaken for an October 325 expiry.
+  if (year < THIS_YEAR - 6 || year > THIS_YEAR + 20) return "";
+  return toISODate(`${mo}/${yTxt}`);
+}
+
+const isMonthYear = (s: string) => asExpiry(s) !== "";
+
+/**
+ * Lines that are furniture, not stock.
+ *
+ * Tier 3 is loose enough to read a row out of the totals block if left to it, so
+ * the bank line, the tax summary and the masthead are struck out by name before
+ * any parser sees them. Nothing here appears in a medicine's name.
+ */
+const NOISE = new RegExp(
+  [
+    "\\bbank\\b", "\\bifsc\\b", "a/c\\s*no", "\\bbranch\\s*:", "\\bcheque\\b",
+    "net\\s*amount", "netamount", "gross\\s*amt", "grossamt", "\\btaxable\\b",
+    "\\bdisc\\s*amt\\b", "\\bdiscamt\\b", "\\bcgst\\b", "\\bsgst\\b", "\\bigst\\b",
+    "\\btotal\\b", "\\botal\\b", "\\bgst\\s*%", "\\bgstin\\b", "\\bpan\\b\\s*:",
+    "jurisdiction", "\\brupees\\b", "goods\\s*once", "terms\\s*(&|and)",
+    "\\bd\\.?l\\.?\\s*no", "\\bdlno", "food\\s*lic", "\\be-?mail\\b",
+    "\\bphone\\b", "\\bmobile\\b", "\\bpage\\s*:", "\\bsub\\s*total\\b",
+    "\\bitems?\\s*:", "\\btems\\s*:", "\\btot\\.?\\s*qty", "\\botqty\\b",
+    "\\bmade?\\s*by\\b", "\\bprint\\s*@", "\\bsignature\\b", "\\bfor\\s+m/s\\b",
+    "\\bround\\s*off\\b", "\\br\\.?off\\b", "\\bfreight\\b", "\\bdebit\\s*note\\b",
+    "\\bcredit\\s*note\\b", "\\bhave\\s+a\\s+nice",
+  ].join("|"),
+  "i",
+);
+
+/** The tokens of one line, with table borders removed. Null when it isn't one. */
+function tokenise(raw: string): string[] | null {
+  const line = raw.replace(/[|¦]/g, " ").replace(/\s+/g, " ").trim();
   if (line.length < 15) return null;
-
+  if (NOISE.test(line)) return null;
   const t = line.split(" ");
-  if (t.length < 8) return null;
+  return t.length < 8 ? null : t;
+}
 
-  // ---- anchor on HSN, the rightmost fixed-width field ----
-  let hi = -1;
-  for (let i = t.length - 1; i >= 6; i--) {
-    if (/^\d{6}$/.test(clean(t[i]))) { hi = i; break; }
-  }
-  if (hi < 6) return null;
+/** A batch number: letters and digits mixed, or a long run of bare digits. */
+function looksLikeBatch(tok: string): boolean {
+  const s = (tok || "").replace(/[^A-Za-z0-9/-]/g, "");
+  if (s.length < 3) return false;
+  if (/\./.test(tok)) return false;                     // a price, not a batch
+  const hasDigit = /\d/.test(s);
+  const hasAlpha = /[A-Za-z]/.test(s);
+  if (hasDigit && hasAlpha) return true;
+  return hasDigit && !hasAlpha && s.length >= 5;        // "48020919", "51389"
+}
 
-  const hsn = clean(t[hi]);
-  const gst = clean(t[hi - 1]);
-  // G% is a small integer. If it isn't, this line isn't an item row.
-  if (!isNum(gst) || Number(gst) > 28) return null;
-
-  const amount = clean(t[hi - 2]);
-  const rate = clean(t[hi - 3]);
-  if (!isNum(amount) || !isNum(rate)) return null;
-
-  // EXP sits just left of RATE.
-  const expTok = (t[hi - 4] ?? "").replace(/[^\d/\-]/g, "");
-  if (!isMonthYear(expTok)) return null;
-  const expiry = toISODate(expTok);
-  if (!expiry) return null;
-
-  const mrp = clean(t[hi - 5]);
-  if (!isNum(mrp)) return null;
-
-  const batchNo = (t[hi - 6] || "").replace(/[^A-Za-z0-9/-]/g, "");
-  if (batchNo.length < 3) return null;
-
-  // ---- leftward: OMrp, FREE, QTY, PACK, PRODUCT NAME ----
+/**
+ * PRODUCT NAME · PACK · QTY · FREE · OMrp - everything left of the batch.
+ *
+ * Shared by every tier, because the left half of the line is the half that
+ * survives: it is the widest, the darkest, and nowhere near the edge of the
+ * paper. Only the anchor on the right differs between tiers.
+ */
+function scanLeft(t: string[], batchIdx: number) {
   // OMrp is a short alphabetic company code (ARIS, AVEN, U.S., GLEN, PFIZ).
-  let cursor = hi - 6;
+  let cursor = batchIdx;
   let oMrp = "";
-  const maybeCode = (t[hi - 7] ?? "").replace(/[^A-Za-z.]/g, "");
+  const maybeCode = (t[batchIdx - 1] ?? "").replace(/[^A-Za-z.]/g, "");
   if (maybeCode.length >= 2 && maybeCode.length <= 6) {
     oMrp = maybeCode;
-    cursor = hi - 7;
+    cursor = batchIdx - 1;
   }
 
   // QTY, and FREE when present, are the numbers immediately left of OMrp.
@@ -199,27 +316,209 @@ function parseLine(raw: string): ParsedRow | null {
   }
 
   // Everything from after the serial number to the pack is the product name.
+  //
+  // The SNO is stripped from the TEXT, not by dropping the first token. There is
+  // no gutter between the serial number and the name on these invoices, so OCR
+  // routinely glues them: "12/CREMAFFIN PINK SYP", "1'SMUTH SUS". Dropping the
+  // token threw the first WORD of the product away with the serial - CREMAFFIN
+  // PINK arrived in the grid as "PINK SYP", matching nothing in the catalog.
   const nameEnd = pack ? firstNumIdx - 1 : firstNumIdx;
-  const nameStart = /^\d{1,3}$/.test(clean(t[0])) && clean(t[0]) !== "" ? 1 : 0;   // drop SNO
-  const medicine = t.slice(nameStart, nameEnd)
+  const medicine = t.slice(0, nameEnd)
     .join(" ")
+    .replace(/^\s*\d{1,3}\s*(?=[^\d])/, "")
     .replace(/^[^A-Za-z]+/, "")
     .replace(/[^A-Za-z0-9 .\-/%]/g, "")
     .replace(/\s+/g, " ")
     .trim();
   if (medicine.length < 3) return null;
 
-  return { medicine, pack, qty, free, oMrp, batchNo, mrp, expiry, rate, amount, gst, hsn, supplier: "" };
+  return { medicine, pack, qty, free, oMrp };
 }
 
-/** Every item row on the invoice. */
+const blank = (): ParsedRow => ({
+  medicine: "", pack: "", qty: "", free: "", oMrp: "", batchNo: "",
+  mrp: "", expiry: "", rate: "", amount: "", gst: "", hsn: "", supplier: "",
+});
+
+/**
+ * TIER 1 - anchored on HSN.
+ *
+ * The rightmost fixed-width field and the strongest landmark there is: a 6-digit
+ * code in a fixed position. Anchoring on the MM/YY expiry instead breaks the
+ * moment a product name contains a number, and these are full of them:
+ * "ISTAMET 50/500", "TELMA CT40/6.25MG", "ECOSPRIN AV 75/20". When this fires
+ * every one of the thirteen columns is placed, so it is tried first and its
+ * result is never second-guessed.
+ */
+function byHsn(t: string[]): ParsedRow | null {
+  let hi = -1;
+  for (let i = t.length - 1; i >= 6; i--) {
+    if (/^\d{6}$/.test(clean(t[i]))) { hi = i; break; }
+  }
+  if (hi < 6) return null;
+
+  const hsn = clean(t[hi]);
+  const gst = clean(t[hi - 1]);
+  // G% is a small integer. If it isn't, this line isn't an item row.
+  if (!isNum(gst) || Number(gst) > 28) return null;
+
+  const amount = clean(t[hi - 2]);
+  const rate = clean(t[hi - 3]);
+  if (!isNum(amount) || !isNum(rate)) return null;
+
+  // EXP sits just left of RATE. Position is pinned, so a missing slash is fine.
+  const expiry = asExpiry(t[hi - 4] ?? "", false);
+  if (!expiry) return null;
+
+  const mrp = asNumber(t[hi - 5] ?? "");
+  if (!mrp) return null;
+
+  const batchNo = (t[hi - 6] || "").replace(/[^A-Za-z0-9/-]/g, "");
+  if (batchNo.length < 3) return null;
+
+  const left = scanLeft(t, hi - 6);
+  if (!left) return null;
+
+  return { ...blank(), ...left, batchNo, mrp, expiry, rate, amount, gst, hsn, confidence: "high" };
+}
+
+/**
+ * TIER 2 - anchored on the expiry.
+ *
+ * For the invoice photographed a centimetre short, where HSN and G% ran off the
+ * edge. Everything left of RATE is still on the paper and still correct; only
+ * the two label columns are gone, and those are labels - the receipt schema
+ * drops an out-of-range G% rather than refusing real stock.
+ *
+ * Scans RIGHT TO LEFT so a product name's "10/325" can never win the anchor: the
+ * name is always left of the expiry column, so the rightmost plausible MM/YY is
+ * the real one. `asExpiry` in strict mode does the rest, rejecting any year that
+ * isn't within a few years of today.
+ */
+function byExpiry(t: string[]): ParsedRow | null {
+  let ei = -1;
+  for (let i = t.length - 1; i >= 3; i--) {
+    if (isMonthYear(t[i])) { ei = i; break; }
+  }
+  if (ei < 3) return null;
+
+  const expiry = asExpiry(t[ei]);
+  const mrp = asNumber(t[ei - 1] ?? "");
+  if (!mrp) return null;
+
+  const batchNo = (t[ei - 2] || "").replace(/[^A-Za-z0-9/-]/g, "");
+  if (!looksLikeBatch(batchNo)) return null;
+
+  const left = scanLeft(t, ei - 2);
+  if (!left) return null;
+
+  // Right of the anchor: RATE AMOUNT G% HSN, each present only if the paper was.
+  const rate = asNumber(t[ei + 1] ?? "");
+  const amount = asNumber(t[ei + 2] ?? "");
+  const gstRaw = asNumber(t[ei + 3] ?? "");
+  const gst = gstRaw && Number(gstRaw) <= 28 ? gstRaw : "";
+  const hsnRaw = clean(t[ei + 4] ?? "");
+  const hsn = /^\d{6}$/.test(hsnRaw) ? hsnRaw : "";
+
+  return { ...blank(), ...left, batchNo, mrp, expiry, rate, amount, gst, hsn, confidence: "medium" };
+}
+
+/**
+ * TIER 3 - anchored on the batch number, expiry left blank.
+ *
+ * The last resort, for a scan where the expiry column is a smudge. It recovers
+ * the product name, the pack, the quantity and the money, and deliberately
+ * returns an EMPTY expiry: the grid paints that cell red and blocks the import
+ * until someone reads the date off the strip in their hand.
+ *
+ * Loose enough to be dangerous on its own, which is why `parseInvoiceText` only
+ * reaches for it when the stronger anchors have found almost nothing on the
+ * whole page. Two non-zero prices and a real product name are required, so the
+ * tax-summary block - all zeroes and no name - cannot become a row.
+ */
+function byBatch(t: string[]): ParsedRow | null {
+  for (let i = t.length - 2; i >= 3; i--) {
+    if (!looksLikeBatch(t[i])) continue;
+
+    // Everything numeric to the right. The first is the MRP - that column never
+    // moves. The rest are RATE, AMOUNT, G%, HSN and, sitting among them, the
+    // unreadable expiry, which OCR hands back as a plain four-digit number.
+    //
+    // Kept as the PRINTED string as well as the number: a price re-rendered
+    // from a float loses its trailing zero, and "295" beside "295.00" on the
+    // paper is one more thing for the pharmacist checking the row to doubt.
+    const after: { s: string; n: number }[] = [];
+    for (let j = i + 1; j < t.length && after.length < 6; j++) {
+      const s = asNumber(t[j]);
+      if (s) after.push({ s, n: Number(s) });
+    }
+    if (!after.length || after[0].n <= 0) continue;
+    const mrp = after[0];
+
+    const left = scanLeft(t, i);
+    if (!left) continue;
+    // A real product name, not a stray label off the totals block.
+    if (!/[A-Za-z]{3}/.test(left.medicine)) continue;
+    const qty = Number(left.qty);
+    if (!(qty > 0)) continue;
+
+    // RATE and AMOUNT, found by the arithmetic that ties them together:
+    // amount = rate x qty, on every line of every invoice. Guessing positionally
+    // instead puts the smudged expiry - "03/28" read as the number 328 - into
+    // the purchase rate, and a wrong rate is invisible: stock arrives, the
+    // margin report quietly lies, and nobody sees it for a quarter. Anything
+    // that doesn't reconcile is left BLANK.
+    let rate = "", amount = "";
+    outer: for (let a = 1; a < after.length; a++) {
+      if (after[a].n <= 0 || after[a].n > mrp.n) continue;   // rate never exceeds MRP
+      for (let b = a + 1; b < after.length; b++) {
+        if (Math.abs(after[a].n * qty - after[b].n) <= Math.max(0.05, after[b].n * 0.02)) {
+          rate = after[a].s;
+          amount = after[b].s;
+          break outer;
+        }
+      }
+    }
+
+    return {
+      ...blank(), ...left,
+      batchNo: t[i].replace(/[^A-Za-z0-9/-]/g, ""),
+      mrp: mrp.s, rate, amount,
+      expiry: "",
+      confidence: "low",
+    };
+  }
+  return null;
+}
+
+/**
+ * Every item row on the invoice.
+ *
+ * Two passes. The first uses the anchors that place columns exactly; the second
+ * only happens when that found next to nothing, which means the right-hand side
+ * of the page is unreadable rather than that the page has no stock on it.
+ */
 export function parseInvoiceText(text: string): ParsedRow[] {
+  const lines = text.split("\n");
+  const tokens = lines.map(tokenise);
+
   const out: ParsedRow[] = [];
-  for (const line of text.split("\n")) {
-    const row = parseLine(line);
+  for (const t of tokens) {
+    if (!t) continue;
+    const row = byHsn(t) ?? byExpiry(t);
     if (row) out.push(row);
   }
-  return out;
+  if (out.length >= 3) return out;
+
+  // Nothing worth having. Fall back to the loose anchor rather than hand the
+  // pharmacist an empty grid and a scan they now have to key in by hand.
+  const loose: ParsedRow[] = [];
+  for (const t of tokens) {
+    if (!t) continue;
+    const row = byHsn(t) ?? byExpiry(t) ?? byBatch(t);
+    if (row) loose.push(row);
+  }
+  return loose.length > out.length ? loose : out;
 }
 
 const squash = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, "");

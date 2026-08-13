@@ -9,6 +9,7 @@ import { PortalScroll } from "@/components/portal/portal-scroll";
 import { DischargeSummaryForm } from "@/components/portal/ipd/discharge-summary-form";
 import { api, ApiClientError } from "@/lib/api-client";
 import { StatusPill } from "@/components/portal/insurance/claims-board";
+import { EditBillDialog, useBillEditing } from "@/components/portal/billing/edit-bill-dialog";
 import { bedLabel } from "@/lib/beds";
 
 /**
@@ -74,15 +75,19 @@ const CAT_LABEL: Record<string, string> = {
 };
 
 /** Every bill on the stay, oldest first. See stayBills. */
+interface StayBill {
+  id: string; receiptNo: string; source: string; payer: string; status: string;
+  total: string; paid: string; createdAt: string; outsideStay: boolean;
+  lines: number; summary: string;
+}
 interface StayBills {
   admittedAt: string;
   dischargedAt: string | null;
-  bills: {
-    id: string; receiptNo: string; source: string; payer: string; status: string;
-    total: string; paid: string; createdAt: string; outsideStay: boolean;
-    lines: number; summary: string;
-  }[];
+  bills: StayBill[];
   outsideCount: number;
+  /** Same patient, NOT on this stay - OP consultations, counter pharmacy sales,
+   *  OP labs, earlier admissions. Printable here; never part of this claim. */
+  otherBills: StayBill[];
 }
 
 /** Where the stay stands with its insurer. See stayClaims. */
@@ -113,6 +118,16 @@ const withDr = (name: string) => (/^dr\.?\s/i.test(name.trim()) ? name.trim() : 
 const money = (v: string | number) => Number(v).toLocaleString("en-IN", { maximumFractionDigits: 0 });
 const money2 = (v: string | number) => Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+
+/** Which counter raised a bill, in the words the desk uses. An assessor reading
+ *  an attachment list should not have to decode "CONSULTATION". */
+const billSource = (s: string) =>
+  s === "PHARMACY" ? "Pharmacy"
+  : s === "LAB" ? "Lab"
+  : s === "IPD" ? "Stay"
+  : s === "CONSULTATION" ? "OP consult"
+  : s === "OTHER" ? "Other"
+  : s;
 const blankLine = { category: "PROCEDURE", description: "", qty: "1", unitPrice: "", gstRatePct: "0" };
 
 export default function InsuranceAdmissionPage() {
@@ -139,6 +154,11 @@ export default function InsuranceAdmissionPage() {
   /** The shared discharge summary - the same record reception edits. */
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [bills, setBills] = useState<StayBills | null>(null);
+
+  // Correcting a bill outright, not just its date. Off unless an admin has
+  // switched it on - see HospitalConfig.billEditingEnabled. Enforced server-side.
+  const { canEdit } = useBillEditing();
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const loadBills = useCallback(async () => {
     try { setBills(await api.get<StayBills>(`/insurance/admissions/${admissionId}/bills`)); }
@@ -333,7 +353,7 @@ export default function InsuranceAdmissionPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono text-[12.5px] font-semibold text-[var(--p-ink)]">{b.receiptNo}</span>
                       <span className="rounded bg-[var(--p-border)]/40 px-1.5 py-0.5 text-[10.5px] font-semibold uppercase text-[var(--p-muted)]">
-                        {b.source === "PHARMACY" ? "Pharmacy" : b.source === "LAB" ? "Lab" : b.source === "IPD" ? "Stay" : b.source}
+                        {billSource(b.source)}
                       </span>
                       {b.payer === "INSURANCE"
                         ? <span className="rounded bg-[var(--p-blue-soft)] px-1.5 py-0.5 text-[10.5px] font-semibold uppercase text-[var(--p-blue-deep)]">On the claim</span>
@@ -349,12 +369,24 @@ export default function InsuranceAdmissionPage() {
 
                   <div className="flex shrink-0 items-center gap-3">
                     <span className="font-mono text-[13.5px] font-semibold text-[var(--p-ink)]">₹{money2(b.total)}</span>
-                    {/* The date IS the control. Money taken or an IRN issued
-                        locks it - the service refuses either way. */}
+                    {/* The date IS the control, and it is no longer locked by a
+                        payment. It writes billDate - the date the sheet PRINTS -
+                        so correcting it moves nothing in the day close and
+                        nothing in the GST return. An IRN still locks it: that
+                        date is filed with the government. */}
                     <input type="date" className={`${fld} w-[150px]`} value={b.createdAt.slice(0, 10)}
-                      disabled={Number(b.paid) > 0}
-                      title={Number(b.paid) > 0 ? "Money has been taken against this bill - its date is fixed" : "Correct the bill date"}
+                      max={new Date().toISOString().slice(0, 10)}
+                      title="The date this bill prints as. The day's collection still counts it when it was raised."
                       onChange={(ev) => redate(b.id, ev.target.value)} />
+                    {canEdit && b.status !== "CANCELLED" && (
+                      <button onClick={() => setEditingId(b.id)}
+                        title={Number(b.paid) > 0
+                          ? `Correct this bill — ₹${money2(b.paid)} already collected`
+                          : "Correct the lines or the amount on this bill"}
+                        className="rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+                        Edit
+                      </button>
+                    )}
                     <a href={`/print/invoice/${b.id}`} target="_blank" rel="noreferrer"
                       className="rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
                       Bill
@@ -363,6 +395,58 @@ export default function InsuranceAdmissionPage() {
                 </div>
               ))}
             </div>
+          )}
+
+          {/* ── THE SAME PATIENT, OFF THIS STAY ──
+              Their OP consultations, counter pharmacy sales, OP labs and any
+              earlier admission. Printable from here so the claim file can be
+              assembled in one place - but visibly NOT part of the claim, and
+              with no date control, because re-dating a bill that has nothing to
+              do with this stay has no honest use. */}
+          {bills && bills.otherBills.length > 0 && (
+            <>
+              <div className="border-y border-[var(--p-border)] bg-[var(--p-bg)] px-5 py-2.5">
+                <h3 className="text-[13px] font-semibold text-[var(--p-ink)]">
+                  Not on this stay · {bills.otherBills.length}
+                </h3>
+                <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">
+                  The same patient&apos;s outpatient bills, counter sales and earlier admissions.
+                  Print any of them for the file - none of them are on this claim.
+                </p>
+              </div>
+              <div className="divide-y divide-[var(--p-border)]">
+                {bills.otherBills.map((b) => (
+                  <div key={b.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-[12.5px] font-semibold text-[var(--p-ink)]">{b.receiptNo}</span>
+                        <span className="rounded bg-[var(--p-border)]/40 px-1.5 py-0.5 text-[10.5px] font-semibold uppercase text-[var(--p-muted)]">
+                          {billSource(b.source)}
+                        </span>
+                        <span className="font-mono text-[11px] text-[var(--p-muted)]">{day(b.createdAt)}</span>
+                      </div>
+                      <div className="mt-0.5 truncate text-[12px] text-[var(--p-muted)]">{b.summary} · {b.lines} line{b.lines === 1 ? "" : "s"}</div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <span className="font-mono text-[13.5px] font-semibold text-[var(--p-ink)]">₹{money2(b.total)}</span>
+                      {canEdit && b.status !== "CANCELLED" && (
+                        <button onClick={() => setEditingId(b.id)}
+                          title={Number(b.paid) > 0
+                            ? `Correct this bill — ₹${money2(b.paid)} already collected`
+                            : "Correct the lines or the amount on this bill"}
+                          className="rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+                          Edit
+                        </button>
+                      )}
+                      <a href={`/print/invoice/${b.id}`} target="_blank" rel="noreferrer"
+                        className="rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+                        Bill
+                      </a>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </section>
       )}
@@ -732,6 +816,20 @@ export default function InsuranceAdmissionPage() {
         <DischargeSummaryForm admissionId={a.id} onClose={() => setSummaryOpen(false)} />
       )}
 
+      {/* The same dialog reception uses - a correction means one thing whichever
+          desk made it, and the claim totals are reloaded behind it. */}
+      {editingId && (
+        <EditBillDialog
+          invoiceId={editingId}
+          accent="blue"
+          onClose={() => setEditingId(null)}
+          onSaved={() => {
+            setEditingId(null);
+            setFlash("Bill corrected.");
+            void Promise.all([loadBills(), load()]);
+          }}
+        />
+      )}
     </PortalScroll>
   );
 }

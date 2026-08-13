@@ -8,10 +8,13 @@ import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
+import { EditBillDialog, useBillEditing } from "@/components/portal/billing/edit-bill-dialog";
 
 interface Inv {
   id: string; receiptNo: string; source: string; status: string;
   totalAmount: string; amountPaid: string; createdAt: string;
+  /** The corrected date this bill prints, when somebody has set one. */
+  billDate: string | null;
   /** Money already handed back. */
   refunded: string;
   /** The ceiling - the desk never has to work it out. */
@@ -45,6 +48,20 @@ const MODES = ["CASH", "UPI", "CARD"] as const;
 const MODE_LABEL: Record<string, string> = { CASH: "Cash", UPI: "UPI", CARD: "Card", NETBANKING: "Net banking", OTHER: "Other" };
 const payLabel = (modes: string[]) => modes.map((m) => MODE_LABEL[m] ?? m).join(" + ");
 const money = (v: string) => Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2 });
+/**
+ * "12 Aug" for this year, "12 Aug 25" for anything older.
+ *
+ * The year is dropped where it is today's, because on a list that is mostly this
+ * week it is four characters of noise on every row - and shown where it is not,
+ * because a bill from last August must not read as a bill from last week.
+ */
+const billDay = (iso: string) => {
+  const d = new Date(iso);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleDateString("en-IN", {
+    day: "2-digit", month: "short", ...(sameYear ? {} : { year: "2-digit" }),
+  });
+};
 const due = (i: Inv) => Math.max(0, Number(i.totalAmount) - Number(i.amountPaid));
 /**
  * Is the balance on this bill money somebody at this desk collects?
@@ -73,6 +90,13 @@ export default function BillingPage() {
   const [payRef, setPayRef] = useState("");
   const [voiding, setVoiding] = useState<Inv | null>(null);
   const [voidReason, setVoidReason] = useState("");
+
+  // ── CORRECTING A BILL ──
+  // Off unless an admin has switched it on for this hospital - see
+  // HospitalConfig.billEditingEnabled. The switch is enforced server-side; this
+  // only decides whether the button is drawn.
+  const { canEdit } = useBillEditing();
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   // ── REFUND ── the only screen in the ERP that takes cash OUT of the hospital.
   const [refunding, setRefunding] = useState<Inv | null>(null);
@@ -142,6 +166,9 @@ export default function BillingPage() {
   useLive([TOPICS.RECEPTION], load, {
     // Bills and payments only - a check-in does not change what is owed.
     events: [EVENTS.INVOICE_RAISED, EVENTS.PAYMENT_TAKEN],
+    // Suspended while a bill is open for correction: reloading the list under an
+    // open dialog is how a half-typed amendment disappears.
+    enabled: !editingId,
   });
 
   const filtered = useMemo(() => {
@@ -373,6 +400,27 @@ export default function BillingPage() {
                     </div>
                   </div>
 
+                  {/* THE BILL'S DATE, on every row.
+                      The date SHOWN is the one that prints - a corrected billDate
+                      where there is one - so the desk reads the same date the
+                      patient is holding. Where the two differ, the day it was
+                      actually raised is kept in the tooltip and marked, because
+                      "why is a bill from the 12th in today's list" needs an
+                      answer that is one hover away rather than a mystery. */}
+                  <div className="w-[104px] shrink-0 text-right">
+                    <div
+                      className="text-[13px] font-medium text-[var(--p-ink)]"
+                      title={i.billDate
+                        ? `Prints as ${billDay(i.billDate)} · actually raised ${billDay(i.createdAt)}`
+                        : `Raised ${billDay(i.createdAt)}`}
+                    >
+                      {billDay(i.billDate ?? i.createdAt)}
+                    </div>
+                    <div className="text-[11px] text-[var(--p-muted)]">
+                      {i.billDate ? "re-dated" : "bill date"}
+                    </div>
+                  </div>
+
                   <span className="rounded bg-[var(--p-bg)] px-2 py-1 text-[12px] font-medium text-[var(--p-muted)]">
                     {SOURCE[i.source] ?? i.source}
                   </span>
@@ -454,6 +502,23 @@ export default function BillingPage() {
                       className="rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 text-[13px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
                       Print
                     </a>
+                    {/* EDIT is offered on a PAID bill too, not only an unpaid
+                        one. The server is what enforces the limits that still
+                        apply - it refuses a cancelled bill, a bill registered
+                        under an IRN, and any correction that would drop the
+                        total below the money already collected. A cancelled bill
+                        is excluded here as well, because that one is obvious
+                        from the row and offering it would just produce an error
+                        somebody has to read. */}
+                    {canEdit && !voided && (
+                      <button onClick={() => setEditingId(i.id)}
+                        title={Number(i.amountPaid) > 0
+                          ? `Correct this bill — ₹${money(i.amountPaid)} already collected`
+                          : "Correct the lines, date or amount on this bill"}
+                        className="rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 text-[13px] font-medium text-[var(--p-teal)] transition-colors hover:border-[var(--p-teal)]">
+                        Edit
+                      </button>
+                    )}
                     {!voided && (
                       <button onClick={() => { setVoiding(i); setVoidReason(""); }}
                         className="rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 text-[13px] font-medium text-[var(--p-muted)] transition-colors hover:border-[var(--p-rose)] hover:text-[var(--p-rose)]">
@@ -704,6 +769,17 @@ export default function BillingPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* EDIT - shared with the insurance room, so a correction means the same
+          thing whichever desk made it. */}
+      {editingId && (
+        <EditBillDialog
+          invoiceId={editingId}
+          accent="teal"
+          onClose={() => setEditingId(null)}
+          onSaved={() => { setEditingId(null); load(); }}
+        />
       )}
     </PortalScroll>
   );

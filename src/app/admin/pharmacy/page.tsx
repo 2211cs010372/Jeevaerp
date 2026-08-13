@@ -528,7 +528,7 @@ function DeliveriesTab({ d }: { d: Overview }) {
                     )}
                   </div>
                   <div className="text-[12px] text-[var(--p-muted)]">
-                    {p.supplierName} · {p.lines} line{p.lines === 1 ? "" : "s"}
+                    {p.supplierName} · {p.lines} Items{p.lines === 1 ? "" : "s"}
                     {p.expectedDate && ` · due ${p.expectedDate}`}
                   </div>
                 </div>

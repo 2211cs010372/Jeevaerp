@@ -73,6 +73,11 @@ export const PORTALS: Record<string, PortalMeta> = {
           events: [EVENTS.LAB_ORDERED],
         },
       },
+      // Directly under Lab tests, because that is where a wrong rate is noticed:
+      // the desk is mid-order, the price reads ₹0, and the fix is one link away
+      // rather than a phone call to the bench. Every edit is audit-logged - see
+      // the route's guard for why this desk is trusted with it.
+      { label: "Lab test prices", href: "/prices", icon: "rupee" },
       { label: "Billing", href: "/billing", icon: "receipt" },
       { label: "Day close", href: "/day-close", icon: "trend" },
       { label: "Admissions", href: "/ipd", icon: "bed" },
@@ -96,6 +101,10 @@ export const PORTALS: Record<string, PortalMeta> = {
       { label: "Pharmacy", href: "/pharmacy", icon: "pill" },
       { label: "HR & staff", href: "/hr", icon: "users" },
       { label: "Lab catalog & GST", href: "/catalog", icon: "flask" },
+      // Prices on their own screen, editable a column at a time. The catalogue
+      // above edits one test in a dialog, which is right for one rate and wrong
+      // for the forty the import left at ₹0.
+      { label: "Lab test prices", href: "/prices", icon: "rupee" },
       { label: "Wards & beds", href: "/wards", icon: "bed" },
       { label: "Login activity", href: "/sessions", icon: "clock" },
       { label: "Audit log", href: "/audit", icon: "activity" },
@@ -180,6 +189,9 @@ export const PORTALS: Record<string, PortalMeta> = {
       // The same rows admin edits under "Lab catalog & GST" - one record, two
       // doors. The bench keeps the names and the prices; admin keeps the tax.
       { label: "Test catalog", href: "/catalog", icon: "box" },
+      // Every price in one editable column - the screen for correcting a lot of
+      // them at once. Same rows as the catalogue, same door admin uses.
+      { label: "Test prices", href: "/prices", icon: "rupee" },
       { label: "Billing", href: "/billing", icon: "rupee" },
       { label: "Invoices", href: "/invoices", icon: "receipt" },
       { label: "Day close", href: "/day-close", icon: "trend" },

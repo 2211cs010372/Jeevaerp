@@ -9,6 +9,7 @@ import { PortalScroll } from "@/components/portal/portal-scroll";
 import { DischargeSummaryForm } from "@/components/portal/ipd/discharge-summary-form";
 import { api, ApiClientError } from "@/lib/api-client";
 import { bedLabel } from "@/lib/beds";
+import { EditBillDialog, useBillEditing } from "@/components/portal/billing/edit-bill-dialog";
 
 /** One row of the hospital's published rate card. See prisma ServiceCharge. */
 interface ServiceCharge {
@@ -86,6 +87,17 @@ export default function AdmissionSheetPage() {
   const [err, setErr] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // ── CORRECTING A BILL RAISED AGAINST THIS STAY ──
+  //
+  // The pharmacy and the lab raise their own invoices against an admission, and
+  // this screen is where the ward actually looks at them - so it is where a
+  // wrong one gets noticed. Until now it could only print them.
+  //
+  // Gated by HospitalConfig.billEditingEnabled like the rest of reception; the
+  // server enforces it inside updateInvoice, this only draws the button.
+  const { canEdit } = useBillEditing();
+  const [editingBillId, setEditingBillId] = useState<string | null>(null);
 
   // add-charge form
   const [cat, setCat] = useState("PROCEDURE");
@@ -438,9 +450,13 @@ export default function AdmissionSheetPage() {
                 counters and they belong in the dues block, not here. For a
                 cashless one they are all one claim - so they sit on the running
                 tab, where the ward looks to see what the stay has cost.
-                Read-only: they are another document's lines, and repricing a
-                dispense here would decouple the bill from the stock that left
-                the shelf. */}
+
+                NOT EDITABLE AS TAB LINES - the amount shown here is another
+                document's total, and repricing a dispense on this tab would
+                decouple the bill from the stock that left the shelf. What Edit
+                opens is that document itself, through the same dialog the
+                pharmacy and lab counters use, so a correction lands on the bill
+                that owns the lines rather than on a summary of it. */}
             {(sheet.claimBills ?? []).map((b) => (
               <div key={b.id} className="flex items-center justify-between gap-3 bg-[var(--p-blue-soft)]/40 px-5 py-3">
                 <div className="min-w-0">
@@ -454,7 +470,24 @@ export default function AdmissionSheetPage() {
                     Bill <span className="font-mono">{b.receiptNo}</span> · billed to the insurer, not collected here
                   </div>
                 </div>
-                <span className="shrink-0 font-mono text-[14px] font-semibold text-[var(--p-ink)]">₹{money(b.total)}</span>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="font-mono text-[14px] font-semibold text-[var(--p-ink)]">₹{money(b.total)}</span>
+                  {/* These print from here now. The ward is where somebody asks
+                      "what is on the pharmacy bill" and it had no answer - the
+                      row named a receipt number nobody could open. */}
+                  <a href={`/print/invoice/${b.id}`} target="_blank" rel="noopener noreferrer"
+                    title="View & print this bill"
+                    className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">
+                    Bill
+                  </a>
+                  {canEdit && (
+                    <button onClick={() => setEditingBillId(b.id)}
+                      title="Correct this bill's date, lines or amount"
+                      className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">
+                      Edit
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
 
@@ -481,9 +514,19 @@ export default function AdmissionSheetPage() {
                 <div className="flex shrink-0 items-center gap-2">
                   <span className="font-mono text-[14px] font-semibold text-[#8a6414]">₹{money(b.due)}</span>
                   <a href={`/print/invoice/${b.id}`} target="_blank" rel="noopener noreferrer"
+                    title="View & print this bill"
                     className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
                     Bill
                   </a>
+                  {canEdit && (
+                    <button onClick={() => setEditingBillId(b.id)}
+                      title={Number(b.paid) > 0
+                        ? `Correct this bill — ₹${money(b.paid)} already collected`
+                        : "Correct this bill's date, lines or amount"}
+                      className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
+                      Edit
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -667,7 +710,22 @@ export default function AdmissionSheetPage() {
                         : <span className="text-[var(--p-rose)]"> · ₹{money(b.balance)} due</span>
                     )}</div>
                   </div>
-                  <a href={`/print/invoice/${b.id}`} target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--p-blue)] hover:border-[var(--p-blue)]"><Icon name="receipt" size={13} /> View</a>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <a href={`/print/invoice/${b.id}`} target="_blank" rel="noopener noreferrer" title="View & print this bill" className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--p-blue)] hover:border-[var(--p-blue)]"><Icon name="receipt" size={13} /> View</a>
+                    {/* Every bill this patient has, not only this stay's - which
+                        is why a cancelled one has to be excluded here and not
+                        anywhere above: this list is the only one that shows
+                        them. */}
+                    {canEdit && b.status !== "CANCELLED" && (
+                      <button onClick={() => setEditingBillId(b.id)}
+                        title={Number(b.paid) > 0
+                          ? `Correct this bill — ₹${money(b.paid)} already collected`
+                          : "Correct this bill's date, lines or amount"}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--p-blue)] hover:border-[var(--p-blue)]">
+                        <Icon name="file" size={13} /> Edit
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))
             ) : historyTab === "labs" ? (
@@ -1072,6 +1130,18 @@ export default function AdmissionSheetPage() {
         <DischargeSummaryForm admissionId={a.id} onClose={() => setSummaryOpen(false)} />
       )}
 
+      {/* The same dialog every other desk corrects a bill with. Both loads are
+          refreshed on save: the running tab shows these bills' totals and the
+          history tab lists them, so refreshing one would leave the other
+          showing the figure that was just corrected. */}
+      {editingBillId && (
+        <EditBillDialog
+          invoiceId={editingBillId}
+          accent="teal"
+          onClose={() => setEditingBillId(null)}
+          onSaved={() => { setEditingBillId(null); load(); loadHistory(); }}
+        />
+      )}
     </PortalScroll>
   );
 }

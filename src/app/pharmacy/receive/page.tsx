@@ -11,11 +11,11 @@ import {
   EmptyState, ErrorNote, Flash, GhostButton, Modal, PROC_CSS, PageHead, Tag,
   daysUntil, dmy, dmyFromISO, fld, inr,
 } from "@/components/portal/pharmacy/procurement-ui";
-import { effectiveUnitCost, invoiceVariance } from "@/lib/pharmacy/procurement-math";
+import { effectiveUnitCost, invoiceVariance, receiptTotal } from "@/lib/pharmacy/procurement-math";
 import { api, ApiClientError } from "@/lib/api-client";
 
 interface Supplier { id: string; name: string }
-interface Med { id: string; name: string; unit: string; mrp: string | null }
+interface Med { id: string; name: string; unit: string; mrp: string | null; gstRatePct: string | null }
 interface OpenPo {
   id: string; poNumber: string; supplierId: string; supplierName: string;
   expectedDate: string | null; qtyOrdered: number; qtyReceived: number; status: string;
@@ -26,7 +26,9 @@ interface PoDetail {
 }
 interface Grn {
   id: string; grnNumber: string; invoiceNo: string | null; invoiceAmount: string | null;
-  receivedValue: string; variance: number | null; mismatch: boolean; createdAt: string;
+  /** Goods only, ex-GST. `receivedTotal` is what the supplier's bill is checked against. */
+  receivedValue: string; receivedTax: string; receivedTotal: string;
+  variance: number | null; mismatch: boolean; createdAt: string;
   supplierName: string; poNumber: string | null; receivedByName: string; lines: number;
 }
 interface GrnDetail extends Grn {
@@ -36,7 +38,7 @@ interface GrnDetail extends Grn {
   items: {
     id: string; name: string; unit: string; batchNo: string; expiryDate: string;
     qty: number; freeQty: number; unitCost: string; landedCost: string; mrp: string;
-    lineValue: string; marginPct: number | null;
+    lineValue: string; gstRatePct: string; lineTax: string; marginPct: number | null;
   }[];
 }
 
@@ -185,16 +187,29 @@ function ReceiveInner() {
   const setRow = (key: string, patch: Partial<Row>) =>
     setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
 
-  /** Running value of the carton, and whether the invoice agrees with it. */
+  /**
+   * Running value of the carton, and whether the invoice agrees with it.
+   *
+   * The invoice amount typed in above is the distributor's TOTAL, which is GST
+   * inclusive - so the tax has to be added here before the two are compared.
+   * Checking the bill against goods value alone made every taxable delivery
+   * read as short by exactly its GST.
+   */
   const totals = useMemo(() => {
-    let value = 0, units = 0, free = 0;
+    let value = 0, tax = 0, units = 0, free = 0;
     for (const r of rows) {
       const q = Number(r.qty || 0), c = Number(r.unitCost || 0), f = Number(r.freeQty || 0);
-      value += q * c; units += q; free += f;
+      const g = Number(r.gst || 0);
+      value += q * c;
+      // Free goods are not billed, so they are not taxed - same base as value.
+      tax += (q * c * g) / 100;
+      units += q; free += f;
     }
     value = Math.round(value * 100) / 100;
-    const v = invoiceAmount ? invoiceVariance(Number(invoiceAmount), value) : null;
-    return { value, units, free, variance: v?.variance ?? null, mismatch: v?.mismatch ?? false };
+    tax = Math.round(tax * 100) / 100;
+    const total = receiptTotal(value, tax);
+    const v = invoiceAmount ? invoiceVariance(Number(invoiceAmount), total) : null;
+    return { value, tax, total, units, free, variance: v?.variance ?? null, mismatch: v?.mismatch ?? false };
   }, [rows, invoiceAmount]);
 
   const valid = rows.filter((r) =>
@@ -445,7 +460,7 @@ function ReceiveInner() {
                     {g.mismatch && <Tag tone="warn">Invoice differs</Tag>}
                   </div>
                   <div className="mt-0.5 text-[12px] text-[var(--p-muted)]">
-                    {g.supplierName} · {g.lines} line{g.lines === 1 ? "" : "s"} · {dmyFromISO(g.createdAt)} · {g.receivedByName}
+                    {g.supplierName} · {g.lines} Item{g.lines === 1 ? "" : "s"} · {dmyFromISO(g.createdAt)} · {g.receivedByName}
                     {g.invoiceNo && <> · inv <span className="num">{g.invoiceNo}</span></>}
                   </div>
                 </div>
@@ -481,6 +496,21 @@ function ReceiveInner() {
                   <span className="lbl">Value of goods</span>
                   <span className="num text-[16px] font-bold text-[var(--p-ink)]">{inr(totals.value, 2)}</span>
                 </div>
+                {/* The arithmetic the invoice is checked against, shown rather than
+                    implied - a variance nobody can reconstruct is a variance nobody
+                    trusts. Hidden on a wholly exempt delivery, where it is all zeros. */}
+                {totals.tax > 0 && (
+                  <>
+                    <div>
+                      <span className="lbl">GST</span>
+                      <span className="num text-[14px] font-semibold text-[var(--p-ink)]">+{inr(totals.tax, 2)}</span>
+                    </div>
+                    <div>
+                      <span className="lbl">Invoice total</span>
+                      <span className="num text-[16px] font-bold text-[var(--p-ink)]">{inr(totals.total, 2)}</span>
+                    </div>
+                  </>
+                )}
                 {totals.free > 0 && (
                   <div>
                     <span className="lbl">Free units</span>
@@ -660,7 +690,16 @@ function ReceiveInner() {
                                 <select className={fld} value={r.medicineId}
                                   onChange={(e) => {
                                     const m = meds.find((x) => x.id === e.target.value);
-                                    setRow(r.key, { medicineId: e.target.value, name: m?.name ?? "", unit: m?.unit ?? "unit", mrp: r.mrp || (m?.mrp ?? "") });
+                                    // GST% comes across with the product, so the running
+                                    // total here matches what the server will compute. A
+                                    // blank rate would make this preview disagree with the
+                                    // posted receipt, which is the one place the desk
+                                    // checks the invoice BEFORE committing to it.
+                                    setRow(r.key, {
+                                      medicineId: e.target.value, name: m?.name ?? "", unit: m?.unit ?? "unit",
+                                      mrp: r.mrp || (m?.mrp ?? ""),
+                                      gst: r.gst || (m?.gstRatePct != null ? String(Number(m.gstRatePct)) : ""),
+                                    });
                                   }}>
                                   <option value="">Select…</option>
                                   {meds.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
@@ -780,7 +819,15 @@ function ReceiveInner() {
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg border border-[var(--p-border)] px-4 py-3">
                 <div className="lbl">Value received</div>
-                <div className="num text-[18px] font-bold text-[var(--p-ink)]">{inr(view.receivedValue, 2)}</div>
+                {/* Goods, then the tax, then the sum the invoice is actually checked
+                    against. Without the middle line a correct receipt reads as
+                    ₹4,000 received against a ₹4,480 bill with no difference, and
+                    the desk cannot tell a good delivery from a broken figure. */}
+                <div className="num text-[18px] font-bold text-[var(--p-ink)]">{inr(view.receivedTotal, 2)}</div>
+                <div className="num mt-0.5 text-[11px] text-[var(--p-muted)]">
+                  {inr(view.receivedValue, 2)} goods
+                  {Number(view.receivedTax) > 0 && <> + {inr(view.receivedTax, 2)} GST</>}
+                </div>
               </div>
               <div className="rounded-lg border border-[var(--p-border)] px-4 py-3">
                 <div className="lbl">They invoiced</div>

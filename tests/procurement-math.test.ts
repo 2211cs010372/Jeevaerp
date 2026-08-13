@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   effectiveUnitCost, lineValue, lineTax, orderTotals,
-  suggestedOrderQty, daysOfCover, invoiceVariance,
+  suggestedOrderQty, daysOfCover, invoiceVariance, receiptTotal, round2,
 } from "@/lib/pharmacy/procurement-math";
 
 describe("free goods - the number that makes margin honest", () => {
@@ -122,6 +122,71 @@ describe("does the supplier's invoice match the carton?", () => {
 
   it("an exact match is not a mismatch", () => {
     expect(invoiceVariance(1000, 1000)).toEqual({ variance: 0, mismatch: false });
+  });
+});
+
+describe("the invoice total is GST INCLUSIVE - the carton must be too", () => {
+  // THE REGRESSION. A distributor's invoice total carries tax; the receipt only
+  // ever summed goods. Every taxable delivery therefore read as short by exactly
+  // its GST, and the pharmacist was told to ring the supplier about a receipt
+  // that was correct. A warning that cries wolf on good deliveries is worse than
+  // no warning at all - it trains the counter to click past the real ones.
+
+  it("adds the tax back before comparing", () => {
+    // 100 strips at ₹40 = ₹4000 goods, 12% GST = ₹480, bill = ₹4480.
+    const goods = lineValue(100, 40);
+    const tax = lineTax(100, 40, 12);
+    expect(goods).toBe(4000);
+    expect(tax).toBe(480);
+    expect(receiptTotal(goods, tax)).toBe(4480);
+    expect(invoiceVariance(4480, receiptTotal(goods, tax))).toEqual({ variance: 0, mismatch: false });
+  });
+
+  it("is exactly the bug: goods alone makes a correct bill look short by its GST", () => {
+    const goods = lineValue(100, 40);
+    const tax = lineTax(100, 40, 12);
+    // What the old code did - the whole ₹480 of tax surfaced as a variance.
+    expect(invoiceVariance(4480, goods)).toEqual({ variance: 480, mismatch: true });
+    // What it does now.
+    expect(invoiceVariance(4480, receiptTotal(goods, tax))!.mismatch).toBe(false);
+  });
+
+  it("still catches a real short supply once tax is accounted for", () => {
+    // Bill says ₹4480 but only 90 strips arrived: ₹3600 + ₹432 = ₹4032.
+    const total = receiptTotal(lineValue(90, 40), lineTax(90, 40, 12));
+    expect(total).toBe(4032);
+    expect(invoiceVariance(4480, total)).toEqual({ variance: 448, mismatch: true });
+  });
+
+  it("leaves an exempt delivery exactly where it was", () => {
+    // 0% GST - goods value IS the invoice total, and nothing changes.
+    const total = receiptTotal(lineValue(50, 20), lineTax(50, 20, 0));
+    expect(total).toBe(1000);
+    expect(invoiceVariance(1000, total)).toEqual({ variance: 0, mismatch: false });
+  });
+
+  it("taxes the paid packs only - free goods are not billed, so they are not taxed", () => {
+    // A 10+2 scheme: 12 strips arrive, the invoice charges for 10.
+    const goods = lineValue(10, 100);
+    const tax = lineTax(10, 100, 5);
+    expect(receiptTotal(goods, tax)).toBe(1050);
+    // Taxing all 12 would invent ₹100 of tax nobody was billed for.
+    expect(receiptTotal(goods, lineTax(12, 100, 5))).not.toBe(1050);
+  });
+
+  it("sums tax across mixed rates on one invoice", () => {
+    // Real deliveries carry 5% and 12% lines on the same bill.
+    const goods = round2(lineValue(20, 50) + lineValue(10, 80));
+    const tax = round2(lineTax(20, 50, 5) + lineTax(10, 80, 12));
+    expect(goods).toBe(1800);
+    expect(tax).toBe(146);
+    expect(invoiceVariance(1946, receiptTotal(goods, tax))).toEqual({ variance: 0, mismatch: false });
+  });
+
+  it("keeps the rupee tolerance, measured on the GST-inclusive figure", () => {
+    const total = receiptTotal(4000, 480);
+    expect(invoiceVariance(4480.5, total)!.mismatch).toBe(false);
+    expect(invoiceVariance(4482, total)!.mismatch).toBe(true);
   });
 });
 

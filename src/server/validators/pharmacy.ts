@@ -66,6 +66,9 @@ export const dispenseSchema = z.object({
   items: z.array(z.object({
     medicineId: z.string().trim().min(1),
     qty: z.coerce.number().int().min(1),
+    /// "1-0-1 after food". Free text, as it is written on the ward chit - it is
+    /// copied onto the prescription record this dispense files, not onto the bill.
+    dosage: z.string().trim().max(120).optional(),
   })).min(1, "Add at least one medicine"),
   discountAmount: z.coerce.number().min(0).optional(),
   shortSupplyReason: z.string().trim().max(200).optional(),

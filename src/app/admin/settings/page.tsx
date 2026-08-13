@@ -33,6 +33,7 @@ interface Config {
   onlineBookingEnabled: boolean;
   callbackRequestsEnabled: boolean;
   accountsTabEnabled: boolean;
+  billEditingEnabled: boolean;
   afterHoursOpEnabled: boolean;
   afterHoursOpStart: string;
   afterHoursOpEnd: string;
@@ -48,6 +49,9 @@ const blank: Config = {
   onlineBookingEnabled: true,
   callbackRequestsEnabled: true,
   accountsTabEnabled: true,
+  // Matches the column default. The safer branch is the one a form that has
+  // never been saved should be sitting on.
+  billEditingEnabled: false,
   afterHoursOpEnabled: true,
   afterHoursOpStart: "20:00",
   afterHoursOpEnd: "06:00",
@@ -297,6 +301,24 @@ export default function SettingsPage() {
 
         {/* ── SMS ────────────────────────────────────────────────────────── */}
         <SmsCard />
+
+        {/* ── BILL EDITING ───────────────────────────────────────────────── */}
+        <Card title="Billing" sub="Who is allowed to rewrite a bill after it has been raised.">
+          <Toggle
+            checked={f.billEditingEnabled}
+            onChange={(v) => set("billEditingEnabled")(v)}
+            label="Let reception and the insurance desk edit unpaid bills"
+            on="Both desks get an Edit button on any bill with no money taken against it — they can change the lines, the amounts and the discount, and the receipt number stays the same. Every edit is recorded with their name and the new total."
+            off="Neither desk can change a bill. To correct one they cancel it and issue a new one, which leaves both documents in the ledger. This is the safer route and it is the default."
+            risky
+          />
+          <p className="mt-3 rounded-lg bg-[var(--p-bg)] px-3.5 py-2.5 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+            A bill is a GST document, and a patient may already be holding a printed copy of it.
+            Whatever this is set to, a bill that has taken money or carries an IRN can never be
+            edited by anyone — it can only be cancelled and reissued. Admin and the lab counter
+            are not affected by this switch.
+          </p>
+        </Card>
 
         {/* ── WARDS ──────────────────────────────────────────────────────── */}
         <Card title="Wards & discharge" sub="Controls what reception is allowed to do at the point of discharge.">

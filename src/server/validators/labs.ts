@@ -198,6 +198,23 @@ export const updateInvoiceSchema = z.object({
   })).min(1, "An invoice needs at least one item"),
   discountAmount: z.coerce.number().min(0).optional(),
   notes: z.string().trim().max(300).optional(),
+  /**
+   * THE DATE THE BILL PRINTS, when that is not the day it was typed.
+   *
+   * A plain "YYYY-MM-DD" - a bill is dated to a day, not to a moment, and
+   * accepting a timestamp would invite a timezone to decide which day that is.
+   * Stored in Invoice.billDate, which is deliberately NOT createdAt: see the
+   * schema note. Sending null clears the correction and puts the sheet back on
+   * the real date.
+   *
+   * NO FUTURE DATES. A bill dated next Tuesday is either a typo or an attempt to
+   * push revenue into the next return period, and neither should be one
+   * keystroke away at a counter. The past is left open: back-dating to the day
+   * treatment was actually given is the entire reason this field exists.
+   */
+  billDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Give the date as YYYY-MM-DD")
+    .refine((d) => !Number.isNaN(Date.parse(`${d}T00:00:00`)), "That is not a real date")
+    .nullish(),
 });
 
 export const cancelInvoiceSchema = z.object({
@@ -219,6 +236,27 @@ export const labCatalogItemSchema = z.object({
   code: z.string().trim().max(20).optional().or(z.literal("")),
   price: z.coerce.number().min(0, "A price cannot be negative"),
   active: z.boolean().optional().default(true),
+});
+
+/**
+ * A round of price corrections from the price grid.
+ *
+ * Only ids and prices - no name, no code, no active flag. The grid edits one
+ * column, so it sends one column; see bulkUpdateCatalogPrices for why widening
+ * this would let a price fix quietly revert someone else's rename.
+ *
+ * The ceiling is not defensive padding. `price` is Decimal(10,2), so anything
+ * from 100000000 up fails at the database with a message about numeric field
+ * overflow - a sentence nobody at a bench can act on. Rejected here instead,
+ * where the screen can say which test and why.
+ */
+export const labCatalogPricesSchema = z.object({
+  prices: z.array(z.object({
+    id: z.string().trim().min(1),
+    price: z.coerce.number()
+      .min(0, "A price cannot be negative")
+      .max(9_999_999, "That price is too large"),
+  })).min(1, "Nothing to save").max(500),
 });
 
 /**

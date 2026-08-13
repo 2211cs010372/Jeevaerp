@@ -174,7 +174,7 @@ export const INVOICE_PRINT_CSS = `
     box-shadow: 0 8px 40px rgba(0,0,0,.18); 
     padding: 8mm 9mm;
     font-family: var(--font-sans, "Instrument Sans"), "Noto Sans Telugu", "Nirmala UI", Arial, sans-serif;
-    font-size: 9.7px; 
+    font-size: 11.5px; 
     line-height: 1.42; 
   }
   
@@ -191,6 +191,7 @@ export const INVOICE_PRINT_CSS = `
     @page { 
       size: 148mm 210mm; /* Explicitly define exact A5 dimensions */
       margin: 0mm;       /* Strip all browser-injected margins */
+      
     }
     
     #print-sheet { 

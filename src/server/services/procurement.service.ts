@@ -7,7 +7,8 @@ import { notifySupplierPo, notifyStockReceived } from "./notify.service";
 import { publishLive } from "@/server/realtime/publish";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import {
-  effectiveUnitCost, invoiceVariance, lineValue, orderTotals, round2, suggestedOrderQty,
+  effectiveUnitCost, invoiceVariance, lineTax, lineValue, orderTotals, receiptTotal,
+  round2, suggestedOrderQty,
 } from "@/lib/pharmacy/procurement-math";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma } from "@prisma/client";
@@ -738,7 +739,13 @@ export async function receiveGoods(
   },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<{
-  id: string; grnNumber: string; receivedValue: string;
+  id: string; grnNumber: string;
+  /** Goods only, ex-GST - the cost basis. */
+  receivedValue: string;
+  /** Tax charged on those goods. */
+  receivedTax: string;
+  /** receivedValue + receivedTax. What the supplier's bill should total. */
+  receivedTotal: string;
   variance: number | null; mismatch: boolean;
   /** Products this delivery added to the catalogue, so the desk is told. */
   createdMedicines: { id: string; name: string }[];
@@ -760,8 +767,16 @@ export async function receiveGoods(
     if ((it.freeQty ?? 0) < 0) throw new ApiError(400, "Free quantity can't be negative");
     const exp = asDate(it.expiryDate);
     if (exp <= today) {
-      const med = await prisma.medicine.findUnique({ where: { id: it.medicineId }, select: { name: true } });
-      throw new ApiError(400, `${med?.name ?? "That medicine"} batch ${it.batchNo} expires ${it.expiryDate} - don't take it in, send it back with the delivery.`);
+      // A new-product line carries no `medicineId` - the catalogue row is only
+      // created inside the transaction below, and the validator deliberately
+      // accepts a name instead. Look up only when there is an id to look up,
+      // and otherwise name the product from what the pharmacist typed, so an
+      // expired batch is refused with the same sentence either way.
+      const med = it.medicineId
+        ? await prisma.medicine.findUnique({ where: { id: it.medicineId }, select: { name: true } })
+        : null;
+      const label = med?.name ?? (it.newMedicineName?.trim() || "That medicine");
+      throw new ApiError(400, `${label} batch ${it.batchNo} expires ${it.expiryDate} - don't take it in, send it back with the delivery.`);
     }
   }
 
@@ -781,6 +796,7 @@ export async function receiveGoods(
   const result = await prisma.$transaction(async (tx) => {
     const grnNumber = await nextId("GRN", { tx });
     let receivedValue = 0;
+    let receivedTax = 0;
     const createdMedicines: { id: string; name: string }[] = [];
 
     const grn = await tx.goodsReceipt.create({
@@ -980,6 +996,13 @@ export async function receiveGoods(
         }
       }
 
+      // THE RATE TAX IS CHARGED AT ON THIS LINE. What the delivery note says
+      // wins, because that is what the supplier actually billed; the catalogue
+      // rate is the fallback for a line the desk did not type a rate on. Falling
+      // back to 0 instead would put the whole tax back into the variance, which
+      // is the bug this line exists to close.
+      const gstRatePct = it.gstRatePct ?? Number(med.gstRatePct.toString());
+
       await tx.goodsReceiptItem.create({
         data: {
           goodsReceiptId: grn.id,
@@ -992,13 +1015,21 @@ export async function receiveGoods(
           freeQty: free,
           unitCost: dec(it.unitCost),
           mrp: dec(it.mrp),
+          gstRatePct: dec(gstRatePct),
         },
       });
 
+      // Tax rides on the SAME base as the goods value - paid packs at the
+      // invoice rate, free goods excluded. Any other base and the two numbers
+      // stop adding up to the bill they are checked against.
       receivedValue = round2(receivedValue + lineValue(qty, it.unitCost));
+      receivedTax = round2(receivedTax + lineTax(qty, it.unitCost, gstRatePct));
     }
 
-    await tx.goodsReceipt.update({ where: { id: grn.id }, data: { receivedValue: dec(receivedValue) } });
+    await tx.goodsReceipt.update({
+      where: { id: grn.id },
+      data: { receivedValue: dec(receivedValue), receivedTax: dec(receivedTax) },
+    });
 
     // Re-derive the order's status from its lines - never trust a running flag.
     if (po) {
@@ -1015,16 +1046,20 @@ export async function receiveGoods(
       });
     }
 
-    return { id: grn.id, grnNumber: grn.grnNumber, receivedValue, createdMedicines };
+    return { id: grn.id, grnNumber: grn.grnNumber, receivedValue, receivedTax, createdMedicines };
   });
 
-  const v = invoiceVariance(input.invoiceAmount, result.receivedValue);
+  // Checked against the GST-INCLUSIVE total, because that is the figure printed
+  // on the distributor's invoice the desk just typed in.
+  const receivedTotal = receiptTotal(result.receivedValue, result.receivedTax);
+  const v = invoiceVariance(input.invoiceAmount, receivedTotal);
 
   await logAudit(actor, {
     action: "GOODS_RECEIVED", targetTable: "GoodsReceipt", targetId: result.id,
     meta: {
       grnNumber: result.grnNumber, supplier: supplier.name, lines: input.items.length,
       poNumber: po?.poNumber ?? null, receivedValue: dec(result.receivedValue),
+      receivedTax: dec(result.receivedTax), receivedTotal: dec(receivedTotal),
       invoiceAmount: input.invoiceAmount ?? null, variance: v?.variance ?? null,
     },
     ...ctx,
@@ -1048,6 +1083,8 @@ export async function receiveGoods(
     id: result.id,
     grnNumber: result.grnNumber,
     receivedValue: dec(result.receivedValue),
+    receivedTax: dec(result.receivedTax),
+    receivedTotal: dec(receivedTotal),
     variance: v?.variance ?? null,
     mismatch: v?.mismatch ?? false,
     createdMedicines: result.createdMedicines,
@@ -1071,7 +1108,7 @@ export async function listGoodsReceipts(filter?: { supplierId?: string; query?: 
     take: 100,
     select: {
       id: true, grnNumber: true, invoiceNo: true, invoiceDate: true, invoiceAmount: true,
-      receivedValue: true, createdAt: true,
+      receivedValue: true, receivedTax: true, createdAt: true,
       supplier: { select: { id: true, name: true } },
       purchaseOrder: { select: { id: true, poNumber: true } },
       receivedBy: { select: { name: true } },
@@ -1080,12 +1117,16 @@ export async function listGoodsReceipts(filter?: { supplierId?: string; query?: 
   });
 
   return rows.map((g) => {
-    const v = invoiceVariance(g.invoiceAmount ? Number(g.invoiceAmount.toString()) : null, Number(g.receivedValue.toString()));
+    // Same comparison as the posting path: goods PLUS tax against the bill.
+    const receivedTotal = receiptTotal(Number(g.receivedValue.toString()), Number(g.receivedTax.toString()));
+    const v = invoiceVariance(g.invoiceAmount ? Number(g.invoiceAmount.toString()) : null, receivedTotal);
     return {
       id: g.id, grnNumber: g.grnNumber, invoiceNo: g.invoiceNo,
       invoiceDate: g.invoiceDate ? iso(g.invoiceDate) : null,
       invoiceAmount: g.invoiceAmount ? g.invoiceAmount.toString() : null,
       receivedValue: g.receivedValue.toString(),
+      receivedTax: g.receivedTax.toString(),
+      receivedTotal: receivedTotal.toFixed(2),
       variance: v?.variance ?? null,
       mismatch: v?.mismatch ?? false,
       createdAt: g.createdAt.toISOString(),
@@ -1102,13 +1143,14 @@ export async function goodsReceiptDetail(id: string) {
     where: { id },
     select: {
       id: true, grnNumber: true, invoiceNo: true, invoiceDate: true, invoiceAmount: true,
-      receivedValue: true, notes: true, createdAt: true,
+      receivedValue: true, receivedTax: true, notes: true, createdAt: true,
       supplier: { select: { id: true, name: true, gstin: true, drugLicenseNo: true, phone: true } },
       purchaseOrder: { select: { id: true, poNumber: true } },
       receivedBy: { select: { name: true } },
       items: {
         select: {
           id: true, batchNo: true, expiryDate: true, qty: true, freeQty: true, unitCost: true, mrp: true,
+          gstRatePct: true,
           medicine: { select: { id: true, name: true, unit: true } },
           batchId: true,
         },
@@ -1117,13 +1159,18 @@ export async function goodsReceiptDetail(id: string) {
   });
   if (!g) throw new ApiError(404, "Goods receipt not found");
 
-  const v = invoiceVariance(g.invoiceAmount ? Number(g.invoiceAmount.toString()) : null, Number(g.receivedValue.toString()));
+  // Same comparison as the posting path and the list: goods PLUS tax against
+  // the bill. Three call sites, one rule - they must not drift apart.
+  const receivedTotal = receiptTotal(Number(g.receivedValue.toString()), Number(g.receivedTax.toString()));
+  const v = invoiceVariance(g.invoiceAmount ? Number(g.invoiceAmount.toString()) : null, receivedTotal);
 
   return {
     id: g.id, grnNumber: g.grnNumber, invoiceNo: g.invoiceNo,
     invoiceDate: g.invoiceDate ? iso(g.invoiceDate) : null,
     invoiceAmount: g.invoiceAmount ? g.invoiceAmount.toString() : null,
     receivedValue: g.receivedValue.toString(),
+    receivedTax: g.receivedTax.toString(),
+    receivedTotal: receivedTotal.toFixed(2),
     variance: v?.variance ?? null,
     mismatch: v?.mismatch ?? false,
     notes: g.notes,
@@ -1144,6 +1191,8 @@ export async function goodsReceiptDetail(id: string) {
         landedCost: dec(landed),
         mrp: i.mrp.toString(),
         lineValue: dec(lineValue(i.qty, cost)),
+        gstRatePct: i.gstRatePct.toString(),
+        lineTax: dec(lineTax(i.qty, cost, Number(i.gstRatePct.toString()))),
         marginPct: mrp > 0 ? Math.round(((mrp - landed) / mrp) * 1000) / 10 : null,
       };
     }),
@@ -1351,7 +1400,7 @@ export async function procurementStats(): Promise<{
     }),
     prisma.goodsReceipt.findMany({
       where: { createdAt: { gte: monthStart } },
-      select: { receivedValue: true, invoiceAmount: true },
+      select: { receivedValue: true, receivedTax: true, invoiceAmount: true },
     }),
     prisma.purchaseReturn.findMany({
       where: { status: "SENT" },
@@ -1367,8 +1416,12 @@ export async function procurementStats(): Promise<{
   ).length;
 
   const purchaseValueThisMonth = monthReceipts.reduce((t, g) => round2(t + Number(g.receivedValue.toString())), 0);
+  // The dashboard's mismatch COUNT has to use the same rule as the screens it
+  // sends people to. Counting on goods value alone made this tile report every
+  // taxable delivery of the month as a query to chase.
   const invoiceMismatches = monthReceipts.filter((g) => {
-    const v = invoiceVariance(g.invoiceAmount ? Number(g.invoiceAmount.toString()) : null, Number(g.receivedValue.toString()));
+    const total = receiptTotal(Number(g.receivedValue.toString()), Number(g.receivedTax.toString()));
+    const v = invoiceVariance(g.invoiceAmount ? Number(g.invoiceAmount.toString()) : null, total);
     return v?.mismatch ?? false;
   }).length;
 

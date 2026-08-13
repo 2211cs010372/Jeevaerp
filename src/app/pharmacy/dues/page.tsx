@@ -11,6 +11,7 @@ import { api } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
 import { TOPICS } from "@/lib/realtime/topics";
 import { bedLabel } from "@/lib/beds";
+import { EditBillDialog } from "@/components/portal/billing/edit-bill-dialog";
 
 /**
  * THE COUNTER'S DEBTORS.
@@ -52,6 +53,14 @@ export default function PharmacyDuesPage() {
   const [collect, setCollect] = useState<Due | null>(null);
   /** A ward patient's whole debt, settled in one payment. */
   const [settle, setSettle] = useState<IpdDue | null>(null);
+  /**
+   * A pharmacy bill open for correction.
+   *
+   * PHARMACIST is not one of the roles HospitalConfig.billEditingEnabled gates
+   * (that switch covers reception and the insurance desk), so there is no
+   * useBillEditing() check here - the same arrangement the lab counter has.
+   */
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   /**
    * `quiet` is what makes a live refresh feel live rather than broken. The first
@@ -71,7 +80,7 @@ export default function PharmacyDuesPage() {
   // under someone who is counting cash is worse than being a few seconds stale.
   // Suspended while EITHER sheet is open - refreshing the list out from under
   // someone who is counting cash is worse than being a few seconds stale.
-  useLive([TOPICS.PHARMACY], () => load(true), { enabled: !collect && !settle });
+  useLive([TOPICS.PHARMACY], () => load(true), { enabled: !collect && !settle && !editingId });
 
   // Ward dues come pre-grouped by patient from the service (ipdByPatient);
   // only the counter's own walk-in bills are still listed one per invoice.
@@ -115,9 +124,19 @@ export default function PharmacyDuesPage() {
           <DueSection
             title="At the counter" tone="plain"
             sub="Walk-in sales left part-paid or unpaid."
-            rows={counter} onCollect={setCollect}
+            rows={counter} onCollect={setCollect} onEdit={setEditingId}
           />
         </div>
+      )}
+
+      {/* The same dialog reception, the lab and admin correct a bill with. */}
+      {editingId && (
+        <EditBillDialog
+          invoiceId={editingId}
+          accent="blue"
+          onClose={() => setEditingId(null)}
+          onSaved={() => { setEditingId(null); load(); }}
+        />
       )}
 
       {collect && (
@@ -244,8 +263,13 @@ function WardDueSection({ rows, onCollect }: { rows: IpdDue[]; onCollect: (p: Ip
 }
 
 function DueSection({
-  title, sub, tone, rows, onCollect,
-}: { title: string; sub: string; tone: "amber" | "plain"; rows: Due[]; onCollect: (d: Due) => void }) {
+  title, sub, tone, rows, onCollect, onEdit,
+}: {
+  title: string; sub: string; tone: "amber" | "plain"; rows: Due[];
+  onCollect: (d: Due) => void;
+  /** Open a bill for correction. Offered only on rows with nothing paid yet. */
+  onEdit: (invoiceId: string) => void;
+}) {
   if (rows.length === 0) return null;
   const total = rows.reduce((s, r) => s + Number(r.due), 0);
   return (
@@ -304,6 +328,17 @@ function DueSection({
                   className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border-strong)] bg-white px-3.5 py-2 text-[12.5px] font-semibold text-[var(--p-ink)] transition-colors hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
                   <Icon name="receipt" size={14} /> Print bill
                 </Link>
+                {/* Offered on part-paid bills too, which is most of this screen.
+                    The server holds the line that matters: a correction may not
+                    take the total below the ₹{d.paid} already collected, and a
+                    bill under a live IRN is reissued rather than rewritten. */}
+                <button onClick={() => onEdit(d.invoiceId)}
+                  title={Number(d.paid) > 0
+                    ? `Correct this bill — ₹${money(d.paid)} already collected`
+                    : "Correct this bill's date, lines or amount"}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border-strong)] bg-white px-3.5 py-2 text-[12.5px] font-semibold text-[var(--p-ink)] transition-colors hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+                  <Icon name="file" size={14} /> Edit
+                </button>
                 <button onClick={() => onCollect(d)}
                   className="btn-primary inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[12.5px] font-semibold text-white">
                   <Icon name="rupee" size={14} /> Collect

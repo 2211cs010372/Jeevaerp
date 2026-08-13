@@ -209,3 +209,89 @@ export function invoiceStatusFrom(
   if (net >= total) return "PAID";
   return "PARTIALLY_PAID";
 }
+
+// ---------------------------------------------------------------------------
+// THE PRINTED DATE
+// ---------------------------------------------------------------------------
+
+export class BillDateError extends Error {}
+
+/**
+ * Turn the "YYYY-MM-DD" a desk typed into the timestamp stored in
+ * Invoice.billDate - the date the SHEET prints.
+ *
+ * ANCHORED AT NOON, not midnight, and that is the whole reason this is a
+ * function rather than `new Date(s)`. The column is a timestamp; a server in UTC
+ * serving a hospital at +05:30 turns local midnight on the 12th into 18:30 on
+ * the 11th, so a bill dated the 12th prints as the 11th - on a document the
+ * patient hands to an insurer. Noon is the one hour that lands on the right
+ * calendar day from either side of the date it belongs to.
+ *
+ * NO FUTURE DATES. A bill dated next Tuesday is either a typo or an attempt to
+ * push revenue into the next return period. The past stays open: back-dating to
+ * the day treatment was actually given is the entire point of the field.
+ *
+ * `undefined` in means "the caller did not send a date" and comes back out
+ * unchanged, so Prisma leaves the column alone. `null` means "clear the
+ * correction" and puts the sheet back on createdAt.
+ *
+ * `now` is injectable so the future rule can be tested without waiting for
+ * tomorrow.
+ */
+export function resolveBillDate(
+  input: string | null | undefined,
+  now: Date = new Date(),
+): Date | null | undefined {
+  if (input === undefined) return undefined;
+  if (input === null) return null;
+
+  const s = input.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new BillDateError("Give the date as YYYY-MM-DD");
+
+  const d = new Date(`${s}T12:00:00`);
+  if (Number.isNaN(d.getTime())) throw new BillDateError("That is not a real date");
+  // "2026-02-31" parses in some engines by rolling into March. Round-tripping the
+  // parsed date back to its parts is what catches a day that does not exist.
+  const back = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  if (back !== s) throw new BillDateError("That is not a real date");
+
+  // A day of slack, not zero: the desk's clock and the server's are never quite
+  // the same, and a bill dated "today" must not be refused at 23:58 because the
+  // server has already rolled over.
+  if (d.getTime() > now.getTime() + 24 * 60 * 60 * 1000) {
+    throw new BillDateError("A bill can't be dated in the future");
+  }
+  return d;
+}
+
+/**
+ * THE FLOOR UNDER A CORRECTED BILL.
+ *
+ * Paid bills are editable - a counter that billed the wrong test to a patient
+ * who has already paid needs to correct the paperwork, not void a settled bill
+ * and hand back a cancelled receipt. What it must not do is correct the total
+ * DOWN past the money in the drawer.
+ *
+ * That money is real: the patient handed it over and holds a receipt for it. A
+ * bill that says less than was taken is an over-collection with nothing anywhere
+ * recording it - the day close still counts the payment, the bill no longer
+ * explains it, and the difference is discoverable only by somebody adding up two
+ * screens. The refund flow exists for giving money back and writes a Refund row
+ * that survives; this points at it rather than quietly allowing the gap.
+ *
+ * Going UP is always fine. The total rises, the balance reappears, the status
+ * falls back to PARTIALLY_PAID and the desk collects the difference.
+ *
+ * `collected` is NET of refunds - money already returned is not money the bill
+ * still has to cover.
+ */
+export function assertTotalCoversCollected(newTotal: number, collected: number): void {
+  if (collected <= 0) return;
+  // The same paise tolerance assertPaymentsWithinTotal uses. Without it a bill
+  // collected to the exact rupee fails on a rounding crumb.
+  if (r2(newTotal) < r2(collected) - 0.01) {
+    throw new InvoiceMathError(
+      `₹${collected.toFixed(2)} has already been collected on this bill, so it can't be corrected to ₹${newTotal.toFixed(2)}. Refund the difference first, then edit.`
+    );
+  }
+}
