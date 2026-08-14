@@ -3,7 +3,7 @@ import { ApiError } from "@/lib/api";
 import { nextId } from "@/lib/ids";
 import { logAudit } from "./audit.service";
 import { splitInvoice } from "@/lib/insurance-split";
-import { createInvoice, recordPayment, getInvoice, advancePaymentRef, type PaymentModeT } from "./billing.service";
+import { createInvoice, updateInvoice, recordPayment, getInvoice, advancePaymentRef, type PaymentModeT } from "./billing.service";
 import { notifyAdmitted, notifyDischarged, notifyAdvanceReceived } from "./notify.service";
 // One rounding definition across the whole system - money must not be
 // rounded two different ways in two different files.
@@ -501,6 +501,179 @@ type ChargeLine = {
   unitPrice: { toString(): string }; gstRatePct: { toString(): string };
 };
 
+type BedStayRow = {
+  wardName: string; dailyCharge: { toString(): string }; gstRatePct: { toString(): string };
+  fromDate: Date; toDate: Date | null; bed: { bedNo: string } | null;
+};
+
+type IpdBillBase = {
+  ipNumber: string;
+  admittedAt: Date;
+  dischargedAt: Date;
+  wardNameAtAdmit: string;
+  dailyChargeAtAdmit: { toString(): string };
+  gstRatePctAtAdmit: { toString(): string };
+  bed: { bedNo: string } | null;
+  charges: ChargeLine[];
+};
+
+/**
+ * WHAT AN IPD BILL IS MADE OF: the bed, the nursing, and the running tab.
+ *
+ * ONE DEFINITION, TWO CALLERS. Discharge builds this to raise the invoice, and a
+ * charge corrected AFTER discharge rebuilds it to re-issue that same invoice. If
+ * each did its own arithmetic they would drift, and the drift would surface as a
+ * claim bill and a tax invoice that disagree about a stay - discovered by a TPA,
+ * months later, with no way to tell which one was right.
+ *
+ * Each BedStay is priced on its own, at the rate that ward carried while the
+ * patient was in it: a mid-stay price revision must never reach back and
+ * re-price nights already lived.
+ */
+export function buildIpdInvoiceLines(adm: IpdBillBase, stays: BedStayRow[]) {
+  const days = stayDays(adm.admittedAt, adm.dischargedAt);
+
+  const bedLines = stays.length > 0
+    ? stays.map((st) => {
+        const d = stayDays(st.fromDate, st.toDate ?? adm.dischargedAt);
+        return {
+          description: `Bed · ${bedLabel(st.wardName, st.bed?.bedNo)} · ${d} day${d > 1 ? "s" : ""}`,
+          qty: d,
+          unitPrice: Number(st.dailyCharge.toString()),
+          gstRatePct: Number(st.gstRatePct.toString()),
+        };
+      })
+    // Fallback for an admission created before BedStay existed and somehow not
+    // backfilled. Never silently bill zero days for a bed someone slept in.
+    : [{
+        description: `Bed charges · ${adm.wardNameAtAdmit} · ${adm.bed?.bedNo ?? "bed not recorded"} · ${adm.ipNumber} · ${days} day(s)`,
+        qty: days,
+        unitPrice: Number(adm.dailyChargeAtAdmit.toString()),
+        gstRatePct: Number(adm.gstRatePctAtAdmit.toString()),
+      }];
+
+  return [
+    ...bedLines,
+    // Nursing care - assigned by default, billed at the same flat per-day rate
+    // the running tab has been showing all along.
+    {
+      description: `Nursing care · ${days} day(s) × ₹${NURSE_FEE_PER_DAY}`,
+      qty: days,
+      unitPrice: NURSE_FEE_PER_DAY,
+      gstRatePct: 0,
+    },
+    // Each line keeps its own GST rate: a ₹5,500 room and a 12% syrup are not
+    // taxed the same way.
+    ...adm.charges.map((c) => ({
+      description: c.description,
+      qty: c.qty,
+      unitPrice: Number(c.unitPrice.toString()),
+      gstRatePct: Number(c.gstRatePct.toString()),
+    })),
+  ];
+}
+
+/**
+ * RE-ISSUE A DISCHARGED STAY'S INVOICE FROM ITS CHARGES.
+ *
+ * A stay's charges used to freeze at discharge, so the insurance desk answering
+ * a TPA query on a closed claim could not touch the bill at all. They can now -
+ * and the moment a charge moves, the invoice raised at discharge is stale. This
+ * puts the two back in step in the same breath.
+ *
+ * It deliberately delegates to `updateInvoice` rather than writing the invoice
+ * itself, because every rule worth having already lives there: a cancelled bill
+ * stays cancelled, a bill carrying a live IRN is the government's copy and is
+ * refused, the total may not fall below money already collected, and the whole
+ * edit is gated behind `billEditingEnabled` for the front desk and the insurance
+ * room. Re-implementing any of that here would mean two answers to "may this
+ * bill change", which is one more than a tax document can survive.
+ *
+ * A stay with no IPD invoice yet (discharged before invoicing, or a stay still
+ * running) is a no-op, not an error - the charge edit itself is still valid.
+ */
+async function reissueIpdInvoice(
+  actor: AuthUser,
+  admissionId: string,
+  ctx: { ipAddress?: string; userAgent?: string },
+): Promise<void> {
+  const adm = await prisma.admission.findUnique({
+    where: { id: admissionId },
+    select: {
+      ipNumber: true, admittedAt: true, dischargedAt: true,
+      wardNameAtAdmit: true, dailyChargeAtAdmit: true, gstRatePctAtAdmit: true,
+      bed: { select: { bedNo: true } },
+      charges: {
+        orderBy: { createdAt: "asc" },
+        select: { description: true, qty: true, unitPrice: true, gstRatePct: true, category: true },
+      },
+      invoices: {
+        where: { source: "IPD", status: { not: "CANCELLED" } },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { id: true, discountAmount: true },
+      },
+    },
+  });
+  if (!adm?.dischargedAt) return;
+  const inv = adm.invoices[0];
+  if (!inv) return;
+
+  const stays = await prisma.bedStay.findMany({
+    where: { admissionId },
+    orderBy: { fromDate: "asc" },
+    select: { wardName: true, dailyCharge: true, gstRatePct: true, fromDate: true, toDate: true, bed: { select: { bedNo: true } } },
+  });
+
+  await updateInvoice(
+    actor,
+    {
+      invoiceId: inv.id,
+      lines: buildIpdInvoiceLines({ ...adm, dischargedAt: adm.dischargedAt }, stays as BedStayRow[]),
+      // The discount was a decision taken at discharge about this stay. A
+      // corrected line is not a reason to quietly withdraw it.
+      discountAmount: Number(inv.discountAmount.toString()),
+    },
+    ctx,
+  );
+}
+
+/**
+ * CHANGE A CLOSED STAY'S CHARGE, OR CHANGE NOTHING AT ALL.
+ *
+ * `updateInvoice` runs its own transaction, so the charge write and the invoice
+ * rewrite cannot share one. That leaves a window where the charge has moved and
+ * the invoice has not - which is precisely the divergence this whole path exists
+ * to prevent, and it is reached by the most ordinary refusal there is: a
+ * correction that would drop the bill below money already collected.
+ *
+ * So the charge change is undone when the re-issue refuses. The desk gets the
+ * invoice's own message - "refund the difference first, then edit" - and the
+ * stay is exactly as it was before they pressed the button.
+ *
+ * A stay that is still ADMITTED has no invoice yet and skips all of this: its
+ * charges are a running tab, and nothing downstream is stale until discharge
+ * raises the bill.
+ */
+async function withInvoiceInStep<T>(
+  actor: AuthUser,
+  admissionId: string,
+  closed: boolean,
+  ctx: { ipAddress?: string; userAgent?: string },
+  apply: () => Promise<T>,
+  undo: (applied: T) => Promise<void>,
+): Promise<T> {
+  const applied = await apply();
+  if (!closed) return applied;
+  try {
+    await reissueIpdInvoice(actor, admissionId, ctx);
+  } catch (e) {
+    await undo(applied);
+    throw e;
+  }
+  return applied;
+}
+
 /**
  * Pharmacy and lab bills raised against a stay that are still unpaid.
  *
@@ -697,30 +870,6 @@ export async function dischargePatient(
     select: { wardName: true, dailyCharge: true, gstRatePct: true, fromDate: true, toDate: true, bed: { select: { bedNo: true } } },
   });
 
-  type StayRow = {
-    wardName: string; dailyCharge: { toString(): string }; gstRatePct: { toString(): string };
-    fromDate: Date; toDate: Date | null; bed: { bedNo: string } | null;
-  };
-
-  const bedLines = (stays as StayRow[]).length > 0
-    ? (stays as StayRow[]).map((st) => {
-        const days = stayDays(st.fromDate, st.toDate ?? adm.dischargedAt);
-        return {
-          description: `Bed · ${bedLabel(st.wardName, st.bed?.bedNo)} · ${days} day${days > 1 ? "s" : ""}`,
-          qty: days,
-          unitPrice: Number(st.dailyCharge.toString()),
-          gstRatePct: Number(st.gstRatePct.toString()),
-        };
-      })
-    // Fallback for an admission created before BedStay existed and somehow not
-    // backfilled. Never silently bill zero days for a bed someone slept in.
-    : [{
-        description: `Bed charges · ${adm.wardNameAtAdmit} · ${adm.bed.bedNo} · ${adm.ipNumber} · ${stayDays(adm.admittedAt, adm.dischargedAt)} day(s)`,
-        qty: stayDays(adm.admittedAt, adm.dischargedAt),
-        unitPrice: Number(adm.dailyChargeAtAdmit.toString()),
-        gstRatePct: Number(adm.gstRatePctAtAdmit.toString()),
-      }];
-
   const invoice = await createInvoice(
     actor,
     {
@@ -732,27 +881,13 @@ export async function dischargePatient(
       // person who agreed the cashless arrangement went off shift days ago.
       payer: adm.payerType,
       payerName: adm.insurer ?? undefined,
-      // The bed is only the first line (or lines - see above). Everything on the
-      // running tab - procedures, oxygen, doctor rounds, lab tests, medicines sent
-      // up from the pharmacy - is billed here, once, at discharge. Each line keeps
-      // its own GST rate: a ₹5,500 room and a 12% syrup are not taxed the same way.
-      lines: [
-        ...bedLines,
-        // Nursing care - assigned by default, billed at the same flat per-day rate
-        // the running tab has been showing all along (days × NURSE_FEE_PER_DAY).
-        {
-          description: `Nursing care · ${stayDays(adm.admittedAt, adm.dischargedAt)} day(s) × ₹${NURSE_FEE_PER_DAY}`,
-          qty: stayDays(adm.admittedAt, adm.dischargedAt),
-          unitPrice: NURSE_FEE_PER_DAY,
-          gstRatePct: 0,
-        },
-        ...(adm.charges as ChargeLine[]).map((c) => ({
-          description: c.description,
-          qty: c.qty,
-          unitPrice: Number(c.unitPrice.toString()),
-          gstRatePct: Number(c.gstRatePct.toString()),
-        })),
-      ],
+      // The bed, the nursing and the whole running tab - built by the one
+      // function a post-discharge correction also rebuilds them with, so the two
+      // can never describe the same stay differently.
+      lines: buildIpdInvoiceLines(
+        { ...adm, dischargedAt: adm.dischargedAt, charges: adm.charges as ChargeLine[] },
+        stays as BedStayRow[],
+      ),
       discountAmount: input.discountAmount,
       payment: input.payment,
       payments: input.payments,
@@ -932,27 +1067,42 @@ export async function addAdmissionCharge(
     select: { id: true, status: true, ipNumber: true },
   });
   if (!adm) throw new ApiError(404, "Admission not found");
-  if (adm.status !== "ADMITTED") {
-    throw new ApiError(409, "This patient is already discharged - their bill is closed");
-  }
   if (input.qty < 1) throw new ApiError(400, "Quantity must be at least 1");
   if (input.unitPrice < 0) throw new ApiError(400, "Price can't be negative");
 
-  await prisma.admissionCharge.create({
-    data: {
-      admissionId: input.admissionId,
-      // validated upstream against the ChargeCategory values; narrow for Prisma
-      category: input.category as ChargeCategory,
-      description: input.description.trim(),
-      qty: input.qty,
-      unitPrice: input.unitPrice.toFixed(2),
-      gstRatePct: (input.gstRatePct ?? 0).toFixed(2),
-      addedById: actor.id,
-    },
-  });
+  // A CLOSED STAY IS NO LONGER A REFUSAL. The insurance desk answering a TPA
+  // query weeks later has to be able to put a line on the bill; what it must not
+  // do is leave the invoice raised at discharge saying something else. So the
+  // charge lands and the invoice is rebuilt from it, together or not at all.
+  const closed = isClosed(adm.status as AdmissionStatusValue);
+
+  const created = await withInvoiceInStep(
+    actor, input.admissionId, closed, ctx,
+    () => prisma.admissionCharge.create({
+      data: {
+        admissionId: input.admissionId,
+        // validated upstream against the ChargeCategory values; narrow for Prisma
+        category: input.category as ChargeCategory,
+        description: input.description.trim(),
+        qty: input.qty,
+        unitPrice: input.unitPrice.toFixed(2),
+        gstRatePct: (input.gstRatePct ?? 0).toFixed(2),
+        addedById: actor.id,
+      },
+      select: { id: true },
+    }),
+    (row) => prisma.admissionCharge.delete({ where: { id: row.id } }).then(() => undefined),
+  );
+
   await logAudit(actor, {
     action: "IPD_CHARGE_ADDED", targetTable: "Admission", targetId: input.admissionId,
-    meta: { ipNumber: adm.ipNumber, description: input.description, amount: input.qty * input.unitPrice },
+    meta: {
+      ipNumber: adm.ipNumber, description: input.description,
+      amount: input.qty * input.unitPrice, chargeId: created.id,
+      // Worth its own field: a line added to a bill that was already issued is
+      // the kind of edit an auditor looks for by name.
+      afterDischarge: closed,
+    },
     ...ctx,
   });
 }
@@ -987,16 +1137,21 @@ export async function updateAdmissionCharge(
     where: { id: chargeId },
     select: {
       id: true, sourceRef: true, description: true, qty: true, unitPrice: true, gstRatePct: true,
+      // Captured so a refused re-issue can put the line back EXACTLY - a rollback
+      // that restores the money but not the heading files the charge under the
+      // wrong section of the printed claim bill.
+      category: true,
       admission: { select: { id: true, status: true, ipNumber: true } },
     },
   });
   if (!charge) throw new ApiError(404, "Charge not found");
-  if (charge.admission.status !== "ADMITTED") {
-    throw new ApiError(409, "That stay is already billed - its charges can't be changed");
-  }
   if (charge.sourceRef) {
     throw new ApiError(400, "This came from a pharmacy dispense. Change it in the pharmacy, not here.");
   }
+  // Repricing a CLOSED stay is allowed - it is the whole point of the tariff
+  // argument this function exists for, and that argument usually starts after
+  // the patient has gone home. The invoice follows the line, or neither moves.
+  const closed = isClosed(charge.admission.status as AdmissionStatusValue);
   if (input.qty !== undefined && input.qty < 1) throw new ApiError(400, "Quantity must be at least 1");
   if (input.unitPrice !== undefined && input.unitPrice < 0) throw new ApiError(400, "Price can't be negative");
 
@@ -1021,32 +1176,52 @@ export async function updateAdmissionCharge(
     (input.category !== undefined && input.category !== null);
   if (!changed) return;
 
-  await prisma.$transaction(async (tx) => {
-    await tx.admissionCharge.update({
-      where: { id: chargeId },
-      data: {
-        ...(input.category ? { category: input.category as ChargeCategory } : {}),
-        description: after.description,
-        qty: after.qty,
-        unitPrice: after.unitPrice.toFixed(2),
-        gstRatePct: after.gstRatePct.toFixed(2),
-      },
-    });
-    await tx.admissionNote.create({
-      data: {
-        admissionId: charge.admission.id,
-        kind: "NURSING",
-        body:
-          `Bill line repriced: "${before.description}" ${before.qty} × ₹${before.unitPrice.toFixed(2)}` +
-          ` → "${after.description}" ${after.qty} × ₹${after.unitPrice.toFixed(2)}`,
-        authorId: actor.id,
-      },
-    });
-  });
+  await withInvoiceInStep(
+    actor, charge.admission.id, closed, ctx,
+    async () => {
+      await prisma.$transaction(async (tx) => {
+        await tx.admissionCharge.update({
+          where: { id: chargeId },
+          data: {
+            ...(input.category ? { category: input.category as ChargeCategory } : {}),
+            description: after.description,
+            qty: after.qty,
+            unitPrice: after.unitPrice.toFixed(2),
+            gstRatePct: after.gstRatePct.toFixed(2),
+          },
+        });
+        await tx.admissionNote.create({
+          data: {
+            admissionId: charge.admission.id,
+            kind: "NURSING",
+            body:
+              `Bill line repriced: "${before.description}" ${before.qty} × ₹${before.unitPrice.toFixed(2)}` +
+              ` → "${after.description}" ${after.qty} × ₹${after.unitPrice.toFixed(2)}` +
+              (closed ? " (after discharge - invoice re-issued)" : ""),
+            authorId: actor.id,
+          },
+        });
+      });
+    },
+    // Put the figures back exactly. The ward note stays: somebody DID attempt
+    // this, and a refused correction on a claim is itself worth reading later.
+    async () => {
+      await prisma.admissionCharge.update({
+        where: { id: chargeId },
+        data: {
+          category: charge.category,
+          description: before.description,
+          qty: before.qty,
+          unitPrice: before.unitPrice.toFixed(2),
+          gstRatePct: before.gstRatePct.toFixed(2),
+        },
+      });
+    },
+  );
 
   await logAudit(actor, {
     action: "IPD_CHARGE_UPDATED", targetTable: "Admission", targetId: charge.admission.id,
-    meta: { ipNumber: charge.admission.ipNumber, chargeId, before, after }, ...ctx,
+    meta: { ipNumber: charge.admission.ipNumber, chargeId, before, after, afterDischarge: closed }, ...ctx,
   });
 }
 
@@ -1058,20 +1233,49 @@ export async function removeAdmissionCharge(
 ): Promise<void> {
   const charge = await prisma.admissionCharge.findUnique({
     where: { id: chargeId },
-    select: { id: true, sourceRef: true, admission: { select: { id: true, status: true, ipNumber: true } } },
+    // The WHOLE row, because a refused re-issue has to put this line back and a
+    // line restored with a fresh id and today's timestamp is not the line that
+    // was there - it loses who raised it and when, on the one document most
+    // likely to be argued over months later.
+    select: {
+      id: true, sourceRef: true, category: true, description: true, qty: true,
+      unitPrice: true, gstRatePct: true, addedById: true, createdAt: true,
+      admission: { select: { id: true, status: true, ipNumber: true } },
+    },
   });
   if (!charge) throw new ApiError(404, "Charge not found");
-  if (charge.admission.status !== "ADMITTED") {
-    throw new ApiError(409, "That stay is already billed - the charge can't be removed");
-  }
   if (charge.sourceRef) {
     // Deleting it here would silently un-bill medicine that physically left the shelf.
     throw new ApiError(400, "This came from a pharmacy dispense. Reverse it in the pharmacy, not here.");
   }
-  await prisma.admissionCharge.delete({ where: { id: chargeId } });
+  const closed = isClosed(charge.admission.status as AdmissionStatusValue);
+
+  await withInvoiceInStep(
+    actor, charge.admission.id, closed, ctx,
+    () => prisma.admissionCharge.delete({ where: { id: chargeId } }).then(() => undefined),
+    () => prisma.admissionCharge.create({
+      data: {
+        id: charge.id,
+        admissionId: charge.admission.id,
+        category: charge.category,
+        description: charge.description,
+        qty: charge.qty,
+        unitPrice: charge.unitPrice,
+        gstRatePct: charge.gstRatePct,
+        sourceRef: charge.sourceRef,
+        addedById: charge.addedById,
+        createdAt: charge.createdAt,
+      },
+    }).then(() => undefined),
+  );
+
   await logAudit(actor, {
     action: "IPD_CHARGE_REMOVED", targetTable: "Admission", targetId: charge.admission.id,
-    meta: { ipNumber: charge.admission.ipNumber, chargeId }, ...ctx,
+    meta: {
+      ipNumber: charge.admission.ipNumber, chargeId,
+      description: charge.description, afterDischarge: closed,
+    },
+    ...ctx,
   });
 }
 

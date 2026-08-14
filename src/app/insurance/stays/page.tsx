@@ -118,11 +118,16 @@ export default function StaysPage() {
         ) : (
           <div className="divide-y divide-[var(--p-border)]">
             {shown.map((s) => (
-              // The whole row is the link. The bill is the only thing anybody
-              // opens a stay for, so there is no second destination to choose.
-              <Link key={s.admissionId} href={`/admissions/${s.admissionId}`}
-                className="flex flex-wrap items-center justify-between gap-4 px-6 py-4 transition-colors hover:bg-[var(--p-bg)]">
-                <div className="min-w-0 flex-1">
+              // The whole row still opens the stay - but printing the bill is now
+              // a second destination, and a nested <a> inside an <a> is invalid
+              // HTML that browsers resolve by dropping one of them. So the row
+              // link is a stretched overlay instead: the card is still clickable
+              // edge to edge, and the print button sits above it on its own.
+              <div key={s.admissionId}
+                className="relative flex flex-wrap items-center justify-between gap-4 px-6 py-4 transition-colors hover:bg-[var(--p-bg)]">
+                <Link href={`/admissions/${s.admissionId}`} className="absolute inset-0"
+                  aria-label={`Open ${s.patient.fullName}'s stay`} />
+                <div className="pointer-events-none min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-[14px] font-semibold text-[var(--p-ink)]">{s.patient.fullName}</span>
                     <span className="font-mono text-[11.5px] text-[var(--p-muted)]">{s.patient.displayId}</span>
@@ -158,13 +163,24 @@ export default function StaysPage() {
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-5">
-                  <div className="text-right">
+                  <div className="pointer-events-none text-right">
                     <div className="font-mono text-[15px] font-bold text-[var(--p-ink)]">{inr(s.amount)}</div>
                     <div className="text-[11px] text-[var(--p-muted)]">{s.dischargedAt ? "final bill" : "run up so far"}</div>
                   </div>
-                  <Icon name="chevron" size={16} />
+                  {/* Both tabs get this. A stay still in a bed prints the running
+                      total as a PROVISIONAL bill - which is exactly what a
+                      pre-authorisation needs - and a discharged one prints the
+                      final. Same sheet, same route; the only difference is
+                      whether an invoice exists behind it yet. */}
+                  <a href={`/print/bill/${s.admissionId}`} target="_blank" rel="noreferrer"
+                    title={s.dischargedAt ? "Print the final claim bill" : "Print the bill as it stands - marked provisional"}
+                    className="relative inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--p-blue)] transition-colors hover:border-[var(--p-blue)]">
+                    <Icon name="printer" size={13} />
+                    {s.dischargedAt ? "Bill" : "Provisional"}
+                  </a>
+                  <Icon name="chevron" size={16} className="pointer-events-none" />
                 </div>
-              </Link>
+              </div>
             ))}
           </div>
         )}

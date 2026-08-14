@@ -238,6 +238,17 @@ export default function InsuranceAdmissionPage() {
   }
 
   const closed = s ? s.admission.status !== "ADMITTED" : false;
+  /**
+   * A line may be changed while the patient is still in - the tab is running and
+   * nothing has been billed yet - or after discharge IF the hospital has allowed
+   * bill corrections. The second case rewrites an issued invoice, which is why
+   * it hangs off the same switch that governs editing a bill anywhere else
+   * rather than off this screen's own idea of who should be trusted.
+   *
+   * Gating the BUTTON on the same rule the server enforces matters: an "Add
+   * line" that always ends in a 403 teaches the desk to distrust the screen.
+   */
+  const mayChangeLines = !closed || canEdit;
 
   async function addLine() {
     if (!f.description.trim() || Number(f.unitPrice) < 0) return;
@@ -609,7 +620,7 @@ export default function InsuranceAdmissionPage() {
                   Reprice a line to the policy&apos;s tariff, or add one the ward didn&apos;t bill.
                 </p>
               </div>
-              {!closed && (
+              {mayChangeLines && (
                 <button onClick={() => { setAdding((v) => !v); setEditId(null); }}
                   className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-3.5 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
                   <Icon name="plus" size={14} /> Add line
@@ -617,13 +628,24 @@ export default function InsuranceAdmissionPage() {
               )}
             </div>
 
-            {closed && (
+            {/* Two different closed states, and telling them apart is the whole
+                point: one is "you may not", the other is "you may, and here is
+                what it will do to the bill you already issued". */}
+            {closed && mayChangeLines && (
+              <p className="border-b border-[var(--p-border)] bg-[var(--p-blue-soft)] px-5 py-2.5 text-[12.5px] text-[var(--p-blue-deep)]">
+                This stay is discharged. Changing a line here re-issues its bill to match -
+                so the claim bill and the invoice never disagree. A correction that would take
+                the total below money already collected is refused; refund the difference first.
+              </p>
+            )}
+            {closed && !mayChangeLines && (
               <p className="border-b border-[var(--p-border)] bg-[var(--p-amber-soft)] px-5 py-2.5 text-[12.5px] text-[#8a5a14]">
-                This stay is discharged and its bill is closed. Lines can no longer be changed.
+                This stay is discharged and its bill is issued. An admin can allow corrections
+                under Settings → Behaviour; until then, lines can&apos;t be changed.
               </p>
             )}
 
-            {adding && !closed && (
+            {adding && mayChangeLines && (
               <div className="border-b border-[var(--p-border)] bg-[var(--p-bg)] px-5 py-4">
                 {services.length > 0 && (
                   <div className="mb-2.5">
@@ -743,7 +765,7 @@ export default function InsuranceAdmissionPage() {
                       </div>
                       <div className="flex shrink-0 items-center gap-4">
                         <span className="font-mono text-[14px] font-semibold text-[var(--p-ink)]">₹{money2(c.amount)}</span>
-                        {!closed && !c.fromPharmacy && (
+                        {mayChangeLines && !c.fromPharmacy && (
                           <div className="flex gap-1.5">
                             <button onClick={() => { startEdit(c); setAdding(false); }}
                               className="rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">

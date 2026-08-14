@@ -981,7 +981,14 @@ export async function counterDues(source?: InvoiceSourceT): Promise<CounterDues>
       payments: { select: { mode: true, amount: true } },
       refunds: { select: { amount: true } },
       patient: { select: { id: true, displayId: true, fullName: true, phone: true } },
-      items: { select: { description: true }, orderBy: { id: "asc" } },
+      // ONE line, plus how many there are. The summary below shows the first
+      // description and "+ N more", so pulling every line of every unpaid bill
+      // fetched fifteen rows off a pharmacy invoice to render one of them. On a
+      // screen that already reads every open bill in the hospital, that is the
+      // difference between a query that grows with BILLS and one that grows with
+      // bills × lines.
+      items: { select: { description: true }, orderBy: { id: "asc" }, take: 1 },
+      _count: { select: { items: true } },
       admission: {
         select: { ipNumber: true, status: true, bed: { select: { bedNo: true, ward: { select: { name: true } } } } },
       },
@@ -1003,7 +1010,7 @@ export async function counterDues(source?: InvoiceSourceT): Promise<CounterDues>
     if (!inv.patient) continue;
 
     const first = inv.items[0];
-    const more = inv.items.length - 1;
+    const more = inv._count.items - 1;
     dues.push({
       invoiceId: inv.id,
       receiptNo: inv.receiptNo,
