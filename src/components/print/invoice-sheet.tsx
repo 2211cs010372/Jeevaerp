@@ -12,21 +12,35 @@ import { INVOICE_PRINT_CSS, PrintToolbar, type HospitalInfo } from "@/components
 import { billItemName, billItemBatch } from "@/lib/bill-item-name";
 
 /**
- * THE BILL PRINTS IN INK, NOT IN BRAND COLOUR.
+ * THE BILL PRINTS IN INK, ON WHITE. NOTHING IS REVERSED OUT.
  *
  * Appended after the shared invoice stylesheet so it wins on specificity of
  * order, and scoped to this sheet so the advance receipt - which shares that
  * stylesheet - keeps the house green.
  *
- * `--pr-primary` is the hospital's teal, and it was on the masthead, the column
+ * `--pr-primary` was the hospital's teal, and it was on the masthead, the column
  * headings, the total rule and the amount in words. On the office laser printer
  * that everything actually comes out of, a mid-tone teal renders as a washed
  * grey that reads lighter than the body text - so the most important figure on
  * the page printed fainter than the address. Ink is one colour, prints black on
- * every device, and photocopies without turning to mush.
+ * every device, and photocopies without turning to mush. Every brand token on
+ * this sheet therefore resolves to ink.
  *
- * The greys are darkened at the same time. #6b7772 on white is fine on a screen
- * and marginal at 7.5px through a toner cartridge that is two-thirds empty.
+ * THE FILLED BANDS ARE GONE FOR A HARDER REASON THAN TASTE. The column headings
+ * sat as white text on a teal fill and the grand total as white text on a black
+ * one, and a background is the one thing a print driver is free to drop -
+ * "background graphics" is off by default in most of them, and the desk's driver
+ * has it off. Drop the fill and white text lands on white paper: on the bills
+ * coming off the counter right now, DESCRIPTION / HSN / QTY / RATE / AMOUNT and
+ * NET PAYABLE - the heading row and the one figure the patient pays - are the
+ * two things that print faintest, or not at all. So the total is carried on
+ * rules instead of a band, and the heading row on a top-and-bottom rule. Rules
+ * are borders; no driver setting suppresses those.
+ *
+ * The greys are darkened and neutralised at the same time. #6b7772 is a
+ * green-cast grey: fine on a screen, marginal at 7.5px through a toner cartridge
+ * that is two-thirds empty, and off-message on a sheet that is meant to be one
+ * colour.
  */
 /**
  * ── THE PAPER THIS BILL IS CUT FROM ──
@@ -56,7 +70,14 @@ import { billItemName, billItemBatch } from "@/lib/bill-item-name";
 const HALF_A4_MM = 138.5;
 
 const BILL_MONO_CSS = `
-  .print-stage { --pr-primary: #173f3a; --pr-accent: #173f3a; --pr-ink: #17211e; --pr-line: #b8c2be; --pr-soft: #f3f6f5; --pr-muted: #66736f; }
+  .print-stage {
+    --pr-ink: #111111;
+    /* The brand tokens still exist because the shared stylesheet references
+       them; on this sheet they are ink, so a stray var() can't reintroduce a
+       colour. */
+    --pr-primary: var(--pr-ink); --pr-accent: var(--pr-ink);
+    --pr-line: #9c9c9c; --pr-hair: #cfcfcf; --pr-muted: #3f3f3f;
+  }
   #print-sheet table { border-collapse: collapse; }
   #print-sheet { box-sizing: border-box; }
   #print-sheet { width: 190mm !important; padding: 0 !important; background: transparent !important; box-shadow: none !important; min-height: 0 !important; }
@@ -65,33 +86,41 @@ const BILL_MONO_CSS = `
     min-height: ${HALF_A4_MM}mm;
     background: #fff;
     padding: 6mm 6mm 5mm;
-    border: 0.5px solid #d5ddda;
+    border: 0.5px solid var(--pr-hair);
     border-radius: 2px;
     color: var(--pr-ink);
   }
   .print-stage .bill-copy { box-shadow: 0 8px 40px rgba(0,0,0,.12); }
   .print-stage .bill-copy + .bill-copy { margin-top: 8mm; }
-  .invoice-section-title { font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--pr-primary); }
-  .invoice-meta-label { font-size: 8px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--pr-muted); }
+  /* -label and -title are the same thing under two names, both live in the
+     markup; aliasing beats leaving half the patient block unstyled. */
+  .invoice-section-title, .invoice-section-label { font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--pr-ink); }
+  .invoice-meta-label, .invoice-meta-title { font-size: 8px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--pr-muted); }
   .invoice-meta-value { font-size: 10px; font-weight: 650; color: var(--pr-ink); }
-  .invoice-soft { background: var(--pr-soft); }
-  .invoice-table th { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: #fff; background: var(--pr-primary); }
-  .invoice-table td { border-bottom: .4px solid #d9dfdd; }
-  .invoice-total { background: var(--pr-primary); color: #fff; }
-  .invoice-status { border: .6px solid var(--pr-primary); color: var(--pr-primary); background: #fff; }
-  .invoice-divider { border-top: .7px solid var(--pr-primary); }
+  /* The patient block was a tint. A tint is a background too - same driver, same
+     disappearing act - so it is a ruled box now. */
+  .invoice-soft { background: #fff; border: .5px solid var(--pr-hair); }
+  .invoice-table th {
+    font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--pr-ink); background: #fff;
+    border-top: .8px solid var(--pr-ink); border-bottom: .8px solid var(--pr-ink);
+  }
+  .invoice-table td { border-bottom: .4px solid var(--pr-hair); }
+  /* The grand total, ruled the way a ledger rules one: a line above, a double
+     line below. Reads as the last word on the page without a drop of fill. */
+  .total-band td { background: #fff; color: var(--pr-ink); border-top: 1px solid var(--pr-ink); border-bottom: 3px double var(--pr-ink); }
+  .invoice-status { border: .6px solid var(--pr-ink); color: var(--pr-ink); background: #fff; }
+  .invoice-divider { border-top: .7px solid var(--pr-ink); }
   @media print {
     @page { size: A4 portrait; margin: 9mm 10mm; }
     #print-sheet { width: auto !important; max-width: none !important; margin: 0 !important; padding: 0 !important; }
     .print-stage .bill-copy { box-shadow: none !important; }
     .print-stage .bill-copy + .bill-copy { margin-top: 0 !important; }
     .cut-line { display: none !important; }
-    .bill-copy ~ .bill-copy { border-top: 1px dashed #9aa5a1; }
+    .bill-copy ~ .bill-copy { border-top: 1px dashed #999999; }
     .bill-copy { height: ${HALF_A4_MM}mm; break-inside: avoid; page-break-inside: avoid; }
-    .invoice-soft, .invoice-soft * , .invoice-total, .invoice-total * , .invoice-status, .invoice-status * {
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-    }
+    /* No print-color-adjust override any more: nothing on the sheet depends on
+       a background being printed, so there is nothing left to force. */
   }
 `;
 
@@ -145,7 +174,7 @@ function Barcode({ value }: { value: string }) {
     try {
       JsBarcode(ref.current, value, {
         format: "CODE128", displayValue: false, height: 24, width: 1.1,
-        margin: 0, background: "transparent", lineColor: "#17211e",
+        margin: 0, background: "transparent", lineColor: "#111111",
       });
     } catch { /* non-encodable receipt - barcode simply omitted */ }
   }, [value]);
@@ -222,7 +251,7 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
 
   const Meta = ({ k, v, right, strong }: { k: string; v: string; right?: boolean; strong?: boolean }) => (
     <div className={`flex items-baseline gap-1.5 ${right ? "justify-end" : ""}`}>
-      <span className="shrink-0 whitespace-nowrap text-[7px] font-bold uppercase tracking-[0.06em] text-[#6b7772]">{k}</span>
+      <span className="shrink-0 whitespace-nowrap text-[7px] font-bold uppercase tracking-[0.06em] text-[#3f3f3f]">{k}</span>
       <span className={`truncate font-mono text-[9px] text-[var(--pr-ink)] ${strong ? "font-bold" : "font-medium"}`}>{v}</span>
     </div>
   );
@@ -270,7 +299,7 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
   const renderCopy = (copy: CopyKind, idx: number) => (
     <div key={idx} className="bill-copy flex flex-col gap-[5px]">
       {/* Professional hospital invoice masthead */}
-      <div className="flex items-start justify-between gap-5 border-b-[1.2px] pb-[5px]" style={{ borderColor: "var(--pr-primary)" }}>
+      <div className="flex items-start justify-between gap-5 border-b-[1.2px] pb-[5px]" style={{ borderColor: "var(--pr-ink)" }}>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             {inv.hospital?.logoDataUrl && (
@@ -278,11 +307,11 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
               <img src={inv.hospital.logoDataUrl} alt="Hospital logo" className="h-[28px] w-[28px] shrink-0 object-contain" />
             )}
             <div>
-              <div className="text-[14px] font-extrabold uppercase leading-none tracking-tight" style={{ color: "var(--pr-primary)" }}>
+              <div className="text-[14px] font-extrabold uppercase leading-none tracking-tight" style={{ color: "var(--pr-ink)" }}>
                 {hospitalName}
               </div>
-              <div className="mt-[2px] text-[6.5px] font-medium leading-snug text-[#45524e]">{hospitalAddr}</div>
-              <div className="mt-[1px] flex flex-wrap gap-x-3 text-[6.5px] font-semibold text-[#45524e]">
+              <div className="mt-[2px] text-[6.5px] font-medium leading-snug text-[#3f3f3f]">{hospitalAddr}</div>
+              <div className="mt-[1px] flex flex-wrap gap-x-3 text-[6.5px] font-semibold text-[#3f3f3f]">
                 {inv.hospital?.gstin && <span>GSTIN: <span className="font-mono">{inv.hospital.gstin}</span></span>}
                 <span>Phone: <span className="font-mono">{hospitalPhone}</span></span>
               </div>
@@ -290,7 +319,7 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
           </div>
         </div>
         <div className="w-[118px] shrink-0 text-right">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.08em]" style={{ color: "var(--pr-primary)" }}>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.08em]" style={{ color: "var(--pr-ink)" }}>
             {gstApplies ? "Tax Invoice" : "Bill of Supply"}
           </div>
           <div className="mt-[2px] inline-block border px-2 py-[2px] text-[6px] font-bold uppercase tracking-[0.08em] invoice-status">
@@ -367,13 +396,13 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
           <tbody>
             {inv.items.map((it, i) => (
               <tr key={i} className="align-top">
-                <td className="px-1 py-[3px] text-center font-mono text-[7px] text-[#65716d]">{i + 1}</td>
+                <td className="px-1 py-[3px] text-center font-mono text-[7px] text-[#3f3f3f]">{i + 1}</td>
                 <td className="px-1.5 py-[3px] font-medium">{billItemName(it.description)}</td>
-                {showBatch && <td className="px-1 py-[3px] font-mono text-[7px] text-[#46524e]">{billItemBatch(it.description) ?? "—"}</td>}
-                <td className="px-1 py-[3px] font-mono text-[7px] text-[#65716d]">{it.hsnSac ?? "—"}</td>
+                {showBatch && <td className="px-1 py-[3px] font-mono text-[7px] text-[#3f3f3f]">{billItemBatch(it.description) ?? "—"}</td>}
+                <td className="px-1 py-[3px] font-mono text-[7px] text-[#3f3f3f]">{it.hsnSac ?? "—"}</td>
                 <td className="px-1 py-[3px] text-right font-mono">{it.qty}</td>
                 <td className="px-1 py-[3px] text-right font-mono">{money(it.unitPrice)}</td>
-                <td className="px-1 py-[3px] text-right font-mono text-[7px] text-[#65716d]">{Number(it.gstRatePct) ? `${it.gstRatePct}%` : "—"}</td>
+                <td className="px-1 py-[3px] text-right font-mono text-[7px] text-[#3f3f3f]">{Number(it.gstRatePct) ? `${it.gstRatePct}%` : "—"}</td>
                 <td className="px-1.5 py-[3px] text-right font-mono font-bold">{money(it.amount)}</td>
               </tr>
             ))}
@@ -394,12 +423,12 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
             ) : null}
 
             {inv.eInvoice && (
-              <div className="mt-[4px] flex items-center gap-2 border-t border-[#d9dfdd] pt-[3px]">
+              <div className="mt-[4px] flex items-center gap-2 border-t border-[#cfcfcf] pt-[3px]">
                 {qrDataUrl && (
                   /* eslint-disable-next-line @next/next/no-img-element */
                   <img src={qrDataUrl} alt="Signed e-invoice QR code" className="h-[36px] w-[36px] shrink-0" />
                 )}
-                <div className="min-w-0 font-mono text-[5.8px] leading-tight text-[#4a5652]">
+                <div className="min-w-0 font-mono text-[5.8px] leading-tight text-[#333333]">
                   <div><span className="font-bold">IRN:</span> {inv.eInvoice.irn}</div>
                   {inv.eInvoice.ackNo && <div><span className="font-bold">Ack No:</span> {inv.eInvoice.ackNo}</div>}
                   {inv.eInvoice.ackDt && <div><span className="font-bold">Ack Date:</span> {inv.eInvoice.ackDt}</div>}
@@ -425,9 +454,9 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
                 ) : <TotalRow k="Net Payable" v={money(total)} />}
               </tbody>
             </table>
-            <div className="mt-[3px] flex justify-between text-[6px] text-[#65716d]">
+            <div className="mt-[3px] flex justify-between text-[6px] text-[#3f3f3f]">
               <span>Payment status</span>
-              <span className="font-bold uppercase" style={{ color: "var(--pr-primary)" }}>
+              <span className="font-bold uppercase" style={{ color: "var(--pr-ink)" }}>
                 {inv.payer === "INSURANCE" ? "CASHLESS" : Number(inv.balanceDue) > 0 ? "BALANCE DUE" : "PAID"}
               </span>
             </div>
@@ -435,17 +464,17 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
         </div>
       </div>
 
-      <div className="flex items-end justify-between gap-4 border-t border-[#d9dfdd] pt-[3px]">
-        <div className="min-w-0 flex-1 text-[5.8px] leading-snug text-[#697570]">
+      <div className="flex items-end justify-between gap-4 border-t border-[#cfcfcf] pt-[3px]">
+        <div className="min-w-0 flex-1 text-[5.8px] leading-snug text-[#4a4a4a]">
           {inv.hospital?.invoiceFooterNote ? <span className="whitespace-pre-line">{inv.hospital.invoiceFooterNote}</span> : "This is a computer-generated invoice. Please retain it for your records."}
         </div>
         {copy === COPY_OFFICE ? (
           <div className="w-[95px] text-center">
-            <div className="border-t border-[#7f8b87]" />
-            <div className="mt-[1px] text-[6px] font-bold uppercase tracking-wide text-[#66736f]">Authorised Signatory</div>
+            <div className="border-t border-[#111111]" />
+            <div className="mt-[1px] text-[6px] font-bold uppercase tracking-wide text-[#3f3f3f]">Authorised Signatory</div>
           </div>
         ) : (
-          <div className="text-right text-[5.8px] text-[#7b8581]">Computer-generated<br />No signature required</div>
+          <div className="text-right text-[5.8px] text-[#555555]">Computer-generated<br />No signature required</div>
         )}
       </div>
     </div>
@@ -477,7 +506,7 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
 function Trow({ k, v, accent }: { k: string; v: string; accent?: boolean }) {
   return (
     <tr>
-      <td className={`py-0.5 text-[9.5px] ${accent ? "font-semibold text-[var(--pr-ink)]" : "text-[#4a5652]"}`}>{k}</td>
+      <td className={`py-0.5 text-[9.5px] ${accent ? "font-semibold text-[var(--pr-ink)]" : "text-[#3a3a3a]"}`}>{k}</td>
       <td className={`py-0.5 text-right font-mono ${accent ? "font-semibold text-[var(--pr-ink)]" : ""}`}>{v}</td>
     </tr>
   );
@@ -486,18 +515,23 @@ function Trow({ k, v, accent }: { k: string; v: string; accent?: boolean }) {
 /**
  * The grand total - the one figure the patient pays.
  *
- * Carried on a filled black band rather than a coloured rule. It is the only
- * reversed element on the sheet, which is what makes it findable in a second on
- * a page that is otherwise uniform ink - and unlike a tint it survives a
- * photocopy, which is what a patient's insurer usually receives.
+ * It used to be reversed out of a filled black band, on the reasoning that the
+ * one reversed element on an otherwise uniform page is findable in a second.
+ * True on screen. On paper it was the opposite: the band is a background, the
+ * desk's driver prints backgrounds off, and white text on no band is white text
+ * on white paper - the single most important number on the bill was the one that
+ * came out blank.
+ *
+ * Rules instead: a line above, a double line below, the figure in ink and a
+ * size larger than anything near it. That is how a ledger has marked a total for
+ * two centuries, it needs no driver setting to survive, and it photocopies -
+ * which is what a patient's insurer usually receives.
  */
 function TotalRow({ k, v }: { k: string; v: string }) {
   return (
     <tr className="total-band">
-      <td className="py-[5px] pl-1.5 text-[9px] font-extrabold uppercase tracking-wide text-white"
-        style={{ background: "var(--pr-ink)" }}>{k}</td>
-      <td className="py-[5px] pr-1.5 text-right font-mono text-[12px] font-bold text-white"
-        style={{ background: "var(--pr-ink)" }}>{v}</td>
+      <td className="py-[5px] pl-1.5 text-[9px] font-extrabold uppercase tracking-wide">{k}</td>
+      <td className="py-[5px] pr-1.5 text-right font-mono text-[12px] font-extrabold">{v}</td>
     </tr>
   );
 }
