@@ -278,7 +278,31 @@ export async function admitPatient(
         gstRatePctAtAdmit: bed.ward.gstRatePct,
         admittedById: actor.id,
       },
-      select: { id: true },
+      select: { id: true, admittedAt: true },
+    });
+
+    // ── THE FIRST BED LEG OPENS WITH THE STAY ──
+    //
+    // It did not, and `transferBed` assumed it had: that function CLOSES the
+    // open leg and opens a new one, so the first transfer of a stay closed
+    // nothing and left exactly one leg, starting at the moment of the move. The
+    // bill then prices legs when any exist - so every night before the transfer
+    // silently vanished from it. Moving a patient to ICU on day three billed
+    // ICU alone and gave the first three days away.
+    //
+    // Same rate, same ward, same start as the admission, so nothing changes for
+    // a stay nobody moves: one leg from admittedAt with no end date bills
+    // exactly what `days × dailyChargeAtAdmit` billed before.
+    await tx.bedStay.create({
+      data: {
+        admissionId: adm.id,
+        bedId: input.bedId,
+        wardName: bed.ward.name,
+        dailyCharge: bed.ward.dailyCharge,
+        gstRatePct: bed.ward.gstRatePct,
+        fromDate: adm.admittedAt,
+        movedById: actor.id,
+      },
     });
 
     // An admission note opens the chronology like any other entry, with the
@@ -513,6 +537,8 @@ type IpdBillBase = {
   wardNameAtAdmit: string;
   dailyChargeAtAdmit: { toString(): string };
   gstRatePctAtAdmit: { toString(): string };
+  /** Null = the hospital's standard fee. See nursePerDayOf. */
+  nursePerDay: { toString(): string } | null;
   bed: { bedNo: string } | null;
   charges: ChargeLine[];
 };
@@ -552,14 +578,17 @@ export function buildIpdInvoiceLines(adm: IpdBillBase, stays: BedStayRow[]) {
         gstRatePct: Number(adm.gstRatePctAtAdmit.toString()),
       }];
 
+  // Assigned by default, at whatever this stay's nursing rate is - the standard
+  // fee unless a desk has corrected it. The same figure the running tab has been
+  // showing all along, because both read it from the same place.
+  const nurse = nursePerDayOf(adm);
+
   return [
     ...bedLines,
-    // Nursing care - assigned by default, billed at the same flat per-day rate
-    // the running tab has been showing all along.
     {
-      description: `Nursing care · ${days} day(s) × ₹${NURSE_FEE_PER_DAY}`,
+      description: `Nursing care · ${days} day(s) × ₹${nurse}`,
       qty: days,
-      unitPrice: NURSE_FEE_PER_DAY,
+      unitPrice: nurse,
       gstRatePct: 0,
     },
     // Each line keeps its own GST rate: a ₹5,500 room and a 12% syrup are not
@@ -602,6 +631,7 @@ async function reissueIpdInvoice(
     select: {
       ipNumber: true, admittedAt: true, dischargedAt: true,
       wardNameAtAdmit: true, dailyChargeAtAdmit: true, gstRatePctAtAdmit: true,
+      nursePerDay: true,
       bed: { select: { bedNo: true } },
       charges: {
         orderBy: { createdAt: "asc" },
@@ -798,6 +828,7 @@ export async function dischargePatient(
         id: true, status: true, admittedAt: true, ipNumber: true, bedId: true,
         payerType: true, insurer: true,
         dailyChargeAtAdmit: true, wardNameAtAdmit: true, gstRatePctAtAdmit: true,
+        nursePerDay: true,
         charges: {
           orderBy: { createdAt: "asc" },
           select: { description: true, qty: true, unitPrice: true, gstRatePct: true, category: true },
@@ -1280,6 +1311,271 @@ export async function removeAdmissionCharge(
 }
 
 /**
+ * CORRECT WHAT THE STAY IS PRICED ON: its dates, its bed rate, its nursing rate.
+ *
+ * Everything else on an inpatient bill is a row somebody can edit. These three
+ * were not rows at all - the bed came from a ward rate snapshotted onto the
+ * admission, nursing came from a constant in this file, and the day count came
+ * from two timestamps nothing on any screen could reach. So the three biggest
+ * numbers on the bill were the only ones nobody could fix.
+ *
+ * They go wrong in ordinary ways. A patient admitted at 11pm gets typed in the
+ * next morning and the stay bills a day short. A family is moved to a private
+ * room on the ward's word before the rate is corrected on the board. An insurer
+ * settles nursing at its own tariff. Until now each of those was worked around
+ * by adding an "adjustment" line to the tab - which reads, on a claim, as the
+ * hospital quietly correcting its own bill, and reads on a discharge sheet as a
+ * charge the family is entitled to ask about and nobody can explain.
+ *
+ * FOUR THINGS HOLD THIS TOGETHER, and they are the reason this is one function
+ * rather than three endpoints:
+ *
+ *   The DAYS and the LEGS move together. `admittedAt` is where the first bed
+ *   leg starts; moving one without the other bills a bed from a date the stay
+ *   had not begun. A correction that would leave a leg starting after it ended
+ *   is refused rather than silently clamped - that is a transfer to fix, not a
+ *   date.
+ *
+ *   The BED RATE is per leg. A patient moved General → ICU on day 3 has two
+ *   rates, and one averaged figure cannot tell an insurer which nights were
+ *   ICU. `dailyChargeAtAdmit` follows the CURRENT leg, which is what a transfer
+ *   already does to it.
+ *
+ *   A DISCHARGED stay re-issues its invoice, through the same path a repriced
+ *   line uses - so the tax document and the claim bill never disagree about a
+ *   stay. Every rule worth having lives in `updateInvoice`: a cancelled bill
+ *   stays cancelled, a filed IRN is refused, the total may not drop below money
+ *   already collected, and the whole edit is gated on `billEditingEnabled`. If
+ *   the re-issue refuses, the stay goes back exactly as it was.
+ *
+ *   The change WRITES ITSELF ONTO THE STAY, with the old figures and the new
+ *   ones. "The bill was changed after the treatment" is the first thing an
+ *   insurer asks, and this is the answer.
+ */
+export async function correctStayBilling(
+  actor: AuthUser,
+  admissionId: string,
+  input: {
+    /** ISO instant. The time of day matters - see stayDays. */
+    admittedAt?: string;
+    /** ISO instant. Only on a stay that is already closed. */
+    dischargedAt?: string;
+    nursePerDay?: number;
+    /** Per-leg bed rates. A leg not named here keeps the rate it had. */
+    legs?: { id: string; dailyCharge: number }[];
+    /** The whole-stay bed rate, for a stay with no BedStay rows (pre-migration). */
+    bedRate?: number;
+    reason?: string;
+  },
+  ctx: { ipAddress?: string; userAgent?: string }
+): Promise<void> {
+  const a = await prisma.admission.findUnique({
+    where: { id: admissionId },
+    select: {
+      id: true, ipNumber: true, status: true, admittedAt: true, dischargedAt: true,
+      dailyChargeAtAdmit: true, nursePerDay: true,
+      bedStays: {
+        orderBy: { fromDate: "asc" },
+        select: { id: true, wardName: true, dailyCharge: true, fromDate: true, toDate: true, bed: { select: { bedNo: true } } },
+      },
+    },
+  });
+  if (!a) throw new ApiError(404, "Admission not found");
+  const closed = isClosed(a.status as AdmissionStatusValue);
+
+  // ── THE DATES ──
+  const now = new Date();
+  const parse = (iso: string, what: string) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) throw new ApiError(400, `That ${what} isn't a date I can read.`);
+    return d;
+  };
+  const beforeAdmittedAt = a.admittedAt;
+  const afterAdmittedAt = input.admittedAt ? parse(input.admittedAt, "admission date") : beforeAdmittedAt;
+  const beforeDischargedAt = a.dischargedAt;
+  const afterDischargedAt = input.dischargedAt ? parse(input.dischargedAt, "discharge date") : beforeDischargedAt;
+
+  if (input.dischargedAt && !closed) {
+    // Setting one here would leave a stay holding a bed and carrying an end
+    // date, which every board and every day count would then read differently.
+    throw new ApiError(400, "This patient is still in a bed. Discharge them from the stay, don't type an end date here.");
+  }
+  if (afterAdmittedAt > now) throw new ApiError(400, "A stay can't start in the future.");
+  if (afterDischargedAt && afterDischargedAt > now) throw new ApiError(400, "A stay can't end in the future.");
+  if (afterDischargedAt && afterDischargedAt <= afterAdmittedAt) {
+    throw new ApiError(400, "The stay would end before it started. Check both dates.");
+  }
+
+  // ── THE BED LEGS ──
+  const legById = new Map(a.bedStays.map((l) => [l.id, l]));
+  const legEdits = input.legs ?? [];
+  for (const e of legEdits) {
+    if (!legById.has(e.id)) throw new ApiError(400, "That bed isn't part of this stay.");
+    if (e.dailyCharge < 0) throw new ApiError(400, "A bed rate can't be negative.");
+  }
+  const firstLeg = a.bedStays[0];
+  const lastLeg = a.bedStays[a.bedStays.length - 1];
+  const admittedMoved = afterAdmittedAt.getTime() !== beforeAdmittedAt.getTime();
+
+  // Moving the start date drags the first leg's start with it. Refused rather
+  // than clamped where that would invert a leg: a stay that begins after the
+  // patient was already moved out of the admitting ward is a transfer recorded
+  // wrongly, and quietly reshaping the legs here would hide it.
+  if (admittedMoved && firstLeg?.toDate && afterAdmittedAt >= firstLeg.toDate) {
+    throw new ApiError(
+      400,
+      `That start date is after this patient was moved out of ${firstLeg.wardName}. Correct the transfer first.`
+    );
+  }
+  if (afterDischargedAt && lastLeg && afterDischargedAt <= lastLeg.fromDate) {
+    throw new ApiError(
+      400,
+      `That end date is before this patient was moved into ${lastLeg.wardName}. Correct the transfer first.`
+    );
+  }
+
+  // ── THE RATES ──
+  const beforeNurse = nursePerDayOf(a);
+  const afterNurse = input.nursePerDay ?? beforeNurse;
+  if (afterNurse < 0) throw new ApiError(400, "A nursing rate can't be negative.");
+
+  const beforeBedRate = Number(a.dailyChargeAtAdmit.toString());
+  // dailyChargeAtAdmit tracks the CURRENT bed, which is what a transfer already
+  // writes to it. With no legs at all (a stay from before BedStay existed) it is
+  // the only bed rate there is, and `bedRate` addresses it directly.
+  const currentLegEdit = lastLeg ? legEdits.find((e) => e.id === lastLeg.id) : undefined;
+  const afterBedRate = currentLegEdit
+    ? currentLegEdit.dailyCharge
+    : (a.bedStays.length === 0 && input.bedRate !== undefined ? input.bedRate : beforeBedRate);
+  if (afterBedRate < 0) throw new ApiError(400, "A bed rate can't be negative.");
+
+  const legChanges = legEdits
+    .map((e) => ({ leg: legById.get(e.id)!, to: e.dailyCharge }))
+    .filter((x) => Number(x.leg.dailyCharge.toString()) !== x.to);
+
+  // Nothing actually moved. Don't write a ward note claiming somebody changed
+  // the bill, and don't re-issue an invoice that would come back identical.
+  const changed =
+    admittedMoved ||
+    (afterDischargedAt?.getTime() ?? null) !== (beforeDischargedAt?.getTime() ?? null) ||
+    afterNurse !== beforeNurse ||
+    afterBedRate !== beforeBedRate ||
+    legChanges.length > 0;
+  if (!changed) return;
+
+  const fmt = (d: Date) =>
+    d.toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  const parts: string[] = [];
+  if (admittedMoved) parts.push(`admitted ${fmt(beforeAdmittedAt)} → ${fmt(afterAdmittedAt)}`);
+  if (afterDischargedAt && beforeDischargedAt && afterDischargedAt.getTime() !== beforeDischargedAt.getTime()) {
+    parts.push(`discharged ${fmt(beforeDischargedAt)} → ${fmt(afterDischargedAt)}`);
+  }
+  for (const c of legChanges) {
+    parts.push(
+      `${bedLabel(c.leg.wardName, c.leg.bed?.bedNo)} ₹${Number(c.leg.dailyCharge.toString()).toFixed(2)}/day → ₹${c.to.toFixed(2)}/day`
+    );
+  }
+  if (legChanges.length === 0 && afterBedRate !== beforeBedRate) {
+    parts.push(`bed ₹${beforeBedRate.toFixed(2)}/day → ₹${afterBedRate.toFixed(2)}/day`);
+  }
+  if (afterNurse !== beforeNurse) {
+    parts.push(`nursing ₹${beforeNurse.toFixed(2)}/day → ₹${afterNurse.toFixed(2)}/day`);
+  }
+
+  await withInvoiceInStep(
+    actor, a.id, closed, ctx,
+    async () => {
+      await prisma.$transaction(async (tx) => {
+        await tx.admission.update({
+          where: { id: a.id },
+          data: {
+            admittedAt: afterAdmittedAt,
+            ...(afterDischargedAt ? { dischargedAt: afterDischargedAt } : {}),
+            // Only when they actually moved. Writing nursePerDay unconditionally
+            // would turn "nobody has corrected this" (NULL, reads the hospital's
+            // current fee) into a frozen ₹600 on every stay whose DATE somebody
+            // fixed - so a later change to the standard rate would silently skip
+            // exactly those stays.
+            ...(afterNurse !== beforeNurse ? { nursePerDay: afterNurse.toFixed(2) } : {}),
+            ...(afterBedRate !== beforeBedRate ? { dailyChargeAtAdmit: afterBedRate.toFixed(2) } : {}),
+          },
+        });
+        for (const c of legChanges) {
+          await tx.bedStay.update({ where: { id: c.leg.id }, data: { dailyCharge: c.to.toFixed(2) } });
+        }
+        if (admittedMoved && firstLeg) {
+          await tx.bedStay.update({ where: { id: firstLeg.id }, data: { fromDate: afterAdmittedAt } });
+        }
+        await tx.admissionNote.create({
+          data: {
+            admissionId: a.id,
+            kind: "NURSING",
+            body:
+              `Stay billing corrected: ${parts.join("; ")}.` +
+              (input.reason?.trim() ? ` Reason: ${input.reason.trim()}` : "") +
+              (closed ? " (after discharge - invoice re-issued)" : ""),
+            authorId: actor.id,
+          },
+        });
+      });
+    },
+    // Put the stay back exactly. The ward note stays: somebody DID attempt this,
+    // and a refused correction on a claim is itself worth reading later.
+    async () => {
+      await prisma.$transaction(async (tx) => {
+        await tx.admission.update({
+          where: { id: a.id },
+          data: {
+            admittedAt: beforeAdmittedAt,
+            // Every field back to what the row held, NULL included - a rollback
+            // that leaves nursePerDay set has quietly frozen a rate the desk
+            // never got to save.
+            dischargedAt: beforeDischargedAt,
+            nursePerDay: a.nursePerDay,
+            dailyChargeAtAdmit: a.dailyChargeAtAdmit,
+          },
+        });
+        for (const c of legChanges) {
+          await tx.bedStay.update({ where: { id: c.leg.id }, data: { dailyCharge: c.leg.dailyCharge } });
+        }
+        if (admittedMoved && firstLeg) {
+          await tx.bedStay.update({ where: { id: firstLeg.id }, data: { fromDate: firstLeg.fromDate } });
+        }
+      });
+    },
+  );
+
+  await logAudit(actor, {
+    action: "IPD_STAY_BILLING_CORRECTED", targetTable: "Admission", targetId: a.id,
+    meta: {
+      ipNumber: a.ipNumber,
+      afterDischarge: closed,
+      reason: input.reason?.trim() || null,
+      before: {
+        admittedAt: beforeAdmittedAt.toISOString(),
+        dischargedAt: beforeDischargedAt?.toISOString() ?? null,
+        bedRate: beforeBedRate,
+        nursePerDay: beforeNurse,
+        legs: legChanges.map((c) => ({ id: c.leg.id, dailyCharge: Number(c.leg.dailyCharge.toString()) })),
+      },
+      after: {
+        admittedAt: afterAdmittedAt.toISOString(),
+        dischargedAt: afterDischargedAt?.toISOString() ?? null,
+        bedRate: afterBedRate,
+        nursePerDay: afterNurse,
+        legs: legChanges.map((c) => ({ id: c.leg.id, dailyCharge: c.to })),
+      },
+    },
+    ...ctx,
+  });
+
+  // The day count and the running total both moved. The ward board, the
+  // discharge desk and the insurance room are all looking at figures that are
+  // now stale.
+  await publishLive([TOPICS.IPD, TOPICS.RECEPTION, TOPICS.INSURANCE, TOPICS.ADMIN], EVENTS.ADMISSION_CORRECTED);
+}
+
+/**
  * Nursing / observation notes for the stay - shift-handover text, not billed.
  *
  * APPEND-ONLY. There is deliberately no update and no delete here, and adding
@@ -1586,10 +1882,29 @@ export async function dischargeSummaryData(admissionId: string) {
  */
 export const NURSE_FEE_PER_DAY = 600;
 
+/**
+ * What nursing costs per day ON THIS STAY - the hospital's rate unless somebody
+ * has corrected it (Admission.nursePerDay).
+ *
+ * ONE function, called by all four places that price nursing: the running tab,
+ * the discharge invoice, a post-discharge re-issue of that invoice, and the
+ * printed claim bill. They read one figure or they drift, and the drift shows up
+ * as a claim bill and a tax invoice that disagree about the same stay - found by
+ * a TPA, months later, with nothing to say which was right.
+ *
+ * A stay nobody has touched has NULL here and reads the constant, which is why
+ * the column needed no backfill.
+ */
+export function nursePerDayOf(a: { nursePerDay?: { toString(): string } | null }): number {
+  return a.nursePerDay == null ? NURSE_FEE_PER_DAY : Number(a.nursePerDay.toString());
+}
+
 /** The full running tab: bed so far + every charge, with a live total. */
 export async function admissionSheet(admissionId: string): Promise<{
   admission: {
     id: string; ipNumber: string; status: string; admittedAt: string; reason: string | null;
+    /** Null while they are still in a bed. Editable - see correctStayBilling. */
+    dischargedAt: string | null;
     wardName: string; bedNo: string; dailyCharge: string; gstRatePct: string;
     attendantName: string | null; attendantPhone: string | null; attendantRelation: string | null;
     /** Who settles this stay, decided at admission. Drives the banner the ward
@@ -1600,16 +1915,23 @@ export async function admissionSheet(admissionId: string): Promise<{
   };
   days: number;
   bedTotal: string;
-  /** Assigned nursing care, days × NURSE_FEE_PER_DAY. Derived, not a stored line. */
+  /** Assigned nursing care, days × nursePerDay. Derived, not a stored line. */
   nurseTotal: string;
+  /** This stay's nursing rate - the hospital's, or a corrected one. */
   nursePerDay: string;
   /** The stay's chronology, oldest first. Append-only - see AdmissionNote. */
   notes: AdmissionNoteDTO[];
   charges: ChargeDTO[];
   chargesTotal: string;
   grandTotal: string;
-  /** One row per bed occupied. Two rows means they were transferred. */
-  legs: { wardName: string; bedNo: string; dailyCharge: string; days: number; total: string; current: boolean }[];
+  /** One row per bed occupied. Two rows means they were transferred. The id is
+   *  what a rate correction addresses - each leg is priced on its own - and the
+   *  dates are what lets a screen re-derive this leg's nights without asking. */
+  legs: {
+    id: string; wardName: string; bedNo: string; dailyCharge: string;
+    from: string; to: string | null;
+    days: number; total: string; current: boolean;
+  }[];
   /** Deposit already held. Comes off the discharge bill. */
   advanceTotal: string;
   /** Each deposit slip, so a lost receipt can be reprinted from the stay. */
@@ -1653,6 +1975,7 @@ export async function admissionSheet(admissionId: string): Promise<{
       id: true, ipNumber: true, status: true, admittedAt: true, dischargedAt: true, reason: true,
       noteEntries: { orderBy: { createdAt: "asc" }, select: noteSelect },
       wardNameAtAdmit: true, dailyChargeAtAdmit: true, gstRatePctAtAdmit: true,
+      nursePerDay: true,
       attendantName: true, attendantPhone: true, attendantRelation: true,
       payerType: true, insurer: true, policyNo: true, memberId: true,
       bed: { select: { bedNo: true } },
@@ -1685,13 +2008,13 @@ export async function admissionSheet(admissionId: string): Promise<{
     where: { admissionId },
     orderBy: { fromDate: "asc" },
     select: {
-      wardName: true, dailyCharge: true, fromDate: true, toDate: true,
+      id: true, wardName: true, dailyCharge: true, fromDate: true, toDate: true,
       bed: { select: { bedNo: true } },
     },
   });
 
   type StayRow = {
-    wardName: string; dailyCharge: { toString(): string };
+    id: string; wardName: string; dailyCharge: { toString(): string };
     fromDate: Date; toDate: Date | null; bed: { bedNo: string } | null;
   };
 
@@ -1700,9 +2023,12 @@ export async function admissionSheet(admissionId: string): Promise<{
     const d = stayDays(st.fromDate, st.toDate ?? until);
     const daily = Number(st.dailyCharge.toString());
     return {
+      id: st.id,
       wardName: st.wardName,
       bedNo: st.bed?.bedNo ?? "-",
       dailyCharge: daily.toFixed(2),
+      from: st.fromDate.toISOString(),
+      to: st.toDate?.toISOString() ?? null,
       days: d,
       total: (d * daily).toFixed(2),
       current: st.toDate === null,
@@ -1743,8 +2069,10 @@ export async function admissionSheet(admissionId: string): Promise<{
   });
   const chargesTotal = charges.reduce((s, c) => s + Number(c.amount), 0);
 
-  // ── NURSING ── assigned by default, one flat fee per day of stay.
-  const nurseTotal = days * NURSE_FEE_PER_DAY;
+  // ── NURSING ── assigned by default, one flat fee per day of stay, at this
+  // stay's own rate where a desk has corrected it.
+  const nursePerDay = nursePerDayOf(a);
+  const nurseTotal = days * nursePerDay;
   const grandTotal = bedTotal + nurseTotal + chargesTotal;
 
   // ── WHAT THE CLAIM CARRIES BEYOND THE STAY ──
@@ -1781,6 +2109,7 @@ export async function admissionSheet(admissionId: string): Promise<{
     admission: {
       id: a.id, ipNumber: a.ipNumber, status: a.status,
       admittedAt: a.admittedAt.toISOString(), reason: a.reason,
+      dischargedAt: a.dischargedAt?.toISOString() ?? null,
       wardName: a.wardNameAtAdmit, bedNo: a.bed.bedNo,
       dailyCharge: a.dailyChargeAtAdmit.toString(), gstRatePct: a.gstRatePctAtAdmit.toString(),
       attendantName: a.attendantName, attendantPhone: a.attendantPhone, attendantRelation: a.attendantRelation,
@@ -1790,7 +2119,7 @@ export async function admissionSheet(admissionId: string): Promise<{
     days,
     bedTotal: bedTotal.toFixed(2),
     nurseTotal: nurseTotal.toFixed(2),
-    nursePerDay: NURSE_FEE_PER_DAY.toFixed(2),
+    nursePerDay: nursePerDay.toFixed(2),
     notes: (a.noteEntries as NoteRow[]).map(toNoteDTO),
     chargesTotal: chargesTotal.toFixed(2),
     grandTotal: grandTotal.toFixed(2),
@@ -1910,7 +2239,10 @@ export async function transferBed(
     const adm = await tx.admission.findUnique({
       where: { id: input.admissionId },
       select: {
-        id: true, ipNumber: true, status: true, bedId: true,
+        id: true, ipNumber: true, status: true, bedId: true, admittedAt: true,
+        // The rate this stay has been billed at all along - needed to write the
+        // opening leg for a stay admitted before legs existed. See below.
+        wardNameAtAdmit: true, dailyChargeAtAdmit: true, gstRatePctAtAdmit: true,
         bed: { select: { bedNo: true, ward: { select: { name: true } } } },
       },
     });
@@ -1938,10 +2270,35 @@ export async function transferBed(
     const now = new Date();
 
     // close the leg they're leaving
-    await tx.bedStay.updateMany({
+    const closed = await tx.bedStay.updateMany({
       where: { admissionId: adm.id, toDate: null },
       data: { toDate: now },
     });
+
+    // ── A STAY ADMITTED BEFORE LEGS OPENED WITH THE ADMISSION ──
+    //
+    // There was nothing to close, so the nights already spent in the first bed
+    // have no row to be priced from - and the bill prices legs the moment any
+    // exist. Without this, moving such a patient to ICU on day three would bill
+    // ICU alone and give the first three days away.
+    //
+    // Written at `dailyChargeAtAdmit`, which is the rate that stay has actually
+    // been billed at all along, rather than at the ward's rate today - a price
+    // revision since admission must not reach back into nights already lived.
+    if (closed.count === 0) {
+      await tx.bedStay.create({
+        data: {
+          admissionId: adm.id,
+          bedId: adm.bedId,
+          wardName: adm.wardNameAtAdmit,
+          dailyCharge: adm.dailyChargeAtAdmit,
+          gstRatePct: adm.gstRatePctAtAdmit,
+          fromDate: adm.admittedAt,
+          toDate: now,
+          movedById: actor.id,
+        },
+      });
+    }
 
     // open the leg they're entering, priced at TODAY's rate for that ward
     await tx.bedStay.create({
@@ -2257,7 +2614,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
     where: { id: admissionId },
     select: {
       id: true, ipNumber: true, status: true, admittedAt: true, dischargedAt: true,
-      wardNameAtAdmit: true, dailyChargeAtAdmit: true,
+      wardNameAtAdmit: true, dailyChargeAtAdmit: true, nursePerDay: true,
       payerType: true, insurer: true, policyNo: true,
       bed: { select: { bedNo: true } },
       doctor: { select: { name: true, department: true } },
@@ -2403,14 +2760,15 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   push("DOCTOR VISITING CHARGES", null, bySection.get("DOCTOR VISITING CHARGES") ?? []);
 
   // Nursing care is per-day and derived rather than stored - the same figure the
-  // ward sheet and the discharge bill have always shown.
+  // ward sheet and the discharge bill have always shown, at this stay's own rate.
+  const nurseRate = nursePerDayOf(a);
   push("SERVICES", "OTHER SERVICES", [
     ...(bySection.get("SERVICES") ?? []),
     {
       date: null, issueNo: null, code: null,
       description: "Nursing Charges",
       batchNo: null, expiry: null,
-      rate: m2(NURSE_FEE_PER_DAY), qty: days, amount: m2(NURSE_FEE_PER_DAY * days),
+      rate: m2(nurseRate), qty: days, amount: m2(nurseRate * days),
     },
   ]);
 

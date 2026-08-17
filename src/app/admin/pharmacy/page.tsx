@@ -62,14 +62,39 @@ interface Po {
   fulfilledPct: number; overdue: boolean; daysLate: number;
 }
 interface Mover { medicineId: string | null; name: string; units: number; revenue: number; profit: number; marginPct: number | null; }
+type MasterSource = "master" | "legacy" | "none";
+interface MasterGroup {
+  key: string; name: string; source: MasterSource;
+  units: number; revenue: number; profit: number;
+  marginPct: number | null; products: number; rates: number[];
+}
+type Dimension = "category" | "generic" | "manufacturer" | "hsn";
 interface Overview {
   counter: Counter; procurement: Proc; alerts: Alerts; reorder: Reorder;
   receipts: Grn[]; purchaseOrders: Po[];
   dues: { count: number; totalDue: string; ipdCount: number; ipdTotal: string };
   trend: { date: string; revenue: number; profit: number; bills: number }[];
   movers: Mover[];
+  byMaster: Record<Dimension, MasterGroup[]>;
   window: { revenue: number; profit: number; marginPct: number | null; bills: number; units: number };
 }
+
+/**
+ * Mirrors SALES_DIMENSION_META in admin-pharmacy.service.
+ *
+ * `one` / `many` are spelt out rather than derived: "category" + "s" is
+ * "categorys", and lowercasing "HSN code" for a sentence gives "hsn code".
+ */
+const DIMENSIONS: { key: Dimension; label: string; one: string; many: string; blurb: string }[] = [
+  { key: "category", label: "Category", one: "category", many: "categories",
+    blurb: "Therapeutic or shelf grouping — what kind of medicine earns the counter its money." },
+  { key: "generic", label: "Generic / salt", one: "generic", many: "generics",
+    blurb: "What is actually in the product. Two brands of the same salt add up here as one line." },
+  { key: "manufacturer", label: "Manufacturer", one: "manufacturer", many: "manufacturers",
+    blurb: "Who makes it, not who supplies it. This is the number to take into a distributor negotiation." },
+  { key: "hsn", label: "HSN code", one: "HSN code", many: "HSN codes",
+    blurb: "Grouped by the HSN and GST rate actually billed on each line, not by the product's master today — a tax document can't be rewritten by a later edit to the catalogue." },
+];
 
 const inr0 = (n: number | string) => "₹" + Math.round(Number(n)).toLocaleString("en-IN");
 const inr2 = (n: number | string) => "₹" + Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -314,7 +339,110 @@ function MoneyTab({ d }: { d: Overview }) {
           </Panel>
         </div>
       </div>
+
+      <MasterSales d={d} />
     </div>
+  );
+}
+
+// ── SALES BY PRODUCT MASTER ─────────────────────────────────────────────────
+//
+// The same fortnight of sales, totalled by what the product IS rather than
+// which product it was. "What actually sells" is the right question for a shelf
+// and the wrong one for a decision - an owner choosing what to stock, which
+// company to push, or what to file a return against is asking about a group.
+//
+// The unclassified row is deliberately never hidden. Most of the catalogue is
+// still on free text rather than linked masters, and a breakdown that dropped
+// the unlinked remainder would under-report the pharmacy and still look
+// perfectly plausible. Every dimension here adds back up to the window total.
+
+function MasterSales({ d }: { d: Overview }) {
+  const [dim, setDim] = useState<Dimension>("category");
+  const meta = DIMENSIONS.find((x) => x.key === dim)!;
+  const rows = d.byMaster?.[dim] ?? [];
+  const max = Math.max(1, ...rows.map((r) => r.revenue));
+  const total = rows.reduce((s, r) => s + r.revenue, 0);
+  const unlinked = rows.filter((r) => r.source !== "master").reduce((s, r) => s + r.revenue, 0);
+  const unlinkedPct = total > 0 ? Math.round((unlinked / total) * 100) : 0;
+
+  return (
+    <Panel
+      title="Sales by product master"
+      sub={meta.blurb}
+      right={
+        <div className="flex flex-wrap gap-1.5">
+          {DIMENSIONS.map((x) => (
+            <button key={x.key} onClick={() => setDim(x.key)}
+              className={`rounded-md border px-2.5 py-1.5 text-[12px] font-semibold transition-colors ${
+                dim === x.key
+                  ? "border-[var(--p-teal)] bg-[var(--p-teal-soft)] text-[var(--p-teal-deep)]"
+                  : "border-[var(--p-border)] bg-white text-[var(--p-muted)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]"
+              }`}>{x.label}</button>
+          ))}
+        </div>
+      }
+    >
+      {rows.length === 0 ? <Empty text="Nothing dispensed in the last fortnight." /> : (
+        <>
+          {unlinkedPct > 0 && (
+            <div className="border-b border-[var(--p-border)] bg-[var(--p-bg)] px-5 py-2 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+              <b className="text-[var(--p-ink)]">{unlinkedPct}%</b> of this revenue ({inr0(unlinked)}) comes from products
+              with no {meta.one} master linked yet — grouped by the old free-text column, or left unclassified.
+              The totals are still complete.
+            </div>
+          )}
+          <div className="max-h-[420px] overflow-y-auto divide-y divide-[var(--p-border)]">
+            {rows.map((r) => (
+              <div key={r.key} className="relative flex items-center gap-3 px-5 py-2.5">
+                {/* Share of the window's revenue, read at a glance. */}
+                <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 bg-[var(--p-teal)]/[0.07]"
+                  style={{ width: `${(r.revenue / max) * 100}%` }} />
+                <div className="relative min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`truncate text-[13px] font-medium ${
+                      r.source === "none" ? "italic text-[var(--p-muted)]" : "text-[var(--p-ink)]"
+                    }`}>{r.name}</span>
+                    {r.source === "legacy" && (
+                      <span className="rounded-full bg-[var(--p-amber-soft)] px-2 py-px text-[10px] font-bold uppercase tracking-wide text-[#8a6414]">
+                        Not linked
+                      </span>
+                    )}
+                    {dim === "hsn" && r.rates.length > 0 && (
+                      <span className={`rounded-full px-2 py-px font-mono text-[10.5px] font-bold ${
+                        r.rates.length > 1
+                          ? "bg-[var(--p-rose-soft)] text-[var(--p-rose)]"
+                          : "bg-[var(--p-bg)] text-[var(--p-muted)]"
+                      }`}
+                        title={r.rates.length > 1 ? "Billed at more than one GST rate — resolve before filing." : undefined}>
+                        {r.rates.map((x) => `${x}%`).join(" / ")}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11.5px] text-[var(--p-muted)]">
+                    {r.products} product{r.products === 1 ? "" : "s"} · {r.units.toLocaleString("en-IN")} units
+                    {total > 0 && ` · ${Math.round((r.revenue / total) * 100)}% of sales`}
+                  </div>
+                </div>
+                <span className="relative w-[74px] text-right font-mono text-[12px] text-[var(--p-muted)]">
+                  {r.marginPct === null ? "—" : `${r.marginPct}%`}
+                </span>
+                <span className="relative w-[86px] text-right font-mono text-[13px] font-bold text-[var(--p-ink)]">{inr0(r.revenue)}</span>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center gap-3 border-t border-[var(--p-border)] bg-[var(--p-bg)] px-5 py-2.5">
+            <span className="flex-1 text-[12px] font-semibold text-[var(--p-ink)]">
+              {rows.length} {rows.length === 1 ? meta.one : meta.many}
+            </span>
+            <span className="w-[74px] text-right font-mono text-[12px] text-[var(--p-muted)]">
+              {d.window.marginPct === null ? "—" : `${d.window.marginPct}%`}
+            </span>
+            <span className="w-[86px] text-right font-mono text-[13px] font-bold text-[var(--p-ink)]">{inr0(total)}</span>
+          </div>
+        </>
+      )}
+    </Panel>
   );
 }
 

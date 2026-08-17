@@ -7,6 +7,7 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { DischargeSummaryForm } from "@/components/portal/ipd/discharge-summary-form";
+import { CorrectStayDialog, type StayLeg } from "@/components/portal/ipd/correct-stay-dialog";
 import { api, ApiClientError } from "@/lib/api-client";
 import { StatusPill } from "@/components/portal/insurance/claims-board";
 import { EditBillDialog, useBillEditing } from "@/components/portal/billing/edit-bill-dialog";
@@ -43,6 +44,8 @@ interface Charge {
 interface Sheet {
   admission: {
     id: string; ipNumber: string; status: string; admittedAt: string; reason: string | null;
+    /** Null while they are still in a bed. */
+    dischargedAt: string | null;
     wardName: string; bedNo: string; dailyCharge: string;
     payerType: string; insurer: string | null; policyNo: string | null; memberId: string | null;
     patient: { id: string; displayId: string; fullName: string; age: number | null; gender: string | null; phone: string };
@@ -50,6 +53,11 @@ interface Sheet {
   };
   days: number;
   bedTotal: string; nurseTotal: string; chargesTotal: string; grandTotal: string;
+  /** This stay's nursing rate - the hospital's, or one this desk corrected. */
+  nursePerDay: string;
+  /** One row per bed occupied. Two rows means they were transferred mid-stay,
+   *  and each leg is repriced on its own - see CorrectStayDialog. */
+  legs: StayLeg[];
   advanceTotal: string; balance: string;
   charges: Charge[];
   /** Pharmacy and lab bills going to the insurer on this stay. Nobody collects
@@ -159,6 +167,15 @@ export default function InsuranceAdmissionPage() {
   // switched it on - see HospitalConfig.billEditingEnabled. Enforced server-side.
   const { canEdit } = useBillEditing();
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  // ── REPRICING THE STAY ITSELF, not a line on it ──
+  //
+  // Bed nights and nursing are the two figures a TPA reprices most often, and
+  // they were the two this screen could not touch: both are derived from the
+  // stay rather than stored as rows, so the desk's only route was an adjustment
+  // line - which on a claim reads as the hospital correcting its own bill. The
+  // dates are here for the same reason: the day count multiplies both.
+  const [correctOpen, setCorrectOpen] = useState(false);
 
   const loadBills = useCallback(async () => {
     try { setBills(await api.get<StayBills>(`/insurance/admissions/${admissionId}/bills`)); }
@@ -596,18 +613,42 @@ export default function InsuranceAdmissionPage() {
 
       <div className="grid gap-5 xl:grid-cols-[1fr_320px]">
         <div className="space-y-5">
-          {/* ── FIXED LINES ── the bed and the nursing fee are computed from the
-              stay, not stored as rows, so they are shown but not editable here.
-              Changing a ward rate mid-stay is a wards-and-beds decision, not a
-              claim decision. */}
+          {/* ── FROM THE STAY ──
+              The bed and the nursing fee are computed from the stay rather than
+              stored as rows, which is why this block used to say "not editable
+              here" - and why a desk repricing a claim had to fake them with an
+              adjustment line on the tab. They are the two figures a TPA queries
+              first; they are now corrected at source, on the stay, with the
+              day count that multiplies them. */}
           <section data-rise className="surface overflow-hidden">
-            <div className="border-b border-[var(--p-border)] px-5 py-3.5">
-              <h2 className="text-[14px] font-semibold text-[var(--p-ink)]">From the stay</h2>
-              <p className="mt-0.5 text-[12.5px] text-[var(--p-muted)]">Computed from the bed and the days. Not editable here.</p>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--p-border)] px-5 py-3.5">
+              <div>
+                <h2 className="text-[14px] font-semibold text-[var(--p-ink)]">From the stay</h2>
+                <p className="mt-0.5 text-[12.5px] text-[var(--p-muted)]">
+                  Bed and nursing, multiplied by the days. Reprice them to the policy&apos;s tariff.
+                </p>
+              </div>
+              <button onClick={() => setCorrectOpen(true)}
+                title="Correct the bed rate, the nursing rate or the stay's dates"
+                className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-3.5 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+                <Icon name="rupee" size={14} /> Dates &amp; rates
+              </button>
             </div>
             <div className="divide-y divide-[var(--p-border)] text-[13.5px]">
-              <Fixed k={bedLabel(a.wardName, a.bedNo)} sub={`₹${money(a.dailyCharge)}/day × ${s.days}`} v={s.bedTotal} />
-              <Fixed k="Nursing care" sub={`${s.days} day${s.days === 1 ? "" : "s"}`} v={s.nurseTotal} />
+              {/* One row per LEG where the patient was transferred: an insurer
+                  paying an ICU entitlement has to see which nights were ICU, and
+                  one averaged line cannot tell them. */}
+              {s.legs.length > 1
+                ? s.legs.map((l) => (
+                    <Fixed key={l.id}
+                      k={bedLabel(l.wardName, l.bedNo)}
+                      sub={`₹${money(l.dailyCharge)}/day × ${l.days}${l.current ? " · current bed" : ""}`}
+                      v={l.total} />
+                  ))
+                : <Fixed k={bedLabel(a.wardName, a.bedNo)} sub={`₹${money(a.dailyCharge)}/day × ${s.days}`} v={s.bedTotal} />}
+              <Fixed k="Nursing care"
+                sub={`₹${money(s.nursePerDay)}/day × ${s.days} day${s.days === 1 ? "" : "s"}`}
+                v={s.nurseTotal} />
             </div>
           </section>
 
@@ -849,6 +890,30 @@ export default function InsuranceAdmissionPage() {
             setEditingId(null);
             setFlash("Bill corrected.");
             void Promise.all([loadBills(), load()]);
+          }}
+        />
+      )}
+
+      {/* The stay's own figures - bed nights, nursing, the dates that multiply
+          both. On a discharged stay this re-issues the IPD invoice, so the bill
+          list is reloaded behind it where it has been opened. */}
+      {correctOpen && (
+        <CorrectStayDialog
+          admissionId={a.id}
+          accent="blue"
+          stay={{
+            admittedAt: a.admittedAt,
+            dischargedAt: a.dischargedAt,
+            status: a.status,
+            dailyCharge: a.dailyCharge,
+            nursePerDay: s.nursePerDay,
+            legs: s.legs,
+          }}
+          onClose={() => setCorrectOpen(false)}
+          onSaved={(msg) => {
+            setCorrectOpen(false);
+            setFlash(msg);
+            void Promise.all([load(), bills ? loadBills() : Promise.resolve()]);
           }}
         />
       )}

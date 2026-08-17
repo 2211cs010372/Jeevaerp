@@ -7,6 +7,7 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { DischargeSummaryForm } from "@/components/portal/ipd/discharge-summary-form";
+import { CorrectStayDialog, type StayLeg } from "@/components/portal/ipd/correct-stay-dialog";
 import { api, ApiClientError } from "@/lib/api-client";
 import { bedLabel } from "@/lib/beds";
 import { EditBillDialog, useBillEditing } from "@/components/portal/billing/edit-bill-dialog";
@@ -31,6 +32,8 @@ interface Charge {
 interface Sheet {
   admission: {
     id: string; ipNumber: string; status: string; admittedAt: string; reason: string | null;
+    /** Null while they are still in a bed. */
+    dischargedAt: string | null;
     wardName: string; bedNo: string; dailyCharge: string; gstRatePct: string;
     attendantName: string | null; attendantPhone: string | null; attendantRelation: string | null;
     patient: { id: string; displayId: string; fullName: string; age: number | null; gender: string | null; phone: string };
@@ -41,7 +44,7 @@ interface Sheet {
   /** Append-only chronology - see AdmissionNote. Never edited in place. */
   notes: { id: string; body: string; kind: "NURSING" | "DISCHARGE"; authorName: string | null; createdAt: string }[];
   /** One row per bed occupied. Two rows = they were transferred mid-stay. */
-  legs: { wardName: string; bedNo: string; dailyCharge: string; days: number; total: string; current: boolean }[];
+  legs: StayLeg[];
   advanceTotal: string;
   /** Each deposit slip taken on this stay - listed so any can be reprinted. */
   advances: (Advance & { takenAt: string })[];
@@ -98,6 +101,13 @@ export default function AdmissionSheetPage() {
   // server enforces it inside updateInvoice, this only draws the button.
   const { canEdit } = useBillEditing();
   const [editingBillId, setEditingBillId] = useState<string | null>(null);
+
+  // ── THE THREE FIGURES THAT WERE NOT LINES ──
+  //
+  // Bed, nursing and the day count are the biggest numbers on the sheet and were
+  // the only ones with no edit path - see CorrectStayDialog. Reached from the two
+  // rows themselves, because that is where somebody notices they are wrong.
+  const [correctOpen, setCorrectOpen] = useState(false);
 
   // add-charge form
   const [cat, setCat] = useState("PROCEDURE");
@@ -424,10 +434,21 @@ export default function AdmissionSheetPage() {
                 <div className="text-[12px] text-[var(--p-muted)]">
                   {sheet.days} day{sheet.days === 1 ? "" : "s"} × ₹{money(a.dailyCharge)}
                   {Number(a.gstRatePct) > 0 && ` · ${a.gstRatePct}% GST`}
-                  {" · rate locked at admission"}
+                  {" · rate taken at admission"}
                 </div>
               </div>
-              <span className="font-mono text-[14px] font-bold text-[var(--p-ink)]">₹{money(sheet.bedTotal)}</span>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="font-mono text-[14px] font-bold text-[var(--p-ink)]">₹{money(sheet.bedTotal)}</span>
+                {/* Both this and the nursing row open the SAME dialog: the rate
+                    and the day count are one arithmetic, and correcting a bed
+                    rate without seeing what it does to the days is how a stay
+                    ends up billed for a night nobody slept. */}
+                <button onClick={() => setCorrectOpen(true)}
+                  title="Correct the bed rate, the nursing rate or the stay's dates"
+                  className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
+                  Edit
+                </button>
+              </div>
             </div>
 
             {/* nursing care - assigned by default, accrues per day like the bed */}
@@ -441,7 +462,14 @@ export default function AdmissionSheetPage() {
                   {sheet.days} day{sheet.days === 1 ? "" : "s"} × ₹{money(sheet.nursePerDay)} · charged automatically
                 </div>
               </div>
-              <span className="font-mono text-[14px] font-bold text-[var(--p-ink)]">₹{money(sheet.nurseTotal)}</span>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="font-mono text-[14px] font-bold text-[var(--p-ink)]">₹{money(sheet.nurseTotal)}</span>
+                <button onClick={() => setCorrectOpen(true)}
+                  title="Correct the nursing rate, the bed rate or the stay's dates"
+                  className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
+                  Edit
+                </button>
+              </div>
             </div>
 
             {/* ── ON A CLAIM, THE OTHER COUNTERS' BILLS ARE ON THIS TAB TOO ──
@@ -1140,6 +1168,26 @@ export default function AdmissionSheetPage() {
           accent="teal"
           onClose={() => setEditingBillId(null)}
           onSaved={() => { setEditingBillId(null); load(); loadHistory(); }}
+        />
+      )}
+
+      {/* Bed rate, nursing rate and the stay's dates. Reloads the history too:
+          on a discharged stay this re-issues the IPD invoice, which is one of
+          the bills listed there. */}
+      {correctOpen && (
+        <CorrectStayDialog
+          admissionId={a.id}
+          accent="teal"
+          stay={{
+            admittedAt: a.admittedAt,
+            dischargedAt: a.dischargedAt,
+            status: a.status,
+            dailyCharge: a.dailyCharge,
+            nursePerDay: sheet.nursePerDay,
+            legs: sheet.legs,
+          }}
+          onClose={() => setCorrectOpen(false)}
+          onSaved={(msg) => { setCorrectOpen(false); setFlash(msg); load(); loadHistory(); }}
         />
       )}
     </PortalScroll>

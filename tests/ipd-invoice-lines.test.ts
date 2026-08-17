@@ -41,6 +41,11 @@ const admission = (over: Partial<Parameters<typeof buildIpdInvoiceLines>[0]> = {
   wardNameAtAdmit: "General Ward",
   dailyChargeAtAdmit: { toString: () => "1500.00" },
   gstRatePctAtAdmit: { toString: () => "0.00" },
+  // Null = nobody has corrected this stay's nursing rate, so it bills the
+  // hospital's standard fee. Spelled out rather than left off: the field is
+  // REQUIRED on the input type on purpose, so a caller that forgets to select
+  // the column cannot silently bill the default over somebody's correction.
+  nursePerDay: null,
   bed: { bedNo: "GW-04" },
   charges: [],
   ...over,
@@ -66,7 +71,35 @@ describe("an IPD bill is the bed, the nursing and the running tab", () => {
     const nursing = lines.filter((l) => l.description.startsWith("Nursing care"));
     expect(nursing).toHaveLength(1);
     expect(nursing[0].qty).toBe(4);
+    expect(nursing[0].unitPrice).toBe(600);
     expect(nursing[0].gstRatePct).toBe(0);
+  });
+
+  it("bills nursing at the STAY'S rate once a desk has corrected it", () => {
+    // An insurer settling nursing at its own tariff. The correction lives on
+    // the stay, so the re-issued invoice has to carry it - a bill that quietly
+    // reverted to ₹600 is exactly the disagreement between the claim bill and
+    // the tax invoice this whole shared function exists to prevent.
+    const lines = buildIpdInvoiceLines(
+      admission({ nursePerDay: { toString: () => "450.00" } }),
+      [stay("General Ward", "GW-04", 1500, "2026-08-01", null)],
+    );
+    const nursing = lines.find((l) => l.description.startsWith("Nursing care"))!;
+    expect(nursing.unitPrice).toBe(450);
+    expect(nursing.qty).toBe(4);
+    expect(nursing.description).toContain("₹450");
+  });
+
+  it("bills no nursing at all when a stay has it waived", () => {
+    // ₹0 is a real answer and must not fall back to the hospital's rate the way
+    // null does. Waiving nursing on a long stay is an ordinary concession, and
+    // the desk's old workaround was a negative line on the tab.
+    const lines = buildIpdInvoiceLines(
+      admission({ nursePerDay: { toString: () => "0.00" } }),
+      [stay("General Ward", "GW-04", 1500, "2026-08-01", null)],
+    );
+    const nursing = lines.find((l) => l.description.startsWith("Nursing care"))!;
+    expect(nursing.unitPrice).toBe(0);
   });
 
   it("carries every running-tab line through at ITS OWN gst rate", () => {

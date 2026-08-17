@@ -270,10 +270,7 @@ export function DetailedBillSheet() {
             <div className="flex gap-2"><span className="w-[82px] font-semibold">Bill date &amp; Time</span><span>: {dt(b.billedAt)}</span></div>
             <div className="flex gap-2"><span className="w-[82px] font-semibold">Print Date &amp; Time</span><span>: {dt(new Date().toISOString())}</span></div>
           </div>
-          <div className="text-right">
-            <svg ref={billBar} />
-            <div className="text-[8.5px] font-semibold">( Bill No )</div>
-          </div>
+          
         </div>
 
         <div className="mt-4 border-t border-[#333] pt-1 text-center text-[8.5px] text-[#57655f]">

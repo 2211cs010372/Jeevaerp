@@ -2077,6 +2077,18 @@ model Admission {
   wardNameAtAdmit    String
   gstRatePctAtAdmit  Decimal @default(0) @db.Decimal(4, 2)
 
+  /// What nursing care costs PER DAY on this stay.
+  ///
+  /// NULL means the hospital's standard fee (NURSE_FEE_PER_DAY in ipd.service),
+  /// so this needs no backfill and a stay nobody has corrected reads exactly as
+  /// it did before the column existed.
+  ///
+  /// Snapshotted per stay for the same reason the bed rate is: raising the
+  /// standard fee must never reach back and re-price a stay already billed, and
+  /// a policy that settles nursing at its own rate has to be recorded against
+  /// the stay it applies to rather than against the hospital.
+  nursePerDay Decimal? @db.Decimal(10, 2)
+
   status         AdmissionStatus @default(ADMITTED)
   admittedAt     DateTime        @default(now())
   dischargedAt   DateTime?

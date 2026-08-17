@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { r2 } from "@/server/billing/calc";
 import { localDateISO } from "@/lib/date";
 import { perUnitPrice } from "@/lib/pharmacy/pack";
+import { resolveMaster, type MasterSource } from "@/lib/pharmacy/masters";
 import { pharmacyStats, stockAlerts, pharmacyDues } from "./pharmacy.service";
 import {
   procurementStats, reorderSuggestions, listGoodsReceipts, listPurchaseOrders,
@@ -42,6 +43,79 @@ export interface MedicineMover {
   marginPct: number | null;
 }
 
+// ---------------------------------------------------------------------------
+// THE SAME SALES, GROUPED BY WHAT THE PRODUCT *IS*
+//
+// "What actually sells" answers it per product, which is the right question for
+// a shelf and the wrong one for a decision. An owner deciding what to stock,
+// which company to negotiate with, or what to file a GST return against is
+// asking about a GROUP - and until now nothing in the system could add a group
+// up.
+//
+// The awkward part is that master data is half-migrated by design (see
+// lib/pharmacy/masters): every descriptor exists as a master link AND as the
+// free-text column it replaces, and most products are still on the text. A
+// report that grouped only by linked masters would quietly omit most of the
+// pharmacy's revenue and still look plausible, which is the worst way for a
+// report to be wrong. So every dimension resolves master -> legacy text ->
+// UNCLASSIFIED, and the unclassified bucket is a real row with a real total.
+// The groups always add back up to the window's revenue.
+// ---------------------------------------------------------------------------
+
+/** The product attributes worth totalling sales against. */
+export const SALES_DIMENSIONS = ["category", "generic", "manufacturer", "hsn"] as const;
+export type SalesDimension = (typeof SALES_DIMENSIONS)[number];
+
+export const SALES_DIMENSION_META: Record<
+  SalesDimension,
+  { label: string; blurb: string }
+> = {
+  category: {
+    label: "Category",
+    blurb: "Therapeutic or shelf grouping - what kind of medicine earns the counter its money.",
+  },
+  generic: {
+    label: "Generic / salt",
+    blurb: "What is actually in the product. Two brands of the same salt add up here as one line.",
+  },
+  manufacturer: {
+    label: "Manufacturer",
+    blurb: "Who makes it, not who supplies it. This is the number to take into a distributor negotiation.",
+  },
+  hsn: {
+    label: "HSN code",
+    blurb:
+      "Grouped by the HSN and GST rate ACTUALLY BILLED on each line, not by the product's master today - a tax document cannot be rewritten by a later edit to the catalogue.",
+  },
+};
+
+export interface MasterGroup {
+  /** Stable identity for the row. Not an id - groups can come from free text. */
+  key: string;
+  name: string;
+  /**
+   * Where the label came from. The screens use this to show how much of the
+   * catalogue is still on free text, because "what is left to link" is the only
+   * question that makes the changeover finishable.
+   */
+  source: MasterSource;
+  /** Dispensing units sold - tablets, ml. Not packs. */
+  units: number;
+  revenue: number;
+  profit: number;
+  /** Null when no line in this group had a costed batch. */
+  marginPct: number | null;
+  /** Distinct products that sold under this group. */
+  products: number;
+  /**
+   * HSN only: the distinct GST rates actually billed under this code, sorted.
+   * More than one is not a rounding artefact - it means the same classification
+   * went out at two rates, which is a filing problem somebody has to resolve.
+   * Empty for every other dimension.
+   */
+  rates: number[];
+}
+
 /**
  * Revenue, profit and volume for the last `days` days of pharmacy sales, in one
  * pass. Costed against the batch each line actually came from, so the margin is
@@ -50,6 +124,7 @@ export interface MedicineMover {
 async function salesAnalytics(days: number): Promise<{
   trend: PharmacyTrendPoint[];
   movers: MedicineMover[];
+  byMaster: Record<SalesDimension, MasterGroup[]>;
   window: { revenue: number; profit: number; marginPct: number | null; bills: number; units: number };
 }> {
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -61,21 +136,55 @@ async function salesAnalytics(days: number): Promise<{
     },
     select: {
       description: true, qty: true, unitPrice: true, amount: true,
+      // Snapshotted on the line at the moment of sale. For the HSN breakdown
+      // these BEAT the medicine's masters, deliberately - see the dimension's
+      // blurb. What went on the tax invoice is what the return is filed on.
+      hsnSac: true, gstRatePct: true,
       // A pharmacy line's medicine is reached through the batch it came out of -
       // there is no direct medicineId on the line, and the batch is also where
       // the true cost of THAT delivery lives.
-      batch: { select: { purchasePrice: true, packSize: true, medicine: { select: { id: true, name: true } } } },
+      batch: {
+        select: {
+          purchasePrice: true, packSize: true,
+          // Both sides of every descriptor: the master link and the free-text
+          // column it supersedes. One extra join layer on a query that was
+          // already being run, rather than a second pass over the same sales.
+          medicine: {
+            select: {
+              id: true, name: true,
+              category: { select: { name: true } },
+              generic: { select: { name: true } },
+              genericName: true,
+              manufacturerRef: { select: { name: true } },
+              manufacturer: true,
+              hsn: { select: { code: true } },
+              hsnCode: true,
+            },
+          },
+        },
+      },
       invoice: { select: { id: true, createdAt: true } },
     },
   });
 
+  type Med = {
+    id: string; name: string;
+    category: { name: string } | null;
+    generic: { name: string } | null;
+    genericName: string | null;
+    manufacturerRef: { name: string } | null;
+    manufacturer: string | null;
+    hsn: { code: string } | null;
+    hsnCode: string | null;
+  };
   type It = {
     description: string; qty: number;
     unitPrice: { toString(): string }; amount: { toString(): string };
+    hsnSac: string | null; gstRatePct: { toString(): string };
     batch: {
       purchasePrice: { toString(): string } | null;
       packSize: number;
-      medicine: { id: string; name: string } | null;
+      medicine: Med | null;
     } | null;
     invoice: { id: string; createdAt: Date };
   };
@@ -89,6 +198,31 @@ async function salesAnalytics(days: number): Promise<{
   const moverAcc = new Map<string, MedicineMover & { costedRevenue: number }>();
   let windowRevenue = 0, windowProfit = 0, windowCosted = 0, windowUnits = 0;
   const windowBills = new Set<string>();
+
+  /**
+   * How each dimension reads a sold line.
+   *
+   * Everything goes through resolveMaster so the master/legacy precedence is the
+   * one written down once in lib/pharmacy/masters, not re-guessed here. HSN is
+   * the exception that proves it: the line's own snapshotted hsnSac wins over
+   * both, because the report is about what was billed, not about what the
+   * catalogue says today.
+   */
+  const DIMENSION_OF: Record<SalesDimension, (it: It, med: Med | null) => { value: string | null; source: MasterSource }> = {
+    category: (_it, med) => resolveMaster(med?.category?.name, null),
+    generic: (_it, med) => resolveMaster(med?.generic?.name, med?.genericName),
+    manufacturer: (_it, med) => resolveMaster(med?.manufacturerRef?.name, med?.manufacturer),
+    hsn: (it, med) => {
+      const billed = (it.hsnSac ?? "").trim();
+      if (billed) return { value: billed, source: "master" };
+      return resolveMaster(med?.hsn?.code, med?.hsnCode);
+    },
+  };
+
+  type GroupAcc = Omit<MasterGroup, "rates"> & { costedRevenue: number; productKeys: Set<string>; rateSet: Set<number> };
+  const masterAcc: Record<SalesDimension, Map<string, GroupAcc>> = {
+    category: new Map(), generic: new Map(), manufacturer: new Map(), hsn: new Map(),
+  };
 
   for (const it of items as It[]) {
     // A bill raised at 10 PM belongs to that evening, not to UTC tomorrow.
@@ -130,6 +264,30 @@ async function salesAnalytics(days: number): Promise<{
     cur.profit = r2(cur.profit + profit);
     cur.costedRevenue = r2(cur.costedRevenue + costedRevenue);
     moverAcc.set(mkey, cur);
+
+    // The same line, totalled against what the product IS. Every dimension gets
+    // a row for this line - an unresolvable one lands in UNCLASSIFIED rather
+    // than being skipped, which is what keeps each dimension adding back up to
+    // windowRevenue.
+    const rate = Number(it.gstRatePct.toString());
+    for (const dim of SALES_DIMENSIONS) {
+      const { value, source } = DIMENSION_OF[dim](it, med);
+      const gkey = value ?? " unclassified";
+      const g = masterAcc[dim].get(gkey) ?? {
+        key: gkey,
+        name: value ?? "Unclassified",
+        source,
+        units: 0, revenue: 0, profit: 0, marginPct: null, products: 0,
+        costedRevenue: 0, productKeys: new Set<string>(), rateSet: new Set<number>(),
+      };
+      g.units += it.qty;
+      g.revenue = r2(g.revenue + line);
+      g.profit = r2(g.profit + profit);
+      g.costedRevenue = r2(g.costedRevenue + costedRevenue);
+      g.productKeys.add(mkey);
+      if (dim === "hsn") g.rateSet.add(rate);
+      masterAcc[dim].set(gkey, g);
+    }
   }
 
   const movers = [...moverAcc.values()]
@@ -140,9 +298,31 @@ async function salesAnalytics(days: number): Promise<{
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, 15);
 
+  // Not sliced, unlike movers. A group list that silently dropped its tail would
+  // stop summing to the window total, and the whole point of the unclassified
+  // bucket is that this report reconciles.
+  const byMaster = Object.fromEntries(
+    SALES_DIMENSIONS.map((dim) => [
+      dim,
+      [...masterAcc[dim].values()]
+        .map(({ costedRevenue, productKeys, rateSet, ...g }): MasterGroup => ({
+          ...g,
+          products: productKeys.size,
+          marginPct: costedRevenue > 0 ? Math.round((g.profit / costedRevenue) * 1000) / 10 : null,
+          rates: [...rateSet].sort((a, b) => a - b),
+        }))
+        // Unclassified sorts last however big it is - it is a gap in the
+        // catalogue, not the pharmacy's best-selling category.
+        .sort((a, b) =>
+          (a.source === "none" ? 1 : 0) - (b.source === "none" ? 1 : 0) || b.revenue - a.revenue
+        ),
+    ])
+  ) as Record<SalesDimension, MasterGroup[]>;
+
   return {
     trend: [...dayAcc].map(([date, v]) => ({ date, revenue: v.revenue, profit: v.profit, bills: v.bills.size })),
     movers,
+    byMaster,
     window: {
       revenue: windowRevenue,
       profit: windowProfit,
@@ -177,6 +357,7 @@ export async function pharmacyOverview() {
     dues,
     trend: sales.trend,
     movers: sales.movers,
+    byMaster: sales.byMaster,
     window: sales.window,
   };
 }

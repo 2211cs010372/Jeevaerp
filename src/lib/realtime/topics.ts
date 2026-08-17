@@ -88,6 +88,12 @@ export const EVENTS = {
   ADMISSION_OPENED: "admission.opened",
   /** Somebody went home. Frees a bed, so the ward board must move. */
   ADMISSION_CLOSED: "admission.closed",
+  /**
+   * A stay's dates or its bed / nursing rates were corrected. Not an admission
+   * and not a discharge - the patient has not moved - but the day count and
+   * every total derived from it just did, on screens two desks are reading.
+   */
+  ADMISSION_CORRECTED: "admission.corrected",
   /** The website asked us to ring somebody back. */
   CALLBACK_RAISED: "callback.raised",
   /** A delivery was booked in - stock levels and alerts change. */

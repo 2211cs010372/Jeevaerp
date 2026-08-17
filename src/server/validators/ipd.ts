@@ -111,6 +111,36 @@ export const transferBedSchema = z.object({
   reason: z.string().trim().max(200).optional(),
 });
 
+/**
+ * CORRECTING WHAT A STAY IS PRICED ON - its dates, its bed rate, its nursing rate.
+ *
+ * Every field optional, like the reprice schema above and for the same reason: a
+ * desk usually fixes one of these, and requiring the whole set back would make a
+ * partial edit silently rewrite the rest.
+ *
+ * The dates are full INSTANTS, not calendar days. `stayDays` charges per started
+ * day, so an admission at 23:40 and one at 00:10 the next morning are a day
+ * apart on the bill - sending a date alone would quietly move money.
+ *
+ * The ceilings are deliberately generous rather than tight: a suite at ₹50,000 a
+ * night is a real room in a real hospital, and a validator that refuses it sends
+ * the desk back to typing an adjustment line. They exist to catch a rate typed
+ * into the wrong box, not to price the ward.
+ */
+export const correctStaySchema = z.object({
+  admittedAt: z.string().trim().datetime({ offset: true }).optional(),
+  dischargedAt: z.string().trim().datetime({ offset: true }).optional(),
+  nursePerDay: z.coerce.number().min(0).max(100_000).optional(),
+  bedRate: z.coerce.number().min(0).max(1_000_000).optional(),
+  legs: z.array(z.object({
+    id: z.string().trim().min(1),
+    dailyCharge: z.coerce.number().min(0).max(1_000_000),
+  })).max(20).optional(),
+  /// Why. Free text, kept on the stay's chronology with the figures - "the bill
+  /// was changed after the treatment" is the first thing an insurer asks.
+  reason: z.string().trim().max(200).optional().or(z.literal("")),
+});
+
 /** The deposit taken at admission. */
 export const advanceSchema = z.object({
   amount: z.coerce.number().positive("An advance must be more than ₹0"),
