@@ -373,18 +373,24 @@ export function DetailedBillSheet() {
             it entirely left a bill that quoted a pharmacy's charges without ever
             naming the pharmacy's invoice, so a family querying one could not say
             which document they meant and the desk could not find it. Listed once
-            here, each bill is askable-for and printable. */}
+            here, each bill is askable-for and printable.
+
+            NO STATUS COLUMN. It said Paid / Part paid / Due against each
+            pharmacy and lab bill, and a family reading down it counted the
+            "Paid" rows and expected them off the total - which they already
+            are, in Paid at Counter below. The same fact stated twice in two
+            shapes reads as two facts. Paid-vs-due is answered once, in the
+            totals block, where it settles what is owed today. */}
                 {b.sourceBills.length > 0 && (
                   <div className="keep-together mt-3">
                     <div className="text-[9.5px] font-bold uppercase">Bills included in this statement</div>
                     <table className="mt-1 w-full border-collapse text-[9.5px]">
                       <thead>
                         <tr className="border-b border-t border-[#333]">
-                          <Th w="28%">Invoice No</Th>
-                          <Th w="24%">Date &amp; time</Th>
-                          <Th w="18%">Counter</Th>
-                          <Th w="14%">Status</Th>
-                          <Th w="16%" right>Amount(₹)</Th>
+                          <Th w="32%">Invoice No</Th>
+                          <Th w="26%">Date &amp; time</Th>
+                          <Th w="22%">Counter</Th>
+                          <Th w="20%" right>Amount(₹)</Th>
                         </tr>
                       </thead>
                       <tbody>
@@ -393,9 +399,6 @@ export function DetailedBillSheet() {
                             <td className="py-[3px] pr-1 font-mono text-[8.5px]">{x.receiptNo}</td>
                             <td className="py-[3px] pr-1 font-mono text-[8.5px]">{dt(x.date)}</td>
                             <td className="py-[3px] pr-1">{SOURCE_LABEL[x.source] ?? x.source}</td>
-                            <td className="py-[3px] pr-1 text-[8.5px] font-semibold uppercase">
-                              {x.status === "PAID" ? "Paid" : x.status === "PART" ? "Part paid" : "Due"}
-                            </td>
                             <td className="py-[3px] text-right font-mono">₹{money(x.total)}</td>
                           </tr>
                         ))}
