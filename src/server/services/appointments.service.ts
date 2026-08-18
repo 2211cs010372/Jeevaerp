@@ -1082,3 +1082,115 @@ export async function toggleSlotBlock(
     targetTable: "DoctorSlot", targetId: input.slotId, ...ctx,
   });
 }
+/**
+ * DOCTOR PROFILES, MANAGED FROM THE FRONT DESK.
+ *
+ * WHY NOT JUST GIVE RECEPTION `/admin/staff`. That endpoint creates and edits
+ * USER ACCOUNTS of any role - it is how an ADMIN is made. Widening it so the
+ * desk could fix a spelling in a consultant's qualification would have handed
+ * reception the ability to mint administrators, which is the exact trade the
+ * Role enum's own note refuses.
+ *
+ * So this touches the Doctor row and nothing else. `Doctor.userId` is nullable
+ * on purpose, and that is what makes this safe: a doctor added here is a
+ * PROFILE - bookable, billable, on the roster - with no login behind it. A
+ * consultant who needs to sign in still needs an account, and accounts are
+ * still admin's.
+ */
+export async function createDoctorProfile(
+  actor: AuthUser,
+  input: {
+    name: string; specialization: string; department: string; consultationFee: number;
+    qualification?: string; experienceYears?: number; age?: number;
+    languages?: string; photoUrl?: string; bio?: string;
+  },
+  ctx: { ipAddress?: string; userAgent?: string },
+): Promise<{ id: string; name: string }> {
+  const name = input.name.trim();
+  if (!name) throw new ApiError(400, "Name the doctor");
+
+  const doctor = await prisma.$transaction(async (tx) => {
+    const d = await tx.doctor.create({
+      data: {
+        name,
+        specialization: input.specialization.trim(),
+        department: input.department.trim(),
+        consultationFee: input.consultationFee.toFixed(2),
+        qualification: input.qualification?.trim() || null,
+        experienceYears: input.experienceYears ?? null,
+        age: input.age ?? null,
+        languages: input.languages?.trim() || null,
+        photoUrl: input.photoUrl?.trim() || null,
+        bio: input.bio?.trim() || null,
+      },
+      select: { id: true, name: true },
+    });
+
+    // WITHOUT A DIARY A DOCTOR CANNOT BE BOOKED. The same round-the-clock
+    // schedule admin gives a new consultant - see DIARY_* in admin.service. A
+    // doctor added here who then does not appear on the booking screen would
+    // read as this page not having worked.
+    await tx.doctorSchedule.createMany({
+      data: [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({
+        doctorId: d.id, dayOfWeek, startTime: "00:00", endTime: "24:00", slotMinutes: 15,
+      })),
+    });
+    return d;
+  });
+
+  await logAudit(actor, {
+    action: "DOCTOR_CREATED", targetTable: "Doctor", targetId: doctor.id,
+    meta: { name: doctor.name, department: input.department, fee: input.consultationFee }, ...ctx,
+  });
+  return doctor;
+}
+
+/** Edit a doctor's own details. Never their login - see createDoctorProfile. */
+export async function updateDoctorProfile(
+  actor: AuthUser,
+  doctorId: string,
+  input: {
+    name?: string; specialization?: string; department?: string; consultationFee?: number;
+    qualification?: string; experienceYears?: number; age?: number;
+    languages?: string; photoUrl?: string; bio?: string; active?: boolean;
+  },
+  ctx: { ipAddress?: string; userAgent?: string },
+): Promise<void> {
+  const before = await prisma.doctor.findUnique({
+    where: { id: doctorId },
+    select: { id: true, name: true, consultationFee: true, department: true, active: true },
+  });
+  if (!before) throw new ApiError(404, "Doctor not found");
+
+  const str = (v?: string) => (v === undefined ? undefined : v.trim() || null);
+  await prisma.doctor.update({
+    where: { id: doctorId },
+    data: {
+      ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+      ...(input.specialization !== undefined ? { specialization: input.specialization.trim() } : {}),
+      ...(input.department !== undefined ? { department: input.department.trim() } : {}),
+      ...(input.consultationFee !== undefined ? { consultationFee: input.consultationFee.toFixed(2) } : {}),
+      ...(input.qualification !== undefined ? { qualification: str(input.qualification) } : {}),
+      ...(input.experienceYears !== undefined ? { experienceYears: input.experienceYears } : {}),
+      ...(input.age !== undefined ? { age: input.age } : {}),
+      ...(input.languages !== undefined ? { languages: str(input.languages) } : {}),
+      ...(input.photoUrl !== undefined ? { photoUrl: str(input.photoUrl) } : {}),
+      ...(input.bio !== undefined ? { bio: str(input.bio) } : {}),
+      ...(input.active !== undefined ? { active: input.active } : {}),
+    },
+  });
+
+  // THE FEE IS AUDITED BY ITS BEFORE AND AFTER, not just its new value. It is
+  // what every future booking charges, and "who changed 400 to 900, and when"
+  // is the question asked when a patient disputes a bill months later.
+  const feeMoved = input.consultationFee !== undefined
+    && Number(before.consultationFee) !== input.consultationFee;
+  await logAudit(actor, {
+    action: "DOCTOR_UPDATED", targetTable: "Doctor", targetId: doctorId,
+    meta: {
+      name: before.name,
+      ...(feeMoved ? { feeFrom: Number(before.consultationFee), feeTo: input.consultationFee } : {}),
+      ...(input.active !== undefined && input.active !== before.active ? { activeFrom: before.active, activeTo: input.active } : {}),
+    }, ...ctx,
+  });
+}

@@ -83,6 +83,10 @@ export const PORTALS: Record<string, PortalMeta> = {
       { label: "Admissions", href: "/ipd", icon: "bed" },
       { label: "Patients", href: "/patients", icon: "search" },
       { label: "Schedule", href: "/schedule", icon: "clock" },
+      // The roster the booking screen offers. Kept next to Schedule because the
+      // two answer the same question from either end - who is available, and
+      // who exists at all.
+      { label: "Doctors", href: "/doctors", icon: "users", hint: "Add a doctor, or correct their details" },
     ],
 
   },

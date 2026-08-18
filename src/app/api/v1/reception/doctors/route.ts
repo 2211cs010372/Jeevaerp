@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
-import { handler } from "@/lib/api";
+import { handler, parseBody } from "@/lib/api";
 import { requireRole } from "@/lib/auth/guard";
-import { listDoctors } from "@/server/services/appointments.service";
+import { listDoctors, createDoctorProfile } from "@/server/services/appointments.service";
+import { createDoctorSchema } from "@/server/validators/doctor-profile";
+import { auditContext } from "@/server/services/audit.service";
 import { getAfterHoursOpPolicy } from "@/server/services/op-pricing.service";
 import { localHHMM } from "@/lib/after-hours";
 
@@ -24,4 +26,17 @@ export const GET = handler(async (req) => {
     doctors,
     opPricing: { ...policy, serverTime: localHHMM(new Date()) },
   });
+});
+
+/**
+ * Add a doctor to the roster from the front desk.
+ *
+ * Creates a PROFILE, not a login. See createDoctorProfile for why reception is
+ * trusted with one and not the other.
+ */
+export const POST = handler(async (req) => {
+  const actor = await requireRole(req, "RECEPTIONIST", "ADMIN");
+  const input = await parseBody(req, createDoctorSchema);
+  const doctor = await createDoctorProfile(actor, input, auditContext(req));
+  return NextResponse.json({ doctor }, { status: 201 });
 });

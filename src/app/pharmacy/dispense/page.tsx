@@ -9,6 +9,7 @@ import { api, ApiClientError } from "@/lib/api-client";
 import { DispenseScratchpad, type PadLine } from "@/components/portal/pharmacy/scratchpad";
 import { DiscountInput, PaymentSection, type Tender } from "@/components/portal/ui/bill-fields";
 import { AdmissionBanner, useAdmission } from "@/components/portal/reception/admission-banner";
+import { InpatientPicker } from "@/components/portal/reception/inpatient-picker";
 
 interface Patient { id: string; displayId: string; fullName: string; phone: string; }
 interface Med {
@@ -56,7 +57,7 @@ export default function DispensePage() {
   const { admission, checking: checkingAdm } = useAdmission(patient?.id);
   const isInpatient = !!admission;
 
-  const [patientTab, setPatientTab] = useState<"search" | "direct">("search");
+  const [patientTab, setPatientTab] = useState<"search" | "inpatient" | "direct">("search");
   const [directName, setDirectName] = useState("");
   const [directPhone, setDirectPhone] = useState("");
   const [directAddress, setDirectAddress] = useState("");
@@ -270,6 +271,23 @@ export default function DispensePage() {
                   >
                     Search Patient
                   </button>
+                  {/* THE WARD, WITHOUT TYPING A NAME. A ward runner arrives
+                      with a slip that says "bed 4", not a Jeeva ID, and the
+                      counter was searching for a patient the system could
+                      already list. Sits between the two: most dispensing is a
+                      search, and a direct sale is the exception at the end. */}
+                  <button
+                    type="button"
+                    onClick={() => setPatientTab("inpatient")}
+                    className={`flex items-center gap-1 rounded-md px-3 py-1 transition-colors ${
+                      patientTab === "inpatient"
+                        ? "bg-white text-[var(--p-ink)] shadow-sm"
+                        : "text-[var(--p-muted)] hover:text-[var(--p-ink)]"
+                    }`}
+                  >
+                    <Icon name="bed" size={12} />
+                    Inpatients
+                  </button>
                   <button
                     type="button"
                     onClick={() => setPatientTab("direct")}
@@ -287,7 +305,18 @@ export default function DispensePage() {
             </div>
             <div className="p-6">
               {!patient ? (
-                patientTab === "search" ? (
+                patientTab === "inpatient" ? (
+                  <InpatientPicker
+                    alwaysOpen
+                    pickedPatientId={patient ? (patient as Patient).id : null}
+                    onPick={(ip) => {
+                      // The picker already carries the patient, so this is one
+                      // click from ward to basket - no lookup, no typing.
+                      setPatient(ip.patient);
+                      setQ(""); setResults([]);
+                    }}
+                  />
+                ) : patientTab === "search" ? (
                   <>
                     <div className="flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-3.5 py-2.5">
                       <Icon name="search" size={16} />

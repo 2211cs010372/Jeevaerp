@@ -9,7 +9,9 @@ export const dynamic = "force-dynamic";
 export const GET = handler(async (req) => {
   // The insurance desk reads this list to find the stays it has to raise claims
   // for. Read-only for them: admitting is still reception's job below.
-  await requireRole(req, "RECEPTIONIST", "ADMIN", "DOCTOR", "INSURANCE_DESK");
+  // PHARMACIST reads it too: the dispense screen picks an inpatient off this
+  // list rather than making the counter type a name it can already see.
+  await requireRole(req, "RECEPTIONIST", "ADMIN", "DOCTOR", "INSURANCE_DESK", "PHARMACIST");
   return NextResponse.json({ inpatients: await currentInpatients() });
 });
 

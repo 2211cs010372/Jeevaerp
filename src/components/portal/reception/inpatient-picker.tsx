@@ -47,12 +47,22 @@ function BedMark() {
 export function InpatientPicker({
   onPick,
   pickedPatientId,
+  /**
+   * Render open, with no header to collapse it.
+   *
+   * On reception's screens this is one accordion among several and starts shut -
+   * most lab orders are for outpatients. As the body of a tab the user has
+   * already chosen, a collapsed box is a second click to reach the thing they
+   * just asked for.
+   */
+  alwaysOpen = false,
 }: {
   onPick: (ip: Inpatient) => void;
   pickedPatientId?: string | null;
+  alwaysOpen?: boolean;
 }) {
   const [rows, setRows] = useState<Inpatient[] | null>(null);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(alwaysOpen);
 
   useEffect(() => {
     api.get<{ inpatients: Inpatient[] }>("/ipd/admissions")
@@ -60,8 +70,17 @@ export function InpatientPicker({
       .catch(() => setRows([]));
   }, []);
 
-  // Nothing admitted - don't clutter the page with an empty accordion.
-  if (rows !== null && rows.length === 0) return null;
+  // Nothing admitted. As an accordion this renders nothing rather than
+  // cluttering the page - but as a TAB the user has just clicked, silence looks
+  // like a broken screen, so it says so instead.
+  if (rows !== null && rows.length === 0) {
+    if (!alwaysOpen) return null;
+    return (
+      <p className="py-8 text-center text-[13px] text-[var(--p-muted)]">
+        Nobody is admitted right now.
+      </p>
+    );
+  }
 
   const wards = new Map<string, Inpatient[]>();
   for (const r of rows ?? []) {
@@ -70,7 +89,10 @@ export function InpatientPicker({
   }
 
   return (
-    <div className="mb-4 overflow-hidden rounded-xl border border-[var(--p-blue)]/25 bg-[var(--p-blue-soft)]">
+    <div className={alwaysOpen
+      ? "overflow-hidden"
+      : "mb-4 overflow-hidden rounded-xl border border-[var(--p-blue)]/25 bg-[var(--p-blue-soft)]"}>
+      {!alwaysOpen && (
       <button onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-[var(--p-blue)]/10">
         <span className="flex items-center gap-2.5">
@@ -92,9 +114,12 @@ export function InpatientPicker({
           <Icon name="chevron" size={15} />
         </span>
       </button>
+      )}
 
       {open && rows !== null && (
-        <div className="space-y-4 border-t border-[var(--p-blue)]/20 bg-[var(--p-surface)] p-4">
+        <div className={alwaysOpen
+          ? "space-y-4"
+          : "space-y-4 border-t border-[var(--p-blue)]/20 bg-[var(--p-surface)] p-4"}>
           {[...wards.entries()].map(([ward, list]) => (
             <div key={ward}>
               <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--p-muted)]">{ward}</p>
