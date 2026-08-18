@@ -3,7 +3,7 @@ import { ApiError } from "@/lib/api";
 import { nextId } from "@/lib/ids";
 import { logAudit } from "./audit.service";
 import { splitInvoice } from "@/lib/insurance-split";
-import { createInvoice, updateInvoice, recordPayment, getInvoice, advancePaymentRef, type PaymentModeT } from "./billing.service";
+import { createInvoice, updateInvoice, recordPayment, getInvoice, advancePaymentRef, syncStayCoverage, type PaymentModeT } from "./billing.service";
 import { notifyAdmitted, notifyDischarged, notifyAdvanceReceived } from "./notify.service";
 // One rounding definition across the whole system - money must not be
 // rounded two different ways in two different files.
@@ -15,6 +15,7 @@ import { mergeAdvice } from "@/lib/advised-lab";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, PaymentMode, ChargeCategory } from "@prisma/client";
 import { bedLabel } from "@/lib/beds";
+import { perUnitPrice } from "@/lib/pharmacy/pack";
 import {
   CLOSED_STATUS_LIST, isClosed, OUTCOME_LABEL,
   type AdmissionStatusValue, type DischargeOutcome,
@@ -246,14 +247,18 @@ export async function admitPatient(
     const ipNumber = await nextId("IP", { tx });
     const nn = (v?: string) => (v && v.trim() ? v.trim() : null);
 
-    // An insurance stay with no insurer and no policy number is not an insurance
-    // stay - it is a stay the desk half-flagged. The insurance room would see a
-    // row it cannot act on, and would have to ring the ward to find out who the
-    // insurer even is. Refuse it here, while the family is still at the desk with
-    // the card in their hand.
+    // An insurance stay with no insurer is not an insurance stay - it is a stay
+    // the desk half-flagged. The insurance room would see a row it cannot act on,
+    // and would have to ring the ward to find out who the insurer even is.
+    //
+    // THE POLICY NUMBER IS NOT REQUIRED HERE, deliberately. It used to be, and it
+    // blocked admissions at the worst possible moment: a patient is being wheeled
+    // in and the card is in a bag at home. The insurance desk asks the family for
+    // the policy and member number when it works the claim, which is the same
+    // conversation it was always going to have.
     const payerType = input.payerType ?? "SELF_PAY";
-    if (payerType === "INSURANCE" && (!nn(input.insurer) || !nn(input.policyNo))) {
-      throw new ApiError(400, "An insurance admission needs the insurer and the policy number");
+    if (payerType === "INSURANCE" && !nn(input.insurer)) {
+      throw new ApiError(400, "An insurance admission needs the insurer");
     }
 
     const adm = await tx.admission.create({
@@ -332,6 +337,48 @@ export async function admitPatient(
     // admission anyway - an admission that committed without its claim would be
     // exactly the silent gap this removes.
     if (payerType === "INSURANCE") {
+      // ── A PRE-AUTH RAISED BEFORE THE PATIENT ARRIVED ──
+      //
+      // A planned surgery is authorised days ahead, while there is no admission
+      // to attach the claim to - so that claim carries admissionId = null. This
+      // block used to ignore it and open a SECOND, blank draft, which broke the
+      // planned path in two places at once: the desk saw two claims for one stay
+      // and could not tell which was real, and - the expensive one - actOnClaim
+      // only spreads an approval across bills when the claim HAS an admission,
+      // so the Rs 60,000 the insurer had already agreed to never reached a
+      // single invoice. The stay read as wholly the family's.
+      //
+      // So an open, unattached claim for this patient is ADOPTED by the stay
+      // instead. Newest first: if a desk raised two, the live one is the one
+      // they just made.
+      const existing = await tx.insuranceClaim.findFirst({
+        where: {
+          patientId: patient.id,
+          admissionId: null,
+          status: { notIn: ["SETTLED", "REJECTED", "CLOSED"] },
+        },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, claimNo: true, status: true },
+      });
+
+      if (existing) {
+        await tx.insuranceClaim.update({
+          where: { id: existing.id },
+          data: { admissionId: adm.id },
+        });
+        await tx.claimEvent.create({
+          data: {
+            claimId: existing.id,
+            kind: "NOTE",
+            detail: `Attached to admission ${ipNumber} - the pre-authorisation was raised before the patient was admitted`,
+            byId: actor.id,
+          },
+        });
+        // An approval that predates the stay has never been spread over a bill.
+        // There are none yet either, but each one raised from here on re-runs
+        // this, so the cover lands as the bills appear.
+        await syncStayCoverage(tx, adm.id);
+      } else {
       const claimNo = await nextId("CLAIM", { tx });
       await tx.insuranceClaim.create({
         data: {
@@ -339,7 +386,13 @@ export async function admitPatient(
           patientId: patient.id,
           admissionId: adm.id,
           insurer: nn(input.insurer)!,
-          policyNo: nn(input.policyNo)!,
+          // EMPTY, NOT ABSENT. The column is NOT NULL and the desk is no longer
+          // asked for a policy number at admission, so the draft claim opens
+          // without one and the insurance room fills it in with the amount. An
+          // empty string says "nobody has given us this yet"; inventing a
+          // placeholder like "PENDING" would be a policy number that reads like
+          // a real one on a document that goes to a TPA.
+          policyNo: nn(input.policyNo) ?? "",
           memberId: nn(input.memberId),
           type: "CASHLESS",
           stage: "PRE_AUTH",
@@ -352,12 +405,13 @@ export async function admitPatient(
           events: {
             create: {
               kind: "CREATED",
-              detail: `Opened automatically on admission (${ipNumber}) - needs an amount before it can be submitted`,
+              detail: `Opened automatically on admission (${ipNumber}) - needs the policy number and an amount before it can be submitted`,
               byId: actor.id,
             },
           },
         },
       });
+      }
     }
 
     await logAudit(actor, {
@@ -712,6 +766,69 @@ async function withInvoiceInStep<T>(
  * place they can all be seen together, and the only chance to collect before
  * the patient walks out of the building.
  */
+/** One counter bill raised against a stay, and where it stands. */
+export interface CounterBillDTO {
+  id: string; receiptNo: string; source: string;
+  total: string; paid: string; due: string;
+  /** PAID · PART · DUE - what the running tab shows against the row. */
+  status: BillPaidStatus;
+  /** SELF_PAY or INSURANCE, so the tab can say "on the claim". */
+  payer: string;
+  createdAt: string;
+}
+
+/**
+ * EVERY pharmacy/lab/other bill on a stay - paid ones included.
+ *
+ * The running tab used to be fed by `outstandingForAdmission` alone, which
+ * drops a bill the moment its balance reaches zero. That was survivable while
+ * a ward dispense could not be paid for at the pharmacy window, because nothing
+ * ever WAS paid before discharge. Now that the counter can take the money, a
+ * medicine settled at 11am vanished off the ward's tab by 11:01 - the one screen
+ * that is supposed to show what the stay has cost quietly stopped showing it,
+ * and only the patient's invoice history remembered.
+ *
+ * So the tab reads from here and shows the lot, each marked with its status.
+ * `outstandingForAdmission` still filters this down to what is actually owed,
+ * because a discharge blocker must only ever count real debt.
+ */
+export async function counterBillsForAdmission(admissionId: string): Promise<CounterBillDTO[]> {
+  const rows = await prisma.invoice.findMany({
+    where: {
+      admissionId,
+      source: { in: ["PHARMACY", "LAB", "OTHER"] },
+      status: { not: "CANCELLED" },
+    },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true, receiptNo: true, source: true, createdAt: true, payer: true,
+      totalAmount: true, insuranceCoveredAmount: true,
+      payments: { select: { mode: true, amount: true } },
+      refunds: { select: { amount: true } },
+    },
+  });
+
+  return rows.map((i) => {
+    // The PATIENT's share, same split the dues screens use - an insurer's part
+    // of a bill is not a balance the ward should show as owed by the family.
+    const split = splitInvoice({
+      totalAmount: Number(i.totalAmount.toString()),
+      insuranceCoveredAmount: Number(i.insuranceCoveredAmount.toString()),
+      payments: i.payments.map((x) => ({ mode: String(x.mode), amount: Number(x.amount.toString()) })),
+      refunds: i.refunds.map((x) => ({ amount: Number(x.amount.toString()) })),
+    });
+    const due = split.patientBalance;
+    const paid = split.patientPaid;
+    const status: BillPaidStatus = due <= 0.01 ? "PAID" : paid > 0.01 ? "PART" : "DUE";
+    return {
+      id: i.id, receiptNo: i.receiptNo, source: i.source,
+      total: split.total.toFixed(2), paid: paid.toFixed(2), due: due.toFixed(2),
+      status, payer: String(i.payer),
+      createdAt: i.createdAt.toISOString(),
+    };
+  });
+}
+
 export async function outstandingForAdmission(admissionId: string): Promise<{
   bills: { id: string; receiptNo: string; source: string; total: string; paid: string; due: string; createdAt: string }[];
   totalDue: string;
@@ -1729,6 +1846,7 @@ export async function dischargeSummaryData(admissionId: string) {
       prescriptionUploads: {
         orderBy: { createdAt: "asc" },
         select: {
+          title: true,
           diagnosis: true, advice: true, nextVisit: true,
           advisedLabs: { select: { testName: true, labTestId: true, declinedAt: true }, orderBy: { createdAt: "asc" } },
           items: { select: { medicineName: true, qty: true, dosage: true }, orderBy: { id: "asc" } },
@@ -1771,6 +1889,7 @@ export async function dischargeSummaryData(admissionId: string) {
   // ── Clinical narrative, derived (never typed twice) ──
   type AdvisedRow = { testName: string; labTestId: string | null; declinedAt: Date | null };
   type Rx = {
+    title: string | null;
     diagnosis: string | null; advice: string | null; nextVisit: string | null;
     advisedLabs: AdvisedRow[];
     items: { medicineName: string; qty: number; dosage: string | null }[];
@@ -1788,9 +1907,24 @@ export async function dischargeSummaryData(admissionId: string) {
   // test advised on several days of the stay into one honest line.
   const labsAdvised = mergeAdvice(rxs.flatMap((r) => r.advisedLabs));
 
-  // Medicines on discharge - one row per drug, dosage from its latest mention.
+  // ── MEDICINES ADVISED ON DISCHARGE - THE LAST PRESCRIPTION, NOT THE STAY ──
+  //
+  // This used to fold in every prescription written during the admission and SUM
+  // the quantities, under a heading that said "Medications Advised". So a stay
+  // where an antibiotic was given on day one and stopped on day two printed it
+  // as something to take home, at six days' quantity, next to the drug the
+  // patient is actually meant to continue. A summary is read as instructions.
+  //
+  // The discharge advice is the LAST prescription the doctor wrote. Earlier ones
+  // are what happened during the stay - that is Course in Hospital's job, and
+  // the pharmacy bill's.
+  // The doctor's own typed discharge advice wins over anything inferred. Only
+  // when nobody has filled it in does the last prescription of the stay stand in
+  // - which is a guess, and a guess should never override a written instruction.
+  const typed = rxs.filter((r) => r.title === DISCHARGE_RX_TITLE);
+  const lastRx = typed.length ? typed : rxs.length ? [rxs[rxs.length - 1]] : [];
   const medMap = new Map<string, { name: string; qty: number; dosage: string | null }>();
-  for (const r of rxs) {
+  for (const r of lastRx) {
     for (const it of r.items) {
       const key = it.medicineName.trim().toLowerCase();
       if (!key) continue;
@@ -1942,6 +2076,10 @@ export async function admissionSheet(admissionId: string): Promise<{
    *  leaving money uncollected. */
   outstandingBills: { id: string; receiptNo: string; source: string; total: string; paid: string; due: string; createdAt: string }[];
   outstandingTotal: string;
+  /** THE SAME BILLS, PLUS THE ONES ALREADY PAID. What the running tab lists -
+   *  see counterBillsForAdmission for why a settled bill must not disappear. */
+  counterBills: CounterBillDTO[];
+  counterPaidTotal: string;
   /**
    * PHARMACY AND LAB ON A CASHLESS STAY - counted, not chased.
    *
@@ -2055,6 +2193,8 @@ export async function admissionSheet(admissionId: string): Promise<{
 
   // What the pharmacy and the lab are still owed for this stay.
   const outstanding = await outstandingForAdmission(admissionId);
+  // Every counter bill on the stay, paid or not - what the running tab lists.
+  const counterBills = await counterBillsForAdmission(admissionId);
 
   const charges: ChargeDTO[] = (a.charges as ChargeRow[]).map((c) => {
     const amount = c.qty * Number(c.unitPrice.toString());
@@ -2129,6 +2269,9 @@ export async function admissionSheet(admissionId: string): Promise<{
     advances,
     outstandingBills: outstanding.bills,
     outstandingTotal: outstanding.totalDue,
+    counterBills,
+    /** What has already been collected at the pharmacy and lab windows. */
+    counterPaidTotal: counterBills.reduce((s, b) => round2(s + Number(b.paid)), 0).toFixed(2),
     claimBills,
     claimBillsTotal: claimBillsTotal.toFixed(2),
     claimTotal: round2(grandTotal + claimBillsTotal).toFixed(2),
@@ -2549,6 +2692,9 @@ export async function transferTargets(admissionId: string): Promise<{
 //      number rather than a blank - a pre-authorisation goes out mid-stay and it
 //      still has to be quotable.
 
+/** Where one line's own bill stands. Drafts have no bill yet and carry none. */
+export type BillPaidStatus = "PAID" | "PART" | "DUE";
+
 export interface BillLineDTO {
   /** Investigations and dispensed items carry one; ward and service lines do not. */
   date: string | null;
@@ -2560,14 +2706,80 @@ export interface BillLineDTO {
   rate: string;
   qty: number;
   amount: string;
+  /**
+   * NOTHING HAS BILLED THIS YET.
+   *
+   * A stay accrues faster than its counters invoice it: the ward sends a
+   * prescription down at 11 and the pharmacy raises the bill at 4, and a family
+   * discharged at 1 used to be handed a sheet with none of it on. The item was
+   * not disputed, not waived and not free - it was simply invisible, and the
+   * hospital found out at the month end.
+   *
+   * So an un-invoiced item is printed as a line like any other and flagged here.
+   * The sheet marks it, and `priced` below says whether its amount is real.
+   */
+  draft?: boolean;
+  /**
+   * For a line folded in off another counter's bill: where THAT bill stands.
+   *
+   * The stay sheet lists every item once whether or not it has been paid for,
+   * so without this a medicine settled in cash at the window and one still owed
+   * print identically. The desk needs to tell them apart at a glance, and the
+   * family is entitled to see that what they already paid is on the sheet and
+   * has been credited rather than quietly dropped.
+   *
+   * Absent on ward charges (they have no separate bill) and on drafts (nothing
+   * has billed them at all).
+   */
+  paidStatus?: BillPaidStatus;
+  /**
+   * False when the line is a draft whose PRICE is not knowable yet.
+   *
+   * A prescribed medicine has no price until a pharmacist picks the batch it is
+   * dispensed from - MRP lives on StockBatch, not on Medicine, and two batches
+   * of the same strip can carry two prices. Such a line prints with its quantity
+   * and a dash where the amount goes, and adds nothing to any total. Inventing a
+   * figure would put a number on a bill that nobody has agreed to charge.
+   */
+  priced?: boolean;
 }
 
 export interface BillGroupDTO {
   title: string;
-  /** Second-level heading, as on the paper bill ("LABORATORY" under INVESTIGATIONS). */
-  subtitle: string | null;
   lines: BillLineDTO[];
   total: string;
+  /**
+   * Break this section into date sub-headings.
+   *
+   * Investigations and pharmacy are read AS A COURSE - an assessor checking
+   * whether a CRP was repeated, or a family asking what was given on the third
+   * day, is looking for a date first and an item second. Ward and consultation
+   * lines are not: they are one rate applied over the stay, and sub-heading
+   * them by date would put a heading above every single row.
+   */
+  byDate: boolean;
+}
+
+/**
+ * One of the OTHER counters' invoices whose lines appear on this bill.
+ *
+ * The stay sheet lists what was dispensed and what it cost, but a line on it is
+ * not the document that billed it - the pharmacy's own invoice is. Naming those
+ * invoices by number is what lets a family or an assessor ask for one, and what
+ * makes "print all the bills" a request anybody can act on.
+ */
+export interface BillSourceDTO {
+  receiptNo: string; source: string; date: string;
+  total: string; paid: string; status: BillPaidStatus;
+}
+
+/** One row of the bill's Payment Details table. */
+export interface BillPaymentDTO {
+  /** Deposit receipt, or the invoice the money landed against. */
+  invoiceNo: string;
+  date: string;
+  mode: string;
+  amount: string;
 }
 
 export interface DetailedBillDTO {
@@ -2583,6 +2795,13 @@ export interface DetailedBillDTO {
   admission: {
     ipNumber: string; doctor: string; department: string;
     ward: string; bedNo: string; admittedAt: string; dischargedAt: string | null;
+    /** "2ND FLOOR/PICU/203" - floor, ward and bed as one readable string. */
+    roomInfo: string;
+    /** DISCHARGE · LAMA · EXPIRED … - how the stay ended, printed as stated. */
+    dischargeType: string;
+    /** The consultant's letters, as they appear under their name. */
+    qualification: string | null;
+    specialization: string | null;
   };
   /** "Source Type" on the paper bill - INSURANCE or SELF. */
   sourceType: string;
@@ -2595,7 +2814,51 @@ export interface DetailedBillDTO {
   netBill: string;
   advance: string;
   netPayable: string;
+  /**
+   * How much of `gross` comes from lines nothing has invoiced yet.
+   *
+   * INCLUDED IN THE TOTALS, not held apart. A bill that quietly leaves out what
+   * the pharmacy has not got round to billing understates what the stay cost,
+   * and the desk collects the smaller number. So the draft lines count - and
+   * this is what lets the sheet say how much of the figure is still provisional
+   * rather than presenting it as settled fact.
+   */
+  draftTotal: string;
+  /** Lines with no price yet (a prescribed medicine with no batch). */
+  draftUnpricedCount: number;
+  /**
+   * Money ALREADY TAKEN at the pharmacy and lab windows on bills that are
+   * listed above. Subtracted from the net, exactly like an advance is - it is
+   * the same thing: the stay's money, collected before the stay was billed.
+   */
+  counterPaid: string;
+  /**
+   * Every rupee received against this stay, itemised - deposits taken at the
+   * desk and payments made on its counter bills, oldest first.
+   *
+   * The totals block can only say how much came in. This says WHEN, in WHAT,
+   * and against which receipt, which is the difference between a bill a family
+   * can check and one they have to take on trust.
+   */
+  payments: BillPaymentDTO[];
+  /** The other counters' bills folded in above, by invoice number. */
+  sourceBills: BillSourceDTO[];
 }
+
+/**
+ * JUST THE MEDICINE'S NAME, for the stay bill.
+ *
+ * A pharmacy line's description carries its whole dispensing story:
+ * "CREMAFFIN syP 225Ml (unit) · Batch 76250", "Dolo 650 Tablet · 20 tablets
+ * @ ₹2 (pack of 10)". All of it is right on the PHARMACY'S OWN invoice, which
+ * is the document somebody checking a batch or a pack price actually opens.
+ *
+ * Repeated on the stay bill it is noise in a narrow column - and worse, the
+ * batch number then printed TWICE on the same row, once inside the description
+ * and once in the batch column beside it. The stay bill answers "what was
+ * dispensed and what did it cost"; the name and the money do that.
+ */
+const medicineNameOnly = (description: string) => description.split(" · ")[0].trim();
 
 /** Which printed heading each running-tab category is filed under. */
 const BILL_SECTION: Record<string, string> = {
@@ -2616,8 +2879,10 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
       id: true, ipNumber: true, status: true, admittedAt: true, dischargedAt: true,
       wardNameAtAdmit: true, dailyChargeAtAdmit: true, nursePerDay: true,
       payerType: true, insurer: true, policyNo: true,
-      bed: { select: { bedNo: true } },
-      doctor: { select: { name: true, department: true } },
+      // Floor and ward category build the "Room Info" line the bill prints as
+      // 2ND FLOOR/PICU3/203 - one string the desk reads back to a family.
+      bed: { select: { bedNo: true, ward: { select: { name: true, floor: true, category: true } } } },
+      doctor: { select: { name: true, department: true, specialization: true, qualification: true } },
       patient: { select: { fullName: true, displayId: true, age: true, gender: true, phone: true } },
       charges: {
         orderBy: { createdAt: "asc" },
@@ -2635,13 +2900,32 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
         orderBy: { createdAt: "asc" },
         select: { testName: true, priceAtOrder: true, createdAt: true, orderGroupId: true, catalog: { select: { code: true } } },
       },
-      advances: { select: { amount: true } },
+      // Each deposit is a ROW in the bill's Payment Details table, not just a
+      // number in the totals - a family that paid twice expects to see twice.
+      advances: { select: { id: true, receiptNo: true, amount: true, mode: true, createdAt: true } },
+      // ── MEDICINES THE WARD ASKED FOR THAT NOBODY HAS BILLED ──
+      // Only prescriptions with no invoice behind them: once the pharmacy bills
+      // one, it arrives below as an invoice line and counting it from both
+      // sources would charge the family twice for the same strip.
+      prescriptionUploads: {
+        where: { invoices: { none: {} } },
+        orderBy: { createdAt: "asc" },
+        select: {
+          createdAt: true,
+          items: { select: { medicineName: true, qty: true, dosage: true, medicineId: true } },
+        },
+      },
       invoices: {
         where: { status: { not: "CANCELLED" } },
         orderBy: { createdAt: "desc" },
         select: {
           receiptNo: true, source: true, createdAt: true, payer: true,
           discountAmount: true, cgstAmount: true, sgstAmount: true,
+          // Needed to know whether a folded-in counter bill has ALREADY been
+          // paid. Without this the sheet adds a paid pharmacy bill into its
+          // gross and then asks the family for it a second time.
+          totalAmount: true,
+          payments: { select: { amount: true, mode: true, createdAt: true } },
           items: {
             select: {
               description: true, hsnSac: true, qty: true, unitPrice: true, amount: true,
@@ -2660,9 +2944,9 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   const m2 = (n: number) => round2(n).toFixed(2);
 
   const groups: BillGroupDTO[] = [];
-  const push = (title: string, subtitle: string | null, lines: BillLineDTO[]) => {
+  const push = (title: string, lines: BillLineDTO[], byDate = false) => {
     if (!lines.length) return;
-    groups.push({ title, subtitle, lines, total: m2(lines.reduce((s, l) => round2(s + Number(l.amount)), 0)) });
+    groups.push({ title, lines, byDate, total: m2(lines.reduce((s, l) => round2(s + Number(l.amount)), 0)) });
   };
 
   // ── WARD ── one line per LEG, so a General to ICU transfer prints as two rows
@@ -2673,19 +2957,31 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
         const d = stayDays(st.fromDate, st.toDate ?? end);
         const rate = num(st.dailyCharge);
         return {
-          date: null, issueNo: null, code: null,
+          // THE DAY THE PATIENT MOVED INTO THIS BED, not null.
+          //
+          // Every other hospital-services line carries its date, and a bed leg
+          // without one printed as the only undated row in the section - on a
+          // stay with a transfer, the two ward rows then gave no way to tell
+          // which nights were which. The leg's own start date says it.
+          date: st.fromDate.toISOString(),
+          issueNo: null, code: null,
           description: `${st.wardName}${st.bed?.bedNo ? ` - ${st.bed.bedNo}` : ""}`,
           batchNo: null, expiry: null,
           rate: m2(rate), qty: d, amount: m2(rate * d),
         };
       })
     : [{
-        date: null, issueNo: null, code: null,
+        // No bed-stay rows to date it from, so the stay's own start is the
+        // honest answer - that is the day the bed began to be charged.
+        date: a.admittedAt.toISOString(),
+        issueNo: null, code: null,
         description: `${a.wardNameAtAdmit}${a.bed?.bedNo ? ` - ${a.bed.bedNo}` : ""}`,
         batchNo: null, expiry: null,
         rate: m2(num(a.dailyChargeAtAdmit)), qty: days, amount: m2(num(a.dailyChargeAtAdmit) * days),
       }];
-  push("WARD CHARGES", null, wardLines);
+  // NOT pushed yet - the bed, the nursing and the ward's services print as one
+  // HOSPITAL SERVICES block, which is how the bill this format copies reads.
+  // They are assembled together below, once the services are known.
 
   // ── The running tab, filed under the heading each category belongs to ──
   const bySection = new Map<string, BillLineDTO[]>();
@@ -2704,34 +3000,55 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
     ]);
   }
 
-  // ── THE OTHER COUNTERS' BILLS, ON AN INSURANCE CLAIM ──
+  // ── THE OTHER COUNTERS' BILLS, ON EVERY STAY ──
   //
   // Pharmacy and lab raise their own invoices against the stay and settle at
-  // their own counters. That is right for a self-paying family - three counters,
-  // three bills, each paid where it was incurred - and it is left exactly as it
-  // was for them.
+  // their own counters. This used to fold them in for a CASHLESS CLAIM only, on
+  // the reasoning that a self-paying family pays three counters and gets three
+  // bills, so the stay sheet did not need to repeat them.
   //
-  // It is wrong for a cashless claim. The insurer settles ONE document for the
-  // admission; medicines and investigations billed on separate sheets simply do
-  // not reach it, so the hospital treats the patient and then never asks anyone
-  // for the cost of the drugs. So on an insurance stay those lines are folded in
-  // here, under their own headings, with the subtotals an assessor reads.
+  // That reasoning was wrong in the one place it mattered. The family asks the
+  // discharge desk "what do we owe", and the desk was answering off a sheet that
+  // showed the bed and the nursing and nothing else - no medicines, no
+  // investigations. The pharmacy bill was real and payable and simply not on the
+  // document anyone was reading. So both counters' lines are folded in for a
+  // self-paying stay too, and the sheet is now the whole stay rather than the
+  // part of it the ward happened to raise.
   //
   // The separate invoices still EXIST and are untouched - this changes what the
-  // claim bill shows, not what was billed.
-  const isInsurance = a.payerType === "INSURANCE";
-  if (isInsurance) {
+  // stay sheet SHOWS, not what was billed or where it was paid.
+  //
+  // AND MONEY ALREADY TAKEN AGAINST THEM IS SUBTRACTED AT THE BOTTOM.
+  //
+  // Folding a counter bill into the gross without accounting for what was paid
+  // on it charges the family twice: once in cash at the pharmacy window, and
+  // again in the Net Payable at discharge. `counterPaid` below is that money,
+  // and every line carries the status of the bill it came off, so the sheet
+  // reads as a running account - every item listed once, each marked paid or
+  // due, and only the difference asked for.
+  let counterPaid = 0;
+  const sourceBills: BillSourceDTO[] = [];
+  {
     const SECTION_OF: Record<string, string> = {
       PHARMACY: "PHARMACY", LAB: "INVESTIGATIONS", OTHER: "SERVICES", CONSULTATION: "SERVICES",
     };
     for (const inv of a.invoices) {
       // The IPD invoice is this bill, not an input to it.
       if (inv.source === "IPD") continue;
-      // Only what is actually going to the insurer. A pharmacy bill the family
-      // already paid in cash at the window stays SELF_PAY (see the backfill),
-      // and putting it on the claim would ask the insurer for money the hospital
-      // has already taken.
-      if (inv.payer !== "INSURANCE") continue;
+
+      const paid = inv.payments.reduce((s, p) => round2(s + num(p.amount)), 0);
+      const total = num(inv.totalAmount);
+      counterPaid = round2(counterPaid + paid);
+      // PART only where something was paid AND something is still owed - a
+      // rounding-sized remainder must not print as a debt.
+      const status: BillPaidStatus =
+        paid >= total - 0.01 ? "PAID" : paid > 0.01 ? "PART" : "DUE";
+      sourceBills.push({
+        receiptNo: inv.receiptNo, source: inv.source,
+        date: inv.createdAt.toISOString(),
+        total: m2(total), paid: m2(paid), status,
+      });
+
       const section = SECTION_OF[inv.source] ?? "SERVICES";
       for (const it of inv.items) {
         bySection.set(section, [
@@ -2742,7 +3059,9 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
             // querying one line can be pointed at the document it came from.
             issueNo: inv.receiptNo,
             code: it.hsnSac,
-            description: it.description,
+            // Trimmed to the name on a pharmacy line only. A lab or service
+            // description is already just what it is and has no tail to lose.
+            description: section === "PHARMACY" ? medicineNameOnly(it.description) : it.description,
             batchNo: it.batch?.batchNo ?? null,
             // MM/YYYY - how an expiry is printed on a strip and how an assessor
             // checking a pharmacy line expects to read it. A full timestamp in a
@@ -2751,30 +3070,45 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
               ? `${String(it.batch.expiryDate.getMonth() + 1).padStart(2, "0")}/${it.batch.expiryDate.getFullYear()}`
               : null,
             rate: m2(num(it.unitPrice)), qty: it.qty, amount: m2(num(it.amount)),
+            paidStatus: status,
           },
         ]);
       }
     }
   }
 
-  push("DOCTOR VISITING CHARGES", null, bySection.get("DOCTOR VISITING CHARGES") ?? []);
-
+  // ── HOSPITAL SERVICES ── the bed, the nursing and everything the ward booked
+  // against the stay, under one heading with one subtotal. Room rent, PICU,
+  // oxygen, a syringe pump and the MRD fee are all "what the hospital did",
+  // and a policy is read against that subtotal as a whole.
+  //
   // Nursing care is per-day and derived rather than stored - the same figure the
   // ward sheet and the discharge bill have always shown, at this stay's own rate.
   const nurseRate = nursePerDayOf(a);
-  push("SERVICES", "OTHER SERVICES", [
-    ...(bySection.get("SERVICES") ?? []),
+  push("HOSPITAL SERVICES", [
+    ...wardLines,
     {
-      date: null, issueNo: null, code: null,
+      // Nursing accrues from the moment the patient is in a bed, so the stay's
+      // start dates it - the same day the first bed line carries.
+      date: a.admittedAt.toISOString(),
+      issueNo: null, code: null,
       description: "Nursing Charges",
       batchNo: null, expiry: null,
       rate: m2(nurseRate), qty: days, amount: m2(nurseRate * days),
     },
+    ...(bySection.get("SERVICES") ?? []),
   ]);
+
+  push("CONSULTATION CHARGES", bySection.get("DOCTOR VISITING CHARGES") ?? []);
 
   // ── Investigations ── the lab's own rows plus anything the ward booked as an
   // investigation on the tab. The order id doubles as the issue number, so one
   // sample reads as one issue exactly as the lab raised it.
+  //
+  // Every row here is a test NO invoice has billed (see the query filter), so
+  // they are all drafts. They are priced, though - a lab test's price is fixed
+  // when it is ordered and snapshotted onto the row, so the amount is the real
+  // one and not a guess.
   const labLines: BillLineDTO[] = a.labTests.map((t) => ({
     date: t.createdAt.toISOString(),
     issueNo: t.orderGroupId ? t.orderGroupId.slice(-8).toUpperCase() : null,
@@ -2782,6 +3116,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
     description: t.testName,
     batchNo: null, expiry: null,
     rate: m2(num(t.priceAtOrder)), qty: 1, amount: m2(num(t.priceAtOrder)),
+    draft: true, priced: true,
   }));
   // The invoice line wins over the raw test where both describe the same thing.
   //
@@ -2794,12 +3129,89 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   const invoicedInvestigations = new Set(
     (bySection.get("INVESTIGATIONS") ?? []).map((l) => l.description.trim().toLowerCase())
   );
-  push("INVESTIGATIONS", "LABORATORY", [
+  push("LAB INVESTIGATION CHARGES", [
     ...labLines.filter((l) => !invoicedInvestigations.has(l.description.trim().toLowerCase())),
     ...(bySection.get("INVESTIGATIONS") ?? []),
-  ]);
+  ], true);
 
-  push("PHARMACY", null, bySection.get("PHARMACY") ?? []);
+  // ── MEDICINES ORDERED BUT NOT YET BILLED ──
+  //
+  // A ward prescription that the pharmacy has not invoiced. It is the commonest
+  // gap on a discharge bill, because the prescription is written on the ward and
+  // the bill is raised at a counter downstairs - the patient can be discharged
+  // in between.
+  //
+  // PRICED ONLY WHERE A PRICE HONESTLY EXISTS. MRP lives on StockBatch, not on
+  // Medicine, because two batches of the same strip can carry two prices - so an
+  // item nobody has dispensed yet has no price at all. Where the prescription
+  // names a medicine in the master, the batch the pharmacy would dispense NEXT
+  // prices the line; where it does not (reception transcribed handwriting that
+  // matches nothing in stock) the line prints with its quantity and no amount,
+  // and contributes nothing to any total.
+  //
+  // TWO THINGS HERE MUST MATCH THE PHARMACY COUNTER EXACTLY, because this figure
+  // now counts towards the bill total:
+  //
+  //   FEFO, not newest. The counter dispenses the earliest expiry with stock on
+  //   it, so that is the batch whose price the family will actually be charged.
+  //   Pricing off the newest batch quotes one figure and bills another.
+  //
+  //   PER UNIT, not per pack. StockBatch.mrp is the price of the whole strip as
+  //   printed on it; a prescription is written in tablets. Using the pack price
+  //   as the tablet price is the 15x overcharge perUnitPrice exists to prevent -
+  //   see the note on pharmacy.service's unitMrp.
+  const unbilledItems = a.prescriptionUploads.flatMap((u) =>
+    u.items.map((it) => ({ ...it, at: u.createdAt }))
+  );
+  const medIds = [...new Set(unbilledItems.map((i) => i.medicineId).filter(Boolean) as string[])];
+  const unitPriceOf = new Map<string, number>();
+  if (medIds.length) {
+    const batches = await prisma.stockBatch.findMany({
+      where: { medicineId: { in: medIds }, quantity: { gt: 0 } },
+      orderBy: { expiryDate: "asc" },
+      select: { medicineId: true, mrp: true, packSize: true },
+    });
+    // Ordered earliest-expiry-first, so the FIRST row seen for a medicine is the
+    // one FEFO would pick and later batches must not overwrite it.
+    for (const b of batches) {
+      if (!unitPriceOf.has(b.medicineId)) {
+        unitPriceOf.set(b.medicineId, perUnitPrice(num(b.mrp), b.packSize));
+      }
+    }
+  }
+
+  // The invoice wins over the prescription where both name the same medicine.
+  //
+  // `prescriptionUploadId` normally ties them together and the query above
+  // already drops any prescription the pharmacy has billed. But a counter that
+  // bills a ward patient WITHOUT picking up the prescription - a walk-in-style
+  // sale keyed straight against the stay - leaves the link null, and that strip
+  // would then appear twice: once as a billed invoice line and once as a draft.
+  // On a bill whose drafts count towards the total, that is money charged twice.
+  // Same belt as the investigations above, and for the same reason.
+  const invoicedMedicines = new Set(
+    (bySection.get("PHARMACY") ?? []).map((l) => l.description.trim().toLowerCase())
+  );
+  const draftMedLines: BillLineDTO[] = unbilledItems
+    .filter((it) => !invoicedMedicines.has(it.medicineName.trim().toLowerCase()))
+    .map((it) => {
+      const rate = it.medicineId ? unitPriceOf.get(it.medicineId) : undefined;
+      const priced = rate != null && rate > 0;
+      return {
+        date: it.at.toISOString(),
+        issueNo: null, code: null,
+        // Name only, same as the billed pharmacy lines above - the dosage is on
+        // the prescription, and this column is not where anyone reads it.
+        description: it.medicineName,
+        batchNo: null, expiry: null,
+        rate: priced ? m2(rate!) : "0.00",
+        qty: it.qty,
+        amount: priced ? m2(rate! * it.qty) : "0.00",
+        draft: true, priced,
+      };
+    });
+
+  push("PHARMACY CHARGES", [...(bySection.get("PHARMACY") ?? []), ...draftMedLines], true);
 
   // ── The money block ──
   //
@@ -2813,6 +3225,45 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   const gst = round2(num(inv?.cgstAmount) + num(inv?.sgstAmount));
   const netBill = round2(gross - discount + gst);
   const advance = a.advances.reduce((s, x) => round2(s + num(x.amount)), 0);
+
+  // How much of the figure above nobody has invoiced yet, and how many lines
+  // could not be priced at all. The sheet prints both: a total that silently
+  // mixes billed and unbilled money is worse than one that says which is which.
+  const allLines = groups.flatMap((g) => g.lines);
+  const draftTotal = allLines
+    .filter((l) => l.draft)
+    .reduce((s, l) => round2(s + Number(l.amount)), 0);
+  const draftUnpricedCount = allLines.filter((l) => l.draft && !l.priced).length;
+
+  // ── PAYMENT DETAILS ── deposits and counter payments as one chronological
+  // list. Both are money this stay has received; the family does not
+  // distinguish between the two and the bill should not make them.
+  const payments: BillPaymentDTO[] = [
+    ...a.advances.map((x) => ({
+      invoiceNo: x.receiptNo ?? "ADVANCE",
+      date: x.createdAt.toISOString(),
+      mode: String(x.mode),
+      amount: m2(num(x.amount)),
+      at: x.createdAt.getTime(),
+    })),
+    ...a.invoices.flatMap((i) =>
+      i.payments.map((p) => ({
+        invoiceNo: i.receiptNo,
+        date: p.createdAt.toISOString(),
+        mode: String(p.mode),
+        amount: m2(num(p.amount)),
+        at: p.createdAt.getTime(),
+      }))
+    ),
+  ]
+    .sort((x, y) => x.at - y.at)
+    // `at` was only ever a sort key; it is not part of the printed row.
+    .map(({ at: _at, ...row }) => row);
+
+  /** "2ND FLOOR/PICU/203" - blank segments dropped rather than left as //. */
+  const roomInfo = [a.bed?.ward?.floor, a.bed?.ward?.name ?? a.wardNameAtAdmit, a.bed?.bedNo]
+    .filter((x) => x && String(x).trim())
+    .join("/");
 
   return {
     hospital: await prisma.hospitalConfig.findFirst({
@@ -2835,6 +3286,13 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
       bedNo: a.bed?.bedNo ?? "-",
       admittedAt: a.admittedAt.toISOString(),
       dischargedAt: a.dischargedAt?.toISOString() ?? null,
+      roomInfo: roomInfo || a.wardNameAtAdmit,
+      // Printed as the stay actually ended. A LAMA or an EXPIRED discharge is
+      // not "DISCHARGE", and a bill that says otherwise is a false record of a
+      // thing an insurer and a family both remember clearly.
+      dischargeType: a.status,
+      qualification: a.doctor.qualification,
+      specialization: a.doctor.specialization,
     },
     sourceType: a.payerType === "INSURANCE" ? "INSURANCE" : "SELF",
     insurer: a.insurer,
@@ -2845,6 +3303,105 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
     gst: m2(gst),
     netBill: m2(netBill),
     advance: m2(advance),
-    netPayable: m2(Math.max(0, netBill - advance)),
+    // Advance AND counter money both come off. Both are the stay's own money,
+    // already in the drawer; the only difference is which window took it.
+    netPayable: m2(Math.max(0, netBill - advance - counterPaid)),
+    draftTotal: m2(draftTotal),
+    draftUnpricedCount,
+    counterPaid: m2(counterPaid),
+    payments,
+    sourceBills: [...sourceBills].sort((x, y) => x.date.localeCompare(y.date)),
   };
+}
+
+
+/**
+ * THE MEDICINES THE PATIENT GOES HOME ON, typed on the discharge summary.
+ *
+ * WHY THIS IS A PRESCRIPTION AND NOT A NEW TABLE. Discharge advice IS a
+ * prescription - a named drug, a dose and a quantity, written by a doctor for a
+ * patient to take away - and PrescriptionUpload already models exactly that,
+ * with the pharmacy master link that lets it be dispensed in two clicks. Adding
+ * a second, parallel medicine table to a live hospital database so one screen
+ * could have its own copy would have been a schema migration bought for nothing
+ * and two places to look for "what was this patient sent home on".
+ *
+ * It is created UPLOADED, never SENT_TO_PHARMACY, so it does not appear in the
+ * pharmacy queue: writing the advice is not the same as asking anyone to
+ * dispense it. If the family wants it filled here, the desk dispatches it like
+ * any other prescription.
+ *
+ * ONE PER STAY, replaced wholesale on each save. `title` is the marker - a stay
+ * has many prescriptions and only one of them is the discharge advice, and
+ * matching on it is what stops every save leaving another copy behind.
+ */
+export const DISCHARGE_RX_TITLE = "Discharge medication";
+
+export async function setDischargeMedicines(
+  actor: AuthUser,
+  admissionId: string,
+  items: { medicineName: string; qty: number; dosage?: string }[],
+  ctx: { ipAddress?: string; userAgent?: string },
+): Promise<{ count: number }> {
+  const clean = items
+    .map((i) => ({ medicineName: i.medicineName.trim(), qty: Math.max(1, Math.round(i.qty || 1)), dosage: i.dosage?.trim() || null }))
+    .filter((i) => i.medicineName.length > 0);
+
+  const adm = await prisma.admission.findUnique({
+    where: { id: admissionId },
+    select: { id: true, ipNumber: true, patientId: true, doctor: { select: { name: true } } },
+  });
+  if (!adm) throw new ApiError(404, "Admission not found");
+
+  await prisma.$transaction(async (tx) => {
+    const existing = await tx.prescriptionUpload.findFirst({
+      where: { admissionId, title: DISCHARGE_RX_TITLE },
+      select: { id: true },
+    });
+
+    if (existing) {
+      // Replaced, not merged: the doctor is editing one list, and a drug they
+      // deleted must actually disappear from what the patient is handed.
+      await tx.prescriptionUploadItem.deleteMany({ where: { uploadId: existing.id } });
+      if (!clean.length) {
+        await tx.prescriptionUpload.delete({ where: { id: existing.id } });
+        return;
+      }
+      await tx.prescriptionUploadItem.createMany({
+        data: clean.map((i) => ({ uploadId: existing.id, ...i })),
+      });
+      return;
+    }
+
+    if (!clean.length) return;
+    await tx.prescriptionUpload.create({
+      data: {
+        patientId: adm.patientId,
+        admissionId,
+        uploadedById: actor.id,
+        title: DISCHARGE_RX_TITLE,
+        doctorName: adm.doctor?.name ?? null,
+        // UPLOADED, deliberately - see the note above.
+        status: "UPLOADED",
+        items: { create: clean },
+      },
+    });
+  });
+
+  await logAudit(actor, {
+    action: "DISCHARGE_MEDICINES_SET", targetTable: "Admission", targetId: admissionId,
+    meta: { ipNumber: adm.ipNumber, count: clean.length }, ...ctx,
+  });
+  return { count: clean.length };
+}
+
+/** The discharge advice for a stay, for the summary form to load back. */
+export async function getDischargeMedicines(
+  admissionId: string,
+): Promise<{ medicineName: string; qty: number; dosage: string | null }[]> {
+  const rx = await prisma.prescriptionUpload.findFirst({
+    where: { admissionId, title: DISCHARGE_RX_TITLE },
+    select: { items: { select: { medicineName: true, qty: true, dosage: true }, orderBy: { id: "asc" } } },
+  });
+  return rx?.items ?? [];
 }

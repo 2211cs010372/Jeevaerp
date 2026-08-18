@@ -97,10 +97,10 @@ export default function CatalogPage() {
           <div className="surface w-full max-w-md bg-white">
             <div className="border-b border-[var(--p-border)] px-6 py-4"><h3 className="text-[14px] font-semibold text-[var(--p-ink)]">{edit.id ? "Edit test" : "Add test"}</h3></div>
             <div className="space-y-4 p-6">
-              <Field label="Test name"><input className={fld} value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} autoFocus /></Field>
+              <Field label="Test name" required><input className={fld} value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} autoFocus /></Field>
               <div className="grid grid-cols-2 gap-4">
                 <Field label="Code / SAC"><input className={fld} value={edit.code} onChange={(e) => setEdit({ ...edit, code: e.target.value })} /></Field>
-                <Field label="Price (₹)"><input className={fld} value={edit.price} onChange={(e) => setEdit({ ...edit, price: e.target.value.replace(/[^\d.]/g, "") })} inputMode="decimal" /></Field>
+                <Field label="Price (₹)" required><input className={fld} value={edit.price} onChange={(e) => setEdit({ ...edit, price: e.target.value.replace(/[^\d.]/g, "") })} inputMode="decimal" /></Field>
               </div>
               <Field label="GST rate %">
                 <input className={fld} value={edit.gstRatePct} onChange={(e) => setEdit({ ...edit, gstRatePct: e.target.value.replace(/[^\d.]/g, "") })} inputMode="decimal" />

@@ -283,8 +283,8 @@ function EInvoiceDetail({ bill }: { bill: Bill }) {
           <div className="mt-4">
             <p className="text-[12px] font-semibold text-[var(--p-ink)]">Registered buyer</p>
             <div className="mt-2 grid gap-3 sm:grid-cols-3">
-              <Field label="Buyer GSTIN"><input value={buyer.gstin} onChange={(e) => setBuyer({ ...buyer, gstin: e.target.value.toUpperCase() })} placeholder="36AABCU9603R1ZM" className={`${fld} font-mono`} /></Field>
-              <Field label="Registered name"><input value={buyer.legalName} onChange={(e) => setBuyer({ ...buyer, legalName: e.target.value })} placeholder="Star Health Insurance Ltd" className={fld} /></Field>
+              <Field label="Buyer GSTIN" required><input value={buyer.gstin} onChange={(e) => setBuyer({ ...buyer, gstin: e.target.value.toUpperCase() })} placeholder="36AABCU9603R1ZM" className={`${fld} font-mono`} /></Field>
+              <Field label="Registered name" required><input value={buyer.legalName} onChange={(e) => setBuyer({ ...buyer, legalName: e.target.value })} placeholder="Star Health Insurance Ltd" className={fld} /></Field>
               <Field label="Address"><input value={buyer.address} onChange={(e) => setBuyer({ ...buyer, address: e.target.value })} className={fld} /></Field>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -318,10 +318,10 @@ function EInvoiceDetail({ bill }: { bill: Bill }) {
               Paste exactly what the portal returned. The QR text is signed — any edit to it makes the printed QR fail verification.
             </p>
             <div className="mt-2.5 grid gap-3 sm:grid-cols-2">
-              <Field label="IRN (64 characters)"><input value={manual.irn} onChange={(e) => setManual({ ...manual, irn: e.target.value.trim() })} className={`${fld} font-mono text-[11px]`} /></Field>
-              <Field label="Acknowledgement no"><input value={manual.ackNo} onChange={(e) => setManual({ ...manual, ackNo: e.target.value })} className={`${fld} font-mono`} /></Field>
-              <Field label="Acknowledgement date"><input type="date" value={manual.ackDt} onChange={(e) => setManual({ ...manual, ackDt: e.target.value })} className={fld} /></Field>
-              <Field label="Signed QR text"><textarea value={manual.signedQrCode} onChange={(e) => setManual({ ...manual, signedQrCode: e.target.value })} rows={2} className={`${fld} font-mono text-[10.5px]`} /></Field>
+              <Field label="IRN (64 characters)" required><input value={manual.irn} onChange={(e) => setManual({ ...manual, irn: e.target.value.trim() })} className={`${fld} font-mono text-[11px]`} /></Field>
+              <Field label="Acknowledgement no" required><input value={manual.ackNo} onChange={(e) => setManual({ ...manual, ackNo: e.target.value })} className={`${fld} font-mono`} /></Field>
+              <Field label="Acknowledgement date" required><input type="date" value={manual.ackDt} onChange={(e) => setManual({ ...manual, ackDt: e.target.value })} className={fld} /></Field>
+              <Field label="Signed QR text" required><textarea value={manual.signedQrCode} onChange={(e) => setManual({ ...manual, signedQrCode: e.target.value })} rows={2} className={`${fld} font-mono text-[10.5px]`} /></Field>
             </div>
             <div className="mt-3">
               <PrimaryButton disabled={busy || !manual.irn || !manual.ackNo || !manual.ackDt || !manual.signedQrCode}

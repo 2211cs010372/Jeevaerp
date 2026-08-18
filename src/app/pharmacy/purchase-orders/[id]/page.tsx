@@ -277,7 +277,7 @@ export default function PurchaseOrderDetailPage() {
           }
         >
           <div className="p-6">
-            <Field label="Why?">
+            <Field label="Why?" required>
               <textarea className={`${fld} min-h-[80px]`} value={reason} autoFocus
                 onChange={(e) => setReason(e.target.value)}
                 placeholder={confirm === "CANCEL" ? "e.g. Ordered from another distributor at a better rate" : "e.g. Distributor confirmed the balance is out of stock indefinitely"} />

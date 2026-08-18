@@ -9,6 +9,9 @@ export const dynamic = "force-dynamic";
 export const GET = handler(async (req) => {
   await requireRole(req, "RECEPTIONIST", "ADMIN");
   const source = req.nextUrl.searchParams.get("source") ?? undefined;
-  const invoices = await listInvoices(source as never, 100);
+  // `date` is yyyy-mm-dd and narrows to that one calendar day. Without it the
+  // desk gets its usual working queue - the most recent hundred bills.
+  const date = req.nextUrl.searchParams.get("date") ?? undefined;
+  const invoices = await listInvoices(source as never, date ? 500 : 100, date);
   return NextResponse.json({ invoices });
 });

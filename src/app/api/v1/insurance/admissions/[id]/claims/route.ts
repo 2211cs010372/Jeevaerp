@@ -28,7 +28,7 @@ export const POST = handler(async (req, ctx) => {
   const input = await parseBody(req, revertToSelfPaySchema);
   const result = await revertBillsToSelfPay(
     actor,
-    { admissionId: id, invoiceIds: input.invoiceIds, reason: input.reason },
+    { admissionId: id, invoiceIds: input.invoiceIds, reason: input.reason, convertStay: input.convertStay },
     auditContext(req)
   );
   return NextResponse.json(result);

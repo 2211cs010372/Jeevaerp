@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiClientError } from "@/lib/api-client";
 import { Icon } from "@/components/portal/ui/icons";
+import { Req } from "@/components/portal/ui/form-atoms";
 
 /**
  * Staff sign-in. Two modes:
@@ -175,7 +176,7 @@ export function StaffLogin({ portalName = "Staff" }: { portalName?: string }) {
         step === "username" ? (
           <div className="mt-5 space-y-4">
             <div>
-              <label className={label} htmlFor="login-username">Username</label>
+              <label className={label} htmlFor="login-username">Username<Req /></label>
               <input
                 id="login-username" value={username}
                 onChange={(e) => setUsername(e.target.value.toLowerCase())}
@@ -191,7 +192,7 @@ export function StaffLogin({ portalName = "Staff" }: { portalName?: string }) {
         ) : (
           <div className="mt-5 space-y-4">
             <div>
-              <label className={label} htmlFor="login-code">Six-digit code</label>
+              <label className={label} htmlFor="login-code">Six-digit code<Req /></label>
               <input
                 id="login-code" value={code}
                 onChange={(e) => onCodeChange(e.target.value)}
@@ -224,7 +225,7 @@ export function StaffLogin({ portalName = "Staff" }: { portalName?: string }) {
       ) : (
         <div className="mt-5 space-y-4">
           <div>
-            <label className={label} htmlFor="login-user2">Username</label>
+            <label className={label} htmlFor="login-user2">Username<Req /></label>
             <input
               id="login-user2" value={username}
               onChange={(e) => setUsername(e.target.value.toLowerCase())}
@@ -232,7 +233,7 @@ export function StaffLogin({ portalName = "Staff" }: { portalName?: string }) {
             />
           </div>
           <div>
-            <label className={label} htmlFor="login-pass">Password</label>
+            <label className={label} htmlFor="login-pass">Password<Req /></label>
             <div className="relative">
               <input
                 id="login-pass" type={showPassword ? "text" : "password"} value={password}

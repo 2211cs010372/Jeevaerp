@@ -5,7 +5,7 @@ import { ApiError } from "@/lib/api";
 import { logAudit } from "./audit.service";
 import { notifyBillGenerated } from "./notify.service";
 import { publishLive } from "@/server/realtime/publish";
-import { splitInvoice } from "@/lib/insurance-split";
+import { splitInvoice, allocateCoverage } from "@/lib/insurance-split";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, PaymentMode } from "@prisma/client";
@@ -271,6 +271,17 @@ export async function createInvoice(
       { action: "INVOICE_CREATED", targetTable: "Invoice", targetId: invoice.id, meta: { receiptNo, source: input.source, total: s2(total) }, ...ctx },
       tx
     );
+
+    // A NEW BILL ON AN INSURANCE STAY CHANGES HOW THE COVER SPREADS.
+    //
+    // The approval is one number over however many bills the stay ends up with,
+    // so every bill added after the insurer answered has to re-run the split -
+    // otherwise it lands with zero cover and reads as wholly the family's, which
+    // is exactly what happened to every bill raised after a pre-auth approval.
+    // Recomputes from scratch, so calling it per invoice is safe.
+    if (input.admissionId && payer === "INSURANCE") {
+      await syncStayCoverage(tx, input.admissionId);
+    }
 
     return invoice.id;
   });
@@ -750,7 +761,7 @@ export async function cancelInvoice(
 }
 
 /** Recent invoices for the billing list (filterable by source). */
-export async function listInvoices(source?: InvoiceSourceT, limit = 50): Promise<{
+export async function listInvoices(source?: InvoiceSourceT, limit = 50, onDate?: string): Promise<{
   id: string; receiptNo: string; source: string; status: string; totalAmount: string;
   amountPaid: string; refunded: string; refundable: string;
   /** Distinct payment types used on this bill: [] unpaid, ["CASH"], or ["CASH","UPI"] for a split. */
@@ -768,8 +779,30 @@ export async function listInvoices(source?: InvoiceSourceT, limit = 50): Promise
   patient: { displayId: string; fullName: string };
 }[]> {
   const MODE_ORDER = ["CASH", "UPI", "CARD", "NETBANKING", "OTHER"];
+
+  // ── ONE CALENDAR DAY, WHEN THE DESK ASKS FOR ONE ──
+  //
+  // Without this the screen could only ever filter the last `limit` bills it had
+  // already fetched, so "show me the 3rd" came back empty on any day further
+  // back than a hundred invoices - which in this hospital is about a week. The
+  // filter has to be a query, not a client-side pass over a truncated list.
+  //
+  // LOCAL midnight to local midnight. `new Date("2026-08-03")` is UTC midnight,
+  // which in IST is 05:30 on the 3rd: half a day of the 2nd's takings would come
+  // back under the 3rd, and the day close would disagree with this screen.
+  let dayRange: { gte: Date; lt: Date } | undefined;
+  if (onDate) {
+    const [y, m, d] = onDate.split("-").map(Number);
+    if (y && m && d) {
+      dayRange = { gte: new Date(y, m - 1, d), lt: new Date(y, m - 1, d + 1) };
+    }
+  }
+
   const rows = await prisma.invoice.findMany({
-    where: source ? { source } : {},
+    where: {
+      ...(source ? { source } : {}),
+      ...(dayRange ? { createdAt: dayRange } : {}),
+    },
     // Ordered by when it was RAISED, not by the printed date. The list is the
     // desk's working queue - most recent work first - and a bill back-dated to
     // last month would otherwise fall to the bottom of the screen the moment
@@ -1256,16 +1289,31 @@ export async function settleDues(
  */
 export async function revertBillsToSelfPay(
   actor: AuthUser,
-  input: { admissionId: string; invoiceIds?: string[]; reason: string },
+  input: {
+    admissionId: string; invoiceIds?: string[]; reason: string;
+    /**
+     * THE INSURER REFUSED THE WHOLE STAY, so the stay itself becomes self-pay.
+     *
+     * Without this the function moved the BILLS and left the ADMISSION marked
+     * INSURANCE, which is three wrong things at once: the ward sheet still said
+     * "Paying: Insurance" to a family being asked for cash, the stay stayed on
+     * the claims desk's list forever (insuranceStays filters on payerType), and
+     * the next bill raised against it defaulted straight back to the insurer.
+     *
+     * Off for a PARTIAL revert - an insurer refusing one pharmacy bill has not
+     * refused the admission, and flipping the stay on that would be wrong.
+     */
+    convertStay?: boolean;
+  },
   ctx: { ipAddress?: string; userAgent?: string }
-): Promise<{ moved: { receiptNo: string; total: string }[]; movedTotal: string; skipped: { receiptNo: string; why: string }[] }> {
+): Promise<{ moved: { receiptNo: string; total: string }[]; movedTotal: string; skipped: { receiptNo: string; why: string }[]; stayConverted: boolean }> {
   const reason = input.reason.trim();
   if (reason.length < 3) throw new ApiError(400, "Say why this is going back to the patient");
 
   const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const adm = await tx.admission.findUnique({
       where: { id: input.admissionId },
-      select: { id: true, ipNumber: true, insurer: true },
+      select: { id: true, ipNumber: true, insurer: true, payerType: true },
     });
     if (!adm) throw new ApiError(404, "Admission not found");
 
@@ -1279,7 +1327,19 @@ export async function revertBillsToSelfPay(
       orderBy: { createdAt: "asc" },
       select: { id: true, receiptNo: true, totalAmount: true, payments: { select: { amount: true } } },
     });
-    if (!invoices.length) throw new ApiError(409, "There are no insurance bills on this stay to move");
+    // NO BILLS IS NOT AN ERROR WHEN THE WHOLE STAY IS BEING CONVERTED.
+    //
+    // An insurer refuses a pre-auth on day one, before the ward has raised a
+    // single invoice - that is the commonest refusal there is. This threw a 409
+    // and converted nothing, so the stay stayed INSURANCE, the claim stayed
+    // SUBMITTED, and the desk was told "there are no insurance bills to move"
+    // when what they were trying to say was "this patient is paying cash now".
+    //
+    // It IS still an error on a partial move: naming invoices that turn out not
+    // to exist means the desk is looking at something stale.
+    if (!invoices.length && !input.convertStay) {
+      throw new ApiError(409, "There are no insurance bills on this stay to move");
+    }
 
     const moved: { receiptNo: string; total: string }[] = [];
     const skipped: { receiptNo: string; why: string }[] = [];
@@ -1294,9 +1354,62 @@ export async function revertBillsToSelfPay(
         where: { id: inv.id },
         // status is untouched: it was PENDING as an insurance bill and it is
         // PENDING as a patient bill. What changed is who is being asked.
-        data: { payer: "SELF_PAY", payerName: null },
+        //
+        // insuranceCoveredAmount MUST go back to zero with it. That column is
+        // what splitInvoice subtracts to get the patient's share, so a bill the
+        // insurer had approved at ₹1,80,000 and then refused would still have
+        // credited them that much - the family would be billed the ₹20,000
+        // co-pay for a stay they now owe in full, and the desk would collect it
+        // and think the bill was settled.
+        data: { payer: "SELF_PAY", payerName: null, insuranceCoveredAmount: "0.00" },
       });
       moved.push({ receiptNo: inv.receiptNo, total: Number(inv.totalAmount).toFixed(2) });
+    }
+
+    // The insurer is out of this stay entirely. `insurer` and `policyNo` are
+    // LEFT ON THE ROW on purpose - they are what the note above refers to and
+    // the only record of who refused; it is payerType that decides where the
+    // stay is listed and what the next bill defaults to.
+    const convertStay = Boolean(input.convertStay) && adm.payerType === "INSURANCE";
+    if (convertStay) {
+      await tx.admission.update({
+        where: { id: adm.id },
+        data: { payerType: "SELF_PAY" },
+      });
+
+      // ── AND THE CLAIM IS MARKED REFUSED, IN THE SAME BREATH ──
+      //
+      // Converting the stay without touching the claim left the two saying
+      // opposite things about one admission: the ward billing the family in
+      // cash while the claims board still showed the stay SUBMITTED and waiting
+      // on Star Health. Whichever screen you opened, the other one was wrong,
+      // and the desk had to remember to go and close the claim by hand - which
+      // is exactly the kind of second step that does not happen at 8pm.
+      //
+      // Only claims still in play. One already SETTLED is money that arrived and
+      // must not be rewritten as a refusal; one already REJECTED is why we are
+      // here. The reason is carried onto the claim's own timeline, because
+      // "why was this refused" is asked of the claim, not of the stay.
+      const live = await tx.insuranceClaim.findMany({
+        where: {
+          admissionId: adm.id,
+          status: { notIn: ["SETTLED", "REJECTED", "CLOSED"] },
+        },
+        select: { id: true },
+      });
+      for (const c of live) {
+        await tx.insuranceClaim.update({
+          where: { id: c.id },
+          data: { status: "REJECTED", decisionAt: new Date() },
+        });
+        await tx.claimEvent.create({
+          data: {
+            claimId: c.id, kind: "REJECTED",
+            detail: `Refused - the stay was moved to self-pay. ${reason}`,
+            byId: actor.id,
+          },
+        });
+      }
     }
 
     if (moved.length) {
@@ -1309,7 +1422,8 @@ export async function revertBillsToSelfPay(
           kind: "NURSING",
           body:
             `Billed to the patient instead of ${adm.insurer ?? "the insurer"}: ` +
-            `${moved.map((m) => m.receiptNo).join(", ")}. Reason: ${reason}`,
+            `${moved.map((m) => m.receiptNo).join(", ")}. Reason: ${reason}` +
+            (convertStay ? " The stay is now SELF-PAY." : ""),
           authorId: actor.id,
         },
       });
@@ -1332,6 +1446,7 @@ export async function revertBillsToSelfPay(
       moved,
       movedTotal: s2(moved.reduce((s, m) => r2(s + Number(m.total)), 0)),
       skipped,
+      stayConverted: convertStay,
     };
   });
 
@@ -1342,4 +1457,66 @@ export async function revertBillsToSelfPay(
     EVENTS.INVOICE_RAISED
   );
   return result;
+}
+
+
+/**
+ * RE-SPREAD A STAY'S APPROVED COVER ACROSS ITS BILLS.
+ *
+ * `insuranceCoveredAmount` is a STORED figure - splitInvoice subtracts it to get
+ * the family's share - so it has to be rewritten every time either side of the
+ * sum moves. Two things move it, and until now only one of them triggered:
+ *
+ *   THE APPROVAL CHANGES. Handled all along, inside actOnClaim.
+ *
+ *   A NEW BILL APPEARS. Not handled, and this is the one that broke the planned
+ *   path. A pre-auth approved at Rs 60,000 before admission had no bills to land
+ *   on; the pharmacy and the ward then raised theirs over the next three days
+ *   and every one of them got zero cover. The stay read as wholly the family's
+ *   on a claim the insurer had already agreed to pay.
+ *
+ * WHICH NUMBER IS THE COVER. A stay can carry a pre-auth AND a final claim, and
+ * adding them would cover the stay twice. The final claim supersedes: it is
+ * raised against the real bill and is the number the insurer will actually pay.
+ * The pre-auth is used only while no final claim has a decision on it.
+ *
+ * Safe to call whenever anything moves - it recomputes from scratch rather than
+ * adjusting, so running it twice is the same as running it once.
+ */
+export async function syncStayCoverage(
+  tx: Prisma.TransactionClient,
+  admissionId: string,
+): Promise<void> {
+  const claims = await tx.insuranceClaim.findMany({
+    where: {
+      admissionId,
+      status: { in: ["APPROVED", "PARTIALLY_APPROVED", "SETTLED"] },
+    },
+    orderBy: { decisionAt: "asc" },
+    select: { stage: true, approvedAmount: true, settledAmount: true },
+  });
+
+  const amountOf = (c: (typeof claims)[number]) =>
+    Number(c.approvedAmount ?? c.settledAmount ?? 0);
+
+  const final = claims.filter((c) => c.stage === "FINAL");
+  // Latest decision of the governing stage - a claim queried and re-approved
+  // leaves two rows, and the later answer is the one that stands.
+  const governing = final.length ? final : claims;
+  const approved = governing.length ? amountOf(governing[governing.length - 1]) : 0;
+
+  const bills = await tx.invoice.findMany({
+    where: { admissionId, payer: "INSURANCE", status: { not: "CANCELLED" } },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, totalAmount: true, insuranceCoveredAmount: true },
+  });
+
+  for (const a of allocateCoverage(approved, bills.map((b) => ({ id: b.id, totalAmount: Number(b.totalAmount) })))) {
+    const before = bills.find((b) => b.id === a.id);
+    // Only write where it actually moved: this runs on every invoice creation,
+    // and an UPDATE per bill per bill would be noise in the audit trail.
+    if (before && Math.abs(Number(before.insuranceCoveredAmount) - a.covered) > 0.005) {
+      await tx.invoice.update({ where: { id: a.id }, data: { insuranceCoveredAmount: a.covered.toFixed(2) } });
+    }
+  }
 }

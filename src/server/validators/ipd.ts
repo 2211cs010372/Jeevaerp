@@ -48,13 +48,17 @@ export const admitSchema = z.object({
   /// self-paying patient without knowing the field exists.
   payerType: z.enum(["SELF_PAY", "INSURANCE"]).optional(),
   insurer: z.string().trim().max(80).optional().or(z.literal("")),
+  /// Still ACCEPTED, no longer asked for at the bedside. The admit screen stopped
+  /// collecting these - the insurance desk takes both from the family when it
+  /// works the claim - but the fields stay optional here so any caller that does
+  /// have them on hand can still pass them straight through to the stay.
   policyNo: z.string().trim().max(60).optional().or(z.literal("")),
   memberId: z.string().trim().max(60).optional().or(z.literal("")),
 }).refine(
   // Checked here as well as in the service, so the desk gets the message on the
   // field rather than as a 400 after the bed has already been picked.
-  (v) => v.payerType !== "INSURANCE" || (!!v.insurer?.trim() && !!v.policyNo?.trim()),
-  { message: "An insurance admission needs the insurer and the policy number", path: ["insurer"] }
+  (v) => v.payerType !== "INSURANCE" || !!v.insurer?.trim(),
+  { message: "An insurance admission needs the insurer", path: ["insurer"] }
 );
 
 export const dischargeSchema = z.object({

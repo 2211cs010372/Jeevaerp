@@ -3,7 +3,8 @@ import { ApiError } from "@/lib/api";
 import { nextId } from "@/lib/ids";
 import { logAudit } from "./audit.service";
 import { currentInpatients } from "./ipd.service";
-import { allocateCoverage } from "@/lib/insurance-split";
+import { splitInvoice } from "@/lib/insurance-split";
+import { syncStayCoverage } from "./billing.service";
 // One definition of what a corrected bill date is, shared with billing.service
 // so the Edit dialog and this page's date control cannot disagree.
 import { resolveBillDate, BillDateError } from "@/server/billing/calc";
@@ -293,11 +294,38 @@ export async function pendingWork(): Promise<{ items: PendingWorkDTO[]; count: n
  * the pending list - so a stay whose pre-auth had been submitted vanished, and
  * with it any way to reprice or reprint the bill it will be settled on. The work
  * that page exists for outlives the reminder to start it.
+ *
+ * ── AND SELF-PAYING STAYS TOO, ON REQUEST ──
+ *
+ * `payerType` records how the stay is BEING BILLED, and this list used to treat
+ * it as though it also recorded whether the patient has insurance at all. Those
+ * are different questions. A family pays the counter in full because the policy
+ * was not produced at admission, or the TPA was not on the panel, or nobody
+ * asked - and then claims the money back themselves afterwards. That is the
+ * REIMBURSEMENT claim the schema has always had a type for, and the PayerType
+ * comment explicitly describes: the drawer really did take the cash, so the bill
+ * stays SELF_PAY and a claim is raised beside it.
+ *
+ * The desk simply had no way to reach those stays. Filtering them out of the one
+ * patient list this portal has meant a reimbursement claim could only be raised
+ * by searching the patient by name on the claims board and re-typing the stay's
+ * details - which is how the wrong admission gets attached to a claim.
+ *
+ * Cashless stays remain the default, because they are what this desk is
+ * ACCOUNTABLE for: an unauthorized cashless stay costs the hospital money, while
+ * an unraised reimbursement claim costs the hospital nothing. Self-pay is opt-in
+ * so it never buries the work that rots.
  */
 export interface StayDTO {
   admissionId: string;
   ipNumber: string;
   patient: { id: string; displayId: string; fullName: string; phone: string };
+  /**
+   * How the stay is being billed. SELF_PAY rows appear only when they were
+   * asked for, and the screen must say which kind each row is - "raise a claim"
+   * means something different for each.
+   */
+  payerType: string;
   insurer: string | null;
   policyNo: string | null;
   ward: string;
@@ -311,11 +339,16 @@ export interface StayDTO {
   claims: { id: string; claimNo: string; stage: string; status: string; claimedAmount: string }[];
 }
 
-export async function insuranceStays(opts?: { includeDischarged?: boolean }): Promise<{ stays: StayDTO[] }> {
+export async function insuranceStays(opts?: {
+  includeDischarged?: boolean;
+  /** Which stays to return. Defaults to INSURANCE - see the note above. */
+  payer?: "INSURANCE" | "SELF_PAY" | "ALL";
+}): Promise<{ stays: StayDTO[] }> {
   const cutoff = new Date(Date.now() - 90 * 24 * 3_600_000);
+  const payer = opts?.payer ?? "INSURANCE";
   const rows = await prisma.admission.findMany({
     where: {
-      payerType: "INSURANCE",
+      ...(payer === "ALL" ? {} : { payerType: payer }),
       // Still in a bed, or discharged inside the claim window. Older than that
       // the claim has usually closed, and an unbounded list is one nobody reads.
       OR: [{ status: "ADMITTED" }, { dischargedAt: { gte: cutoff } }],
@@ -324,6 +357,7 @@ export async function insuranceStays(opts?: { includeDischarged?: boolean }): Pr
     take: 200,
     select: {
       id: true, ipNumber: true, status: true, admittedAt: true, dischargedAt: true,
+      payerType: true,
       insurer: true, policyNo: true, wardNameAtAdmit: true, dailyChargeAtAdmit: true,
       bed: { select: { bedNo: true } },
       patient: { select: { id: true, displayId: true, fullName: true, phone: true } },
@@ -366,6 +400,7 @@ export async function insuranceStays(opts?: { includeDischarged?: boolean }): Pr
         admissionId: a.id,
         ipNumber: a.ipNumber,
         patient: a.patient,
+        payerType: a.payerType,
         insurer: a.insurer,
         policyNo: a.policyNo,
         ward: a.wardNameAtAdmit,
@@ -457,7 +492,7 @@ export async function getClaim(id: string): Promise<ClaimDetailDTO> {
 export async function actOnClaim(
   actor: AuthUser,
   id: string,
-  input: { action: "SUBMIT" | "QUERY" | "APPROVE" | "REJECT" | "SETTLE" | "NOTE"; amount?: number; insurerRef?: string; detail?: string },
+  input: { action: "AMOUNT" | "SUBMIT" | "QUERY" | "APPROVE" | "REJECT" | "SETTLE" | "NOTE"; amount?: number; insurerRef?: string; detail?: string },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<ClaimDetailDTO> {
   const claim = await prisma.insuranceClaim.findUnique({ where: { id }, select: { id: true, status: true, stage: true, claimedAmount: true, approvedAmount: true, admissionId: true, insurer: true } });
@@ -472,14 +507,32 @@ export async function actOnClaim(
    */
   let settlementToApply: number | null = null;
   // store the timeline entry in past tense so it reads as a history, not a verb
-  const KIND: Record<string, string> = { SUBMIT: "SUBMITTED", QUERY: "QUERIED", REJECT: "REJECTED", SETTLE: "SETTLED", NOTE: "NOTE" };
+  const KIND: Record<string, string> = { AMOUNT: "NOTE", SUBMIT: "SUBMITTED", QUERY: "QUERIED", REJECT: "REJECTED", SETTLE: "SETTLED", NOTE: "NOTE" };
   let kind = KIND[input.action] ?? input.action;
   let eventAmount: number | undefined;
   const allowed = (states: ClaimStatus[]) => { if (!states.includes(claim.status)) throw new ApiError(400, `Can't ${input.action.toLowerCase()} a claim that is ${claim.status.toLowerCase().replace(/_/g, " ")}`); };
 
   switch (input.action) {
+    // What the hospital is ASKING for. Editable only while the claim is still
+    // the hospital's own - once it is with the insurer the number they are
+    // looking at must not change underneath them.
+    case "AMOUNT": {
+      allowed(["DRAFT", "QUERIED"]);
+      const asked = Number(input.amount ?? 0);
+      if (!(asked > 0)) throw new ApiError(400, "Enter the amount being claimed");
+      data.claimedAmount = asked.toFixed(2);
+      eventAmount = asked;
+      break;
+    }
     case "SUBMIT":
       allowed(["DRAFT", "QUERIED"]);
+      // A PRE-AUTH FOR NOTHING IS NOT A PRE-AUTH. The auto-opened draft starts
+      // at zero deliberately - an invented estimate would be submitted unread -
+      // but submitting that zero asks the insurer to authorise ₹0 and comes
+      // back approved for exactly that, which is worse than never sending it.
+      if (Number(claim.claimedAmount) <= 0) {
+        throw new ApiError(400, "Set the amount being claimed before submitting this to the insurer");
+      }
       data.status = "SUBMITTED"; data.submittedAt = now;
       if (input.insurerRef) data.insurerRef = input.insurerRef.trim();
       break;
@@ -518,7 +571,20 @@ export async function actOnClaim(
   await prisma.$transaction(async (tx) => {
     if (Object.keys(data).length) await tx.insuranceClaim.update({ where: { id }, data });
     await tx.claimEvent.create({
-      data: { claimId: id, kind, detail: input.detail?.trim() || null, amount: eventAmount !== undefined ? eventAmount.toFixed(2) : null, byId: actor.id },
+      data: {
+        claimId: id, kind,
+        // A timeline entry with no words is a row that says something happened
+        // and refuses to say what. Setting the amount is the one action whose
+        // whole content IS the number, so it describes itself when the desk
+        // typed no note - the claim's history is read months later by somebody
+        // who was not there.
+        detail: input.detail?.trim()
+          || (input.action === "AMOUNT" && eventAmount !== undefined
+            ? `Claim amount set to ₹${eventAmount.toFixed(2)}`
+            : null),
+        amount: eventAmount !== undefined ? eventAmount.toFixed(2) : null,
+        byId: actor.id,
+      },
     });
 
     // ── THE PRE-AUTH THAT NEVER HAPPENED ──
@@ -564,19 +630,13 @@ export async function actOnClaim(
     //
     // A REJECTION COVERS NOTHING, so the whole stay lands on the family - and
     // now actually shows up at the counter instead of sitting invisible.
+    // ONE ALLOCATION RULE, IN ONE PLACE. This used to spread the approval here
+    // with its own copy of the arithmetic, which meant a bill raised LATER - on
+    // a stay whose insurer had already answered - never got any of it. Both
+    // paths now call the same helper, so "why is this bill only half covered"
+    // has exactly one answer wherever it is asked from.
     if (["APPROVE", "REJECT"].includes(input.action) && claim.admissionId) {
-      const approved = input.action === "REJECT" ? 0 : (data.approvedAmount ? Number(data.approvedAmount) : 0);
-      const bills = await tx.invoice.findMany({
-        where: { admissionId: claim.admissionId, payer: "INSURANCE", status: { not: "CANCELLED" } },
-        orderBy: { createdAt: "asc" },
-        select: { id: true, totalAmount: true },
-      });
-      for (const a of allocateCoverage(approved, bills.map((b) => ({ id: b.id, totalAmount: Number(b.totalAmount) })))) {
-        await tx.invoice.update({
-          where: { id: a.id },
-          data: { insuranceCoveredAmount: a.covered.toFixed(2) },
-        });
-      }
+      await syncStayCoverage(tx, claim.admissionId);
     }
 
     // ── THE INSURER'S MONEY LANDS ON THE BILLS IT PAID ──
@@ -723,6 +783,322 @@ export async function stayClaims(admissionId: string): Promise<StayClaimsDTO> {
       insuranceBills.length > 0 &&
       claims.some((c) => c.status === "REJECTED" || c.status === "PARTIALLY_APPROVED") &&
       !claims.some((c) => c.status === "SUBMITTED" || c.status === "QUERIED" || c.status === "DRAFT"),
+  };
+}
+
+/**
+ * SETTLE UP - what the insurer's answer MEANS for the money, on one screen.
+ *
+ * The answer already existed, per stay, on that stay's own page: `stayClaims`
+ * raises `needsDecision` and offers "Bill the patient instead". The problem was
+ * that you had to already be looking at the right stay to see it. A refusal
+ * arrives by email or by phone, weeks after the patient went home, and until
+ * somebody went stay-by-stay through the claims list nothing anywhere said which
+ * families now owed money.
+ *
+ * What happened instead: a bill marked INSURANCE is deliberately excluded from
+ * every dues list and every collection total - correctly, because a family owes
+ * nothing on a cashless stay. So a REFUSED claim's bills sat pointed at an
+ * insurer who had already declined them, invisible to reception, uncollected and
+ * uncollectable, until an audit found them. Reception's only recourse was to go
+ * digging through billing screens for something that was not there.
+ *
+ * So this is one list, in three buckets, ordered by what somebody has to DO:
+ *
+ *   PATIENT_PAYS - the insurer decided and refused, in whole or in part, and
+ *     money is still pointed at them. One button moves it onto the patient,
+ *     where reception's Billing screen picks it up on its own. Nobody goes and
+ *     checks; the work arrives.
+ *
+ *   WAITING - still with the insurer. Nothing is owed by anybody yet, and the
+ *     desk must not be tempted to bill a family while a claim is live.
+ *
+ *   DONE - settled by the insurer, or already moved onto the patient. Kept
+ *     visible rather than hidden, because "did we ever resolve that one" is the
+ *     question this screen exists to answer.
+ *
+ * NOT automatic. A refused pre-auth is argued and re-submitted all the time, and
+ * flipping bills the moment a rejection lands would put a family into the dues
+ * list while the desk is still on the phone to the TPA. See revertBillsToSelfPay.
+ */
+export type SettlementBucket = "PATIENT_PAYS" | "WAITING" | "DONE";
+
+export interface SettlementRowDTO {
+  admissionId: string;
+  ipNumber: string;
+  patient: { id: string; displayId: string; fullName: string; phone: string };
+  insurer: string | null;
+  policyNo: string | null;
+  admittedAt: string;
+  dischargedAt: string | null;
+  /** Every claim on the stay, newest first. */
+  claims: {
+    id: string; claimNo: string; stage: string; status: string;
+    claimedAmount: string; approvedAmount: string | null; settledAmount: string | null;
+    decisionAt: string | null;
+  }[];
+  /** The status the bucket was decided on - the newest decided claim, or the
+   *  newest claim if none has been decided. */
+  status: string;
+  claimed: string;
+  approved: string;
+  settled: string;
+  /** Claimed minus approved: what the insurer would not carry. Never negative. */
+  shortfall: string;
+  /** Bills still pointed at the insurer. `movable` excludes any with money
+   *  already taken against them - those cannot be re-pointed, see
+   *  revertBillsToSelfPay - so the screen can promise only what it can deliver. */
+  withInsurer: { count: number; total: string; movable: number; movableTotal: string };
+  /**
+   * Still pointed at the insurer BEYOND what they agreed to carry - the gap
+   * somebody has to pay, whatever the claim happens to be labelled. This, not
+   * the status, is what puts a stay in PATIENT_PAYS.
+   */
+  uncovered: string;
+  /**
+   * Of `uncovered`, what can actually move. Bills move whole, so where a single
+   * bill straddles the approval this is smaller than the gap - and where
+   * `movableTotal` EXCEEDS this, moving those bills would hand the family an
+   * amount the insurer has already agreed to. The screen says so before the
+   * button is pressed rather than after.
+   */
+  atRisk: string;
+  /** What the patient ALREADY owes on this stay, their share only. */
+  patientDue: string;
+  bucket: SettlementBucket;
+  /** DONE only: how it ended. The two are not the same event and a desk
+   *  reviewing the list months later needs to tell them apart. */
+  outcome: "SETTLED_BY_INSURER" | "BILLED_TO_PATIENT" | null;
+  /** Days since the insurer decided. How long this has been nobody's job. */
+  sinceDecisionDays: number | null;
+}
+
+export async function settlementBoard(): Promise<{
+  rows: SettlementRowDTO[];
+  counts: Record<SettlementBucket, number>;
+  /**
+   * The same number as `counts.PATIENT_PAYS`, flat. The sidebar badge reads a
+   * top-level numeric key off the response body (see portal-shell's badgeCount)
+   * and cannot walk into an object - and a badge that silently reads 0 forever
+   * is worse than no badge, because it reads as "nothing to do".
+   */
+  patientPaysCount: number;
+  /** What is waiting to be moved onto patients, across the whole list. */
+  patientPaysTotal: string;
+}> {
+  // A year back. Claims genuinely sit for months, so 90 days (as the "to raise"
+  // list uses) would drop exactly the old refusals this screen exists to find -
+  // but unbounded turns into a screen nobody scrolls, which is the same as no
+  // screen at all.
+  const cutoff = new Date(Date.now() - 365 * 24 * 3_600_000);
+
+  // `InsuranceClaim.admissionId` is a bare column with no Prisma relation behind
+  // it, so the stay cannot be joined in - it is fetched and stitched, the same
+  // way pendingWork does it. The date bound goes on the CLAIM rather than the
+  // stay for the same reason: claims open at admission, so their createdAt is
+  // the stay's date to within hours, and bounding here keeps the whole thing on
+  // one indexed table instead of scanning a year of admissions to find the few
+  // that carry a claim.
+  const claims = await prisma.insuranceClaim.findMany({
+    where: { admissionId: { not: null }, createdAt: { gte: cutoff } },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true, claimNo: true, stage: true, status: true, admissionId: true,
+      claimedAmount: true, approvedAmount: true, settledAmount: true, decisionAt: true,
+    },
+  });
+  const empty = {
+    rows: [] as SettlementRowDTO[],
+    counts: { PATIENT_PAYS: 0, WAITING: 0, DONE: 0 },
+    patientPaysCount: 0,
+    patientPaysTotal: "0.00",
+  };
+  if (claims.length === 0) return empty;
+
+  const claimedStayIds = [...new Set(claims.map((c) => c.admissionId!))];
+  const stays = await prisma.admission.findMany({
+    where: { id: { in: claimedStayIds } },
+    select: {
+      id: true, ipNumber: true, admittedAt: true, dischargedAt: true,
+      insurer: true, policyNo: true,
+      patient: { select: { id: true, displayId: true, fullName: true, phone: true } },
+    },
+  });
+  const stayById = new Map(stays.map((s) => [s.id, s]));
+  // A claim whose admissionId points at a stay that no longer reads is dropped
+  // rather than rendered as a blank row - there is nothing useful to show and
+  // nothing to act on.
+  const admissionIds = claimedStayIds.filter((id) => stayById.has(id));
+  if (admissionIds.length === 0) return empty;
+
+  // ONE query for every bill on every stay in the list. The per-stay version of
+  // this screen can afford a lookup each; a board cannot.
+  const invoices = await prisma.invoice.findMany({
+    where: { admissionId: { in: admissionIds }, status: { not: "CANCELLED" } },
+    select: {
+      id: true, admissionId: true, payer: true, totalAmount: true, insuranceCoveredAmount: true,
+      payments: { select: { mode: true, amount: true } },
+      refunds: { select: { amount: true } },
+    },
+  });
+
+  const billsByStay = new Map<string, typeof invoices>();
+  for (const inv of invoices) {
+    if (!inv.admissionId) continue;
+    const list = billsByStay.get(inv.admissionId) ?? [];
+    list.push(inv);
+    billsByStay.set(inv.admissionId, list);
+  }
+
+  const claimsByStay = new Map<string, typeof claims>();
+  for (const c of claims) {
+    if (!stayById.has(c.admissionId!)) continue;
+    const list = claimsByStay.get(c.admissionId!) ?? [];
+    list.push(c);
+    claimsByStay.set(c.admissionId!, list);
+  }
+
+  const DAY = 86_400_000;
+  const n = (d: Prisma.Decimal | null | undefined) => (d == null ? 0 : Number(d));
+  const IN_FLIGHT = new Set(["DRAFT", "SUBMITTED", "QUERIED"]);
+  const REFUSED = new Set(["REJECTED", "PARTIALLY_APPROVED"]);
+
+  const rows: SettlementRowDTO[] = [];
+  for (const admissionId of admissionIds) {
+    const cs = claimsByStay.get(admissionId)!;
+    const a = stayById.get(admissionId)!;
+    const bills = billsByStay.get(admissionId) ?? [];
+
+    const withInsurerBills = bills.filter((b) => b.payer === "INSURANCE");
+    // A bill with money on it is already part-collected and cannot be re-pointed
+    // without misstating what was taken and from whom.
+    const movableBills = withInsurerBills.filter(
+      (b) => b.payments.reduce((s, p) => s + Number(p.amount), 0) <= 0.01
+    );
+
+    // The patient's own share of the self-pay bills on this stay. Uses the same
+    // split every dues list uses, so this figure and reception's agree.
+    const patientDue = bills
+      .filter((b) => b.payer !== "INSURANCE")
+      .reduce((sum, b) => {
+        const split = splitInvoice({
+          totalAmount: Number(b.totalAmount),
+          insuranceCoveredAmount: Number(b.insuranceCoveredAmount),
+          payments: b.payments.map((p) => ({ mode: String(p.mode), amount: Number(p.amount) })),
+          refunds: b.refunds.map((r) => ({ amount: Number(r.amount) })),
+        });
+        return sum + split.patientBalance;
+      }, 0);
+
+    const decided = cs.filter((c) => c.decisionAt != null || !IN_FLIGHT.has(c.status));
+    const lead = decided[0] ?? cs[0];
+    const anyInFlight = cs.some((c) => IN_FLIGHT.has(c.status));
+    const refused = REFUSED.has(lead.status);
+
+    const claimed = cs.reduce((s, c) => s + n(c.claimedAmount), 0);
+    const approved = cs.reduce((s, c) => s + n(c.approvedAmount), 0);
+    const settled = cs.reduce((s, c) => s + n(c.settledAmount), 0);
+
+    const withInsurerTotal = withInsurerBills.reduce((s, b) => s + Number(b.totalAmount), 0);
+    const movableTotal = movableBills.reduce((s, b) => s + Number(b.totalAmount), 0);
+
+    // ── THE TEST IS MONEY, NOT STATUS ──
+    //
+    // "REJECTED means the patient pays, SETTLED means we are done" is the
+    // obvious rule and it is wrong in the most expensive direction. A claim goes
+    // to SETTLED when the insurer's money arrives - for whatever they agreed to,
+    // which is routinely less than was asked. The difference stays pointed at
+    // the insurer, out of every dues list, and a status-only rule files it under
+    // "done" forever.
+    //
+    // So: what is still aimed at the insurer BEYOND what they agreed to carry.
+    // That is the gap somebody has to pay, whatever the claim is labelled.
+    const uncovered = Math.max(0, withInsurerTotal - approved);
+    // Of that, what can actually be moved. Bills move whole - a bill with money
+    // already taken against it stays put, see revertBillsToSelfPay - so this is
+    // the honest promise the screen can make.
+    const atRisk = Math.min(uncovered, movableTotal);
+
+    let bucket: SettlementBucket;
+    let outcome: SettlementRowDTO["outcome"] = null;
+    if (anyInFlight) {
+      // A live claim NEVER puts a family into the dues list. The desk is still
+      // arguing with the TPA and a refused pre-auth is re-submitted all the time.
+      bucket = "WAITING";
+    } else if (atRisk > 0.01) {
+      bucket = "PATIENT_PAYS";
+    } else if (approved - settled > 0.01) {
+      // They agreed and the money has not arrived. The hospital is owed, the
+      // family is not - so it waits here rather than becoming somebody's debt.
+      bucket = "WAITING";
+    } else {
+      bucket = "DONE";
+      // Refused with nothing left pointing at the insurer means somebody already
+      // moved it. That is a different ending from the insurer paying, and a desk
+      // reviewing this list months later has to be able to tell them apart.
+      outcome = refused && withInsurerBills.length === 0 ? "BILLED_TO_PATIENT" : "SETTLED_BY_INSURER";
+    }
+
+    rows.push({
+      admissionId,
+      ipNumber: a.ipNumber,
+      patient: a.patient,
+      insurer: a.insurer,
+      policyNo: a.policyNo,
+      admittedAt: a.admittedAt.toISOString(),
+      dischargedAt: a.dischargedAt?.toISOString() ?? null,
+      claims: cs.map((c) => ({
+        id: c.id, claimNo: c.claimNo, stage: c.stage, status: c.status,
+        claimedAmount: n(c.claimedAmount).toFixed(2),
+        approvedAmount: c.approvedAmount == null ? null : n(c.approvedAmount).toFixed(2),
+        settledAmount: c.settledAmount == null ? null : n(c.settledAmount).toFixed(2),
+        decisionAt: c.decisionAt?.toISOString() ?? null,
+      })),
+      status: lead.status,
+      claimed: claimed.toFixed(2),
+      approved: approved.toFixed(2),
+      settled: settled.toFixed(2),
+      shortfall: Math.max(0, claimed - approved).toFixed(2),
+      withInsurer: {
+        count: withInsurerBills.length,
+        total: withInsurerTotal.toFixed(2),
+        movable: movableBills.length,
+        movableTotal: movableTotal.toFixed(2),
+      },
+      uncovered: uncovered.toFixed(2),
+      atRisk: atRisk.toFixed(2),
+      patientDue: patientDue.toFixed(2),
+      bucket,
+      outcome,
+      sinceDecisionDays: lead.decisionAt
+        ? Math.max(0, Math.floor((Date.now() - lead.decisionAt.getTime()) / DAY))
+        : null,
+    });
+  }
+
+  // Longest-refused first inside the action bucket - the one that has been
+  // nobody's job the longest is the one most likely to never be collected.
+  const order: Record<SettlementBucket, number> = { PATIENT_PAYS: 0, WAITING: 1, DONE: 2 };
+  rows.sort((x, y) =>
+    order[x.bucket] - order[y.bucket] ||
+    (y.sinceDecisionDays ?? -1) - (x.sinceDecisionDays ?? -1) ||
+    y.admittedAt.localeCompare(x.admittedAt)
+  );
+
+  const needAction = rows.filter((r) => r.bucket === "PATIENT_PAYS");
+  return {
+    rows,
+    counts: {
+      PATIENT_PAYS: needAction.length,
+      WAITING: rows.filter((r) => r.bucket === "WAITING").length,
+      DONE: rows.filter((r) => r.bucket === "DONE").length,
+    },
+    patientPaysCount: needAction.length,
+    // The GAP, not the bill totals: what is genuinely uncollectable today. The
+    // headline figure has to be one nobody can accuse the screen of inflating.
+    patientPaysTotal: needAction
+      .reduce((s, r) => s + Number(r.atRisk), 0)
+      .toFixed(2),
   };
 }
 

@@ -66,14 +66,22 @@ const EXAM_VITALS: { key: string; label: string; placeholder: string }[] = [
   { key: "examCns", label: "CNS", placeholder: "WFND" },
 ];
 
+/**
+ * FOUR BOXES WERE REMOVED FROM HERE, not just from the printed sheet.
+ *
+ * physicalExamination, systemicExamination, followUpInstruction and
+ * preventiveAdvice no longer appear on the discharge summary, and a form that
+ * still asked for them would have doctors typing into fields nobody will ever
+ * read - which is worse than not asking, because it looks like it counts.
+ *
+ * The COLUMNS are left on the table on purpose. Summaries already written hold
+ * text in them, and dropping the columns would delete signed clinical records
+ * to tidy up a form. They are simply no longer collected or printed.
+ */
 const REST: { key: string; label: string; rows: number; hint?: string }[] = [
-  { key: "physicalExamination", label: "Physical examination", rows: 3, hint: "Anything beyond the values above." },
-  { key: "systemicExamination", label: "Systemic examination", rows: 3 },
   { key: "courseInHospital", label: "Course in hospital", rows: 5 },
   { key: "procedureNotes", label: "Operation / procedure notes", rows: 3 },
   { key: "conditionAtDischarge", label: "Condition at discharge", rows: 2 },
-  { key: "followUpInstruction", label: "Follow-up instruction", rows: 2, hint: "e.g. Review after 5 days." },
-  { key: "preventiveAdvice", label: "Preventive advice", rows: 2 },
 ];
 
 const ALL_KEYS = [...NARRATIVE, ...REST].map((f) => f.key).concat(EXAM_VITALS.map((f) => f.key));
@@ -99,6 +107,17 @@ export function DischargeSummaryForm({ admissionId, onClose }: {
   /** Set on a 409 - the only error where the fix is "reload", so it gets a button. */
   const [stale, setStale] = useState(false);
 
+  /**
+   * THE DISCHARGE PRESCRIPTION, typed here.
+   *
+   * Held apart from `f` because it is rows, not fields, and it is saved to its
+   * own endpoint: these are real prescription items with a pharmacy-master link
+   * behind them, not another textarea on the summary. `dose` is free text on
+   * purpose - "BD x 5 Days", "1-0-1 after food", "SOS" are all things doctors
+   * write, and a dropdown of frequencies would only send them to the notes box.
+   */
+  const [meds, setMeds] = useState<{ name: string; dose: string }[]>([]);
+
   const apply = useCallback((s: SummaryDTO | null) => {
     if (!s) { setToken(null); setStatus(null); return; }
     const next = blank();
@@ -115,6 +134,10 @@ export function DischargeSummaryForm({ admissionId, onClose }: {
       const r = await api.get<Derived>(`/ipd/admissions/${admissionId}/discharge-summary`);
       setD(r);
       apply(r.summary);
+      const rx = await api.get<{ medicines: { medicineName: string; dosage: string | null }[] }>(
+        `/ipd/admissions/${admissionId}/discharge-medicines`
+      ).catch(() => ({ medicines: [] }));
+      setMeds(rx.medicines.map((m) => ({ name: m.medicineName, dose: m.dosage ?? "" })));
       setError(null); setStale(false);
     } catch (e) {
       setError(e instanceof ApiClientError ? e.message : "Couldn't load the discharge summary.");
@@ -143,6 +166,14 @@ export function DischargeSummaryForm({ admissionId, onClose }: {
       for (const k of ALL_KEYS) body[k] = f[k] ?? "";
       body.followUpDate = followUpDate || null;
       const r = await api.patch<{ summary: SummaryDTO }>(`/ipd/admissions/${admissionId}/discharge-summary`, body);
+      // Saved with the summary, not on its own button. A doctor who typed the
+      // discharge drugs and pressed Save expects them kept; a second button they
+      // did not notice is how a prescription goes missing.
+      await api.post(`/ipd/admissions/${admissionId}/discharge-medicines`, {
+        medicines: meds
+          .filter((m) => m.name.trim())
+          .map((m) => ({ medicineName: m.name.trim(), qty: 1, dosage: m.dose.trim() || undefined })),
+      });
       apply(r.summary);
       setFlash("Saved. The other desk sees this the moment they open the stay.");
     } catch (e) {
@@ -291,6 +322,50 @@ export function DischargeSummaryForm({ admissionId, onClose }: {
                 </div>
 
                 {REST.map((x) => <Field key={x.key} k={x.key} label={x.label} rows={x.rows} hint={x.hint} />)}
+
+                {/* ── MEDICATIONS ADVISED ──
+                    What the patient goes home on. Rows rather than a textarea
+                    because the printed summary numbers them and the pharmacy can
+                    dispense against them; a paragraph can do neither.
+
+                    Two boxes only. The hospital's own summaries read
+                    "TAB. CEFADOX-CV - BD x 5 Days" - a drug and an instruction -
+                    and asking for quantity here would be asking the doctor a
+                    dispensing question they do not answer at the bedside. */}
+                <div>
+                  <span className="mb-1.5 block text-[11.5px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
+                    Medications advised
+                  </span>
+                  <div className="space-y-2">
+                    {meds.map((m, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <span className="w-4 shrink-0 text-right font-mono text-[12px] text-[var(--p-muted)]">{i + 1}.</span>
+                        <input className={`${inp} flex-[2]`} value={m.name} disabled={completed}
+                          placeholder="TAB. CEFADOX-CV"
+                          onChange={(e) => setMeds(meds.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
+                        <input className={`${inp} flex-1`} value={m.dose} disabled={completed}
+                          placeholder="BD x 5 Days"
+                          onChange={(e) => setMeds(meds.map((x, j) => j === i ? { ...x, dose: e.target.value } : x))} />
+                        {!completed && (
+                          <button type="button" onClick={() => setMeds(meds.filter((_, j) => j !== i))}
+                            title="Remove this medicine"
+                            className="shrink-0 rounded-lg border border-[var(--p-border)] px-2 py-1.5 text-[12px] text-[var(--p-muted)] hover:border-[var(--p-rose)] hover:text-[var(--p-rose)]">
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {!completed && (
+                    <button type="button" onClick={() => setMeds([...meds, { name: "", dose: "" }])}
+                      className="mt-2 rounded-lg border border-[var(--p-blue)] px-3 py-1.5 text-[12.5px] font-semibold text-[var(--p-blue)]">
+                      + Add medicine
+                    </button>
+                  )}
+                  {meds.length === 0 && completed && (
+                    <p className="text-[12px] text-[var(--p-muted)]">No discharge medications recorded.</p>
+                  )}
+                </div>
 
                 <label className="block max-w-[220px]">
                   <span className="mb-1 block text-[11.5px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Follow-up date</span>

@@ -300,7 +300,7 @@ export default function LabCatalogPage() {
               <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">{edit.id ? "Edit test" : "Add test"}</h3>
             </div>
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6">
-              <Field label="Test name">
+              <Field label="Test name" required>
                 <input
                   className={fld}
                   value={edit.name}
@@ -327,7 +327,7 @@ export default function LabCatalogPage() {
                     onChange={(e) => { setCodeTouched(true); setEdit({ ...edit, code: e.target.value }); }}
                   />
                 </Field>
-                <Field label="Price (₹)">
+                <Field label="Price (₹)" required>
                   <input
                     className={fld}
                     value={edit.price}

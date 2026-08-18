@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Icon } from "@/components/portal/ui/icons";
-import { Spinner } from "@/components/portal/ui/form-atoms";
+import { Req, Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 
@@ -47,6 +47,13 @@ export interface ClaimPrefill {
   claimedAmount?: string;
   admissionId?: string;
   invoiceId?: string;
+  /**
+   * CASHLESS or REIMBURSEMENT. Defaults to CASHLESS because that is what this
+   * desk raises all day - but a stay the family already paid for at the counter
+   * is a reimbursement, and defaulting it to cashless there would have the desk
+   * ask an insurer to pay a bill that has already been settled in cash.
+   */
+  type?: "CASHLESS" | "REIMBURSEMENT";
 }
 
 const inr = (s: string | number | null) => (s == null ? "-" : "₹" + Number(s).toLocaleString("en-IN", { maximumFractionDigits: 0 }));
@@ -249,7 +256,7 @@ export function NewClaim({ apiBase, insurers, prefill, onClose, onCreated }: {
   const [hits, setHits] = useState<PatientHit[]>([]);
   const [f, setF] = useState({
     insurer: prefill?.insurer ?? "", policyNo: prefill?.policyNo ?? "", memberId: prefill?.memberId ?? "",
-    sumInsured: "", type: "CASHLESS", stage: prefill?.stage ?? "PRE_AUTH", diagnosis: "",
+    sumInsured: "", type: prefill?.type ?? "CASHLESS", stage: prefill?.stage ?? "PRE_AUTH", diagnosis: "",
     claimedAmount: prefill?.claimedAmount ?? "", remarks: "",
   });
   const [busy, setBusy] = useState(false);
@@ -321,8 +328,8 @@ export function NewClaim({ apiBase, insurers, prefill, onClose, onCreated }: {
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <div><label className={lbl}>Insurer / TPA</label><input list="insurers" className={inp} value={f.insurer} onChange={(e) => set("insurer")(e.target.value)} placeholder="Star Health / Medi Assist…" /><datalist id="insurers">{insurers.map((x) => <option key={x} value={x} />)}</datalist></div>
-            <div><label className={lbl}>Policy number</label><input className={inp} value={f.policyNo} onChange={(e) => set("policyNo")(e.target.value)} placeholder="P/1234/5678" /></div>
+            <div><label className={lbl}>Insurer / TPA<Req /></label><input list="insurers" className={inp} value={f.insurer} onChange={(e) => set("insurer")(e.target.value)} placeholder="Star Health / Medi Assist…" /><datalist id="insurers">{insurers.map((x) => <option key={x} value={x} />)}</datalist></div>
+            <div><label className={lbl}>Policy number<Req /></label><input className={inp} value={f.policyNo} onChange={(e) => set("policyNo")(e.target.value)} placeholder="P/1234/5678" /></div>
             <div><label className={lbl}>Member ID</label><input className={inp} value={f.memberId} onChange={(e) => set("memberId")(e.target.value)} placeholder="Optional" /></div>
             <div><label className={lbl}>Sum insured (₹)</label><input className={inp} inputMode="numeric" value={f.sumInsured} onChange={(e) => set("sumInsured")(e.target.value.replace(/[^\d]/g, ""))} placeholder="500000" /></div>
             <div>
@@ -334,7 +341,7 @@ export function NewClaim({ apiBase, insurers, prefill, onClose, onCreated }: {
               <select className={inp} value={f.stage} onChange={(e) => set("stage")(e.target.value)}><option value="PRE_AUTH">Pre-authorization</option><option value="FINAL">Final claim</option></select>
             </div>
             <div className="sm:col-span-2"><label className={lbl}>Diagnosis</label><input className={inp} value={f.diagnosis} onChange={(e) => set("diagnosis")(e.target.value)} placeholder="e.g. Acute appendicitis - laparoscopic appendectomy" /></div>
-            <div><label className={lbl}>Amount claimed (₹)</label><input className={inp} inputMode="numeric" value={f.claimedAmount} onChange={(e) => set("claimedAmount")(e.target.value.replace(/[^\d]/g, ""))} placeholder="45000" /></div>
+            <div><label className={lbl}>Amount claimed (₹)<Req /></label><input className={inp} inputMode="numeric" value={f.claimedAmount} onChange={(e) => set("claimedAmount")(e.target.value.replace(/[^\d]/g, ""))} placeholder="45000" /></div>
             <div className="sm:col-span-2"><label className={lbl}>Remarks</label><input className={inp} value={f.remarks} onChange={(e) => set("remarks")(e.target.value)} placeholder="Optional" /></div>
           </div>
           {err && <p className="rounded-lg border border-[var(--p-rose)]/25 bg-[var(--p-rose-soft)] px-4 py-2.5 text-[12.5px] text-[var(--p-rose)]">{err}</p>}
@@ -421,7 +428,11 @@ export function ClaimModal({ apiBase, claim, onClose, onChanged }: { apiBase: st
               </div>
               {/* policy */}
               <div className="grid grid-cols-2 gap-x-6 gap-y-2.5 rounded-xl border border-[var(--p-border)] p-4 text-[12.5px]">
-                <Row k="Policy no" v={c.policyNo} mono />
+                {/* Blank on a claim opened automatically at admission: the desk
+                    is no longer asked for a policy number at the bedside, so the
+                    draft carries an empty one until somebody fills it in. A dash
+                    says that; an empty cell looks like the page failed to load. */}
+                <Row k="Policy no" v={c.policyNo?.trim() ? c.policyNo : "-"} mono />
                 <Row k="Member ID" v={c.memberId ?? "-"} mono />
                 <Row k="Sum insured" v={inr2(c.sumInsured)} mono />
                 <Row k="Insurer ref" v={c.insurerRef ?? "-"} mono />

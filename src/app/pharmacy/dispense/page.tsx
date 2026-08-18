@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { PrimaryButton } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
-import { Spinner } from "@/components/portal/ui/form-atoms";
+import { Req, Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 import { DispenseScratchpad, type PadLine } from "@/components/portal/pharmacy/scratchpad";
@@ -152,10 +152,10 @@ export default function DispensePage() {
         patientId: patient.id,
         items: lines.map((l) => ({ medicineId: l.medicineId, qty: l.qty })),
         discountAmount: disc || undefined,
-        // An admitted patient settles at discharge. Sending a tender here would
-        // be a payment the server is obliged to throw away - better not to
-        // collect one in the first place.
-        payments: !isInpatient && payNow && payments.length ? payments : undefined,
+        // Sent for an inpatient too. The pharmacy window settles medicines here
+        // whether or not the patient is in a bed; unticking "collect now" is
+        // what leaves the bill on the stay for reception.
+        payments: payNow && payments.length ? payments : undefined,
       });
       if (res.chargedToRoom) setToRoom({ ipNumber: res.ipNumber ?? "", invoiceId: res.invoice?.id, total: res.invoice?.totalAmount });
       else if (res.invoice) setDone({ id: res.invoice.id, receiptNo: res.invoice.receiptNo, total: res.invoice.totalAmount });
@@ -321,7 +321,7 @@ export default function DispensePage() {
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div>
-                        <label className="block text-[11px] font-semibold uppercase text-[var(--p-muted)]">Customer Name *</label>
+                        <label className="block text-[11px] font-semibold uppercase text-[var(--p-muted)]">Customer Name<Req /></label>
                         <input
                           type="text"
                           required
@@ -332,7 +332,7 @@ export default function DispensePage() {
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-semibold uppercase text-[var(--p-muted)]">Mobile Number *</label>
+                        <label className="block text-[11px] font-semibold uppercase text-[var(--p-muted)]">Mobile Number<Req /></label>
                         <input
                           type="tel"
                           required
@@ -497,25 +497,25 @@ export default function DispensePage() {
             </div>
             <div className="space-y-3 border-t border-[var(--p-border)] p-5">
               <DiscountInput subtotal={subtotal} accent="blue" onChange={(d) => setDisc(d.amount)} />
-              {/* THE TILL IS CLOSED FOR AN INPATIENT. Not disabled - absent.
-                  A greyed-out payment box still invites the question "can I
-                  override this?"; a bill line saying the money is due at
-                  discharge does not. */}
-              {isInpatient ? (
+              {/* THE TILL IS OPEN FOR AN INPATIENT TOO.
+                  It used to be absent here, with a "do not take money" notice:
+                  a ward strip went on the stay and reception collected it at
+                  discharge. This hospital settles medicines at the pharmacy
+                  window and only labs and the stay at reception, so refusing
+                  the cash a relative was holding out was the wrong default.
+                  Leaving it unticked still puts the bill on the stay, which is
+                  the right answer when nobody came down to pay. */}
+              <label className="flex items-center gap-2 text-[13px] text-[var(--p-text)]">
+                <input type="checkbox" checked={payNow} onChange={(e) => setPayNow(e.target.checked)} className="h-4 w-4 accent-[var(--p-blue)]" /> Collect payment now
+              </label>
+              {payNow ? (
+                <PaymentSection total={total} accent="blue" onChange={(r) => { setPayments(r.payments); setPayValid(r.valid); }} />
+              ) : isInpatient ? (
                 <div className="rounded-lg bg-[var(--p-amber-soft)] px-3.5 py-2.5 text-[12px] leading-relaxed text-[#8a6414]">
-                  <b>Do not take money.</b> {admission?.ipNumber} is in a bed - this bill is
-                  raised against the stay and settles in the discharge bill.
+                  <b>Goes on the stay.</b> {admission?.ipNumber} - this bill stays unpaid, shows as
+                  due on the discharge bill, and reception collects it on the way out.
                 </div>
-              ) : (
-                <>
-                  <label className="flex items-center gap-2 text-[13px] text-[var(--p-text)]">
-                    <input type="checkbox" checked={payNow} onChange={(e) => setPayNow(e.target.checked)} className="h-4 w-4 accent-[var(--p-blue)]" /> Collect payment now
-                  </label>
-                  {payNow && (
-                    <PaymentSection total={total} accent="blue" onChange={(r) => { setPayments(r.payments); setPayValid(r.valid); }} />
-                  )}
-                </>
-              )}
+              ) : null}
               {lines.length > 0 && (
                 <div className="border-t border-[var(--p-border)] pt-3">
                   <DispenseScratchpad
@@ -533,9 +533,13 @@ export default function DispensePage() {
             </div>
             {error && <div className="border-t border-[var(--p-border)] bg-[var(--p-rose-soft)] px-5 py-3 text-[12px] text-[var(--p-rose)]">{error}</div>}
             <div className="border-t border-[var(--p-border)] p-5">
-              <PrimaryButton onClick={submit} disabled={!patient || lines.length === 0 || busy || checkingAdm || (!isInpatient && payNow && !payValid)} full>
+              {/* The tender is validated for an inpatient too now. It used to be
+                  skipped because a ward dispense could not carry one; leaving
+                  that guard in place would let a half-filled split payment
+                  through on exactly the bills that now accept money. */}
+              <PrimaryButton onClick={submit} disabled={!patient || lines.length === 0 || busy || checkingAdm || (payNow && !payValid)} full>
                 {busy ? <><Spinner /> Dispensing…</>
-                  : isInpatient ? <><Icon name="bed" size={15} /> Dispense &amp; charge to room</>
+                  : isInpatient && !payNow ? <><Icon name="bed" size={15} /> Dispense &amp; charge to room</>
                   : <><Icon name="pill" size={15} /> Dispense &amp; bill</>}
               </PrimaryButton>
               <p className="mt-2 text-center text-[10px] text-[var(--p-muted)]">Medicines are taxable (5%/12%). Batches picked FEFO.</p>

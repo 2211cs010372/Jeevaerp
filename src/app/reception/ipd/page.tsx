@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Icon } from "@/components/portal/ui/icons";
-import { Spinner } from "@/components/portal/ui/form-atoms";
+import { Req, Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
@@ -53,7 +53,7 @@ const blank = {
   // self-pay is caught at the counter when the family says "but it's cashless",
   // whereas a self-payer marked insurance sits on the claims desk forever.
   payerType: "SELF_PAY" as "SELF_PAY" | "INSURANCE",
-  insurer: "", policyNo: "", memberId: "",
+  insurer: "",
 };
 const money = (v: string | number) => Number(v).toLocaleString("en-IN", { maximumFractionDigits: 0 });
 /** "12 Aug" - the admission date, short enough to sit inside a bed tile. */
@@ -195,7 +195,7 @@ export default function BedBoardPage() {
   }
 
   /** An insurance admission is not complete without somebody to bill. */
-  const insuranceReady = form.payerType === "SELF_PAY" || (!!form.insurer.trim() && !!form.policyNo.trim());
+  const insuranceReady = form.payerType === "SELF_PAY" || !!form.insurer.trim();
 
   async function admit() {
     if (!patient || !bedId || !doctorId || !insuranceReady) return;
@@ -211,8 +211,6 @@ export default function BedBoardPage() {
         notes: form.notes || undefined,
         payerType: form.payerType,
         insurer: form.payerType === "INSURANCE" ? form.insurer || undefined : undefined,
-        policyNo: form.payerType === "INSURANCE" ? form.policyNo || undefined : undefined,
-        memberId: form.payerType === "INSURANCE" ? form.memberId || undefined : undefined,
       });
       setDoneIp(res);
       setPatient(null); setPq(""); setDoctorId(""); setForm({ ...blank }); setBedId("");
@@ -252,7 +250,7 @@ export default function BedBoardPage() {
       </div>
 
       {flash && (
-        <div data-rise className="mb-4 flex items-center justify-between rounded-lg border border-[var(--p-cyan)]/30 bg-[var(--p-cyan-soft)] px-4 py-3 text-[14px] font-medium text-[var(--p-cyan-deep)]">
+        <div data-rise className="mb-4 flex items-center justify-between rounded-lg border border-[var(--p-cyan)]/30 bg-[var(--p-cyan-soft)] px-4 py-1.5 text-[14px] font-medium text-[var(--p-cyan-deep)]">
           <span className="flex items-center gap-2"><Icon name="check" size={15} /> {flash}</span>
           <button onClick={() => setFlash(null)}>✕</button>
         </div>
@@ -449,7 +447,7 @@ export default function BedBoardPage() {
               <div className="space-y-4 p-5">
                 {/* patient */}
                 <div>
-                  <label className={lbl}>Patient <span className="text-[var(--p-rose)]">*</span></label>
+                  <label className={lbl}>Patient<Req /></label>
                   {patient ? (
                     <div className="flex items-center justify-between rounded-lg border border-[var(--p-blue)]/30 bg-[var(--p-blue-soft)] px-3 py-2.5">
                       <div className="min-w-0">
@@ -482,14 +480,14 @@ export default function BedBoardPage() {
                 {/* ward + bed */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className={lbl}>Ward <span className="text-[var(--p-rose)]">*</span></label>
+                    <label className={lbl}>Ward<Req /></label>
                     <select className={fld} value={wardId} onChange={(e) => setWardId(e.target.value)}>
                       {freeWards.length === 0 && <option value="">No beds free</option>}
                       {freeWards.map((w) => <option key={w.id} value={w.id}>{w.name} ({w.beds.length} free)</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className={lbl}>Bed <span className="text-[var(--p-rose)]">*</span></label>
+                    <label className={lbl}>Bed<Req /></label>
                     <select className={fld} value={bedId} onChange={(e) => setBedId(e.target.value)} disabled={!selectedWard}>
                       {!selectedWard && <option value="">-</option>}
                       {selectedWard?.beds.map((b) => <option key={b.id} value={b.id}>{bedShort(b.bedNo)}</option>)}
@@ -503,7 +501,7 @@ export default function BedBoardPage() {
                 )}
 
                 <div>
-                  <label className={lbl}>Attending doctor <span className="text-[var(--p-rose)]">*</span></label>
+                  <label className={lbl}>Attending doctor<Req /></label>
                   <select className={fld} value={doctorId} onChange={(e) => setDoctorId(e.target.value)}>
                     <option value="">Choose a doctor…</option>
                     {doctors.map((d) => <option key={d.id} value={d.id}>{d.name} - {d.department}</option>)}
@@ -539,21 +537,26 @@ export default function BedBoardPage() {
 
                   {form.payerType === "INSURANCE" && (
                     <div className="mt-3 space-y-2">
+                      {/* THE INSURER IS THE ONLY THING ASKED FOR HERE.
+                          Policy number and member ID used to sit alongside it and
+                          the policy number was required, which stopped an
+                          admission at the one moment nobody can afford to be
+                          stopped: a patient is being wheeled in and the card is
+                          in a bag somebody left at home. The insurance desk asks
+                          for both anyway when it works the claim, and asks the
+                          family directly - so collecting them at the bedside
+                          bought nothing and blocked the bed. */}
                       <div>
-                        <input className={fld} list="ins-list" value={form.insurer}
+                        <label className={lbl} htmlFor="admit-insurer">Insurer / TPA<Req /></label>
+                        <input id="admit-insurer" className={fld} list="ins-list" value={form.insurer}
                           onChange={(e) => setForm({ ...form, insurer: e.target.value })}
-                          placeholder="Insurer / TPA *" />
+                          placeholder="Star Health, Care, CGHS…" />
                         <datalist id="ins-list">{INSURERS.map((x) => <option key={x} value={x} />)}</datalist>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <input className={fld} value={form.policyNo}
-                          onChange={(e) => setForm({ ...form, policyNo: e.target.value })} placeholder="Policy no *" />
-                        <input className={fld} value={form.memberId}
-                          onChange={(e) => setForm({ ...form, memberId: e.target.value })} placeholder="Member ID" />
                       </div>
                       <p className="text-[12px] leading-relaxed text-[var(--p-muted)]">
                         This puts the stay on the <b className="text-[var(--p-ink)]">insurance desk&apos;s</b> list straight away,
                         so the pre-authorization gets raised while the patient is still here.
+                        They collect the policy and member number with the claim.
                       </p>
                     </div>
                   )}
@@ -572,13 +575,13 @@ export default function BedBoardPage() {
                 </div>
 
                 <button onClick={admit} disabled={busy || !patient || !bedId || !doctorId || !insuranceReady}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-[var(--p-blue-deep)] disabled:opacity-40">
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-[var(--p-blue-deep)] disabled:opacity-40">
                   {busy ? <><Spinner /> Admitting…</> : <><Icon name="bed" size={16} /> Admit &amp; assign bed</>}
                 </button>
                 {!patient && <p className="text-center text-[12px] text-[var(--p-muted)]">Find the patient first.</p>}
                 {patient && !insuranceReady && (
                   <p className="text-center text-[12px] text-[var(--p-muted)]">
-                    Add the insurer and policy number, or switch to self-paying.
+                    Name the insurer, or switch to self-paying.
                   </p>
                 )}
               </div>

@@ -316,7 +316,7 @@ export default function PatientDetailPage() {
             <div className="space-y-4 p-6">
               <Field label="Description"><input className={fld} value={billDesc} onChange={(e) => setBillDesc(e.target.value)} /></Field>
               <div className="grid grid-cols-2 gap-4">
-                <Field label="Amount (₹)"><input className={fld} value={billAmt} onChange={(e) => setBillAmt(e.target.value.replace(/[^\d.]/g, ""))} inputMode="decimal" placeholder="700" autoFocus /></Field>
+                <Field label="Amount (₹)" required><input className={fld} value={billAmt} onChange={(e) => setBillAmt(e.target.value.replace(/[^\d.]/g, ""))} inputMode="decimal" placeholder="700" autoFocus /></Field>
                 <Field label="GST %"><input className={fld} value={billGst} onChange={(e) => setBillGst(e.target.value.replace(/[^\d.]/g, ""))} inputMode="decimal" /></Field>
               </div>
               <p className="text-[12px] leading-relaxed text-[var(--p-muted)]">Consultations are typically GST-exempt (0%). CGST/SGST split is computed automatically.</p>

@@ -136,8 +136,30 @@ export const PORTALS: Record<string, PortalMeta> = {
       // pre-auth is already submitted drops off "To raise" and would otherwise
       // have no route to its bill at all - and repricing and reprinting that
       // bill is most of this desk's work.
+
       { label: "Insurance stays", href: "/stays", icon: "bed", hint: "Everyone admitted on a policy" },
+      // THE WARD ITSELF, not just this desk's slice of it. A family arriving
+      // with a policy card is admitted here rather than queued at reception and
+      // sent back for the pre-auth; and because a bed held by a self-paying
+      // patient is just as unavailable, the board shows every bed and every
+      // stay, not only the insured ones.
+      { label: "Beds & admit", href: "/ipd", icon: "bed", hint: "The ward board - admit a patient and open any stay" },
       { label: "Claims", href: "/claims", icon: "shield", hint: "Everything raised, and where it stands with the insurer" },
+      {
+        // The other end of a claim. "Approved" is not the end of the story -
+        // REFUSED is, and a refusal leaves bills pointed at an insurer who has
+        // already said no. Those are kept out of every dues list by design, so
+        // without this screen nobody could see them and reception's instinct
+        // (go and look in Billing) was guaranteed to find nothing.
+        label: "Settle up", href: "/settlements", icon: "rupee",
+        hint: "What the insurer's answer means for the money",
+        badge: {
+          path: "/insurance/settlements", field: "patientPaysCount", tone: "rose",
+          // A decision recorded on this desk, or a bill moving, is what changes
+          // this number. Both land as one of these.
+          events: [EVENTS.INVOICE_RAISED, EVENTS.ADMISSION_CLOSED],
+        },
+      },
     ],
     groups: [
       {
@@ -159,12 +181,22 @@ export const PORTALS: Record<string, PortalMeta> = {
         title: "The patients",
         items: [
           { label: "Insurance stays", href: "/stays", icon: "bed" },
+          { label: "Beds & admit stays", href: "/ipd", icon: "bed" },
         ],
       },
       {
         title: "With the insurer",
         items: [
           { label: "Claims", href: "/claims", icon: "shield" },
+          {
+            // Last, because it is where a claim ENDS - and the only place the
+            // consequence of a refusal is visible as money somebody must chase.
+            label: "Settle up", href: "/settlements", icon: "rupee",
+            badge: {
+              path: "/insurance/settlements", field: "patientPaysCount", tone: "rose",
+              events: [EVENTS.INVOICE_RAISED, EVENTS.ADMISSION_CLOSED],
+            },
+          },
         ],
       },
     ],

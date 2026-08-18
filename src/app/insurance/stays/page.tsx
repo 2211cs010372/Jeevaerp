@@ -8,7 +8,7 @@ import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
 import { TOPICS } from "@/lib/realtime/topics";
-import { StatusPill } from "@/components/portal/insurance/claims-board";
+import { StatusPill, NewClaim, type ClaimPrefill } from "@/components/portal/insurance/claims-board";
 import { bedLabel } from "@/lib/beds";
 
 /**
@@ -27,12 +27,33 @@ import { bedLabel } from "@/lib/beds";
 interface Stay {
   admissionId: string; ipNumber: string;
   patient: { id: string; displayId: string; fullName: string; phone: string };
+  /** SELF_PAY rows only appear on the self-pay tab - see the payer filter. */
+  payerType: string;
   insurer: string | null; policyNo: string | null;
   ward: string; bedNo: string;
   admittedAt: string; dischargedAt: string | null; days: number;
   amount: string;
   claims: { id: string; claimNo: string; stage: string; status: string; claimedAmount: string }[];
 }
+
+/**
+ * ── WHICH PATIENTS THIS DESK CAN SEE ──
+ *
+ * Cashless first and by default: an unauthorized cashless stay is money the
+ * hospital loses, so that list must never be diluted by rows nobody is
+ * accountable for.
+ *
+ * Self-paying stays are the second tab because the family paying the counter
+ * does not mean the family has no policy. They pay in full - the policy was not
+ * produced at admission, or the TPA is not on the panel - and then claim the
+ * money back themselves. The hospital's part is the paperwork, and until now the
+ * desk had to rebuild the stay by hand on the claims board to produce it.
+ */
+type Payer = "INSURANCE" | "SELF_PAY";
+const PAYERS: { k: Payer; label: string; hint: string }[] = [
+  { k: "INSURANCE", label: "Cashless", hint: "Admitted on a policy. The hospital bills the insurer directly." },
+  { k: "SELF_PAY", label: "Self-paying", hint: "The family settles at the counter. Raise a reimbursement claim so they can get it back from their own insurer." },
+];
 
 const inr = (v: string | number) => "₹" + Number(v).toLocaleString("en-IN", { maximumFractionDigits: 0 });
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
@@ -47,17 +68,33 @@ const TABS: { k: Tab; label: string }[] = [
 export default function StaysPage() {
   const [stays, setStays] = useState<Stay[]>([]);
   const [tab, setTab] = useState<Tab>("IN_BED");
+  const [payer, setPayer] = useState<Payer>("INSURANCE");
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  /** The stay a reimbursement claim is being raised against, prefilled. */
+  const [raising, setRaising] = useState<ClaimPrefill | null>(null);
+  /** The insurer picker's options, same source the pending screen uses. */
+  const [insurers, setInsurers] = useState<string[]>([]);
+  const [flash, setFlash] = useState<string | null>(null);
+
   const load = useCallback(async () => {
-    try { setStays((await api.get<{ stays: Stay[] }>("/insurance/stays")).stays); setError(null); }
+    try {
+      setStays((await api.get<{ stays: Stay[] }>(`/insurance/stays?payer=${payer}`)).stays);
+      setError(null);
+    }
     catch (e) { setError(e instanceof ApiClientError ? e.message : "Couldn't load the list."); }
     finally { setLoading(false); }
+  }, [payer]);
+  useEffect(() => { setLoading(true); load(); }, [load]);
+  useEffect(() => {
+    api.get<{ insurers: string[] }>("/insurance?status=ALL")
+      .then((r) => setInsurers(r.insurers)).catch(() => {});
   }, []);
-  useEffect(() => { load(); }, [load]);
-  useLive([TOPICS.INSURANCE], load);
+  // Not while the claim form is open - a reload behind it is harmless, but the
+  // list jumping under a half-filled dialog is not.
+  useLive([TOPICS.INSURANCE], load, { enabled: !raising });
 
   const shown = useMemo(() => stays.filter((s) => {
     if (tab === "IN_BED" && s.dischargedAt) return false;
@@ -78,9 +115,25 @@ export default function StaysPage() {
       <div data-rise className="surface dotgrid mb-5 px-6 py-5">
         <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Insurance stays</h1>
         <p className="mt-1 max-w-2xl text-[14px] leading-relaxed text-[var(--p-muted)]">
-          Every patient admitted on a policy. Open one to price its bill against that
-          policy&apos;s tariff, or to print the claim bill again.
+          {payer === "INSURANCE"
+            ? "Every patient admitted on a policy. Open one to price its bill against that policy's tariff, or to print the claim bill again."
+            : "Patients whose families settled at the counter. They may still hold a policy - raise a reimbursement claim so they can get the money back themselves. Nothing here changes what was collected."}
         </p>
+      </div>
+
+      {/* ── WHO IS PAYING ──
+          Cashless is the accountable list and stays first. Self-paying is a
+          second door onto the same patients, not a filter on the same list -
+          which is why it reloads rather than filtering client-side: the server
+          never sent these rows before. */}
+      <div data-rise className="mb-4 flex flex-wrap gap-1 rounded-md border border-[var(--p-border)] bg-white p-1">
+        {PAYERS.map((p) => (
+          <button key={p.k} onClick={() => setPayer(p.k)} title={p.hint}
+            className={`rounded px-3.5 py-1.5 text-[12px] font-semibold transition-colors ${
+              payer === p.k ? "bg-[var(--p-ink)] text-white" : "text-[var(--p-muted)] hover:text-[var(--p-ink)]"}`}>
+            {p.label}
+          </button>
+        ))}
       </div>
 
       <div data-rise className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -100,6 +153,12 @@ export default function StaysPage() {
         </div>
       </div>
 
+      {flash && (
+        <div className="mb-4 flex items-start justify-between gap-3 rounded-lg border border-[var(--p-cyan)]/30 bg-[var(--p-cyan-soft)] px-4 py-3 text-[13.5px] font-medium text-[var(--p-cyan-deep)]">
+          <span className="flex items-start gap-2"><Icon name="check" size={15} /> {flash}</span>
+          <button onClick={() => setFlash(null)}>✕</button>
+        </div>
+      )}
       {error && <div className="mb-4 rounded-lg border border-[var(--p-rose)]/25 bg-[var(--p-rose-soft)] px-4 py-3 text-[14px] text-[var(--p-rose)]">{error}</div>}
 
       <section data-rise className="surface overflow-hidden">
@@ -109,10 +168,15 @@ export default function StaysPage() {
           <div className="flex flex-col items-center px-6 py-20 text-center">
             <span className="grid h-12 w-12 place-items-center rounded-full border border-[var(--p-border)] text-[var(--p-muted)]"><Icon name="bed" size={20} /></span>
             <p className="mt-3 text-[15px] font-semibold text-[var(--p-ink)]">
-              {q ? "Nothing matches that." : tab === "IN_BED" ? "Nobody is in a bed on a policy right now." : "Nothing here."}
+              {q ? "Nothing matches that."
+                : tab === "IN_BED"
+                  ? (payer === "INSURANCE" ? "Nobody is in a bed on a policy right now." : "Nobody is in a bed paying their own way right now.")
+                  : "Nothing here."}
             </p>
             <p className="mt-1 max-w-md text-[13px] leading-relaxed text-[var(--p-muted)]">
-              A stay appears here the moment reception admits somebody and marks them as insurance.
+              {payer === "INSURANCE"
+                ? "A stay appears here the moment reception admits somebody and marks them as insurance."
+                : "Every stay reception admits as self-paying appears here, whether or not the family has a policy."}
             </p>
           </div>
         ) : (
@@ -139,7 +203,7 @@ export default function StaysPage() {
                     )}
                   </div>
                   <div className="mt-0.5 truncate text-[12.5px] text-[var(--p-muted)]">
-                    {s.insurer ?? "Insurer not recorded"}
+                    {s.payerType === "SELF_PAY" ? "Paying at the counter" : (s.insurer ?? "Insurer not recorded")}
                     {s.policyNo && <> · <span className="font-mono">{s.policyNo}</span></>}
                     {" · "}{bedLabel(s.ward, s.bedNo)}
                     {" · "}
@@ -149,9 +213,15 @@ export default function StaysPage() {
                       blank row would read as "nothing to do". */}
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                     {s.claims.length === 0 ? (
-                      <span className="rounded-full bg-[var(--p-rose-soft)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--p-rose)]">
-                        No claim raised
-                      </span>
+                      s.payerType === "SELF_PAY" ? (
+                        <span className="rounded-full bg-[var(--p-border)]/40 px-2.5 py-0.5 text-[11px] font-semibold text-[var(--p-muted)]">
+                          No claim - the family paid
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-[var(--p-rose-soft)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--p-rose)]">
+                          No claim raised
+                        </span>
+                      )
                     ) : s.claims.map((c) => (
                       <span key={c.id} className="inline-flex items-center gap-1.5">
                         <span className="font-mono text-[11px] text-[var(--p-muted)]">
@@ -178,6 +248,35 @@ export default function StaysPage() {
                     <Icon name="printer" size={13} />
                     {s.dischargedAt ? "Bill" : "Provisional"}
                   </a>
+
+                  {/* ── THE REIMBURSEMENT ──
+                      Only on a self-paying stay, and only where no claim exists
+                      yet. Prefilled from the row so the desk confirms rather
+                      than re-types: re-keying an IP number and an amount off a
+                      screen that already shows both is how the wrong admission
+                      ends up attached to somebody's claim.
+
+                      FINAL stage, not PRE_AUTH: there is nothing to
+                      pre-authorize on treatment the family has already paid
+                      for. And the money is NOT touched - the drawer really did
+                      take that cash, the bill stays SELF_PAY, and this only
+                      produces the paperwork the family claims with. */}
+                  {s.payerType === "SELF_PAY" && s.claims.length === 0 && (
+                    <button
+                      onClick={() => setRaising({
+                        patient: { ...s.patient, age: null },
+                        stage: "FINAL",
+                        type: "REIMBURSEMENT",
+                        claimedAmount: s.amount,
+                        admissionId: s.admissionId,
+                        insurer: s.insurer ?? undefined,
+                        policyNo: s.policyNo ?? undefined,
+                      })}
+                      title="Raise a reimbursement claim so the family can recover this from their own insurer"
+                      className="relative inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--p-teal)] transition-colors hover:border-[var(--p-teal)]">
+                      <Icon name="shield" size={13} /> Claim
+                    </button>
+                  )}
                   <Icon name="chevron" size={16} className="pointer-events-none" />
                 </div>
               </div>
@@ -185,6 +284,20 @@ export default function StaysPage() {
           </div>
         )}
       </section>
+
+      {raising && (
+        <NewClaim
+          apiBase="/insurance"
+          insurers={insurers}
+          prefill={raising}
+          onClose={() => setRaising(null)}
+          onCreated={(c) => {
+            setRaising(null);
+            setFlash(`${c.claimNo} raised for reimbursement. Nothing collected has changed - this is the paperwork the family claims with.`);
+            load();
+          }}
+        />
+      )}
     </PortalScroll>
   );
 }

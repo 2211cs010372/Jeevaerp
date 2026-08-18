@@ -157,6 +157,10 @@ const DS_CSS = (onStationery: boolean) => `
 
   /* A shaded header band carries the column labels, a shaded row carries each
      total - the fill marks the row the way a rule used to. */
+  /* The discharge prescription. A numbered list rather than a table - see the
+     note at Medications Advised for why quantity is not on it. */
+  .ds-rx { margin: 4px 0 0 0; padding-left: 18px; list-style: decimal; }
+  .ds-rx li { font-size: 11.5px; line-height: 1.6; padding: 1px 0; color: var(--pr-ink); }
   .ds-tbl { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 11.5px; }
   .ds-tbl thead th { background: var(--pr-band); padding: 4px 6px; text-align: left; font-size: 10px;
     font-weight: 800; text-transform: uppercase; letter-spacing: .03em; color: var(--pr-ink); }
@@ -339,9 +343,13 @@ function DischargeSummaryInner() {
           <Sec t="Clinical Finding"><p className="ds-body ds-pre">{say("clinicalFindings")}</p></Sec>
         )}
 
-        {(examShown.length > 0 || say("physicalExamination") || say("systemicExamination")) && (
+        {/* PHYSICAL AND SYSTEMIC EXAMINATION PROSE IS NOT PRINTED.
+            Both were free-text boxes restating what the structured row below
+            already carries, and a discharge summary that repeats itself in
+            prose is one a reader stops reading. The vitals and system findings
+            stay because they are values, not paragraphs. */}
+        {examShown.length > 0 && (
           <Sec t="Examination at Admission">
-            {say("physicalExamination") && <p className="ds-body ds-pre">{say("physicalExamination")}</p>}
             {examShown.length > 0 && (
               <div className="ds-exam">
                 {examShown.map(([k, label]) => (
@@ -351,14 +359,6 @@ function DischargeSummaryInner() {
                   </div>
                 ))}
               </div>
-            )}
-            {say("systemicExamination") && (
-              <>
-                <p className="mt-[5px] text-[9px] font-bold uppercase tracking-[0.1em]" style={{ color: "var(--pr-muted)" }}>
-                  Systemic Examination
-                </p>
-                <p className="ds-body ds-pre">{say("systemicExamination")}</p>
-              </>
             )}
           </Sec>
         )}
@@ -386,74 +386,35 @@ function DischargeSummaryInner() {
           <p className="ds-body ds-pre">{say("conditionAtDischarge") ?? "Not recorded."}</p>
         </Sec>
 
-        {(d.investigations.length > 0 || d.clinical.labsAdvised.length > 0) && (
-          <Sec t="Investigations / Lab Summary">
-            {d.investigations.length > 0 && (
-              <table className="ds-tbl">
-                <thead><tr><th>Investigation</th><th>Date</th></tr></thead>
-                <tbody>
-                  {d.investigations.map((t, i) => (
-                    <tr key={i}>
-                      <td>{t.testName}</td>
-                      <td className="ds-mono">{date(t.date)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-            {d.clinical.labsAdvised.length > 0 && (
-              <p className="ds-body">
-                <b>Advised:</b>{" "}
-                {d.clinical.labsAdvised.map((l, i) => (
-                  <span key={i}>
-                    {i > 0 && ", "}{l.name}
-                    {/* An advised test that was never ordered is exactly what a
-                        reader of this summary needs to see. */}
-                    {!l.ordered && !l.declined && <b> (not ordered)</b>}
-                    {l.declined && " (declined)"}
-                  </span>
-                ))}
-              </p>
-            )}
-          </Sec>
-        )}
-
+        {/* INVESTIGATIONS / LAB SUMMARY IS NOT PRINTED.
+            Every test run during the stay is itemised on the bill and on the
+            lab reports that go home with the family; repeating the list here
+            made the summary longer without telling a reading doctor anything
+            they could act on. What was DONE is history; this document is about
+            what happens next. */}
+        {/* A NUMBERED LIST, NOT A TABLE WITH A QUANTITY COLUMN.
+            Quantity is a dispensing fact - it belongs on the pharmacy bill. What
+            a patient is sent home with is a DRUG, a FREQUENCY and a DURATION,
+            and that is what the doctor writes and what the next doctor reads:
+            "TAB. CEFADOX-CV - BD x 5 Days". Printing a Qty column instead left
+            the two facts that matter clinically nowhere on the page. */}
         <Sec t="Medications Advised">
           {d.medicines.length > 0 ? (
-            <table className="ds-tbl">
-              <thead>
-                <tr>
-                  <th className="w-[22px]">#</th><th>Medicine</th>
-                  <th className="w-[54px]">Qty</th>
-                </tr>
-              </thead>
-              <tbody>
-                {d.medicines.map((m, i) => (
-                  <tr key={i}>
-                    <td className="ds-mono">{i + 1}.</td>
-                    <td className="font-semibold">{m.name}</td>
-                    <td className="ds-mono">{m.qty}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <ol className="ds-rx">
+              {d.medicines.map((m, i) => (
+                <li key={i}>
+                  <span className="font-semibold">{m.name}</span>
+                  {m.dosage && <span> - {m.dosage}</span>}
+                </li>
+              ))}
+            </ol>
           ) : <p className="ds-body ds-muted">No discharge medications recorded.</p>}
         </Sec>
 
-        <Sec t="Follow Up Instruction">
-          <p className="ds-body ds-pre">{say("followUpInstruction", d.clinical.advice) ?? "As advised."}</p>
-          {(d.summary?.followUpDate || d.clinical.nextVisit) && (
-            <p className="ds-body">
-              <b>Review on:</b>{" "}
-              {d.summary?.followUpDate ? date(d.summary.followUpDate) : d.clinical.nextVisit}
-            </p>
-          )}
-        </Sec>
-
-        {say("preventiveAdvice") && (
-          <Sec t="Preventive Advised"><p className="ds-body ds-pre">{say("preventiveAdvice")}</p></Sec>
-        )}
-
+        {/* FOLLOW-UP INSTRUCTION AND PREVENTIVE ADVICE ARE NOT PRINTED.
+            Removed at the hospital's request: the advice that matters travels
+            on the discharge prescription the patient is handed, and two places
+            saying what to do next is how they end up disagreeing. */}
         <Sec t="Billing Summary">
           <table className="ds-tbl">
             <tbody>

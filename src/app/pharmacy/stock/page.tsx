@@ -720,7 +720,7 @@ export default function StockPage() {
             <div className="grid gap-4 p-6 sm:grid-cols-2">
               {/* First field, and required: who this stock came from decides
                   which consignment it belongs to, not just who to pay. */}
-              <Field label="Received from" span>
+              <Field label="Received from" span required>
                 <select className={fld} value={bf.supplierId} onChange={(e) => setBf({ ...bf, supplierId: e.target.value })} autoFocus>
                   <option value="">Choose the distributor…</option>
                   {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -731,10 +731,10 @@ export default function StockPage() {
                   </p>
                 )}
               </Field>
-              <Field label="Batch number"><input className={fld} value={bf.batchNo} onChange={(e) => setBf({ ...bf, batchNo: e.target.value })} placeholder="Printed on the strip" /></Field>
-              <Field label="Expiry date"><input type="date" className={fld} value={bf.expiryDate} onChange={(e) => setBf({ ...bf, expiryDate: e.target.value })} /></Field>
-              <Field label={`Quantity (${receiving.unit}s)`}><input className={fld} value={bf.quantity} onChange={(e) => setBf({ ...bf, quantity: e.target.value.replace(/\D/g, "") })} inputMode="numeric" /></Field>
-              <Field label="MRP (₹)"><input className={fld} value={bf.mrp} onChange={(e) => setBf({ ...bf, mrp: e.target.value.replace(/[^\d.]/g, "") })} inputMode="decimal" /></Field>
+              <Field label="Batch number" required><input className={fld} value={bf.batchNo} onChange={(e) => setBf({ ...bf, batchNo: e.target.value })} placeholder="Printed on the strip" /></Field>
+              <Field label="Expiry date" required><input type="date" className={fld} value={bf.expiryDate} onChange={(e) => setBf({ ...bf, expiryDate: e.target.value })} /></Field>
+              <Field label={`Quantity (${receiving.unit}s)`} required><input className={fld} value={bf.quantity} onChange={(e) => setBf({ ...bf, quantity: e.target.value.replace(/\D/g, "") })} inputMode="numeric" /></Field>
+              <Field label="MRP (₹)" required><input className={fld} value={bf.mrp} onChange={(e) => setBf({ ...bf, mrp: e.target.value.replace(/[^\d.]/g, "") })} inputMode="decimal" /></Field>
               <Field label="Purchase price (₹)"><input className={fld} value={bf.purchasePrice} onChange={(e) => setBf({ ...bf, purchasePrice: e.target.value.replace(/[^\d.]/g, "") })} inputMode="decimal" /></Field>
               <Field label="Supplier invoice"><input className={fld} value={bf.supplierRef} onChange={(e) => setBf({ ...bf, supplierRef: e.target.value })} /></Field>
             </div>
@@ -762,7 +762,7 @@ export default function StockPage() {
               </p>
             </div>
             <div className="space-y-4 p-6">
-              <Field label={`How many ${remove.med.unit}s?`}>
+              <Field label={`How many ${remove.med.unit}s?`} required>
                 <input className={fld} value={rmQty} inputMode="numeric" autoFocus
                   onChange={(e) => setRmQty(e.target.value.replace(/\D/g, ""))} />
               </Field>
@@ -810,7 +810,7 @@ export default function StockPage() {
 
             {/* ── BODY (only this scrolls) ── */}
             <div className="flex-1 overflow-y-auto px-6 py-5">
-              <Field label="Name"><input className={fld} value={editMed.name} onChange={(e) => setEditMed({ ...editMed, name: e.target.value })} autoFocus /></Field>
+              <Field label="Name" required><input className={fld} value={editMed.name} onChange={(e) => setEditMed({ ...editMed, name: e.target.value })} autoFocus /></Field>
 
               <div className="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-2">
 

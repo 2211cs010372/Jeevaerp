@@ -262,12 +262,12 @@ export default function SettingsPage() {
         {/* ── IDENTITY ───────────────────────────────────────────────────── */}
         <Card title="Legal identity" sub="Printed on every GST invoice. The GSTIN must be the hospital's real registration number.">
           <div className="grid gap-4 p-6 sm:grid-cols-2">
-            <Field label="Legal name" span><input className={fld} value={f.legalName} onChange={(e) => set("legalName")(e.target.value)} /></Field>
-            <Field label="Address" span><input className={fld} value={f.addressLine} onChange={(e) => set("addressLine")(e.target.value)} /></Field>
-            <Field label="City"><input className={fld} value={f.city} onChange={(e) => set("city")(e.target.value)} /></Field>
-            <Field label="State"><input className={fld} value={f.state} onChange={(e) => set("state")(e.target.value)} /></Field>
-            <Field label="State code (Telangana = 36)"><input className={fld} value={f.stateCode} onChange={(e) => set("stateCode")(e.target.value.replace(/\D/g, "").slice(0, 2))} /></Field>
-            <Field label="PIN code"><input className={fld} value={f.pincode} onChange={(e) => set("pincode")(e.target.value.replace(/\D/g, "").slice(0, 6))} /></Field>
+            <Field label="Legal name" span required><input className={fld} value={f.legalName} onChange={(e) => set("legalName")(e.target.value)} /></Field>
+            <Field label="Address" span required><input className={fld} value={f.addressLine} onChange={(e) => set("addressLine")(e.target.value)} /></Field>
+            <Field label="City" required><input className={fld} value={f.city} onChange={(e) => set("city")(e.target.value)} /></Field>
+            <Field label="State" required><input className={fld} value={f.state} onChange={(e) => set("state")(e.target.value)} /></Field>
+            <Field label="State code (Telangana = 36)" required><input className={fld} value={f.stateCode} onChange={(e) => set("stateCode")(e.target.value.replace(/\D/g, "").slice(0, 2))} /></Field>
+            <Field label="PIN code" required><input className={fld} value={f.pincode} onChange={(e) => set("pincode")(e.target.value.replace(/\D/g, "").slice(0, 6))} /></Field>
             <Field label="GSTIN" span><input className={`${fld} font-mono`} value={f.gstin} onChange={(e) => set("gstin")(e.target.value.toUpperCase())} placeholder="36AACCA1234F1Z5" /></Field>
             <Field label="Phone"><input className={fld} value={f.phone} onChange={(e) => set("phone")(e.target.value)} /></Field>
             <Field label="Email"><input className={fld} value={f.email} onChange={(e) => set("email")(e.target.value)} /></Field>

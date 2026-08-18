@@ -7,6 +7,9 @@ export const dynamic = "force-dynamic";
 
 /** Wards with only their free beds - feeds the admit form's dropdowns. */
 export const GET = handler(async (req) => {
-  await requireRole(req, "RECEPTIONIST", "ADMIN");
+  // INSURANCE_DESK: this portal now runs the whole admission - the bed board,
+  // the admit form and the stay sheet - so a patient can be booked in on a
+  // policy without walking the family to reception first.
+  await requireRole(req, "RECEPTIONIST", "ADMIN", "INSURANCE_DESK");
   return NextResponse.json({ wards: await availableBeds() });
 });

@@ -125,7 +125,7 @@ const BILL_MONO_CSS = `
 `;
 
 
-interface Invoice {
+export interface Invoice {
   id: string; receiptNo: string; source: string; status: string; createdAt: string;
   /** The corrected date to print, when a desk set one. Null on an uncorrected bill. */
   billDate?: string | null;
@@ -190,11 +190,18 @@ const GENDER: Record<string, string> = { MALE: "M", FEMALE: "F", OTHER: "O" };
  * when a stay has more lines than fit. "staff" reads the staff endpoint;
  * "portal" reads the patient-scoped one.
  */
+/**
+ * FETCH ONE BILL AND PRINT IT. The wrapper every /print/invoice/[id] route uses.
+ *
+ * The document itself is `InvoiceDoc` below, which takes an already-loaded
+ * invoice. They are split because a stay's bills are also printed TOGETHER -
+ * one job, one paper tray, every counter's invoice in the run - and that page
+ * has several invoices in hand at once and no route parameter to fetch by.
+ */
 export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal" } = {}) {
   const { invoiceId } = useParams<{ invoiceId: string }>();
   const [inv, setInv] = useState<Invoice | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const path = source === "portal" ? `/portal/invoice/${invoiceId}` : `/billing/invoice/${invoiceId}`;
@@ -202,6 +209,25 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
       .then((r) => setInv(r.invoice))
       .catch((e) => setError(e instanceof ApiClientError ? e.message : "Couldn't load the bill."));
   }, [invoiceId, source]);
+
+  if (error) return <div className="p-10 text-center text-[14px] text-[#8a3b2e]">{error}</div>;
+  if (!inv) return <div className="p-10 text-center text-[14px] text-[#5a6a66]">Preparing the bill…</div>;
+  return <InvoiceDoc inv={inv} />;
+}
+
+/** The stylesheet one invoice needs, so a page printing SEVERAL can emit it once. */
+export const INVOICE_SHEET_CSS = INVOICE_PRINT_CSS + BILL_MONO_CSS;
+
+/**
+ * One invoice, rendered. Takes the bill already loaded - see InvoiceSheet.
+ *
+ * `embedded` drops the page furniture: the print-stage wrapper, the stylesheet
+ * and the toolbar. A page printing a whole stay's bills supplies those once for
+ * the run, and repeating them per invoice would emit the same stylesheet six
+ * times and stack six toolbars down the screen.
+ */
+export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean }) {
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 
   /**
    * The signed e-invoice QR.
@@ -224,9 +250,6 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
       .catch(() => { if (!cancelled) setQrDataUrl(null); });
     return () => { cancelled = true; };
   }, [inv]);
-
-  if (error) return <div className="p-10 text-center text-[14px] text-[#8a3b2e]">{error}</div>;
-  if (!inv) return <div className="p-10 text-center text-[14px] text-[#5a6a66]">Preparing the bill…</div>;
 
   // THE DATE ON THE PAPER is the corrected one where a desk set one, and the
   // real one everywhere else. Every portal prints this one sheet, so a bill
@@ -327,7 +350,7 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
           </div>
           <div className="mt-[3px] grid grid-cols-[38px_1fr] gap-x-2 gap-y-[1px] text-right">
             <span className="invoice-meta-label">Bill No</span><span className="invoice-meta-value font-mono">{inv.receiptNo}</span>
-            <span className="invoice-meta-label">Date</span><span className="invoice-meta-value">{created.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</span>
+            <span className="invoice-meta-label">Date</span><span className="invoice-meta-value">{created.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}{" "}{created.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true })}</span>
             <span className="invoice-meta-label">Dept</span><span className="invoice-meta-value">{SOURCE_LABEL[inv.source] ?? inv.source}</span>
           </div>
         </div>
@@ -398,7 +421,7 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
               <tr key={i} className="align-top">
                 <td className="px-1 py-[3px] text-center font-mono text-[7px] text-[#3f3f3f]">{i + 1}</td>
                 <td className="px-1.5 py-[3px] font-medium">{billItemName(it.description)}</td>
-                {showBatch && <td className="px-1 py-[3px] font-mono text-[7px] text-[#3f3f3f]">{billItemBatch(it.description) ?? "—"}</td>}
+                <td className="px-1 py-[3px] font-mono text-[7px] text-[#3f3f3f]">{billItemBatch(it.description) ?? "—"}</td>
                 <td className="px-1 py-[3px] font-mono text-[7px] text-[#3f3f3f]">{it.hsnSac ?? "—"}</td>
                 <td className="px-1 py-[3px] text-right font-mono">{it.qty}</td>
                 <td className="px-1 py-[3px] text-right font-mono">{money(it.unitPrice)}</td>
@@ -480,14 +503,8 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
     </div>
   );
 
-  return (
-    <div className="print-stage">
-      <style dangerouslySetInnerHTML={{ __html: INVOICE_PRINT_CSS + BILL_MONO_CSS }} />
-      <PrintToolbar
-        title={`Bill · ${inv.receiptNo} · ${inv.patient.fullName}${copies.length > 1 ? " · 2 copies" : ""}`}
-      />
-
-      <div id="print-sheet">
+  const body = (
+    <div id={embedded ? undefined : "print-sheet"}>
         {copies.map((copy, i) => (
           <Fragment key={i}>
             {/* The fold, drawn. "Half of A4" measured by eye is how one copy
@@ -498,7 +515,17 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
             {renderCopy(copy, i)}
           </Fragment>
         ))}
-      </div>
+    </div>
+  );
+
+  if (embedded) return body;
+  return (
+    <div className="print-stage">
+      <style dangerouslySetInnerHTML={{ __html: INVOICE_SHEET_CSS }} />
+      <PrintToolbar
+        title={`Bill · ${inv.receiptNo} · ${inv.patient.fullName}${copies.length > 1 ? " · 2 copies" : ""}`}
+      />
+      {body}
     </div>
   );
 }

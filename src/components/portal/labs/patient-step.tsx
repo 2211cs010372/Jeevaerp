@@ -20,7 +20,7 @@
 
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/portal/ui/icons";
-import { Spinner } from "@/components/portal/ui/form-atoms";
+import { Req, Spinner } from "@/components/portal/ui/form-atoms";
 import { api } from "@/lib/api-client";
 import { formatPhone, isIndianMobile, toBare10 } from "@/lib/phone";
 
@@ -250,7 +250,7 @@ export function PatientStep({
           <>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label className={lbl}>First name *</label>
+                <label className={lbl}>First name<Req /></label>
                 <input value={draft.firstName} onChange={(e) => edit({ firstName: e.target.value })} className={fld} autoFocus placeholder="Lakshmi" />
               </div>
               <div>
@@ -258,7 +258,7 @@ export function PatientStep({
                 <input value={draft.lastName} onChange={(e) => edit({ lastName: e.target.value })} className={fld} placeholder="Rao" />
               </div>
               <div>
-                <label className={lbl}>Mobile *</label>
+                <label className={lbl}>Mobile<Req /></label>
                 <input
                   value={draft.phone} inputMode="numeric" maxLength={14}
                   onChange={(e) => edit({ phone: e.target.value })}

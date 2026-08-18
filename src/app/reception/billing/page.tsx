@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pill, statusTone } from "@/components/portal/ui/primitives";
+import PortalDatePicker from "@/components/portal/ui/datepicker";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
@@ -74,7 +75,7 @@ const due = (i: Inv) => Math.max(0, Number(i.totalAmount) - Number(i.amountPaid)
 const isCollectable = (i: Inv) => i.payer !== "INSURANCE" && i.status !== "CANCELLED";
 const isToday = (iso: string) => new Date(iso).toDateString() === new Date().toDateString();
 
-type Tab = "TODAY" | "DUE" | "INSURER" | "ALL";
+type Tab = "TODAY" | "DUE" | "INSURER" | "ALL" | "DATE";
 
 export default function BillingPage() {
   const [invs, setInvs] = useState<Inv[]>([]);
@@ -120,6 +121,8 @@ export default function BillingPage() {
       setErr(e instanceof ApiClientError ? e.message : "Could not refund.");
     } finally { setRefBusy(false); }
   }
+  /** The day the desk asked for. Empty until they pick one - see the DATE tab. */
+  const [onDate, setOnDate] = useState("");
   const [busy, setBusy] = useState(false);
 
   /** Inpatient dues, already grouped per patient by the service. */
@@ -149,7 +152,10 @@ export default function BillingPage() {
     setLoading(true);
     try {
       const [r, d] = await Promise.all([
-        api.get<{ invoices: Inv[] }>("/reception/billing"),
+        // The day filter is a QUERY, not a pass over what we already have: the
+        // list is capped at the most recent hundred bills, so any day further
+        // back than that came back empty when filtered client-side.
+        api.get<{ invoices: Inv[] }>(onDate ? `/reception/billing?date=${onDate}` : "/reception/billing"),
         api.get<{ ipdByPatient: IpdDue[] }>("/reception/dues"),
       ]);
       setInvs(r.invoices);
@@ -181,13 +187,18 @@ export default function BillingPage() {
     // their own tab instead, so they are still findable.
     if (tab === "DUE") rows = rows.filter((i) => isCollectable(i) && due(i) > 0);
     if (tab === "INSURER") rows = rows.filter((i) => i.payer === "INSURANCE" && i.status !== "CANCELLED");
+    // On the date tab the SERVER has already narrowed to the chosen day, so
+    // there is nothing left to filter - but until a day is picked the list is
+    // still the ordinary working queue, and showing that under a heading that
+    // says "by date" would be a hundred bills answering a question nobody asked.
+    if (tab === "DATE" && !onDate) rows = [];
     const s = q.trim().toLowerCase();
     if (s) rows = rows.filter((i) =>
       i.receiptNo.toLowerCase().includes(s) ||
       i.patient.fullName.toLowerCase().includes(s) ||
       i.patient.displayId.toLowerCase().includes(s));
     return rows;
-  }, [invs, tab, q]);
+  }, [invs, tab, q, onDate]);
 
   /** What the desk hands over at end of shift. Counts only today's live money. */
   const till = useMemo(() => {
@@ -204,10 +215,11 @@ export default function BillingPage() {
 
   const counts = useMemo(() => ({
     TODAY: invs.filter((i) => isToday(i.createdAt)).length,
+    DATE: onDate ? invs.length : 0,
     DUE: invs.filter((i) => isCollectable(i) && due(i) > 0).length,
     INSURER: invs.filter((i) => i.payer === "INSURANCE" && i.status !== "CANCELLED").length,
     ALL: invs.length,
-  }), [invs]);
+  }), [invs, onDate]);
 
   async function collect() {
     if (!pay) return;
@@ -242,6 +254,7 @@ export default function BillingPage() {
   const TABS: { k: Tab; label: string }[] = [
     { k: "TODAY", label: "Today" }, { k: "DUE", label: "Balance due" },
     { k: "INSURER", label: "With insurer" }, { k: "ALL", label: "All bills" },
+    { k: "DATE", label: "By date" },
   ];
 
   return (
@@ -366,6 +379,21 @@ export default function BillingPage() {
             </span>
           </button>
         ))}
+        {/* Shown only on its own tab. A date box sitting beside "Today" the
+            rest of the time reads as a second, contradictory filter - and the
+            desk cannot tell which of the two the list is obeying. */}
+        {tab === "DATE" && (
+          <div className="flex items-center gap-2">
+            <PortalDatePicker value={onDate} onChange={setOnDate} accent="teal" placeholder="Pick a day" />
+            {onDate && (
+              <button onClick={() => setOnDate("")}
+                title="Back to the most recent bills"
+                className="rounded-lg border border-[var(--p-border)] bg-white px-2.5 py-2 text-[13px] text-[var(--p-muted)] hover:border-[var(--p-teal)] hover:text-[var(--p-ink)]">
+                Clear
+              </button>
+            )}
+          </div>
+        )}
         <div className="surface ml-auto flex min-w-[240px] items-center gap-2 px-3.5 py-2">
           <Icon name="search" size={15} />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Receipt or patient…" className="w-full bg-transparent text-sm outline-none" />
@@ -384,7 +412,10 @@ export default function BillingPage() {
       <section data-rise className="surface overflow-hidden">
         {filtered.length === 0 && !loading ? (
           <p className="py-16 text-center text-[14px] text-[var(--p-muted)]">
-            {tab === "DUE" ? "Nothing outstanding - every bill is settled." : "No bills here."}
+            {tab === "DUE" ? "Nothing outstanding - every bill is settled."
+              : tab === "DATE" && !onDate ? "Pick a day to see the bills raised on it."
+              : tab === "DATE" ? "No bills were raised on that day."
+              : "No bills here."}
           </p>
         ) : (
           <div className="divide-y divide-[var(--p-border)]">
@@ -544,7 +575,7 @@ export default function BillingPage() {
               </p>
             </div>
             <div className="space-y-4 p-6">
-              <Field label="Amount (₹)">
+              <Field label="Amount (₹)" required>
                 <input className={fld} value={payAmt} inputMode="decimal" autoFocus
                   onChange={(e) => setPayAmt(e.target.value.replace(/[^\d.]/g, ""))} />
               </Field>
@@ -610,7 +641,7 @@ export default function BillingPage() {
                   <span className="font-mono text-[var(--p-amber)]">₹{money(settle.due)}</span>
                 </div>
               </div>
-              <Field label="Amount (₹)">
+              <Field label="Amount (₹)" required>
                 <input className={fld} value={settleAmt} inputMode="decimal" autoFocus
                   onChange={(e) => setSettleAmt(e.target.value.replace(/[^\d.]/g, ""))} />
               </Field>
@@ -683,7 +714,7 @@ export default function BillingPage() {
                 </p>
               </div>
 
-              <Field label="Amount to return">
+              <Field label="Amount to return" required>
                 <div className="flex gap-2">
                   <input className={fld} value={refAmt} inputMode="decimal"
                     onChange={(e) => setRefAmt(e.target.value.replace(/[^\d.]/g, ""))} />
@@ -716,7 +747,7 @@ export default function BillingPage() {
                 </p>
               </Field>
 
-              <Field label="Why? (goes on the record)">
+              <Field label="Why? (goes on the record)" required>
                 <input className={fld} value={refReason} onChange={(e) => setRefReason(e.target.value)}
                   placeholder="Visit cancelled · overcharged · procedure not done" />
               </Field>

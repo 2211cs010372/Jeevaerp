@@ -269,7 +269,7 @@ export default function RegisterPage() {
 
         <Sec>Name</Sec>
         <div className="grid gap-4 sm:grid-cols-3">
-          <Field label="First name" icon="users" error={errors.firstName}><input className={cls(errors.firstName)} value={f.firstName} onChange={(e) => set("firstName")(e.target.value)} placeholder="Divya" autoFocus /></Field>
+          <Field label="First name" icon="users" required error={errors.firstName}><input className={cls(errors.firstName)} value={f.firstName} onChange={(e) => set("firstName")(e.target.value)} placeholder="Divya" autoFocus /></Field>
           <Field label="Middle name"><input className={cls(false)} value={f.middleName} onChange={(e) => set("middleName")(e.target.value)} placeholder="-" /></Field>
           <Field label="Last name"><input className={cls(false)} value={f.lastName} onChange={(e) => set("lastName")(e.target.value)} placeholder="Prasad" /></Field>
         </div>
@@ -288,7 +288,7 @@ export default function RegisterPage() {
 
         <Sec>Contact</Sec>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Phone" icon="clock" error={errors.phone}><input className={cls(errors.phone)} value={f.phone} onChange={(e) => set("phone")(e.target.value.replace(/\D/g, "").slice(0, 10))} inputMode="numeric" placeholder="9000012345" /></Field>
+          <Field label="Phone" icon="clock" required error={errors.phone}><input className={cls(errors.phone)} value={f.phone} onChange={(e) => set("phone")(e.target.value.replace(/\D/g, "").slice(0, 10))} inputMode="numeric" placeholder="9000012345" /></Field>
           <Field label="Alternate phone"><input className={cls(false)} value={f.altPhone} onChange={(e) => set("altPhone")(e.target.value.replace(/\D/g, "").slice(0, 10))} inputMode="numeric" placeholder="-" /></Field>
           <Field label="Email" error={errors.email} span><input className={cls(errors.email)} value={f.email} onChange={(e) => set("email")(e.target.value)} placeholder="name@example.com" /></Field>
           <Field label="Address" span><input className={cls(false)} value={f.address} onChange={(e) => set("address")(e.target.value)} placeholder="House no, area" /></Field>

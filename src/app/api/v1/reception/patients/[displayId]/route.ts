@@ -8,7 +8,10 @@ import { auditContext } from "@/server/services/audit.service";
 export const dynamic = "force-dynamic";
 
 export const GET = handler(async (req, ctx) => {
-  await requireRole(req, "RECEPTIONIST", "ADMIN");
+  // INSURANCE_DESK: this portal now runs the whole admission - the bed board,
+  // the admit form and the stay sheet - so a patient can be booked in on a
+  // policy without walking the family to reception first.
+  await requireRole(req, "RECEPTIONIST", "ADMIN", "INSURANCE_DESK");
   const { displayId } = await ctx.params;
   const patient = await getPatientByDisplayId(displayId.toUpperCase());
   return NextResponse.json({ patient });

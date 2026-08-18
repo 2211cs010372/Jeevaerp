@@ -9,6 +9,7 @@ const nextConfig: NextConfig = {
    * corrupt each other's webpack cache.
    */
   distDir: process.env.NEXT_DIST_DIR || ".next",
+  experimental: { cpus: 1 },
 };
 
 export default nextConfig;

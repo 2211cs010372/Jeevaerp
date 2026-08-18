@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Icon } from "@/components/portal/ui/icons";
 import { perDayFromDosage, billTotal, shortedCourseCritical, type PadLine } from "@/lib/pharmacy/course-math";
+import { Req } from "@/components/portal/ui/form-atoms";
 
 // re-exported so the pages that already import from here keep working
 export { perDayFromDosage, billTotal, type PadLine };
@@ -223,7 +224,7 @@ export function DispenseScratchpad({
       {isShort && (
         <div className="mt-3">
           <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
-            Why is the patient taking less? <span className="text-[var(--p-rose)]">*</span>
+            Why is the patient taking less?<Req />
           </label>
           <input value={reason} onChange={(e) => onReasonChange(e.target.value)}
             placeholder="Couldn't afford the full course / already has some at home…"

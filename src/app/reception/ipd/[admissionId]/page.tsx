@@ -8,9 +8,11 @@ import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { DischargeSummaryForm } from "@/components/portal/ipd/discharge-summary-form";
 import { CorrectStayDialog, type StayLeg } from "@/components/portal/ipd/correct-stay-dialog";
+import { ConvertToSelfPayDialog } from "@/components/portal/ipd/convert-to-self-pay-dialog";
 import { api, ApiClientError } from "@/lib/api-client";
 import { bedLabel } from "@/lib/beds";
 import { EditBillDialog, useBillEditing } from "@/components/portal/billing/edit-bill-dialog";
+import { PatientHistoryPanel } from "@/components/portal/ipd/patient-history-panel";
 
 /** One row of the hospital's published rate card. See prisma ServiceCharge. */
 interface ServiceCharge {
@@ -36,6 +38,7 @@ interface Sheet {
     dischargedAt: string | null;
     wardName: string; bedNo: string; dailyCharge: string; gstRatePct: string;
     attendantName: string | null; attendantPhone: string | null; attendantRelation: string | null;
+    payerType: string; insurer: string | null;
     patient: { id: string; displayId: string; fullName: string; age: number | null; gender: string | null; phone: string };
     doctor: { name: string; department: string };
   };
@@ -58,17 +61,19 @@ interface Sheet {
   claimBillsTotal: string;
   claimTotal: string;
   balance: string;
+  /** EVERY counter bill on the stay, paid ones included - what the tab lists.
+   *  outstandingBills drops a bill as soon as it is settled; this does not, so
+   *  a medicine paid for at the pharmacy window still shows what the stay cost. */
+  counterBills: {
+    id: string; receiptNo: string; source: string;
+    total: string; paid: string; due: string;
+    status: "PAID" | "PART" | "DUE"; payer: string; createdAt: string;
+  }[];
+  counterPaidTotal: string;
 }
 interface Med { id: string; name: string; unit: string; inStock: number; }
 /** One deposit slip. `receiptNo` is what the family quotes at discharge. */
 interface Advance { id: string; receiptNo: string; amount: string; mode: string; }
-interface History {
-  bills: { id: string; receiptNo: string; source: string; status: string; total: string; paid: string; balance: string; date: string; payer: string }[];
-  labs: { id: string; testName: string; status: string; reportReady: boolean; reportUrl: string | null; date: string; forThisStay: boolean }[];
-  prescriptions: { id: string; title: string | null; fileUrl: string | null; status: string; forThisStay: boolean; date: string; items: { medicineName: string; qty: number; dosage: string | null }[] }[];
-}
-const SRC_LABEL: Record<string, string> = { CONSULTATION: "Consultation", LAB: "Laboratory", PHARMACY: "Pharmacy", IPD: "Inpatient", OTHER: "Other" };
-const prettyDate = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 
 const CATEGORIES = [
   { k: "PROCEDURE", label: "Procedure" },
@@ -108,6 +113,8 @@ export default function AdmissionSheetPage() {
   // the only ones with no edit path - see CorrectStayDialog. Reached from the two
   // rows themselves, because that is where somebody notices they are wrong.
   const [correctOpen, setCorrectOpen] = useState(false);
+  /** The insurer refused - the stay and its bills become the family's. */
+  const [rejectOpen, setRejectOpen] = useState(false);
 
   // add-charge form
   const [cat, setCat] = useState("PROCEDURE");
@@ -212,13 +219,12 @@ export default function AdmissionSheetPage() {
   const [labPick, setLabPick] = useState<Set<string>>(new Set());
   const [labQuery, setLabQuery] = useState("");
 
-  // ── HISTORY ── the patient's billings, lab reports and pharmacy record.
-  const [history, setHistory] = useState<History | null>(null);
-  const [historyTab, setHistoryTab] = useState<"bills" | "labs" | "rx">("bills");
-  const loadHistory = useCallback(() => {
-    api.get<History>(`/ipd/admissions/${admissionId}/history`).then(setHistory).catch(() => {});
-  }, [admissionId]);
-  useEffect(() => { loadHistory(); }, [loadHistory]);
+  // ── HISTORY ── owned by PatientHistoryPanel, which fetches it itself. The
+  // page keeps only a token: every existing `loadHistory()` call site still
+  // means "the record changed, read it again", it just says so by bumping a
+  // number instead of holding the data.
+  const [historyToken, setHistoryToken] = useState(0);
+  const loadHistory = useCallback(() => setHistoryToken((n) => n + 1), []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -376,6 +382,27 @@ export default function AdmissionSheetPage() {
           {/* WRITE it here; the neighbour PRINTS it. Two separate acts on the
               same record - and neither is the discharge-and-bill button, which
               closes the stay and frees the bed. */}
+          {/* Only on a stay still pointed at an insurer. Once converted the
+              stay is self-pay and there is nothing left to refuse.
+
+              THE LABEL IS THE INSTRUCTION, not a status. "Insurance rejected"
+              read like a button that recorded a fact, and a desk pressing it to
+              note a refusal got a stay silently rebilled to the family. It says
+              what it will DO now, and the dialog behind it spells out all four
+              consequences before anything moves. */}
+          {a.payerType === "INSURANCE" && (
+            /* A BADGE, NOT A BUTTON - and it is still clickable.
+               Sized and shaped like StatusPill because that is what the desk's
+               eye is trained on for "where does this stay stand", and this IS a
+               statement about the stay before it is an action. The hover fill is
+               what stops it reading as decoration: a badge that does something
+               has to say so before it is pressed, not after. */
+            <button onClick={() => setRejectOpen(true)}
+              title="The insurer refused - mark the claim rejected and move this stay and its bills onto the family as cash"
+              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-[var(--p-rose-soft)] px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--p-rose)] ring-1 ring-[var(--p-rose)]/30 transition-colors hover:bg-[var(--p-rose)] hover:text-white hover:ring-[var(--p-rose)]">
+              <Icon name="alert" size={12} /> Rejected — convert to cash
+            </button>
+          )}
           <button onClick={() => setSummaryOpen(true)}
             title="Write or edit this stay's discharge summary. The insurance desk edits the same record."
             className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
@@ -416,12 +443,36 @@ export default function AdmissionSheetPage() {
         <section data-rise className="surface overflow-hidden">
           <div className="flex items-center justify-between border-b border-[var(--p-border)] px-5 py-3.5">
             <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">The running tab</h3>
-            {/* +2 for the bed and the nursing fee, which are derived rather than
-                stored, plus the claim's pharmacy and lab now that they sit on
-                the tab too - the count has to match what is under it. */}
-            <span className="badge">
-              {sheet.charges.length + (sheet.claimBills?.length ?? 0) + (sheet.outstandingBills?.length ?? 0) + 2} lines
-            </span>
+            <div className="flex items-center gap-2">
+              {/* +2 for the bed and the nursing fee, which are derived rather than
+                  stored, plus every counter bill on the stay - the count has to
+                  match what is under it, and what is under it now includes the
+                  bills that have already been paid. */}
+              <span className="badge">
+                {sheet.charges.length + (sheet.counterBills?.length ?? 0) + 2} lines
+              </span>
+              {/* THE TAB, ON PAPER. Until now it existed only on this screen, so
+                  a ward round asking what the stay is at, or a family wanting to
+                  see the position before agreeing to another day, had to stand
+                  at the terminal and left with nothing. The sheet is stamped
+                  with its print time and says on its face that it is not a bill
+                  - see running-tab-sheet for why that matters. */}
+              <a href={`/print/tab/${a.id}`} target="_blank" rel="noopener noreferrer"
+                title="Print the running tab as it stands — a dated statement of position, not a bill"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
+                <Icon name="printer" size={13} /> Print tab
+              </a>
+              {/* EVERY COUNTER'S BILL, IN ONE JOB. The rows below each print
+                  their own, which is right when a family queries one line - but
+                  "give me the bills" means all of them, and doing that a row at
+                  a time on a week-long stay is where a pharmacy bill gets
+                  missed. Each sheet in the run is still its own tax invoice. */}
+              <a href={`/print/bills/${a.id}`} target="_blank" rel="noopener noreferrer"
+                title="Print every bill raised against this stay — ward, pharmacy and lab, each as its own invoice"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[12px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">
+                <Icon name="receipt" size={13} /> Print all bills
+              </a>
+            </div>
           </div>
 
           <div className="divide-y divide-[var(--p-border)]">
@@ -485,81 +536,72 @@ export default function AdmissionSheetPage() {
                 opens is that document itself, through the same dialog the
                 pharmacy and lab counters use, so a correction lands on the bill
                 that owns the lines rather than on a summary of it. */}
-            {(sheet.claimBills ?? []).map((b) => (
-              <div key={b.id} className="flex items-center justify-between gap-3 bg-[var(--p-blue-soft)]/40 px-5 py-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-[14px] font-medium text-[var(--p-ink)]">
-                      {b.source === "PHARMACY" ? "Pharmacy dispense" : b.source === "LAB" ? "Laboratory tests" : "Other charges"}
-                    </span>
-                    <span className="shrink-0 rounded bg-[var(--p-blue-soft)] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[var(--p-blue-deep)]">On the claim</span>
-                  </div>
-                  <div className="text-[12px] text-[var(--p-muted)]">
-                    Bill <span className="font-mono">{b.receiptNo}</span> · billed to the insurer, not collected here
-                  </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <span className="font-mono text-[14px] font-semibold text-[var(--p-ink)]">₹{money(b.total)}</span>
-                  {/* These print from here now. The ward is where somebody asks
-                      "what is on the pharmacy bill" and it had no answer - the
-                      row named a receipt number nobody could open. */}
-                  <a href={`/print/invoice/${b.id}`} target="_blank" rel="noopener noreferrer"
-                    title="View & print this bill"
-                    className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">
-                    Bill
-                  </a>
-                  {canEdit && (
-                    <button onClick={() => setEditingBillId(b.id)}
-                      title="Correct this bill's date, lines or amount"
-                      className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">
-                      Edit
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
+            {/* ── EVERY COUNTER BILL ON THIS STAY, PAID OR NOT ──
+                One list, not two. This used to render `claimBills` (the
+                insurer's) and then `outstandingBills` (what was still owed),
+                and between them they had a hole: a bill that had been PAID was
+                in neither, so a medicine settled at the pharmacy window dropped
+                off the ward's tab the moment the money was taken. The tab is
+                the one screen that shows what a stay has cost, and it was
+                showing less than the stay had cost.
 
-            {/* ── SELF-PAY: THE SAME BILLS, THE OPPOSITE INSTRUCTION ──
-                Pharmacy and lab bill a self-paying family on their own invoices,
-                settled at Billing on the way out. They belong on this tab too - it
-                is the one screen that sees the whole stay - but they are marked
-                DUE and are deliberately NOT in the total below, because the
-                discharge invoice does not cover them. Somebody still has to
-                collect them, and the summary under the total says so. */}
-            {(sheet.outstandingBills ?? []).map((b) => (
-              <div key={b.id} className="flex items-center justify-between gap-3 bg-[var(--p-amber-soft)]/50 px-5 py-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-[14px] font-medium text-[var(--p-ink)]">
-                      {b.source === "PHARMACY" ? "Pharmacy dispense" : b.source === "LAB" ? "Laboratory tests" : "Other charges"}
+                So it now lists them all and marks each with where it stands.
+                Nothing here is EDITABLE as a tab line - the amount is another
+                document's total, and Edit opens that document. */}
+            {(sheet.counterBills ?? []).map((b) => {
+              const onClaim = b.payer === "INSURANCE";
+              const tone = onClaim
+                ? { bg: "bg-[var(--p-blue-soft)]/40", chip: "bg-[var(--p-blue-soft)] text-[var(--p-blue-deep)]", amt: "text-[var(--p-ink)]", btn: "text-[var(--p-blue)] hover:border-[var(--p-blue)]" }
+                : b.status === "PAID"
+                  ? { bg: "bg-[var(--p-bg)]", chip: "bg-[var(--p-teal-soft)] text-[var(--p-teal)]", amt: "text-[var(--p-muted)]", btn: "text-[var(--p-teal)] hover:border-[var(--p-teal)]" }
+                  : { bg: "bg-[var(--p-amber-soft)]/50", chip: "bg-[var(--p-amber-soft)] text-[#8a6414]", amt: "text-[#8a6414]", btn: "text-[var(--p-teal)] hover:border-[var(--p-teal)]" };
+              const label = onClaim ? "On the claim" : b.status === "PAID" ? "Paid" : b.status === "PART" ? "Part paid" : "Due";
+              const note = onClaim
+                ? "billed to the insurer, not collected here"
+                : b.status === "PAID"
+                  ? "already collected at the counter"
+                  : b.status === "PART"
+                    ? `₹${money(b.paid)} collected, ₹${money(b.due)} still due`
+                    : "settled at Billing, not on the discharge bill";
+              return (
+                <div key={b.id} className={`flex items-center justify-between gap-3 px-5 py-3 ${tone.bg}`}>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-[14px] font-medium text-[var(--p-ink)]">
+                        {b.source === "PHARMACY" ? "Pharmacy dispense" : b.source === "LAB" ? "Laboratory tests" : "Other charges"}
+                      </span>
+                      <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${tone.chip}`}>{label}</span>
+                    </div>
+                    <div className="text-[12px] text-[var(--p-muted)]">
+                      Bill <span className="font-mono">{b.receiptNo}</span> · {note}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {/* A settled bill shows what it COST, struck through as owed
+                        money it is not; an open one shows what is still due. */}
+                    <span className={`font-mono text-[14px] font-semibold ${tone.amt}`}>
+                      ₹{money(onClaim || b.status === "PAID" ? b.total : b.due)}
                     </span>
-                    <span className="shrink-0 rounded bg-[var(--p-amber-soft)] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[#8a6414]">Due</span>
-                  </div>
-                  <div className="text-[12px] text-[var(--p-muted)]">
-                    Bill <span className="font-mono">{b.receiptNo}</span> · settled at Billing, not on the discharge bill
+                    <a href={`/print/invoice/${b.id}`} target="_blank" rel="noopener noreferrer"
+                      title="View & print this bill"
+                      className={`rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] font-medium ${tone.btn}`}>
+                      Bill
+                    </a>
+                    {canEdit && (
+                      <button onClick={() => setEditingBillId(b.id)}
+                        title={Number(b.paid) > 0
+                          ? `Correct this bill — ₹${money(b.paid)} already collected`
+                          : "Correct this bill's date, lines or amount"}
+                        className={`rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] font-medium ${tone.btn}`}>
+                        Edit
+                      </button>
+                    )}
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <span className="font-mono text-[14px] font-semibold text-[#8a6414]">₹{money(b.due)}</span>
-                  <a href={`/print/invoice/${b.id}`} target="_blank" rel="noopener noreferrer"
-                    title="View & print this bill"
-                    className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
-                    Bill
-                  </a>
-                  {canEdit && (
-                    <button onClick={() => setEditingBillId(b.id)}
-                      title={Number(b.paid) > 0
-                        ? `Correct this bill — ₹${money(b.paid)} already collected`
-                        : "Correct this bill's date, lines or amount"}
-                      className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
-                      Edit
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
+              );
+            })}
 
-            {sheet.charges.length === 0 && (sheet.claimBills ?? []).length === 0 && (sheet.outstandingBills ?? []).length === 0 ? (
+            {sheet.charges.length === 0 && (sheet.counterBills ?? []).length === 0 ? (
               <p className="px-5 py-8 text-center text-[13px] text-[var(--p-muted)]">
                 Nothing else on the tab yet. Add procedures, oxygen, doctor rounds below -
                 pharmacy medicines land here automatically.
@@ -628,11 +670,11 @@ export default function AdmissionSheetPage() {
                   </select></Field>
                 </div>
                 <div className="sm:col-span-4">
-                  <Field label="Description"><input className={fld} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Dressing change, ECG, night nursing…" /></Field>
+                  <Field label="Description" required><input className={fld} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Dressing change, ECG, night nursing…" /></Field>
                 </div>
                 <Field label="Qty"><input className={fld} value={qty} inputMode="numeric" onChange={(e) => setQty(e.target.value.replace(/\D/g, ""))} /></Field>
                 <div className="sm:col-span-2">
-                  <Field label="Rate (₹)"><input className={fld} value={price} inputMode="decimal" onChange={(e) => setPrice(e.target.value.replace(/[^\d.]/g, ""))} /></Field>
+                  <Field label="Rate (₹)" required><input className={fld} value={price} inputMode="decimal" onChange={(e) => setPrice(e.target.value.replace(/[^\d.]/g, ""))} /></Field>
                 </div>
                 <Field label="GST %"><input className={fld} value={gst} inputMode="decimal" onChange={(e) => setGst(e.target.value.replace(/[^\d.]/g, ""))} /></Field>
                 <div className="flex items-end sm:col-span-2">
@@ -708,77 +750,14 @@ export default function AdmissionSheetPage() {
         </section>
 
         {/* PATIENT HISTORY - billings, lab reports, prescriptions (like the profile) */}
-        <section data-rise className="surface overflow-hidden">
-          <div className="border-b border-[var(--p-border)] px-5 py-3.5">
-            <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Patient history</h3>
-            <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">Billings, lab reports and pharmacy across every visit. Rows from this stay are marked.</p>
-          </div>
-          <div className="flex gap-1 border-b border-[var(--p-border)] px-3 py-2">
-            {([["bills", "Billings", history?.bills.length], ["labs", "Lab reports", history?.labs.length], ["rx", "Prescriptions", history?.prescriptions.length]] as const).map(([k, label, n]) => (
-              <button key={k} onClick={() => setHistoryTab(k)}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-semibold transition-colors ${historyTab === k ? "bg-[var(--p-blue)] text-white" : "text-[var(--p-muted)] hover:bg-[var(--p-bg)]"}`}>
-                {label}{n != null && n > 0 && <span className={`rounded-full px-1.5 text-[10.5px] font-bold ${historyTab === k ? "bg-white/25" : "bg-[var(--p-blue-soft)] text-[var(--p-blue-deep)]"}`}>{n}</span>}
-              </button>
-            ))}
-          </div>
-          <div className="divide-y divide-[var(--p-border)]">
-            {!history ? (
-              <div className="flex items-center justify-center gap-2 py-8 text-[13px] text-[var(--p-muted)]"><Spinner size={14} /> Loading history…</div>
-            ) : historyTab === "bills" ? (
-              history.bills.length === 0 ? <p className="px-5 py-8 text-center text-[13px] text-[var(--p-muted)]">No bills yet.</p> : history.bills.map((b) => (
-                <div key={b.id} className="flex items-center justify-between gap-3 px-5 py-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-[13.5px] font-medium text-[var(--p-ink)]"><span className="font-mono">{b.receiptNo}</span> · {SRC_LABEL[b.source] ?? b.source}</div>
-                    {/* An unpaid balance on a cashless bill is with the insurer,
-                        not with the family. In the same red as a real debt it
-                        sends the desk to chase somebody who owes nothing. */}
-                    <div className="text-[12px] text-[var(--p-muted)]">{prettyDate(b.date)} · Paid ₹{money(b.paid)} of ₹{money(b.total)}{Number(b.balance) > 0 && (
-                      b.payer === "INSURANCE"
-                        ? <span className="text-[var(--p-blue-deep)]"> · ₹{money(b.balance)} with insurer</span>
-                        : <span className="text-[var(--p-rose)]"> · ₹{money(b.balance)} due</span>
-                    )}</div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <a href={`/print/invoice/${b.id}`} target="_blank" rel="noopener noreferrer" title="View & print this bill" className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--p-blue)] hover:border-[var(--p-blue)]"><Icon name="receipt" size={13} /> View</a>
-                    {/* Every bill this patient has, not only this stay's - which
-                        is why a cancelled one has to be excluded here and not
-                        anywhere above: this list is the only one that shows
-                        them. */}
-                    {canEdit && b.status !== "CANCELLED" && (
-                      <button onClick={() => setEditingBillId(b.id)}
-                        title={Number(b.paid) > 0
-                          ? `Correct this bill — ₹${money(b.paid)} already collected`
-                          : "Correct this bill's date, lines or amount"}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--p-blue)] hover:border-[var(--p-blue)]">
-                        <Icon name="file" size={13} /> Edit
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))
-            ) : historyTab === "labs" ? (
-              history.labs.length === 0 ? <p className="px-5 py-8 text-center text-[13px] text-[var(--p-muted)]">No lab tests yet.</p> : history.labs.map((l) => (
-                <div key={l.id} className="flex items-center justify-between gap-3 px-5 py-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2"><span className="truncate text-[13.5px] font-medium text-[var(--p-ink)]">{l.testName}</span>{l.forThisStay && <span className="shrink-0 rounded bg-[var(--p-blue-soft)] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[var(--p-blue-deep)]">This stay</span>}</div>
-                    <div className="text-[12px] text-[var(--p-muted)]">{prettyDate(l.date)} · {l.status === "COMPLETED" ? "Completed" : "Pending"}</div>
-                  </div>
-                  {l.reportUrl ? <a href={l.reportUrl} target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--p-cyan)] px-3 py-1.5 text-[12px] font-semibold text-white hover:opacity-90"><Icon name="file" size={13} /> Report</a> : <span className="shrink-0 text-[11.5px] text-[var(--p-muted)]">No report yet</span>}
-                </div>
-              ))
-            ) : (
-              history.prescriptions.length === 0 ? <p className="px-5 py-8 text-center text-[13px] text-[var(--p-muted)]">No prescriptions yet.</p> : history.prescriptions.map((r) => (
-                <div key={r.id} className="flex items-center justify-between gap-3 px-5 py-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2"><span className="truncate text-[13.5px] font-medium text-[var(--p-ink)]">{r.title || (r.items.length ? r.items.map((i) => i.medicineName).slice(0, 2).join(", ") + (r.items.length > 2 ? "…" : "") : "Prescription")}</span>{r.forThisStay && <span className="shrink-0 rounded bg-[var(--p-blue-soft)] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[var(--p-blue-deep)]">This stay</span>}</div>
-                    <div className="text-[12px] text-[var(--p-muted)]">{prettyDate(r.date)} · {r.items.length} item{r.items.length === 1 ? "" : "s"} · {r.status.toLowerCase().replace(/_/g, " ")}</div>
-                  </div>
-                  {r.fileUrl && <a href={r.fileUrl} target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--p-blue)] hover:border-[var(--p-blue)]"><Icon name="file" size={13} /> Scan</a>}
-                </div>
-              ))
-            )}
-          </div>
-        </section>
+        {/* Extracted so the insurance desk gets the same record on its own
+            stay page - see PatientHistoryPanel. */}
+        <PatientHistoryPanel
+          admissionId={admissionId}
+          canEdit={canEdit}
+          onEditBill={setEditingBillId}
+          reloadToken={historyToken}
+        />
         </div>
 
         {/* TOTAL */}
@@ -1174,6 +1153,16 @@ export default function AdmissionSheetPage() {
       {/* Bed rate, nursing rate and the stay's dates. Reloads the history too:
           on a discharged stay this re-issues the IPD invoice, which is one of
           the bills listed there. */}
+      {rejectOpen && (
+        <ConvertToSelfPayDialog
+          admissionId={a.id}
+          ipNumber={a.ipNumber}
+          insurer={a.insurer}
+          onClose={() => setRejectOpen(false)}
+          onDone={(msg) => { setRejectOpen(false); setFlash(msg); load(); loadHistory(); }}
+        />
+      )}
+
       {correctOpen && (
         <CorrectStayDialog
           admissionId={a.id}

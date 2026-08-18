@@ -229,9 +229,9 @@ export default function WardsPage() {
               <button onClick={() => setWardModal(null)} className="text-[var(--p-muted)]">✕</button>
             </div>
             <div className="space-y-4 p-6">
-              <Field label="Ward name *"><input className={fld} value={wardModal.name} onChange={(e) => setWardModal({ ...wardModal, name: e.target.value })} placeholder="General Ward A" /></Field>
+              <Field label="Ward name" required><input className={fld} value={wardModal.name} onChange={(e) => setWardModal({ ...wardModal, name: e.target.value })} placeholder="General Ward A" /></Field>
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Category *">
+                <Field label="Category" required>
                   <select className={fld} value={wardModal.category} onChange={(e) => setWardModal({ ...wardModal, category: e.target.value })}>
                     {CATEGORIES.map((c) => <option key={c} value={c}>{c.replace("_", " ")}</option>)}
                   </select>
@@ -239,7 +239,7 @@ export default function WardsPage() {
                 <Field label="Floor"><input className={fld} value={wardModal.floor} onChange={(e) => setWardModal({ ...wardModal, floor: e.target.value })} placeholder="1st floor" /></Field>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Daily charge (₹) *"><input className={fld} value={wardModal.dailyCharge} onChange={(e) => setWardModal({ ...wardModal, dailyCharge: e.target.value.replace(/[^\d.]/g, "") })} inputMode="decimal" /></Field>
+                <Field label="Daily charge (₹)" required><input className={fld} value={wardModal.dailyCharge} onChange={(e) => setWardModal({ ...wardModal, dailyCharge: e.target.value.replace(/[^\d.]/g, "") })} inputMode="decimal" /></Field>
                 <Field label="GST %"><input className={fld} value={wardModal.gstRatePct} onChange={(e) => setWardModal({ ...wardModal, gstRatePct: e.target.value.replace(/[^\d.]/g, "") })} inputMode="decimal" /></Field>
               </div>
               <p className="rounded-lg bg-[var(--p-bg)] px-3 py-2.5 text-[11px] leading-relaxed text-[var(--p-muted)]">
@@ -267,7 +267,7 @@ export default function WardsPage() {
             </div>
             <div className="space-y-4 p-6">
               <div className="grid grid-cols-2 gap-3">
-                <Field label="How many? *"><input className={fld} value={bedCount} onChange={(e) => setBedCount(e.target.value.replace(/\D/g, ""))} inputMode="numeric" /></Field>
+                <Field label="How many?" required><input className={fld} value={bedCount} onChange={(e) => setBedCount(e.target.value.replace(/\D/g, ""))} inputMode="numeric" /></Field>
                 <Field label="Number prefix"><input className={fld} value={bedPrefix} onChange={(e) => setBedPrefix(e.target.value.toUpperCase())} placeholder="GEN" /></Field>
               </div>
               <p className="text-[11px] text-[var(--p-muted)]">Beds continue from the highest existing number - e.g. {bedPrefix || "GEN"}-05, {bedPrefix || "GEN"}-06…</p>

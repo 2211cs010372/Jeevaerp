@@ -289,7 +289,7 @@ export default function ReturnsPage() {
         >
           <div className="space-y-5 p-6">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Send back to">
+              <Field label="Send back to" required>
                 <select className={fld} value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
                   <option value="">Select supplier…</option>
                   {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -303,7 +303,7 @@ export default function ReturnsPage() {
             </div>
 
             <div>
-              <Field label="Pick the batches going back">
+              <Field label="Pick the batches going back" required>
                 <select className={fld} value={medId} onChange={(e) => pickMedicine(e.target.value)}>
                   <option value="">Choose a medicine…</option>
                   {meds.map((m) => (
@@ -437,7 +437,7 @@ export default function ReturnsPage() {
                 <Field label="Their credit note no.">
                   <input className={fld} value={creditNoteNo} onChange={(e) => setCreditNoteNo(e.target.value)} autoFocus />
                 </Field>
-                <Field label="Amount actually credited (₹)">
+                <Field label="Amount actually credited (₹)" required>
                   <input className={`${fld} num`} value={creditedAmount} inputMode="decimal"
                     onChange={(e) => setCreditedAmount(e.target.value.replace(/[^\d.]/g, ""))} />
                 </Field>

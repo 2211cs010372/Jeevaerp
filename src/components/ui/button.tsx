@@ -22,7 +22,7 @@ export function ButtonLink({
   return (
     <Link
       href={href}
-      className={`inline-flex items-center justify-center gap-2 rounded-md px-6 py-3 text-sm font-medium transition-colors duration-200 ${styles[variant]} ${className}`}
+      className={`inline-flex items-center justify-center gap-2 rounded-md px-6 py-1 text-sm font-medium transition-colors duration-200 ${styles[variant]} ${className}`}
     >
       {children}
     </Link>

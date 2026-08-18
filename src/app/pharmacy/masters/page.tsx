@@ -255,7 +255,7 @@ export default function PharmacyMastersPage() {
           }
         >
           <div className="space-y-3 p-3">
-            <Field label={meta.labelField === "code" ? "Code" : "Name"}>
+            <Field label={meta.labelField === "code" ? "Code" : "Name"} required>
               <input className={fld} value={edit.label} autoFocus
                 onChange={(e) => setEdit({ ...edit, label: e.target.value })} />
             </Field>

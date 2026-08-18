@@ -767,14 +767,26 @@ export async function dispense(
   //
   //   * it is a PHARMACY bill, not an IPD one - pharmacy, labs and the stay are
   //     billed separately, each settled on its own;
-  //   * it is left UNPAID (status PENDING) when the patient is in a bed, because
-  //     the family settles on the way out, not at the ward door - that is the
-  //     "bill me at discharge" the relatives actually ask for;
   //   * it is linked to the admission, so reception and the discharge desk can
-  //     see it outstanding and nobody walks out owing the pharmacy money.
+  //     see it outstanding and nobody walks out owing the pharmacy money;
+  //   * it may be PAID AT THIS COUNTER, including for a patient in a bed.
   //
-  // No payment is recorded here even if one was passed: a bedside dispense has
-  // nobody standing at the till.
+  // THAT LAST POINT REVERSES WHAT THIS DID BEFORE. A ward dispense used to
+  // discard any tender it was passed, on the reasoning that a bedside dispense
+  // has nobody standing at the till and the family settles on the way out. In
+  // this hospital that is not how it runs: the pharmacy window takes the money
+  // for medicines, and reception takes the labs and the stay. Forcing every ward
+  // strip onto the discharge bill made the pharmacy unable to accept cash a
+  // relative was holding out, and pushed a debt down to a desk that had not
+  // dispensed it.
+  //
+  // Unpaid is still perfectly valid and still the right answer when nobody is
+  // there to pay - the bill stays PENDING, shows as DUE on the stay sheet, and
+  // reception collects it at discharge exactly as before. The difference is that
+  // it is now the counter's choice rather than a rule.
+  const tendered = (input.payments ?? []).reduce((s, p) => s + (p?.amount ?? 0), 0)
+    + (input.payment?.amount ?? 0);
+
   const invoice = await createInvoice(
     actor,
     {
@@ -789,9 +801,16 @@ export async function dispense(
       discountAmount: input.discountAmount,
       notes: [
         input.shortSupplyReason ? `Short supply: ${input.shortSupplyReason}` : null,
-        liveAdmission ? `Inpatient ${liveAdmission.ipNumber} - due at discharge` : null,
+        // The note has to tell the truth about which of the two happened, since
+        // the discharge desk reads it to decide whether to chase this bill.
+        liveAdmission
+          ? tendered > 0
+            ? `Inpatient ${liveAdmission.ipNumber} - paid at pharmacy`
+            : `Inpatient ${liveAdmission.ipNumber} - due at discharge`
+          : null,
       ].filter(Boolean).join(" · ") || undefined,
-      ...(liveAdmission ? {} : { payment: input.payment, payments: input.payments }),
+      payment: input.payment,
+      payments: input.payments,
     },
     ctx
   );
@@ -817,8 +836,14 @@ export async function dispense(
       EVENTS.INVOICE_RAISED
     );
 
-    // `chargedToRoom` is kept in the shape so the counter can still say "don't
-    // take money now" - but there IS an invoice behind it now, and it is due.
+    // `chargedToRoom` now means what it says: this went on the stay and nobody
+    // paid for it. A ward dispense the counter DID collect for is an ordinary
+    // paid sale that happens to belong to an admission, so it comes back like
+    // one - the pharmacist gets a receipt to hand over rather than a notice
+    // telling them not to take money they have already taken.
+    if (tendered > 0) {
+      return { chargedToRoom: false as const, ipNumber: liveAdmission.ipNumber, invoice };
+    }
     return { chargedToRoom: true as const, ipNumber: liveAdmission.ipNumber, invoice };
   }
 

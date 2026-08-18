@@ -25,6 +25,23 @@ import { api, ApiClientError } from "@/lib/api-client";
  */
 
 const label = "font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--muted)]";
+
+/**
+ * The required marker, in the PUBLIC site's palette.
+ *
+ * Deliberately not the portal's `Req` atom: this page is themed by
+ * site-theme.css, which has no `--p-rose` at all, so borrowing the staff-side
+ * component would render an asterisk in whatever colour it happened to inherit.
+ * `--alert` is the token the errors under these very inputs already use.
+ */
+function Req() {
+  return (
+    <>
+      <span aria-hidden className="ml-0.5 text-[var(--alert)]">*</span>
+      <span className="sr-only"> (required)</span>
+    </>
+  );
+}
 const field =
   "w-full rounded-xl border border-[var(--line-strong)] bg-white px-4 py-3 text-[14px] text-[var(--ink)] outline-none transition-colors focus:border-[var(--teal)] disabled:bg-[var(--bone)] disabled:text-[var(--muted)]";
 
@@ -183,13 +200,13 @@ export function RequestCallbackForm({ initialDoctorId = "" }: { initialDoctorId?
 
       <div className="mt-7 grid gap-5 sm:grid-cols-2">
         <div>
-          <label htmlFor="cb-name" className={label}>Patient name *</label>
+          <label htmlFor="cb-name" className={label}>Patient name<Req /></label>
           <input id="cb-name" value={name} onChange={(e) => setName(e.target.value)}
             placeholder="Full name of the patient" className={`${field} mt-2.5`} />
         </div>
 
         <div>
-          <label htmlFor="cb-phone" className={label}>Mobile number *</label>
+          <label htmlFor="cb-phone" className={label}>Mobile number<Req /></label>
           <input id="cb-phone" value={phone} onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
             inputMode="numeric" placeholder="10-digit mobile" className={`${field} mt-2.5 font-mono`} />
           {phone.length > 0 && !phoneOk && (

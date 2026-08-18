@@ -574,7 +574,7 @@ function ReceiveInner() {
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <Field label="Supplier">
+              <Field label="Supplier" required>
                 <select className={fld} value={supplierId} disabled={!!poId}
                   onChange={(e) => setSupplierId(e.target.value)}>
                   <option value="">Select…</option>

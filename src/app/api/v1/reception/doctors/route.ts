@@ -8,7 +8,10 @@ import { localHHMM } from "@/lib/after-hours";
 export const dynamic = "force-dynamic";
 
 export const GET = handler(async (req) => {
-  await requireRole(req, "RECEPTIONIST", "ADMIN");
+  // INSURANCE_DESK: this portal now runs the whole admission - the bed board,
+  // the admit form and the stay sheet - so a patient can be booked in on a
+  // policy without walking the family to reception first.
+  await requireRole(req, "RECEPTIONIST", "ADMIN", "INSURANCE_DESK");
   const [doctors, policy] = await Promise.all([listDoctors(), getAfterHoursOpPolicy()]);
   // The after-hours policy rides along on the call the booking screen already
   // makes, so the desk can show the emergency fee without a second round trip.

@@ -5,27 +5,39 @@ import { useParams } from "next/navigation";
 import JsBarcode from "jsbarcode";
 import { api, ApiClientError } from "@/lib/api-client";
 import { amountInWords } from "@/lib/amount-words";
-import { bedLabel } from "@/lib/beds";
 import { BillHead, PrintToolbar, type HospitalInfo } from "@/components/print/stationery";
 
 /**
- * DETAILED BILL (CREDIT) - the sheet that goes to the insurer.
+ * IP FINAL BILL - the discharge bill for a stay.
  *
- * This is the one document in the ERP whose reader is not in the building. A TPA
- * assessor gets it as paper or a PDF attachment, reads it once against a policy,
- * and either pays or raises a query - and every query costs the hospital weeks.
- * So the layout is not a house style choice: it copies the bill format the desk
- * already submits and the assessors already know how to read.
+ * ONE DOCUMENT, TWO READERS, and that is the whole reason it looks the way it
+ * does. A family gets it at the counter and checks it line by line against what
+ * they remember; a TPA assessor gets it as a PDF attachment, reads it once
+ * against a policy, and either pays or raises a query that costs the hospital
+ * weeks. So the layout is not a house style choice - it copies the bill format
+ * both of them already know how to read.
  *
- * Three things it does that the A5 counter invoice deliberately does not:
+ * What that format does, and why:
  *
- *   A4, NOT A5. Forty line items and five subtotals do not fit on a half-sheet,
- *   and a claim bill that runs to six cramped pages gets read less carefully.
+ *   FOUR COLUMNS. Service type, quantity, rate, amount. Issue numbers, HSN
+ *   codes and batch numbers all live on the counter's OWN invoice, which is the
+ *   document anyone chasing a line opens; here they were a third of the width
+ *   spent on things nobody reads off this sheet.
  *
- *   GROUPED WITH SUBTOTALS. Ward, doctor visits, services, investigations and
- *   pharmacy each total on their own line, because that is the granularity a
- *   policy is written at - a room-rent cap applies to the ward subtotal, not to
- *   the bill.
+ *   SUBTOTAL ON THE HEADING. Each section's total prints beside its name rather
+ *   than under its lines, because a policy is written at that granularity - a
+ *   room-rent cap applies to the hospital-services subtotal - and a reader
+ *   deciding whether to read forty lines wants the number first.
+ *
+ *   DATES AS SUB-HEADINGS, for investigations and pharmacy only. Those read as
+ *   a course of treatment: a repeat CRP or the third day's medicines are looked
+ *   for by day. Ward and consultation are one rate over the stay, so their date
+ *   sits inline instead of putting a heading above every row.
+ *
+ *   PAYMENT DETAILS, ITEMISED. Deposits and counter payments as rows, not one
+ *   number. A family that paid three times expects to see three lines.
+ *
+ *   A4, NOT A5. Forty line items and five subtotals do not fit on a half-sheet.
  *
  *   BOTH BARCODES. IP number and bill number. The assessor's file and the
  *   hospital's file are reconciled on those two numbers, by hand, months later.
@@ -39,8 +51,26 @@ interface BillLine {
   date: string | null; issueNo: string | null; code: string | null;
   description: string; batchNo: string | null; expiry: string | null;
   rate: string; qty: number; amount: string;
+  /** Nothing has invoiced this yet. Printed, marked, and counted in the total. */
+  draft?: boolean;
+  /** False when the amount is not knowable yet - prints a dash, adds nothing. */
+  priced?: boolean;
+  // `paidStatus` is on the wire and deliberately not read here - see the note
+  // at the description cell. Paid-vs-due is answered once in the totals block;
+  // per-line it belongs on the stay screen's running tab, not on this sheet.
 }
-interface BillGroup { title: string; subtitle: string | null; lines: BillLine[]; total: string }
+interface BillGroup {
+  title: string; lines: BillLine[]; total: string;
+  /** Break this section into date sub-headings (investigations, pharmacy). */
+  byDate: boolean;
+}
+/** One row of the Payment Details table. */
+interface BillPayment { invoiceNo: string; date: string; mode: string; amount: string }
+/** One of the other counters' bills whose lines appear above, by number. */
+interface BillSource {
+  receiptNo: string; source: string; date: string;
+  total: string; paid: string; status: "PAID" | "PART" | "DUE";
+}
 interface Data {
   hospital: (HospitalInfo & { logoDataUrl?: string | null }) | null;
   provisional: boolean;
@@ -50,12 +80,19 @@ interface Data {
   admission: {
     ipNumber: string; doctor: string; department: string;
     ward: string; bedNo: string; admittedAt: string; dischargedAt: string | null;
+    roomInfo: string; dischargeType: string;
+    qualification: string | null; specialization: string | null;
   };
   sourceType: string;
   insurer: string | null;
   policyNo: string | null;
   groups: BillGroup[];
   gross: string; discount: string; gst: string; netBill: string; advance: string; netPayable: string;
+  draftTotal: string;
+  draftUnpricedCount: number;
+  counterPaid: string;
+  payments: BillPayment[];
+  sourceBills: BillSource[];
 }
 
 const money = (v: string | number) =>
@@ -67,10 +104,92 @@ const GENDER: Record<string, string> = { MALE: "MALE", FEMALE: "FEMALE", OTHER: 
  * going to an insurer. Add it only when it is missing.
  */
 const withDr = (name: string) => (/^dr\.?\s/i.test(name.trim()) ? name.trim() : `Dr. ${name.trim()}`);
-const dt = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleString("en-IN", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }) : "-";
-const d = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "2-digit", year: "numeric" }) : "";
+/**
+ * dd-mm-yyyy.
+ *
+ * Assembled from the parts rather than left to `toLocaleDateString`, which
+ * returns dd/mm/yyyy for en-IN. The slashes are the locale's and there is no
+ * option to change the separator - so a format the hospital asked for cannot be
+ * expressed through it at all.
+ *
+ * Doing it by hand also PINS the output. Intl formatting varies with the ICU
+ * build underneath, so the same bill could print one way on the desk's machine
+ * and another on the server's; on a document a TPA files in another city, the
+ * date is the last field that should be allowed to drift.
+ */
+const d = (iso: string | null) => {
+  if (!iso) return "";
+  const x = new Date(iso);
+  return `${String(x.getDate()).padStart(2, "0")}-${String(x.getMonth() + 1).padStart(2, "0")}-${x.getFullYear()}`;
+};
+/** dd-mm-yyyy, h:mm AM/PM - the same date, with the clock time after it. */
+const dt = (iso: string | null) => {
+  if (!iso) return "-";
+  const x = new Date(iso);
+  const h = x.getHours();
+  const clock = `${h % 12 === 0 ? 12 : h % 12}:${String(x.getMinutes()).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
+  return `${d(iso)}, ${clock}`;
+};
+
+const SOURCE_LABEL: Record<string, string> = {
+  PHARMACY: "Pharmacy", LAB: "Laboratory", CONSULTATION: "OP Consultation", OTHER: "Services",
+};
+const MODE_LABEL: Record<string, string> = {
+  CASH: "Cash", UPI: "UPI", CARD: "Card", NETBANKING: "Net banking",
+  INSURANCE: "Insurance", OTHER: "Other",
+};
+
+/**
+ * Lines bucketed under their own date, in the order the days happened.
+ *
+ * A Map preserves insertion order, and the lines arrive oldest-first from the
+ * service, so the days come out chronological without a second sort. Lines with
+ * no date at all (a ward charge that was never stamped) collect under "" and
+ * print with no heading rather than under a fabricated one.
+ */
+function groupLinesByDate(lines: BillLine[]): [string, BillLine[]][] {
+  const byDay = new Map<string, BillLine[]>();
+  for (const l of lines) {
+    const day = d(l.date);
+    byDay.set(day, [...(byDay.get(day) ?? []), l]);
+  }
+  // Undated lines lead: they belong to the stay as a whole, not to one day.
+  return [...byDay.entries()].sort(([a], [z]) => (a === "" ? -1 : z === "" ? 1 : 0));
+}
+
+/**
+ * One printed line.
+ *
+ * `withDate` puts the date in front of the description, which is how a section
+ * that is NOT sub-headed by day still says when each thing happened.
+ * `indent` is for lines that already sit under a date heading.
+ */
+function BillRow({ l, withDate, indent }: { l: BillLine; withDate?: boolean; indent?: boolean }) {
+  return (
+    <tr>
+      <td className={`py-[3px] pr-1 ${indent ? "pl-3" : ""}`}>
+        {withDate && l.date && <span className="font-mono text-[8.5px]">{dt(l.date)} - </span>}
+        {l.description}
+        {/* PER-LINE PAID/DUE MARKERS ARE DELIBERATELY NOT HERE. They were, and
+            they made a settled bill read as an argument about who owed what -
+            on a document a family takes away and an insurer files. What has
+            been collected is a MONEY question, answered once in the totals and
+            itemised in Payment Details. The stay screen's running tab is where
+            a desk needs it line by line, and that is where it still is. */}
+        {l.draft && (
+          <span className="ml-1.5 rounded-sm border border-[#8a6414] px-[3px] py-px align-middle text-[7px] font-bold uppercase tracking-wide text-[#8a6414]">
+            not yet billed
+          </span>
+        )}
+      </td>
+      <td className="py-[3px] pr-1 text-right font-mono">{l.qty}</td>
+      {/* An unpriced draft prints a dash, never 0.00 - a zero in a money column
+          reads as "free", which is a different claim from "not priced yet". */}
+      <td className="py-[3px] pr-1 text-right font-mono">{l.draft && !l.priced ? "—" : money(l.rate)}</td>
+      <td className="py-[3px] text-right font-mono">{l.draft && !l.priced ? "—" : `₹${money(l.amount)}`}</td>
+    </tr>
+  );
+}
 
 export function DetailedBillSheet() {
   const { admissionId } = useParams<{ admissionId: string }>();
@@ -136,8 +255,8 @@ export function DetailedBillSheet() {
                     and the page margins below reserve the band it occupies -
                     printing our own on top of it would strike through theirs. */}
                 {!onStationery && <BillHead hospital={b.hospital} />}
-                <div className="mt-1 text-center text-[12px] font-bold">
-                  Detailed Bill (Credit)
+                <div className="mt-1 text-center text-[13px] font-bold tracking-wide">
+                  IP FINAL BILL
                   {/* Said on the sheet, not just in the UI. A bill for a stay
                       that is still running WILL be filed by somebody as if it
                       were final. */}
@@ -148,30 +267,39 @@ export function DetailedBillSheet() {
                   )}
                 </div>
 
-        {/* ── WHO, AND WHICH BILL ── two columns inside one box, as on the form
-            the desk submits today. Kept together so it never splits across a
-            page: a continuation page whose header is on the previous sheet is
-            the single easiest way to lose a page of a claim. */}
-        <div className="keep-together mt-2 grid grid-cols-2 border border-[#333]">
-          <div className="border-r border-[#333] p-1.5">
-            <F k="Patient Name" v={b.patient.fullName.toUpperCase()} strong />
-            <F k="Age/Gender" v={`${b.patient.age != null ? `${b.patient.age} Y` : "-"} / ${GENDER[b.patient.gender ?? ""] ?? "-"}`} />
-            <F k="Mobile No" v={b.patient.phone} />
-            <F k="Doctor" v={withDr(b.admission.doctor)} />
-            <F k="Department" v={b.admission.department} />
-            <F k="Ward/Bed No" v={bedLabel(b.admission.ward, b.admission.bedNo)} />
-            <F k="Source Type" v={b.sourceType} strong />
-          </div>
-          <div className="p-1.5">
-            <F k="IP No" v={b.admission.ipNumber} />
-            <F k="MR No" v={b.patient.displayId} />
-            <F k="Bill No" v={b.billNo} strong />
-            <F k="Bill Date & Time" v={dt(b.billedAt)} />
-            <F k="Admission Date & Time" v={dt(b.admission.admittedAt)} />
-            <F k="Discharge Date & Time" v={b.admission.dischargedAt ? dt(b.admission.dischargedAt) : "-"} />
-            <F k="Insurer / Policy" v={b.insurer ? `${b.insurer}${b.policyNo ? ` · ${b.policyNo}` : ""}` : "-"} />
-          </div>
-        </div>
+                {/* ── WHO, AND WHICH BILL ── two columns of label/value pairs,
+            read across rather than down: MR against Reg No, admit against
+            discharge. Kept together so it never splits across a page - a
+            continuation page whose header is on the previous sheet is the
+            single easiest way to lose a page of a claim. */}
+                <div className="keep-together mt-2 grid grid-cols-2 gap-x-4 border border-[#333] p-1.5">
+                  <F k="MR Number" v={b.patient.displayId} />
+                  <F k="Patient Reg.No." v={b.admission.ipNumber} />
+                  <F k="Patient Name" v={b.patient.fullName.toUpperCase()} strong />
+                  <F k="Phone" v={b.patient.phone} />
+                  <F k="Age / Gender" v={`${b.patient.age != null ? `${b.patient.age}Y` : "-"} / ${GENDER[b.patient.gender ?? ""] ?? "-"}`} />
+                  <F k="Room Info" v={b.admission.roomInfo} />
+                  <F k="Admit Date" v={dt(b.admission.admittedAt)} />
+                  <F k="Date of Discharge" v={b.admission.dischargedAt ? dt(b.admission.dischargedAt) : "-"} />
+                  <F k="Bill No" v={b.billNo} strong />
+                  <F k="Discharge Type" v={b.admission.dischargeType} />
+                  <F k="Source Type" v={b.sourceType} />
+                </div>
+
+                {/* ── DOCTOR INFORMATION ── who treated, under what letters. An
+            assessor checks the specialisation against the diagnosis. */}
+                <div className="keep-together mt-1.5 border border-[#333]">
+                  <div className="border-b border-[#333] bg-[#eef2f1] px-1.5 py-[3px] text-[9.5px] font-bold uppercase">
+                    Doctor Information
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-4 p-1.5">
+                    <F k="Consultant Doctor" v={withDr(b.admission.doctor)} strong />
+                    <F k="Department" v={b.admission.department} />
+                    <F k="Specialization" v={b.admission.qualification || b.admission.specialization || "-"} />
+                  </div>
+                </div>
+
+                <div className="mt-1.5 text-[9.5px] font-bold uppercase">Payment Information</div>
               </td>
             </tr>
           </thead>
@@ -179,105 +307,215 @@ export function DetailedBillSheet() {
             <tr>
               <td>
 
-        {/* ── THE LINES ── its own thead, which repeats too, so a continuation
+                {/* ── THE LINES ── its own thead, which repeats too, so a continuation
             page carries the column headings rather than nine bare numbers. */}
-        <table className="mt-2 w-full border-collapse text-[9.5px]">
-          <thead>
-            <tr className="border-b border-t border-[#333]">
-              <Th w="9%">Date</Th>
-              <Th w="10%">Issue No</Th>
-              <Th w="7%">Code</Th>
-              <Th w="31%">Description</Th>
-              <Th w="9%">Batchno</Th>
-              <Th w="8%">Expirydt</Th>
-              <Th w="8%" right>Rate</Th>
-              <Th w="6%" right>Qty</Th>
-              <Th w="12%" right>Amount</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {/* A keyed Fragment, not a bare one: each group emits a heading, its
+                <table className="mt-1 w-full border-collapse text-[9.5px]">
+                  <thead>
+                    {/* FOUR COLUMNS. Date, issue number, HSN code and batch each
+                had one of their own; between them they took a third of the
+                width to carry things that are all on the counter's OWN invoice,
+                which is the document anyone chasing a line actually opens. The
+                bill answers what was done, how much of it, at what rate. The
+                date survives - inline on the line, or as a sub-heading. */}
+                    <tr className="border-b border-t border-[#333]">
+                      <Th w="60%">Service Type</Th>
+                      <Th w="10%" right>Quantity</Th>
+                      <Th w="13%" right>Rate</Th>
+                      <Th w="17%" right>Amount(₹)</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {/* A keyed Fragment, not a bare one: each group emits a heading, its
                 lines and a subtotal as siblings, and only the wrapper can carry
                 the key that keeps them associated across a re-render. */}
-            {b.groups.map((g) => (
-              <Fragment key={g.title}>
-                <tr>
-                  <td colSpan={9} className="pb-0.5 pt-2 text-[9.5px] font-bold uppercase">{g.title}</td>
-                </tr>
-                {g.subtitle && (
-                  <tr>
-                    <td colSpan={9} className="pb-0.5 pl-4 text-[9px] font-bold uppercase text-[#3c4a45]">{g.subtitle}</td>
-                  </tr>
+                    {b.groups.map((g) => (
+                      <Fragment key={g.title}>
+                        {/* THE SUBTOTAL RIDES ON THE HEADING, not on a trailing
+                    row. A reader deciding whether a section is worth reading
+                    line by line - a room-rent cap against the ward total, say -
+                    gets the number before the forty lines rather than after
+                    them, and on a bill that breaks across pages the heading is
+                    the part that stays with the section. */}
+                        <tr className="border-t border-[#333]">
+                          <td colSpan={3} className="pb-[3px] pt-2 text-[9.5px] font-bold uppercase">{g.title}</td>
+                          <td className="pb-[3px] pt-2 text-right font-mono text-[9.5px] font-bold">₹{money(g.total)}</td>
+                        </tr>
+
+                        {g.byDate
+                          ? // Investigations and pharmacy read as a course of
+                          // treatment: the date is the heading and the items
+                          // sit under it, which is how a repeat CRP or a third
+                          // day's medicines are actually looked for.
+                          groupLinesByDate(g.lines).map(([day, lines]) => (
+                            <Fragment key={`${g.title}-${day}`}>
+                              {day && (
+                                <tr>
+                                  <td colSpan={4} className="pb-[2px] pt-[5px] font-mono text-[9px] font-semibold">{day}</td>
+                                </tr>
+                              )}
+                              {lines.map((l, i) => <BillRow key={`${g.title}-${day}-${i}`} l={l} indent />)}
+                            </Fragment>
+                          ))
+                          : // Ward, nursing and consultation are one rate applied
+                          // over the stay. A date heading above each would be a
+                          // heading per row, so the date goes on the line.
+                          g.lines.map((l, i) => <BillRow key={`${g.title}-${i}`} l={l} withDate />)}
+                      </Fragment>
+                    ))}
+                  </tbody>
+                </table>
+
+                {/* ── BILLS INCLUDED ── the other counters' invoices whose lines
+            are above, by number.
+
+            The four-column layout dropped the per-line "Issue No", which is
+            right - a receipt number repeated on forty rows is noise. But losing
+            it entirely left a bill that quoted a pharmacy's charges without ever
+            naming the pharmacy's invoice, so a family querying one could not say
+            which document they meant and the desk could not find it. Listed once
+            here, each bill is askable-for and printable. */}
+                {b.sourceBills.length > 0 && (
+                  <div className="keep-together mt-3">
+                    <div className="text-[9.5px] font-bold uppercase">Bills included in this statement</div>
+                    <table className="mt-1 w-full border-collapse text-[9.5px]">
+                      <thead>
+                        <tr className="border-b border-t border-[#333]">
+                          <Th w="28%">Invoice No</Th>
+                          <Th w="24%">Date &amp; time</Th>
+                          <Th w="18%">Counter</Th>
+                          <Th w="14%">Status</Th>
+                          <Th w="16%" right>Amount(₹)</Th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {b.sourceBills.map((x) => (
+                          <tr key={x.receiptNo}>
+                            <td className="py-[3px] pr-1 font-mono text-[8.5px]">{x.receiptNo}</td>
+                            <td className="py-[3px] pr-1 font-mono text-[8.5px]">{dt(x.date)}</td>
+                            <td className="py-[3px] pr-1">{SOURCE_LABEL[x.source] ?? x.source}</td>
+                            <td className="py-[3px] pr-1 text-[8.5px] font-semibold uppercase">
+                              {x.status === "PAID" ? "Paid" : x.status === "PART" ? "Part paid" : "Due"}
+                            </td>
+                            <td className="py-[3px] text-right font-mono">₹{money(x.total)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
-                {g.lines.map((l, i) => (
-                  <tr key={`${g.title}-${i}`}>
-                    <td className="py-[3px] pr-1 font-mono text-[8.5px]">{d(l.date)}</td>
-                    <td className="py-[3px] pr-1 font-mono text-[8.5px]">{l.issueNo ?? ""}</td>
-                    <td className="py-[3px] pr-1 font-mono text-[8.5px]">{l.code ?? ""}</td>
-                    <td className="py-[3px] pr-1">{l.description}</td>
-                    <td className="py-[3px] pr-1 font-mono text-[8.5px]">{l.batchNo ?? ""}</td>
-                    <td className="py-[3px] pr-1 font-mono text-[8.5px]">{l.expiry ?? ""}</td>
-                    <td className="py-[3px] pr-1 text-right font-mono">{money(l.rate)}</td>
-                    <td className="py-[3px] pr-1 text-right font-mono">{l.qty.toFixed(2)}</td>
-                    <td className="py-[3px] text-right font-mono">{money(l.amount)}</td>
-                  </tr>
-                ))}
-                <tr>
-                  <td colSpan={6} />
-                  <td colSpan={2} className="border-t border-[#333] py-[3px] pr-1 text-right text-[9px] font-bold uppercase">
-                    {g.title} Total:
-                  </td>
-                  <td className="border-t border-[#333] py-[3px] text-right font-mono font-bold">{money(g.total)}</td>
-                </tr>
-              </Fragment>
-            ))}
-          </tbody>
-        </table>
 
-        {/* ── THE MONEY ── kept whole, and on the right where an assessor's eye
+                {/* ── PAYMENT DETAILS ── every rupee already received against
+            this stay. The totals block can only say how much; this says when,
+            in what, and against which receipt - the difference between a bill
+            a family can check and one they have to take on trust. */}
+                {b.payments.length > 0 && (
+                  <div className="keep-together mt-3">
+                    <div className="text-[9.5px] font-bold uppercase">Payment Details</div>
+                    <table className="mt-1 w-full border-collapse text-[9.5px]">
+                      <thead>
+                        <tr className="border-b border-t border-[#333]">
+                          <Th w="8%">S.NO</Th>
+                          <Th w="30%">Invoice No</Th>
+                          <Th w="26%">Date &amp; time</Th>
+                          <Th w="20%">Payment Mode</Th>
+                          <Th w="16%" right>Amount(₹)</Th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {b.payments.map((p, i) => (
+                          <tr key={`${p.invoiceNo}-${i}`}>
+                            <td className="py-[3px] pr-1 font-mono text-[8.5px]">{i + 1}</td>
+                            <td className="py-[3px] pr-1 font-mono text-[8.5px]">{p.invoiceNo}</td>
+                            <td className="py-[3px] pr-1 font-mono text-[8.5px]">{dt(p.date)}</td>
+                            <td className="py-[3px] pr-1">{MODE_LABEL[p.mode] ?? p.mode}</td>
+                            <td className="py-[3px] text-right font-mono">₹{money(p.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* ── THE MONEY ── kept whole, and on the right where an assessor's eye
             goes first. */}
-        <div className="keep-together mt-4 flex items-start justify-between gap-8">
-          <div className="min-w-0 flex-1">
-            <div className="flex gap-2 text-[9.5px]">
-              <span className="w-[92px] shrink-0 font-semibold">Rupees in words</span>
-              <span>: <span className="font-semibold uppercase">{amountInWords(b.netPayable)}</span></span>
-            </div>
-            <div className="mt-6">
-              <div className="w-[190px] border-b border-[#333]" />
-              <div className="mt-1 text-[9px] font-bold">Patient/Attendant Signatory</div>
-            </div>
-          </div>
+                <div className="keep-together mt-4 flex items-start justify-between gap-8">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex gap-2 text-[9.5px]">
+                      <span className="w-[92px] shrink-0 font-semibold">Rupees in words</span>
+                      <span>: <span className="font-semibold uppercase">{amountInWords(b.netPayable)}</span></span>
+                    </div>
+                    <div className="mt-6">
+                      <div className="w-[190px] border-b border-[#333]" />
+                      <div className="mt-1 text-[9px] font-bold">Patient/Attendant Signatory</div>
+                    </div>
+                  </div>
 
-          <table className="w-[250px] text-[10px]">
-            <tbody>
-              <T k="Gross Total" v={money(b.gross)} />
-              <T k="Less Discount" v={money(b.discount)} />
-              <T k="Total GST" v={money(b.gst)} />
-              <T k="Net Bill Amount" v={money(b.netBill)} rule />
-              <T k="Less Advance" v={money(b.advance)} />
-              <T k="Net Payable" v={money(b.netPayable)} rule strong />
-            </tbody>
-          </table>
-        </div>
+                  <table className="w-[250px] text-[10px]">
+                    <tbody>
+                      <T k="Total" v={money(b.gross)} />
+                      {/* Called out INSIDE the money block rather than as a footnote.
+                  The figure above already contains it, and a reader who takes
+                  the Total as settled needs to meet the caveat in the same
+                  glance - not three inches lower in small print. */}
+                      {Number(b.draftTotal) > 0 && (
+                        <T k="…of which not yet billed" v={money(b.draftTotal)} />
+                      )}
+                      <T k="Discount" v={money(b.discount)} />
+                      {Number(b.gst) > 0 && <T k="Total GST" v={money(b.gst)} />}
+                      <T k="Net Amount" v={money(b.netBill)} rule />
+                      <T k="Advance Paid" v={money(b.advance)} />
+                      {/* Money the pharmacy and lab windows already took on bills that
+                  are listed above. Without this row the sheet adds those bills
+                  into its total and then asks for them a second time. */}
+                      {Number(b.counterPaid) > 0 && (
+                        <T k="Paid at Counter" v={money(b.counterPaid)} />
+                      )}
+                      <T k="Balance Amount" v={money(b.netPayable)} rule strong />
+                    </tbody>
+                  </table>
+                </div>
 
-        {/* ── THE TWO NUMBERS, machine-readable ── */}
-        <div className="keep-together mt-6 flex items-end justify-between gap-8">
-          <div>
-            <svg ref={ipBar} />
-            <div className="text-[8.5px] font-semibold">( IP No )</div>
-          </div>
-          <div className="text-[9px]">
-            <div className="flex gap-2"><span className="w-[82px] font-semibold">Bill date &amp; Time</span><span>: {dt(b.billedAt)}</span></div>
-            <div className="flex gap-2"><span className="w-[82px] font-semibold">Print Date &amp; Time</span><span>: {dt(new Date().toISOString())}</span></div>
-          </div>
-          
-        </div>
+                {/* ── THE TWO NUMBERS, machine-readable ── */}
+                <div className="keep-together mt-6 flex items-end justify-between gap-8">
+                  <div>
+                    <svg ref={ipBar} />
+                    <div className="text-[8.5px] font-semibold">( IP No )</div>
+                  </div>
+                  <div className="text-[9px]">
+                    <div className="flex gap-2"><span className="w-[82px] font-semibold">Bill date &amp; Time</span><span>: {dt(b.billedAt)}</span></div>
+                    <div className="flex gap-2"><span className="w-[82px] font-semibold">Print Date &amp; Time</span><span>: {dt(new Date().toISOString())}</span></div>
+                  </div>
 
-        <div className="mt-4 border-t border-[#333] pt-1 text-center text-[8.5px] text-[#57655f]">
-          {b.provisional
-            ? "Provisional bill for pre-authorisation. The final bill is raised at discharge."
-            : "Computer-generated bill. Submitted for insurance settlement."}
-        </div>
+                </div>
+
+                {/* SAID ON THE SHEET, because the sheet is what leaves the building.
+            Whoever reads this - a family at the counter, a TPA assessor weeks
+            later - is entitled to know that part of the total is not yet an
+            invoice, and how much. Kept above the standard footer so it is not
+            mistaken for boilerplate. */}
+                {Number(b.draftTotal) > 0 && (
+                  <div className="keep-together mt-4 border border-[#8a6414] bg-[#fdf8ec] px-3 py-2 text-[8.5px] leading-relaxed text-[#8a6414]">
+                    <b className="uppercase">Includes items not yet billed.</b>{" "}
+                    Lines marked <i>not yet billed</i> total <b>{money(b.draftTotal)}</b> and are already counted in
+                    the figures above. They are medicines and investigations raised against this stay that the
+                    pharmacy or the laboratory has not yet invoiced.
+                    {b.draftUnpricedCount > 0 && (
+                      <>
+                        {" "}
+                        A further <b>{b.draftUnpricedCount}</b>{" "}
+                        {b.draftUnpricedCount === 1 ? "item is" : "items are"} shown with a dash: the price is set
+                        when the pharmacy dispenses the batch, so {b.draftUnpricedCount === 1 ? "it is" : "they are"} not
+                        in the total and will be added when billed.
+                      </>
+                    )}
+                  </div>
+                )}
+
+                <div className="mt-4 border-t border-[#333] pt-1 text-center text-[8.5px] text-[#57655f]">
+                  {b.provisional
+                    ? "Provisional bill for pre-authorisation. The final bill is raised at discharge."
+                    : "Computer-generated bill. Submitted for insurance settlement."}
+                </div>
               </td>
             </tr>
           </tbody>

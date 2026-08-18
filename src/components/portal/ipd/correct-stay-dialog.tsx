@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Icon } from "@/components/portal/ui/icons";
-import { Spinner } from "@/components/portal/ui/form-atoms";
+import { Req, Spinner } from "@/components/portal/ui/form-atoms";
 import { api, ApiClientError } from "@/lib/api-client";
 import { bedLabel } from "@/lib/beds";
 
@@ -224,14 +224,14 @@ export function CorrectStayDialog({
           {/* ── DATES ── first, because they move every other number on the page */}
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <label className={label}>Admitted</label>
+              <label className={label}>Admitted<Req /></label>
               <input type="datetime-local" className={fld} value={admitted} max={maxNow}
                 onFocus={(e) => (e.currentTarget.style.borderColor = ring)}
                 onBlur={(e) => (e.currentTarget.style.borderColor = "")}
                 onChange={(e) => setAdmitted(e.target.value)} />
             </div>
             <div>
-              <label className={label}>Discharged</label>
+              <label className={label}>Discharged{closed && <Req />}</label>
               <input type="datetime-local" className={`${fld} disabled:bg-[var(--p-bg)] disabled:text-[var(--p-muted)]`}
                 value={discharged} max={maxNow} disabled={!closed}
                 onFocus={(e) => (e.currentTarget.style.borderColor = ring)}

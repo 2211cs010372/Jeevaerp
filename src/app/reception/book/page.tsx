@@ -422,13 +422,13 @@ export default function BookAppointmentPage() {
                   ) : (
                     <>
                       <div className="grid gap-4 sm:grid-cols-2">
-                        <Field label="First name" icon="users" error={npFieldErr.firstName}>
+                        <Field label="First name" icon="users" required error={npFieldErr.firstName}>
                           <input className={npCls(npFieldErr.firstName)} value={np.firstName} onChange={(e) => { setNp({ ...np, firstName: e.target.value }); setNpFieldErr((p) => ({ ...p, firstName: undefined })); }} placeholder="Divya" autoFocus />
                         </Field>
                         <Field label="Last name">
                           <input className={npCls()} value={np.lastName} onChange={(e) => setNp({ ...np, lastName: e.target.value })} placeholder="Prasad" />
                         </Field>
-                        <Field label="Phone" error={npFieldErr.phone}>
+                        <Field label="Phone" required error={npFieldErr.phone}>
                           <input className={npCls(npFieldErr.phone)} value={np.phone} onChange={(e) => { setNp({ ...np, phone: e.target.value.replace(/\D/g, "").slice(0, 10) }); setNpFieldErr((p) => ({ ...p, phone: undefined })); }} inputMode="numeric" placeholder="9000012345" />
                         </Field>
                         <Field label="Age" error={npFieldErr.age}>

@@ -210,7 +210,7 @@ export default function SuppliersPage() {
           }
         >
           <div className="grid gap-4 p-6 sm:grid-cols-2">
-            <Field label="Supplier name" span>
+            <Field label="Supplier name" span required>
               <input className={fld} value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} autoFocus placeholder="e.g. Sri Balaji Pharma Distributors" />
             </Field>
             <Field label="Contact person">

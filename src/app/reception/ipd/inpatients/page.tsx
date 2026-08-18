@@ -393,6 +393,21 @@ export default function InpatientsPage() {
                     className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
                     <Icon name="receipt" size={14} /> Detailed bill
                   </a>
+                  {/* BACK INTO THE STAY AFTER IT IS CLOSED.
+                      This heading has always promised "open the record after the
+                      patient has left the ward" and there was no way to do it -
+                      every button here printed something. A discharge date typed
+                      wrong, a bed rate corrected a day late, a charge that should
+                      never have been on the tab: all of them are edited from the
+                      stay sheet, and all of them were unreachable the moment the
+                      bed was freed. The sheet's own Edit gates what may still be
+                      changed on a closed stay and re-issues the invoice when it
+                      is, so nothing here needs its own rules. */}
+                  <Link href={`/ipd/${d.id}`}
+                    title="Open the stay - correct the dates, the bed rate or the nursing rate"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">
+                    <Icon name="bed" size={14} /> Open sheet
+                  </Link>
                   {d.invoice ? (
                     <a href={`/print/invoice/${d.invoice.id}`} target="_blank" rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--p-blue)] px-3.5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[var(--p-blue-deep)]">

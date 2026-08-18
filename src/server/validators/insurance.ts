@@ -18,8 +18,18 @@ export const createClaimSchema = z.object({
 
 /** Move a claim along its lifecycle. */
 export const claimActionSchema = z.object({
-  action: z.enum(["SUBMIT", "QUERY", "APPROVE", "REJECT", "SETTLE", "NOTE"]),
-  /// approved amount (APPROVE) or amount received (SETTLE)
+  /**
+   * AMOUNT sets what is being CLAIMED, and it exists because nothing could.
+   *
+   * claimedAmount was written once, by createClaim, and never again - so the
+   * ₹0 draft every insurance admission opens automatically could never be
+   * given a figure. The desk's only way forward was to raise a SECOND claim,
+   * which is how one stay ends up with a real claim and a blank one and nobody
+   * can tell which is live. A pre-auth that cannot be filled in is not a
+   * pre-auth; it is a reminder that rots.
+   */
+  action: z.enum(["AMOUNT", "SUBMIT", "QUERY", "APPROVE", "REJECT", "SETTLE", "NOTE"]),
+  /// claimed amount (AMOUNT), approved amount (APPROVE) or amount received (SETTLE)
   amount: z.coerce.number().min(0).optional(),
   insurerRef: z.string().trim().max(80).optional(),
   detail: z.string().trim().max(500).optional(),
@@ -39,6 +49,12 @@ export const claimActionSchema = z.object({
 export const revertToSelfPaySchema = z.object({
   invoiceIds: z.array(z.string().trim().min(1)).optional(),
   reason: z.string().trim().min(3, "Say why this is going back to the patient").max(300),
+  /**
+   * The insurer refused the STAY, not one bill - so the admission itself becomes
+   * self-pay. Only ever sent with a whole-stay revert; a partial one moves the
+   * bills it names and leaves the stay on the policy.
+   */
+  convertStay: z.boolean().optional(),
 });
 
 /**

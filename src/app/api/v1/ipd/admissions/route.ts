@@ -15,7 +15,10 @@ export const GET = handler(async (req) => {
 
 /** Admit: patient by Jeeva ID, onto an AVAILABLE bed, under a doctor. */
 export const POST = handler(async (req) => {
-  const actor = await requireRole(req, "RECEPTIONIST", "ADMIN");
+  // INSURANCE_DESK: this portal now runs the whole admission - the bed board,
+  // the admit form and the stay sheet - so a patient can be booked in on a
+  // policy without walking the family to reception first.
+  const actor = await requireRole(req, "RECEPTIONIST", "ADMIN", "INSURANCE_DESK");
   const i = await parseBody(req, admitSchema);
   const result = await admitPatient(actor, {
     patientDisplayId: i.patientDisplayId,

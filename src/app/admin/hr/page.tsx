@@ -356,19 +356,19 @@ export default function HrPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 {!isEdit && (
-                  <Field label="Handle">
+                  <Field label="Handle" required>
                     <input className={fld} value={f.handle} onChange={(e) => setF({ ...f, handle: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "") })} placeholder={f.role === "DOCTOR" ? "shireesha" : "ravi"} />
                   </Field>
                 )}
-                <Field label="Full name" span={isEdit}>
+                <Field label="Full name" span={isEdit} required>
                   <input className={fld} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder={f.role === "DOCTOR" ? "Dr. Shireesha M" : "Ravi Kumar"} />
                 </Field>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Mobile"><input className={fld} value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })} inputMode="numeric" placeholder="10 digits" /></Field>
+                <Field label="Mobile" required><input className={fld} value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })} inputMode="numeric" placeholder="10 digits" /></Field>
                 <Field label="Email (optional)"><input className={fld} value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} placeholder="name@hospital.in" /></Field>
               </div>
-              <Field label={isEdit ? "New password (leave blank to keep the current one)" : "Temporary password"}>
+              <Field label={isEdit ? "New password (leave blank to keep the current one)" : "Temporary password"} required={!isEdit}>
                 <input className={fld} type="text" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} placeholder={isEdit ? "unchanged" : "min 8 characters"} />
               </Field>
 
@@ -380,16 +380,16 @@ export default function HrPage() {
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
-                    <Field label="Specialization">
+                    <Field label="Specialization" required>
                       <input className={fld} value={d.specialization} onChange={(e) => setD({ ...d, specialization: e.target.value })} placeholder="Obstetrician & Gynaecologist" />
                     </Field>
-                    <Field label="Department">
+                    <Field label="Department" required>
                       <input className={fld} list="dept-options" value={d.department} onChange={(e) => setD({ ...d, department: e.target.value })} placeholder="Gynaecology" />
                       <datalist id="dept-options">{DEPARTMENTS.map((x) => <option key={x} value={x} />)}</datalist>
                     </Field>
                   </div>
                   <div className="grid grid-cols-3 gap-3">
-                    <Field label="Fee (₹)">
+                    <Field label="Fee (₹)" required>
                       <input className={fld} inputMode="numeric" value={d.consultationFee} onChange={(e) => setD({ ...d, consultationFee: e.target.value.replace(/[^\d.]/g, "") })} placeholder="400" />
                     </Field>
                     <Field label="Experience (yrs)">
