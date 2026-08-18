@@ -135,6 +135,7 @@ export default function AdmissionSheetPage() {
   const [err, setErr] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [undoOpen, setUndoOpen] = useState(false);
 
   // ── CORRECTING A BILL RAISED AGAINST THIS STAY ──
   //
@@ -223,6 +224,26 @@ export default function AdmissionSheetPage() {
       setXferOpen(false); setXferReason("");
       await load();
     } catch (e) { setErr(e instanceof ApiClientError ? e.message : "Could not transfer."); }
+    finally { setBusy(false); }
+  }
+
+  /**
+   * Remove a transfer that was entered by mistake.
+   *
+   * Only the newest leg can come off, and that is the only safe one: the legs
+   * chain end-to-end, so pulling one out of the middle would leave a hole in
+   * the days that no arithmetic closes. The chronology keeps both the move and
+   * its removal - somebody did move this patient in the system, and a record
+   * that can be edited to say otherwise is not a record.
+   */
+  async function doUndoTransfer() {
+    setBusy(true); setErr(null);
+    try {
+      const r = await api.post<{ movedBackTo: string }>(`/ipd/admissions/${admissionId}/transfer/undo`, {});
+      setFlash(`Transfer removed. Back in ${r.movedBackTo} - the bed charge is recalculated.`);
+      setUndoOpen(false);
+      await load();
+    } catch (e) { setErr(e instanceof ApiClientError ? e.message : "Could not remove the transfer."); }
     finally { setBusy(false); }
   }
 
@@ -718,7 +739,14 @@ export default function AdmissionSheetPage() {
           </div>
           <div className="divide-y divide-[var(--p-border)]">
             {sc.claims.map((c) => (
-              <div key={c.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+              /* THE ACTION GETS ITS OWN ROW, not the corner of the amount cell.
+                 Set-amount and Send used to live in the right-hand column - the
+                 one sized to hold "₹1,60,750 claimed" - so a real call to
+                 action was rendered at 12px in a narrow box with a hairline
+                 border, and read as a caption. It is the only thing on this
+                 screen the desk is meant to press. */
+              <div key={c.id} className="px-5 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-[12.5px] font-semibold text-[var(--p-ink)]">{c.claimNo}</span>
@@ -731,64 +759,97 @@ export default function AdmissionSheetPage() {
                     <div className="mt-0.5 text-[12px] text-[var(--p-muted)]">Insurer ref <span className="font-mono">{c.insurerRef}</span></div>
                   )}
                 </div>
+                {/* The cell shows the FIGURE. Nothing to press lives here. */}
                 <div className="text-right text-[12.5px]">
-                  {/* A DRAFT WITH NO FIGURE IS THE COMMONEST BROKEN CLAIM HERE.
-                      Every insurance admission opens one at ₹0 and until now
-                      nothing could fill it in - claimedAmount was written once,
-                      at creation, and had no update path - so the desk raised a
-                      second claim instead and the stay ended up with two.
-                      The stay's own running total is offered because it is the
-                      number the desk would otherwise copy off the tab by hand. */}
                   {c.status === "DRAFT" && Number(c.claimedAmount) <= 0 ? (
-                    amountFor === c.id ? (
-                      <div className="flex flex-col items-end gap-1.5">
-                        <input autoFocus inputMode="numeric" value={claimAmt}
-                          onChange={(e) => setClaimAmt(e.target.value.replace(/[^\d.]/g, ""))}
-                          className="w-[140px] rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 text-right font-mono text-[13px] outline-none focus:border-[var(--p-blue)]" />
-                        <div className="flex items-center gap-2">
-                          <button onClick={() => { setAmountFor(null); setClaimAmt(""); }}
-                            className="text-[12px] text-[var(--p-muted)] hover:text-[var(--p-ink)]">Cancel</button>
-                          <button onClick={() => setClaimAmountAndSubmit(c.id, false)} disabled={busy || !(Number(claimAmt) > 0)}
-                            className="rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[12px] font-semibold text-[var(--p-text)] disabled:opacity-40">Save</button>
-                          <button onClick={() => setClaimAmountAndSubmit(c.id, true)} disabled={busy || !(Number(claimAmt) > 0)}
-                            className="rounded-lg bg-[var(--p-blue)] px-2.5 py-1 text-[12px] font-semibold text-white disabled:opacity-40">Save &amp; send</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col items-end gap-1">
-                        <span className="rounded bg-[var(--p-amber-soft)] px-2 py-0.5 text-[11px] font-bold uppercase text-[#8a6414]">
-                          No amount — never sent
-                        </span>
-                        <button onClick={() => { setAmountFor(c.id); setClaimAmt(String(Math.round(Number(sheet.claimTotal)))); }}
-                          className="rounded-lg border border-[var(--p-blue)] px-2.5 py-1 text-[12px] font-semibold text-[var(--p-blue)]">
-                          Set amount (stay is at ₹{money2(sheet.claimTotal)})
-                        </button>
-                      </div>
-                    )
+                    <span className="rounded bg-[var(--p-amber-soft)] px-2 py-0.5 text-[11px] font-bold uppercase text-[#8a6414]">
+                      No amount — never sent
+                    </span>
                   ) : (
                     <>
                       <div className="font-mono font-semibold text-[var(--p-ink)]">₹{money2(c.claimedAmount)} claimed</div>
                       {c.approvedAmount != null && (
                         <div className="text-[var(--p-muted)]">₹{money2(c.approvedAmount)} approved</div>
                       )}
-                      {/* THE NEXT MOVE, ON THE SCREEN THE LIST SENDS YOU TO.
-                          A pre-auth on a patient still in a bed is the whole
-                          point of a pre-auth, and it could not be sent from
-                          here - only from the claims board. QUERIED is the same
-                          button: the insurer asked something, the desk answers
-                          and re-sends. */}
-                      {(c.status === "DRAFT" || c.status === "QUERIED") && (
-                        <button onClick={() => sendClaim(c.id)} disabled={busy}
-                          title={c.status === "QUERIED"
-                            ? "Answer the query and send it back to the insurer"
-                            : "Send this claim to the insurer"}
-                          className="mt-1.5 rounded-lg bg-[var(--p-blue)] px-2.5 py-1 text-[12px] font-semibold text-white disabled:opacity-40">
-                          {c.status === "QUERIED" ? "Re-send to insurer" : "Send to insurer"}
-                        </button>
-                      )}
                     </>
                   )}
                 </div>
+              </div>
+
+              {/* ── WHAT TO DO ABOUT THIS CLAIM ──
+                  A DRAFT WITH NO FIGURE IS THE COMMONEST BROKEN CLAIM HERE.
+                  Every insurance admission opens one at ₹0 and nothing could
+                  fill it in - claimedAmount was written once, at creation, and
+                  had no update path - so the desk raised a SECOND claim and the
+                  stay ended up with two. The stay's own running total is
+                  offered because it is the number the desk would otherwise copy
+                  off the tab by hand; it is a starting point, not the answer -
+                  a pre-auth estimates the WHOLE stay, not the cost so far. */}
+              {c.status === "DRAFT" && Number(c.claimedAmount) <= 0 && (
+                amountFor === c.id ? (
+                  <div className="mt-3 rounded-xl border border-[var(--p-blue)]/30 bg-[var(--p-blue-soft)]/50 p-3.5">
+                    <label className="mb-1.5 block text-[12px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
+                      Amount to claim
+                    </label>
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <div className="flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] bg-white px-3 py-2.5">
+                        <span className="text-[15px] font-semibold text-[var(--p-muted)]">₹</span>
+                        <input autoFocus inputMode="numeric" value={claimAmt}
+                          onChange={(e) => setClaimAmt(e.target.value.replace(/[^\d.]/g, ""))}
+                          className="w-[150px] bg-transparent text-right font-mono text-[15px] font-semibold text-[var(--p-ink)] outline-none" />
+                      </div>
+                      <button onClick={() => setClaimAmountAndSubmit(c.id, false)} disabled={busy || !(Number(claimAmt) > 0)}
+                        className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] bg-white px-4 py-2.5 text-[13px] font-semibold text-[var(--p-text)] transition-colors hover:border-[var(--p-blue)] disabled:opacity-40">
+                        Save only
+                      </button>
+                      <button onClick={() => setClaimAmountAndSubmit(c.id, true)} disabled={busy || !(Number(claimAmt) > 0)}
+                        className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-[var(--p-blue-deep)] disabled:opacity-40">
+                        {busy ? <Spinner size={14} /> : <Icon name="shield" size={15} />}
+                        Save &amp; send to insurer
+                      </button>
+                      <button onClick={() => { setAmountFor(null); setClaimAmt(""); }}
+                        className="text-[13px] font-medium text-[var(--p-muted)] hover:text-[var(--p-ink)]">
+                        Cancel
+                      </button>
+                    </div>
+                    <p className="mt-2 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+                      Pre-filled with what the stay has run up so far. A pre-auth covers the
+                      whole stay, so raise it if more treatment is planned.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--p-amber)]/40 bg-[var(--p-amber-soft)] px-4 py-3">
+                    <span className="text-[12.5px] leading-relaxed text-[#8a6414]">
+                      This claim has no amount, so it has never gone to the insurer.
+                    </span>
+                    <button onClick={() => { setAmountFor(c.id); setClaimAmt(String(Math.round(Number(sheet.claimTotal)))); }}
+                      className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-[var(--p-blue-deep)]">
+                      <Icon name="rupee" size={15} />
+                      Set claim amount
+                    </button>
+                  </div>
+                )
+              )}
+
+              {/* THE NEXT MOVE, ON THE SCREEN THE "TO RAISE" LIST SENDS YOU TO.
+                  A pre-auth on a patient still in a bed is the whole point of a
+                  pre-auth, and it could not be sent from here - only from the
+                  claims board. QUERIED is the same button: the insurer asked
+                  something, the desk answers and re-sends. */}
+              {(c.status === "DRAFT" || c.status === "QUERIED") && Number(c.claimedAmount) > 0 && (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--p-blue)]/30 bg-[var(--p-blue-soft)]/50 px-4 py-3">
+                  <span className="text-[12.5px] leading-relaxed text-[var(--p-blue-deep)]">
+                    {c.status === "QUERIED"
+                      ? "The insurer has queried this. Answer them, then send it back."
+                      : `Ready to go to the insurer for ₹${money2(c.claimedAmount)}.`}
+                  </span>
+                  <button onClick={() => sendClaim(c.id)} disabled={busy}
+                    className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-[var(--p-blue-deep)] disabled:opacity-40">
+                    {busy ? <Spinner size={14} /> : <Icon name="shield" size={15} />}
+                    {c.status === "QUERIED" ? "Re-send to insurer" : "Send to insurer"}
+                  </button>
+                </div>
+              )}
               </div>
             ))}
           </div>
@@ -1196,6 +1257,13 @@ export default function AdmissionSheetPage() {
                     <span className="text-[var(--p-ink)]">{bedLabel(l.wardName, l.bedNo)}</span>
                     <span className="ml-1 text-[12px]">({l.days}d × ₹{money(l.dailyCharge)})</span>
                     {l.current && <span className="ml-1 rounded bg-[var(--p-blue-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--p-blue)]">now</span>}
+                    {l.current && i > 0 && !discharged && (
+                      <button onClick={() => setUndoOpen(true)} disabled={busy}
+                        title="Entered by mistake? Send them back to the previous bed and take this leg off the bill."
+                        className="ml-1.5 align-middle rounded border border-[var(--p-border)] px-1.5 py-[1px] text-[10px] font-semibold text-[var(--p-muted)] transition hover:border-[var(--p-rose)] hover:text-[var(--p-rose)] disabled:opacity-40">
+                        Remove
+                      </button>
+                    )}
                   </span>
                   <span className="shrink-0 font-mono text-[var(--p-ink)]">₹{money(l.total)}</span>
                 </div>
@@ -1447,6 +1515,47 @@ export default function AdmissionSheetPage() {
           The bill keeps EACH LEG at its own rate. Three days in General then four
           in ICU is billed as exactly that - not seven days at whichever rate
           happened to be last. */}
+      {/* ─────────── UNDO A TRANSFER ─────────── */}
+      {undoOpen && sheet && sheet.legs.length > 1 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setUndoOpen(false)}>
+          <div onClick={(e) => e.stopPropagation()} className="surface w-full max-w-md overflow-hidden">
+            <div className="border-b border-[var(--p-border)] px-5 py-4">
+              <h3 className="text-[15px] font-semibold text-[var(--p-ink)]">Remove this transfer</h3>
+              <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">
+                For a move that was entered by mistake - not for a patient who really did change beds.
+              </p>
+            </div>
+
+            <div className="space-y-3 p-5 text-[13px] leading-relaxed text-[var(--p-text)]">
+              <div className="rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] px-3 py-2.5">
+                <div className="flex items-center gap-2 text-[13px]">
+                  <span className="font-semibold text-[var(--p-ink)]">{bedLabel(sheet.legs[sheet.legs.length - 1].wardName, sheet.legs[sheet.legs.length - 1].bedNo)}</span>
+                  <span className="text-[var(--p-muted)]">→</span>
+                  <span className="font-semibold text-[var(--p-ink)]">{bedLabel(sheet.legs[sheet.legs.length - 2].wardName, sheet.legs[sheet.legs.length - 2].bedNo)}</span>
+                </div>
+                <p className="mt-1 text-[12px] text-[var(--p-muted)]">
+                  The bed they are in now goes back to free, and the earlier one is theirs again.
+                </p>
+              </div>
+
+              <ul className="space-y-1.5 text-[12px] text-[var(--p-muted)]">
+                <li>· The bed charge is recalculated on the earlier ward&apos;s rate for the whole stay.</li>
+                <li>· The chronology keeps both the move and this removal. Nothing is erased.</li>
+                <li>· Only the most recent move can be removed this way.</li>
+              </ul>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-[var(--p-border)] bg-[var(--p-bg)] px-5 py-3">
+              <button onClick={() => setUndoOpen(false)} className="rounded-lg px-4 py-2 text-[13px] font-medium text-[var(--p-muted)] hover:text-[var(--p-ink)]">Keep it</button>
+              <button onClick={doUndoTransfer} disabled={busy}
+                className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-rose)] px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-40">
+                {busy ? <><Spinner /> Removing…</> : <>Remove the transfer</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {xferOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setXferOpen(false)}>
           <div onClick={(e) => e.stopPropagation()} className="surface w-full max-w-md overflow-hidden">

@@ -95,6 +95,7 @@ export default function AdmissionSheetPage() {
   const [err, setErr] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [undoOpen, setUndoOpen] = useState(false);
 
   // ── CORRECTING A BILL RAISED AGAINST THIS STAY ──
   //
@@ -183,6 +184,26 @@ export default function AdmissionSheetPage() {
       setXferOpen(false); setXferReason("");
       await load();
     } catch (e) { setErr(e instanceof ApiClientError ? e.message : "Could not transfer."); }
+    finally { setBusy(false); }
+  }
+
+  /**
+   * Remove a transfer that was entered by mistake.
+   *
+   * Only the newest leg can come off, and that is the only safe one: the legs
+   * chain end-to-end, so pulling one out of the middle would leave a hole in
+   * the days that no arithmetic closes. The chronology keeps both the move and
+   * its removal - somebody did move this patient in the system, and a record
+   * that can be edited to say otherwise is not a record.
+   */
+  async function doUndoTransfer() {
+    setBusy(true); setErr(null);
+    try {
+      const r = await api.post<{ movedBackTo: string }>(`/ipd/admissions/${admissionId}/transfer/undo`, {});
+      setFlash(`Transfer removed. Back in ${r.movedBackTo} - the bed charge is recalculated.`);
+      setUndoOpen(false);
+      await load();
+    } catch (e) { setErr(e instanceof ApiClientError ? e.message : "Could not remove the transfer."); }
     finally { setBusy(false); }
   }
 
@@ -775,6 +796,13 @@ export default function AdmissionSheetPage() {
                     <span className="text-[var(--p-ink)]">{bedLabel(l.wardName, l.bedNo)}</span>
                     <span className="ml-1 text-[12px]">({l.days}d × ₹{money(l.dailyCharge)})</span>
                     {l.current && <span className="ml-1 rounded bg-[var(--p-blue-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--p-blue)]">now</span>}
+                    {l.current && i > 0 && !discharged && (
+                      <button onClick={() => setUndoOpen(true)} disabled={busy}
+                        title="Entered by mistake? Send them back to the previous bed and take this leg off the bill."
+                        className="ml-1.5 align-middle rounded border border-[var(--p-border)] px-1.5 py-[1px] text-[10px] font-semibold text-[var(--p-muted)] transition hover:border-[var(--p-rose)] hover:text-[var(--p-rose)] disabled:opacity-40">
+                        Remove
+                      </button>
+                    )}
                   </span>
                   <span className="shrink-0 font-mono text-[var(--p-ink)]">₹{money(l.total)}</span>
                 </div>
@@ -1026,6 +1054,47 @@ export default function AdmissionSheetPage() {
           The bill keeps EACH LEG at its own rate. Three days in General then four
           in ICU is billed as exactly that - not seven days at whichever rate
           happened to be last. */}
+      {/* ─────────── UNDO A TRANSFER ─────────── */}
+      {undoOpen && sheet && sheet.legs.length > 1 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setUndoOpen(false)}>
+          <div onClick={(e) => e.stopPropagation()} className="surface w-full max-w-md overflow-hidden">
+            <div className="border-b border-[var(--p-border)] px-5 py-4">
+              <h3 className="text-[15px] font-semibold text-[var(--p-ink)]">Remove this transfer</h3>
+              <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">
+                For a move that was entered by mistake - not for a patient who really did change beds.
+              </p>
+            </div>
+
+            <div className="space-y-3 p-5 text-[13px] leading-relaxed text-[var(--p-text)]">
+              <div className="rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] px-3 py-2.5">
+                <div className="flex items-center gap-2 text-[13px]">
+                  <span className="font-semibold text-[var(--p-ink)]">{bedLabel(sheet.legs[sheet.legs.length - 1].wardName, sheet.legs[sheet.legs.length - 1].bedNo)}</span>
+                  <span className="text-[var(--p-muted)]">→</span>
+                  <span className="font-semibold text-[var(--p-ink)]">{bedLabel(sheet.legs[sheet.legs.length - 2].wardName, sheet.legs[sheet.legs.length - 2].bedNo)}</span>
+                </div>
+                <p className="mt-1 text-[12px] text-[var(--p-muted)]">
+                  The bed they are in now goes back to free, and the earlier one is theirs again.
+                </p>
+              </div>
+
+              <ul className="space-y-1.5 text-[12px] text-[var(--p-muted)]">
+                <li>· The bed charge is recalculated on the earlier ward&apos;s rate for the whole stay.</li>
+                <li>· The chronology keeps both the move and this removal. Nothing is erased.</li>
+                <li>· Only the most recent move can be removed this way.</li>
+              </ul>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-[var(--p-border)] bg-[var(--p-bg)] px-5 py-3">
+              <button onClick={() => setUndoOpen(false)} className="rounded-lg px-4 py-2 text-[13px] font-medium text-[var(--p-muted)] hover:text-[var(--p-ink)]">Keep it</button>
+              <button onClick={doUndoTransfer} disabled={busy}
+                className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-rose)] px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-40">
+                {busy ? <><Spinner /> Removing…</> : <>Remove the transfer</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {xferOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setXferOpen(false)}>
           <div onClick={(e) => e.stopPropagation()} className="surface w-full max-w-md overflow-hidden">

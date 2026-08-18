@@ -38,6 +38,58 @@ export function stayDays(admittedAt: Date, until: Date): number {
   return Math.max(1, Math.ceil((until.getTime() - admittedAt.getTime()) / DAY_MS));
 }
 
+/**
+ * ONE DAY OF A STAY IS BILLED ONCE, EVEN IF THE PATIENT MOVED THAT DAY.
+ *
+ * Each leg used to be priced with `stayDays(from, to)` on its own, and that
+ * function has a `Math.max(1, …)` floor - rightly, since occupying a bed for an
+ * hour is a day's occupancy. Applied per leg it double-counts: a patient moved
+ * from General to Sharing bills a full day in BOTH, so one transfer silently
+ * added a day to the stay. A real case on this database - moved after ONE
+ * MINUTE - came to Rs 6,300 of bed charges on a stay one day old.
+ *
+ * So the days are DISTRIBUTED rather than computed leg by leg. The stay is cut
+ * into day slots from the admission time, and each slot goes to the ward the
+ * patient spent MOST of it in. Two consequences, both wanted:
+ *
+ *   The legs always sum to the stay's own day count. Bed charges can no longer
+ *   disagree with the number of days the bill says the patient was here.
+ *
+ *   A ward passed through briefly bills nothing. It still PRINTS - the transfer
+ *   is part of the record - it just carries no days, which is the honest answer
+ *   to "what did that hour in General cost".
+ */
+export function splitStayDays(
+  admittedAt: Date,
+  end: Date,
+  legs: { fromDate: Date; toDate: Date | null }[],
+): number[] {
+  const out = new Array(legs.length).fill(0);
+  if (!legs.length) return out;
+
+  const total = stayDays(admittedAt, end);
+  const endMs = end.getTime();
+
+  for (let n = 0; n < total; n++) {
+    const slotStart = admittedAt.getTime() + n * DAY_MS;
+    const slotEnd = Math.min(slotStart + DAY_MS, endMs);
+
+    let bestLeg = 0;
+    let bestOverlap = -1;
+    for (let i = 0; i < legs.length; i++) {
+      const from = legs[i].fromDate.getTime();
+      const to = legs[i].toDate ? legs[i].toDate!.getTime() : endMs;
+      const overlap = Math.min(slotEnd, to) - Math.max(slotStart, from);
+      // `>` not `>=`: on an exact tie the EARLIER leg keeps the day, so a
+      // transfer at the stroke of a slot boundary does not shunt the day
+      // forward onto a ward the patient had not reached yet.
+      if (overlap > bestOverlap) { bestOverlap = overlap; bestLeg = i; }
+    }
+    out[bestLeg] += 1;
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Wards & beds (setup lives with admin; the board is for everyone clinical)
 // ---------------------------------------------------------------------------
@@ -613,9 +665,11 @@ type IpdBillBase = {
 export function buildIpdInvoiceLines(adm: IpdBillBase, stays: BedStayRow[]) {
   const days = stayDays(adm.admittedAt, adm.dischargedAt);
 
+  // Days shared out across the legs, so a transfer cannot bill one day twice.
+  const legDays = splitStayDays(adm.admittedAt, adm.dischargedAt, stays);
   const bedLines = stays.length > 0
-    ? stays.map((st) => {
-        const d = stayDays(st.fromDate, st.toDate ?? adm.dischargedAt);
+    ? stays.map((st, i) => {
+        const d = legDays[i];
         return {
           description: `Bed · ${bedLabel(st.wardName, st.bed?.bedNo)} · ${d} day${d > 1 ? "s" : ""}`,
           qty: d,
@@ -2157,8 +2211,9 @@ export async function admissionSheet(admissionId: string): Promise<{
   };
 
   const until = a.dischargedAt ?? new Date();
-  const legs = (stays as StayRow[]).map((st) => {
-    const d = stayDays(st.fromDate, st.toDate ?? until);
+  const sheetLegDays = splitStayDays(a.admittedAt, until, stays as StayRow[]);
+  const legs = (stays as StayRow[]).map((st, i) => {
+    const d = sheetLegDays[i];
     const daily = Number(st.dailyCharge.toString());
     return {
       id: st.id,
@@ -2464,6 +2519,20 @@ export async function transferBed(
     await tx.admission.update({
       where: { id: adm.id },
       data: { bedId: toBed.id, wardNameAtAdmit: toBed.ward.name, dailyChargeAtAdmit: toBed.ward.dailyCharge },
+    });
+
+    // ON THE STAY'S OWN RECORD, not only in the audit log. A ward asking "when
+    // did they move, and who moved them" reads the chronology; the audit log is
+    // an admin screen they do not open. It also explains the second bed line on
+    // the bill, which a family WILL ask about.
+    await tx.admissionNote.create({
+      data: {
+        admissionId: adm.id,
+        kind: "NURSING",
+        body: `Transferred ${bedLabel(adm.wardNameAtAdmit, adm.bed?.bedNo)} → ${bedLabel(toBed.ward.name, toBed.bedNo)}`
+          + (input.reason?.trim() ? `. Reason: ${input.reason.trim()}` : ""),
+        authorId: actor.id,
+      },
     });
 
     await logAudit(actor, {
@@ -2952,9 +3021,10 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   // ── WARD ── one line per LEG, so a General to ICU transfer prints as two rows
   // at two rates. An insurer paying an ICU entitlement has to see which nights
   // were actually ICU, and one averaged line cannot tell them.
+  const billLegDays = splitStayDays(a.admittedAt, end, a.bedStays);
   const wardLines: BillLineDTO[] = a.bedStays.length
-    ? a.bedStays.map((st) => {
-        const d = stayDays(st.fromDate, st.toDate ?? end);
+    ? a.bedStays.map((st, i) => {
+        const d = billLegDays[i];
         const rate = num(st.dailyCharge);
         return {
           // THE DAY THE PATIENT MOVED INTO THIS BED, not null.
@@ -3404,4 +3474,86 @@ export async function getDischargeMedicines(
     select: { items: { select: { medicineName: true, qty: true, dosage: true }, orderBy: { id: "asc" } } },
   });
   return rx?.items ?? [];
+}
+
+/**
+ * UNDO A TRANSFER THAT SHOULD NOT HAVE HAPPENED.
+ *
+ * A bed transfer is two writes and a price change, and it is entered by a desk
+ * at a counter - so it gets entered against the wrong patient, or to the wrong
+ * bed, several times a month. Before this the only repair was to transfer them
+ * BACK, which leaves three legs on the bill and a chronology saying the patient
+ * toured the hospital. The bill then has to be explained to a family who never
+ * moved.
+ *
+ * ONLY THE LAST LEG COMES OFF, and that is not a limitation - it is the only
+ * safe operation. Legs are a chain: each one's start is the previous one's end.
+ * Pulling one from the middle would leave a hole no arithmetic can close, and
+ * the day distribution would silently reassign days across wards the patient
+ * really was in.
+ *
+ * The note is KEPT and a second one written. Somebody did move this patient in
+ * the system, a nurse may have acted on it, and a chronology that can be edited
+ * to say otherwise is not a record.
+ */
+export async function undoLastTransfer(
+  actor: AuthUser,
+  admissionId: string,
+  ctx: { ipAddress?: string; userAgent?: string },
+): Promise<{ movedBackTo: string }> {
+  const result = await prisma.$transaction(async (tx) => {
+    const adm = await tx.admission.findUnique({
+      where: { id: admissionId },
+      select: {
+        id: true, ipNumber: true, status: true, bedId: true,
+        bedStays: { orderBy: { fromDate: "asc" }, select: { id: true, wardName: true, bedId: true, fromDate: true, toDate: true, bed: { select: { bedNo: true } } } },
+      },
+    });
+    if (!adm) throw new ApiError(404, "Admission not found");
+    if (adm.status !== "ADMITTED") {
+      // A discharged stay's bed charges are already on an issued invoice.
+      throw new ApiError(409, "This stay is closed. Correct the bill instead of the bed.");
+    }
+    if (adm.bedStays.length < 2) {
+      throw new ApiError(409, "There is no transfer on this stay to undo");
+    }
+
+    const current = adm.bedStays[adm.bedStays.length - 1];
+    const previous = adm.bedStays[adm.bedStays.length - 2];
+
+    // Put the patient back where they were, and reopen that leg so the days
+    // flow through it again.
+    await tx.bedStay.delete({ where: { id: current.id } });
+    await tx.bedStay.update({ where: { id: previous.id }, data: { toDate: null } });
+
+    if (current.bedId) await tx.bed.update({ where: { id: current.bedId }, data: { status: "AVAILABLE" } });
+    if (previous.bedId) await tx.bed.update({ where: { id: previous.bedId }, data: { status: "OCCUPIED" } });
+
+    await tx.admission.update({
+      where: { id: adm.id },
+      data: { bedId: previous.bedId ?? undefined, wardNameAtAdmit: previous.wardName },
+    });
+
+    await tx.admissionNote.create({
+      data: {
+        admissionId: adm.id,
+        kind: "NURSING",
+        body: `Transfer to ${bedLabel(current.wardName, current.bed?.bedNo)} removed - entered in error. Back in ${bedLabel(previous.wardName, previous.bed?.bedNo)}.`,
+        authorId: actor.id,
+      },
+    });
+
+    return {
+      ipNumber: adm.ipNumber,
+      backTo: bedLabel(previous.wardName, previous.bed?.bedNo),
+      removed: bedLabel(current.wardName, current.bed?.bedNo),
+    };
+  });
+
+  await logAudit(actor, {
+    action: "BED_TRANSFER_UNDONE", targetTable: "Admission", targetId: admissionId,
+    meta: { ipNumber: result.ipNumber, removed: result.removed, backTo: result.backTo }, ...ctx,
+  });
+  await publishLive([TOPICS.IPD, TOPICS.RECEPTION, TOPICS.INSURANCE, TOPICS.ADMIN], EVENTS.ADMISSION_CORRECTED);
+  return { movedBackTo: result.backTo };
 }

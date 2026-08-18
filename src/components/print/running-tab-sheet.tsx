@@ -46,6 +46,8 @@ interface Data {
     doctor: { name: string; department: string };
   };
   days: number;
+  /** One row per bed occupied. Two rows means they were transferred. */
+  legs: { wardName: string; bedNo: string; dailyCharge: string; days: number; total: string; current: boolean }[];
   bedTotal: string; nurseTotal: string; nursePerDay: string;
   chargesTotal: string; grandTotal: string;
   charges: Charge[];
@@ -161,13 +163,30 @@ export function RunningTabSheet() {
             {/* Bed and nursing are derived per day, not stored as rows - they
                 are printed first because they are what the stay costs before
                 anybody adds anything to it. */}
-            <tr>
-              <td className="py-[3px] pr-1 font-mono text-[8.5px]">{dt(a.admittedAt)}</td>
-              <td className="py-[3px] pr-1">Bed · {a.wardName} - {a.bedNo}</td>
-              <td className="py-[3px] pr-1 text-right font-mono">{s.days}</td>
-              <td className="py-[3px] pr-1 text-right font-mono">{money(a.dailyCharge)}</td>
-              <td className="py-[3px] text-right font-mono">₹{money(s.bedTotal)}</td>
-            </tr>
+            {/* ONE ROW PER BED, not one row for the stay.
+                This printed a single line - the CURRENT ward, the whole stay's
+                days, the admission rate - with the leg-summed total beside it.
+                On a transferred patient that line contradicted itself: qty x
+                rate did not make the amount, and the ward they had left was
+                nowhere on the sheet. */}
+            {(s.legs?.length ? s.legs : [{
+              wardName: a.wardName, bedNo: a.bedNo, dailyCharge: a.dailyCharge,
+              days: s.days, total: s.bedTotal, current: true,
+            }]).map((l, i) => (
+              <tr key={i}>
+                <td className="py-[3px] pr-1 font-mono text-[8.5px]">{i === 0 ? dt(a.admittedAt) : ""}</td>
+                <td className="py-[3px] pr-1">
+                  Bed · {l.wardName} - {l.bedNo}
+                  {/* A ward passed through on the day of a transfer bills
+                      nothing - see splitStayDays. Saying so is better than a
+                      bare 0 that reads as a mistake. */}
+                  {l.days === 0 && <span className="ml-1 text-[8px] uppercase text-[#8a6414]">transferred same day, not charged</span>}
+                </td>
+                <td className="py-[3px] pr-1 text-right font-mono">{l.days}</td>
+                <td className="py-[3px] pr-1 text-right font-mono">{money(l.dailyCharge)}</td>
+                <td className="py-[3px] text-right font-mono">₹{money(l.total)}</td>
+              </tr>
+            ))}
             <tr>
               <td className="py-[3px] pr-1 font-mono text-[8.5px]">{dt(a.admittedAt)}</td>
               <td className="py-[3px] pr-1">Nursing care</td>
