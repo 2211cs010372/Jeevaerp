@@ -1113,26 +1113,45 @@ export async function dischargePatient(
   // advance would silently fail to apply - leaving the bill showing the full
   // amount due against money the hospital was already holding. The excess stays
   // in AdmissionAdvance and surfaces as refundable on the discharge sheet.
+  //
+  // ONE PAYMENT PER TENDER MODE, NOT ONE LUMP.
+  //
+  // A family deposits more than once - 3,000 in cash at admission, 5,000 by UPI
+  // two days later - and this used to collapse the lot into a single payment
+  // carrying the FIRST advance's mode. The invoice then recorded 8,000 of cash
+  // against a drawer that had only ever seen 3,000, and the day close could not
+  // be made to balance by anyone who did not already know why.
+  //
+  // settleDues states the rule this has to keep: tender modes are preserved
+  // exactly, because the drawer has to reconcile and a mode invented here
+  // breaks it. So the deposits are grouped by how they were actually paid and
+  // applied oldest first - if the advance overshoots the bill, the money left
+  // refundable is the most recent, which is the deposit the family remembers
+  // making and the one they will ask about.
   const advances = await prisma.admissionAdvance.findMany({
     where: { admissionId: adm.id },
+    orderBy: { createdAt: "asc" },
     select: { amount: true, mode: true },
   });
   if (advances.length > 0) {
-    const advTotal = (advances as { amount: { toString(): string }; mode: string }[])
-      .reduce((sum, a) => sum + Number(a.amount.toString()), 0);
-    const outstanding = Number(invoice.balanceDue);
-    const toApply = Math.min(advTotal, outstanding);
-    if (toApply > 0) {
+    const byMode = new Map<PaymentModeT, number>();
+    for (const a of advances as { amount: { toString(): string }; mode: PaymentModeT }[]) {
+      byMode.set(a.mode, round2((byMode.get(a.mode) ?? 0) + Number(a.amount.toString())));
+    }
+    // Only up to what is still owed: recordPayment rejects a tender beyond the
+    // balance, and one rejection would throw the whole discharge, leaving the
+    // bill showing full value against money the hospital already holds.
+    let left = Number(invoice.balanceDue);
+    for (const [mode, amount] of byMode) {
+      if (left <= 0) break;
+      const toApply = round2(Math.min(amount, left));
+      if (toApply <= 0) continue;
       await recordPayment(
         actor,
-        {
-          invoiceId: invoice.id,
-          mode: (advances as { mode: PaymentModeT }[])[0].mode,
-          amount: toApply,
-          reference: advancePaymentRef(adm.ipNumber),
-        },
+        { invoiceId: invoice.id, mode, amount: toApply, reference: advancePaymentRef(adm.ipNumber) },
         ctx
       );
+      left = round2(left - toApply);
     }
   }
 

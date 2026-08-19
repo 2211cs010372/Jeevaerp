@@ -31,6 +31,18 @@ interface Data {
   totalAdvance: string;
 }
 
+/** The invoice's ruled-table look, scoped to this sheet so the two documents
+ *  read as coming off the same counter without sharing a stylesheet. */
+const ADV_TABLE_CSS = `
+  #print-sheet .adv-section-title { font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--pr-ink); }
+  #print-sheet .adv-table { border-collapse: collapse; }
+  #print-sheet .adv-table th {
+    border-top: .8px solid var(--pr-ink); border-bottom: .8px solid var(--pr-ink);
+    font-weight: 800; text-transform: uppercase; letter-spacing: .05em; font-size: 8px; color: var(--pr-ink);
+  }
+  #print-sheet .adv-table td { border-bottom: .4px solid var(--pr-line); }
+`;
+
 const money = (v: string | number) => `₹${Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const GENDER: Record<string, string> = { MALE: "M", FEMALE: "F", OTHER: "O" };
 const MODE_LABEL: Record<string, string> = {
@@ -82,7 +94,7 @@ export function AdvanceReceipt() {
 
   return (
     <div className="print-stage">
-      <style dangerouslySetInnerHTML={{ __html: INVOICE_PRINT_CSS }} />
+      <style dangerouslySetInnerHTML={{ __html: INVOICE_PRINT_CSS + ADV_TABLE_CSS }} />
       <PrintToolbar title={`Advance · ${d.advance.receiptNo ?? d.admission.ipNumber} · ${d.patient.fullName}`} />
 
       <div id="print-sheet">
@@ -122,42 +134,81 @@ export function AdvanceReceipt() {
           </div>
         </div>
 
-        {/* the money - one figure, deliberately unmissable */}
-        <div className="keep-together mt-2 border-y-2 py-2" style={{ borderColor: "var(--pr-primary)" }}>
-          <div className="flex items-baseline justify-between gap-4">
-            <div className="min-w-0">
-              <p className="text-[8px] font-bold uppercase tracking-wide text-[#3c4a45]">Advance received towards inpatient treatment</p>
-              <p className="mt-0.5 text-[9px] text-[#57655f]">
-                Under {d.admission.doctorName} · admitted {dateTime(d.admission.admittedAt)}
-              </p>
-            </div>
-            <p className="shrink-0 font-mono text-[17px] font-extrabold" style={{ color: "var(--pr-primary)" }}>
-              {money(amount)}
-            </p>
-          </div>
-          <p className="mt-1.5 text-[8px] font-bold uppercase tracking-wide text-[#3c4a45]">
-            Rupees <span className="font-semibold normal-case text-[9.5px] text-[var(--pr-ink)]">{amountInWords(amount)}</span>
-          </p>
+        {/* ── PARTICULARS, laid out as a bill ──────────────────────────────
+            Families ask for "a proper bill" for a deposit, and they are right
+            to: they have handed over real money and a highlighted band with one
+            number on it does not read as a document anybody would accept back.
+            So this takes the invoice's shape - a ruled particulars table and a
+            totals block in the same place on the page.
+
+            What it does NOT take is the invoice's TITLE. A deposit is money the
+            hospital holds, not a supply, so it carries no GST and there is no
+            HSN, no CGST/SGST split and no "Tax Invoice" anywhere on it. Dressing
+            a deposit as a tax invoice would be a false tax document, and the
+            family would be holding two invoices for one treatment. The layout
+            is the bill's; the wording stays honest. */}
+        <div className="keep-together mt-2.5">
+          <div className="adv-section-title mb-[3px]">Particulars</div>
+          <table className="adv-table w-full text-[9px]">
+            <thead>
+              <tr className="text-left">
+                <th className="w-[20px] px-1 py-[4px] text-center">#</th>
+                <th className="px-1.5 py-[4px]">Description</th>
+                <th className="w-[70px] px-1 py-[4px]">Mode</th>
+                <th className="w-[80px] px-1.5 py-[4px] text-right">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="align-top">
+                <td className="px-1 py-[4px] text-center font-mono text-[8px] text-[#3f3f3f]">1</td>
+                <td className="px-1.5 py-[4px] font-medium">
+                  Advance received towards inpatient treatment
+                  <div className="mt-[1px] text-[8px] font-normal text-[#57655f]">
+                    Under {d.admission.doctorName} · admitted {dateTime(d.admission.admittedAt)}
+                    {d.advance.reference ? ` · ref ${d.advance.reference}` : ""}
+                  </div>
+                </td>
+                <td className="px-1 py-[4px] font-mono text-[8px] text-[#3f3f3f]">
+                  {MODE_LABEL[d.advance.mode] ?? d.advance.mode}
+                </td>
+                <td className="px-1.5 py-[4px] text-right font-mono font-bold">{money(amount)}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
-        <div className="keep-together mt-2 grid grid-cols-3 gap-x-6 gap-y-0.5">
-          <Meta k="Paid by" v={MODE_LABEL[d.advance.mode] ?? d.advance.mode} />
-          <Meta k="Reference" v={d.advance.reference || "-"} />
-          <Meta k="Received by" v={d.advance.receivedBy} />
-        </div>
-
-        {priorHeld > 0 && (
-          <div className="keep-together mt-2 rule-strong pb-1">
-            <div className="flex items-baseline justify-between text-[9.5px]">
-              <span className="font-semibold text-[#3c4a45]">Advance held earlier on this admission</span>
-              <span className="font-mono">{money(priorHeld)}</span>
-            </div>
-            <div className="flex items-baseline justify-between text-[9.5px] font-bold" style={{ color: "var(--pr-primary)" }}>
-              <span>Total advance now held</span>
-              <span className="font-mono">{money(d.totalAdvance)}</span>
+        {/* Totals, right-aligned where a bill puts them. */}
+        <div className="keep-together mt-2 grid grid-cols-[1fr_190px] gap-x-6">
+          <div className="self-end">
+            <p className="text-[8px] font-bold uppercase tracking-wide text-[#3c4a45]">Rupees</p>
+            <p className="text-[9.5px] font-semibold text-[var(--pr-ink)]">{amountInWords(amount)}</p>
+            <div className="mt-1.5 space-y-0.5">
+              <Meta k="Received by" v={d.advance.receivedBy} />
             </div>
           </div>
-        )}
+          <table className="w-full text-[9px]">
+            <tbody>
+              <tr>
+                <td className="py-[2px] text-[#3c4a45]">This receipt</td>
+                <td className="py-[2px] text-right font-mono">{money(amount)}</td>
+              </tr>
+              {priorHeld > 0 && (
+                <tr>
+                  <td className="py-[2px] text-[#3c4a45]">Advance held earlier</td>
+                  <td className="py-[2px] text-right font-mono">{money(priorHeld)}</td>
+                </tr>
+              )}
+              <tr className="border-t-2" style={{ borderColor: "var(--pr-primary)" }}>
+                <td className="pt-[3px] text-[9.5px] font-extrabold uppercase tracking-wide" style={{ color: "var(--pr-primary)" }}>
+                  Total advance held
+                </td>
+                <td className="pt-[3px] text-right font-mono text-[12px] font-extrabold" style={{ color: "var(--pr-primary)" }}>
+                  {money(d.totalAdvance)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
         {/* The sentence that stops this slip being mistaken for the final bill. */}
         <div className="keep-together mt-3 rounded-sm border px-2.5 py-2 text-[9px] leading-relaxed" style={{ borderColor: "var(--pr-line)" }}>
