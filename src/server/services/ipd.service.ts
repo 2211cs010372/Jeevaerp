@@ -3094,7 +3094,20 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
           // which nights were which. The leg's own start date says it.
           date: st.fromDate.toISOString(),
           issueNo: null, code: null,
-          description: `${st.wardName}${st.bed?.bedNo ? ` - ${st.bed.bedNo}` : ""}`,
+          // NAMED, AND IN THE WARD'S OWN WORDS.
+          //
+          // This printed the stored bed id straight out of the column -
+          // "General Ward - GW-01" - which says the ward twice on any bed whose
+          // id carries its ward as a prefix, and reads as a database row on the
+          // one document a family and a TPA both keep. `bedLabel` is the single
+          // definition of how a bed reads to a person ("General Ward BED 1");
+          // every screen and the GST invoice already use it, and this sheet was
+          // the last place still spelling it its own way.
+          //
+          // "Bed charges ·" because the row sits under HOSPITAL SERVICES beside
+          // "Nursing Charges" - without it, the first line of the bill is a
+          // place rather than a charge.
+          description: `Bed charges · ${bedLabel(st.wardName, st.bed?.bedNo)}`,
           batchNo: null, expiry: null,
           rate: m2(rate), qty: d, amount: m2(rate * d),
         };
@@ -3104,7 +3117,9 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
         // honest answer - that is the day the bed began to be charged.
         date: a.admittedAt.toISOString(),
         issueNo: null, code: null,
-        description: `${a.wardNameAtAdmit}${a.bed?.bedNo ? ` - ${a.bed.bedNo}` : ""}`,
+        // Same label as the leg rows above - a stay with no BedStay row must not
+        // print its bed a second way.
+        description: `Bed charges · ${bedLabel(a.wardNameAtAdmit, a.bed?.bedNo)}`,
         batchNo: null, expiry: null,
         rate: m2(num(a.dailyChargeAtAdmit)), qty: days, amount: m2(num(a.dailyChargeAtAdmit) * days),
       }];
