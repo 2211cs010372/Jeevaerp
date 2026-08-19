@@ -4,6 +4,9 @@ import { nextId } from "@/lib/ids";
 import { logAudit } from "./audit.service";
 import { currentInpatients } from "./ipd.service";
 import { splitInvoice } from "@/lib/insurance-split";
+// ONE definition of "does this stay still owe a final claim", shared with the
+// stay screen that draws the button - see final-claim.ts.
+import { authorisedAmount, needsFinalClaim, excessOver } from "@/lib/final-claim";
 import { syncStayCoverage } from "./billing.service";
 // One definition of what a corrected bill date is, shared with billing.service
 // so the Edit dialog and this page's date control cannot disagree.
@@ -136,8 +139,23 @@ export interface PendingWorkDTO {
   dischargedAt: string | null;
   days: number;
   stage: "PRE_AUTH" | "FINAL";
-  /** Running bill for a live stay; the final invoice total once discharged. */
+  /**
+   * Running bill for a live stay; everything pointed at the insurer once
+   * discharged - the discharge bill AND the stay's pharmacy and lab bills,
+   * because on a cashless stay all three go on one claim.
+   */
   amount: string;
+  /**
+   * WHAT THE PRE-AUTH GOT AUTHORISED FOR, on a FINAL row. Null when no pre-auth
+   * was ever approved - then the whole bill is unasked-for money.
+   *
+   * The estimate is the thing the desk is comparing against: a stay authorised
+   * at ₹1,40,000 and billed ₹1,35,000 is finished, and one billed ₹1,60,000 is
+   * a claim for the difference waiting to be sent.
+   */
+  approvedAmount: string | null;
+  /** amount − approvedAmount, when that is positive. What is over the estimate. */
+  excess: string | null;
   invoiceId: string | null;
   invoiceNo: string | null;
   /** Since admission (PRE_AUTH) or since discharge (FINAL). Drives the urgency. */
@@ -167,7 +185,12 @@ export async function pendingWork(): Promise<{ items: PendingWorkDTO[]; count: n
   // every page load of the desk's landing screen.
   const claims = await prisma.insuranceClaim.findMany({
     where: { admissionId: { not: null }, status: { not: "CLOSED" } },
-    select: { id: true, claimNo: true, admissionId: true, stage: true, status: true, claimedAmount: true },
+    select: {
+      id: true, claimNo: true, admissionId: true, stage: true, status: true, claimedAmount: true,
+      // What the insurer actually authorised, which is the figure a final claim
+      // is judged against - see `authorisedFor` below.
+      approvedAmount: true, settledAmount: true,
+    },
   });
   const byStay = new Map(claims.map((c) => [`${c.admissionId}:${c.stage}`, c]));
 
@@ -205,6 +228,9 @@ export async function pendingWork(): Promise<{ items: PendingWorkDTO[]; count: n
         days: a.days,
         stage: "PRE_AUTH" as const,
         amount: a.runningCharge,
+        // Nothing has been authorised yet - that is why this row is here.
+        approvedAmount: null,
+        excess: null,
         invoiceId: null,
         invoiceNo: null,
         waitingHours: hoursSince(new Date(a.admittedAt)),
@@ -215,7 +241,23 @@ export async function pendingWork(): Promise<{ items: PendingWorkDTO[]; count: n
     })
     .filter((x) => x !== null);
 
-  // ── GONE HOME, BILL RAISED, NO FINAL CLAIM ──
+  // ── GONE HOME, BILLED OVER THE ESTIMATE, NO FINAL CLAIM ──
+  //
+  // NOT every discharged insurance stay. This desk works the way the insurer
+  // does: a pre-authorisation is raised on an ESTIMATE while the patient is in
+  // the bed, and if the stay lands inside that estimate the authorisation is
+  // what settles it - there is no second claim to send and nothing left to do.
+  // A final claim is for the stay that went OVER: the ₹1,60,000 hip replacement
+  // authorised at ₹1,40,000, where the difference has to be asked for.
+  //
+  // Listing every discharge regardless is what this used to do, and it made the
+  // list lie: stays that were finished sat on it for ninety days asking for a
+  // claim nobody was going to raise, which is how a worklist stops being read.
+  //
+  // A stay with NO authorisation at all still appears - nobody has asked the
+  // insurer for any of that money yet, which is the expensive version of the
+  // same mistake.
+  //
   // Bounded to 90 days. Older than that the claim window has usually closed with
   // the insurer anyway, and an unbounded list would grow into a screen nobody
   // reads - which is the same as having no list.
@@ -241,18 +283,55 @@ export async function pendingWork(): Promise<{ items: PendingWorkDTO[]; count: n
     },
   });
 
+  // EVERYTHING POINTED AT THE INSURER, per stay - the discharge bill plus the
+  // pharmacy and lab bills, which on a cashless stay go on the same claim. The
+  // IPD invoice alone would compare two thirds of a bill against a whole
+  // authorisation and call an over-run finished.
+  //
+  // It is also what falls to zero when a refused claim is reverted to the
+  // family: bills that no longer point at the insurer are not claimable, and
+  // that stay drops off this list rather than asking for a claim on ₹0.
+  const insuranceBilled = closed.length === 0 ? [] : await prisma.invoice.groupBy({
+    by: ["admissionId"],
+    where: {
+      admissionId: { in: closed.map((a) => a.id) },
+      payer: "INSURANCE",
+      status: { not: "CANCELLED" },
+    },
+    _sum: { totalAmount: true },
+  });
+  const billedByStay = new Map(
+    insuranceBilled.map((r) => [r.admissionId!, Number(r._sum.totalAmount ?? 0)]),
+  );
+
+  /** What the insurer authorised on this stay's pre-auth - see final-claim.ts,
+   *  which the stay's own screen reads too so both agree about the same stay.
+   *  Decimals are stringified at this boundary, like every DTO here does, so the
+   *  shared rule never has to know Prisma exists. */
+  const authorisedFor = (admissionId: string) => {
+    const pre = byStay.get(`${admissionId}:PRE_AUTH`);
+    return authorisedAmount(pre && {
+      status: pre.status,
+      approvedAmount: pre.approvedAmount?.toString() ?? null,
+      settledAmount: pre.settledAmount?.toString() ?? null,
+    });
+  };
+
   const final: PendingWorkDTO[] = closed
     .filter((a) => {
       if (a.invoices.length === 0) return false;
-      const claim = byStay.get(`${a.id}:FINAL`);
-      // A final claim already with the insurer is off this desk's plate; a final
-      // claim still in draft is not.
-      return !claim || claim.status === "DRAFT";
+      return needsFinalClaim({
+        billedToInsurer: billedByStay.get(a.id) ?? 0,
+        authorised: authorisedFor(a.id),
+        finalClaimStatus: byStay.get(`${a.id}:FINAL`)?.status ?? null,
+      });
     })
     .map((a) => {
       const inv = a.invoices[0];
       const end = a.dischargedAt ?? new Date();
       const claim = byStay.get(`${a.id}:FINAL`);
+      const billed = billedByStay.get(a.id) ?? Number(inv.totalAmount);
+      const authorised = authorisedFor(a.id);
       return {
         admissionId: a.id,
         ipNumber: a.ipNumber,
@@ -266,7 +345,9 @@ export async function pendingWork(): Promise<{ items: PendingWorkDTO[]; count: n
         dischargedAt: end.toISOString(),
         days: Math.max(1, Math.ceil((end.getTime() - a.admittedAt.getTime()) / 86_400_000)),
         stage: "FINAL" as const,
-        amount: Number(inv.totalAmount).toFixed(2),
+        amount: billed.toFixed(2),
+        approvedAmount: authorised === null ? null : authorised.toFixed(2),
+        excess: excessOver(billed, authorised)?.toFixed(2) ?? null,
         invoiceId: inv.id,
         invoiceNo: inv.receiptNo,
         waitingHours: hoursSince(end),

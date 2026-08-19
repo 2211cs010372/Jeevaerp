@@ -264,6 +264,69 @@ export function resolveBillDate(
   return d;
 }
 
+export class ChargeDateError extends Error {}
+
+/** dd-mm-yyyy, h:mm AM/PM - how the ward's own printed tab writes an instant. */
+export function wallClock(d: Date): string {
+  const h = d.getHours();
+  return (
+    `${String(d.getDate()).padStart(2, "0")}-${String(d.getMonth() + 1).padStart(2, "0")}-${d.getFullYear()}` +
+    `, ${h % 12 === 0 ? 12 : h % 12}:${String(d.getMinutes()).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`
+  );
+}
+
+/**
+ * WHEN A LINE ON THE RUNNING TAB ACTUALLY HAPPENED.
+ *
+ * `AdmissionCharge.createdAt` is the timestamp the printed tab puts in its
+ * "Date & time" column, and it was never really "when the row was created" as
+ * far as the family reading that sheet is concerned - it is when the oxygen ran,
+ * when the doctor did the round, when the dressing was changed. The ward keys
+ * those in whenever it gets a minute, which on a busy morning is all of them at
+ * 4pm on the day of discharge. The sheet then shows four days of treatment
+ * stamped with one afternoon, in an order nobody performed them in.
+ *
+ * So the date is correctable, and this is the rule for what may be typed.
+ *
+ * A FULL INSTANT, not a calendar day, unlike `resolveBillDate` above: the tab
+ * prints the time beside the date and the tab is ordered by it, so "the second
+ * round, at 6pm" has to be expressible. The client sends an absolute ISO
+ * instant, so no timezone reasoning is needed here - only the window.
+ *
+ * THE WINDOW IS THE STAY ITSELF. A charge before the admission or after the
+ * discharge is not a correction, it is a line on the wrong stay, and on a claim
+ * it is the first thing a TPA's checker circles. The slack against `now` is for
+ * clock skew between the desk's machine and the server, nothing more - unlike a
+ * bill date, this one is never legitimately in the future.
+ *
+ * `now` is injectable so the future rule can be tested without waiting.
+ */
+export function resolveChargeDate(
+  input: string | undefined,
+  stay: { admittedAt: Date; dischargedAt: Date | null },
+  now: Date = new Date(),
+): Date | undefined {
+  if (input === undefined) return undefined;
+
+  const d = new Date(input.trim());
+  if (Number.isNaN(d.getTime())) throw new ChargeDateError("That is not a real date and time");
+
+  if (d.getTime() > now.getTime() + 5 * 60 * 1000) {
+    throw new ChargeDateError("A charge can't be dated in the future");
+  }
+  if (d.getTime() < stay.admittedAt.getTime()) {
+    throw new ChargeDateError(
+      `This patient was admitted on ${wallClock(stay.admittedAt)} - a charge can't be dated before they were in the bed.`,
+    );
+  }
+  if (stay.dischargedAt && d.getTime() > stay.dischargedAt.getTime()) {
+    throw new ChargeDateError(
+      `This stay was discharged on ${wallClock(stay.dischargedAt)} - a charge can't be dated after the patient left.`,
+    );
+  }
+  return d;
+}
+
 /**
  * THE FLOOR UNDER A CORRECTED BILL.
  *

@@ -8,6 +8,7 @@ import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { DischargeSummaryForm } from "@/components/portal/ipd/discharge-summary-form";
 import { CorrectStayDialog, type StayLeg } from "@/components/portal/ipd/correct-stay-dialog";
+import { CorrectChargeDialog, chargeDateLabel } from "@/components/portal/ipd/correct-charge-dialog";
 import { ConvertToSelfPayDialog } from "@/components/portal/ipd/convert-to-self-pay-dialog";
 import { api, ApiClientError } from "@/lib/api-client";
 import { bedLabel } from "@/lib/beds";
@@ -116,6 +117,8 @@ export default function AdmissionSheetPage() {
   const [correctOpen, setCorrectOpen] = useState(false);
   /** The insurer refused - the stay and its bills become the family's. */
   const [rejectOpen, setRejectOpen] = useState(false);
+  /** The tab line whose date is being corrected - see CorrectChargeDialog. */
+  const [editingChargeId, setEditingChargeId] = useState<string | null>(null);
 
   // add-charge form
   const [cat, setCat] = useState("PROCEDURE");
@@ -349,6 +352,9 @@ export default function AdmissionSheetPage() {
 
   const a = sheet.admission;
   const discharged = a.status !== "ADMITTED";
+  /** Read off the sheet rather than copied into state, so a reload behind the
+   *  open dialog cannot leave it showing a line that has since changed. */
+  const editingCharge = sheet.charges.find((c) => c.id === editingChargeId) ?? null;
 
   return (
     <PortalScroll>
@@ -640,9 +646,27 @@ export default function AdmissionSheetPage() {
                     {CAT_LABEL[c.category] ?? c.category} · {c.qty} × ₹{money(c.unitPrice)}
                     {Number(c.gstRatePct) > 0 && ` · ${c.gstRatePct}% GST`} · {c.addedBy}
                   </div>
+                  {/* WHEN IT WAS GIVEN - the date the printed tab puts against
+                      this line, and until now the one thing on the row nobody
+                      could fix. A morning's work keyed in at 4pm printed as four
+                      days of treatment under one timestamp. */}
+                  <div className="text-[12px] text-[var(--p-muted)]">{chargeDateLabel(c.createdAt)}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <span className="font-mono text-[14px] font-semibold text-[var(--p-ink)]">₹{money(c.amount)}</span>
+                  {/* Edit sits where Edit sits on the pharmacy and lab rows
+                      above, and opens a dialog like they do. Still there after
+                      discharge, deliberately: that is when somebody reads the
+                      printed sheet and notices. The dialog itself says which
+                      corrections re-issue the discharge bill and which do not -
+                      see updateAdmissionCharge. */}
+                  {!c.fromPharmacy && (
+                    <button onClick={() => setEditingChargeId(c.id)}
+                      title="Correct this line - the rate, the qty, or the date it was given"
+                      className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
+                      Edit
+                    </button>
+                  )}
                   {!discharged && !c.fromPharmacy && (
                     <button onClick={() => removeCharge(c)} disabled={busy}
                       className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] text-[var(--p-muted)] hover:border-[var(--p-rose)] hover:text-[var(--p-rose)]">
@@ -1246,6 +1270,21 @@ export default function AdmissionSheetPage() {
           }}
           onClose={() => setCorrectOpen(false)}
           onSaved={(msg) => { setCorrectOpen(false); setFlash(msg); load(); loadHistory(); }}
+        />
+      )}
+
+      {/* One tab line - its figures and its date. The history tab is reloaded
+          too: repricing a discharged stay re-issues the IPD invoice, which is
+          one of the bills listed there. */}
+      {editingCharge && (
+        <CorrectChargeDialog
+          charge={editingCharge}
+          admittedAt={a.admittedAt}
+          dischargedAt={a.dischargedAt}
+          discharged={discharged}
+          accent="teal"
+          onClose={() => setEditingChargeId(null)}
+          onSaved={(msg) => { setEditingChargeId(null); setFlash(msg); load(); loadHistory(); }}
         />
       )}
     </PortalScroll>

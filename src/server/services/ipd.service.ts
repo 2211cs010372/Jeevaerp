@@ -6,8 +6,9 @@ import { splitInvoice } from "@/lib/insurance-split";
 import { createInvoice, updateInvoice, recordPayment, getInvoice, advancePaymentRef, syncStayCoverage, type PaymentModeT } from "./billing.service";
 import { notifyAdmitted, notifyDischarged, notifyAdvanceReceived } from "./notify.service";
 // One rounding definition across the whole system - money must not be
-// rounded two different ways in two different files.
-import { r2 as round2 } from "@/server/billing/calc";
+// rounded two different ways in two different files. `resolveChargeDate` is the
+// same idea for a date a desk typed: one rule, next to the bill-date one.
+import { r2 as round2, resolveChargeDate, ChargeDateError, wallClock } from "@/server/billing/calc";
 import { getSettings } from "./admin.service";
 import { publishLive } from "@/server/realtime/publish";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
@@ -1347,11 +1348,21 @@ export async function addAdmissionCharge(
  * it represents stock that physically left a shelf at a price the pharmacy
  * recorded, and re-pricing it here would silently decouple the bill from the
  * dispense.
+ *
+ * IT ALSO RE-DATES A LINE, and that is not a repricing at all - see
+ * `resolveChargeDate`. The ward keys a morning's work in at four in the
+ * afternoon, and the tab then prints four days of treatment under one
+ * timestamp. Moving the date touches no figure, so it deliberately does NOT
+ * re-issue a discharged stay's invoice: the date is not on that document.
  */
 export async function updateAdmissionCharge(
   actor: AuthUser,
   chargeId: string,
-  input: { description?: string; qty?: number; unitPrice?: number; gstRatePct?: number; category?: string },
+  input: {
+    description?: string; qty?: number; unitPrice?: number; gstRatePct?: number; category?: string;
+    /** ISO instant. Writes AdmissionCharge.createdAt - the tab's "Date & time". */
+    chargedAt?: string;
+  },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<void> {
   const charge = await prisma.admissionCharge.findUnique({
@@ -1362,7 +1373,12 @@ export async function updateAdmissionCharge(
       // that restores the money but not the heading files the charge under the
       // wrong section of the printed claim bill.
       category: true,
-      admission: { select: { id: true, status: true, ipNumber: true } },
+      createdAt: true,
+      // The stay's own dates, because they are the window a charge date has to
+      // land inside - a line dated before the admission is on the wrong stay.
+      admission: {
+        select: { id: true, status: true, ipNumber: true, admittedAt: true, dischargedAt: true },
+      },
     },
   });
   if (!charge) throw new ApiError(404, "Charge not found");
@@ -1376,35 +1392,53 @@ export async function updateAdmissionCharge(
   if (input.qty !== undefined && input.qty < 1) throw new ApiError(400, "Quantity must be at least 1");
   if (input.unitPrice !== undefined && input.unitPrice < 0) throw new ApiError(400, "Price can't be negative");
 
+  let dated: Date | undefined;
+  try {
+    dated = resolveChargeDate(input.chargedAt, charge.admission);
+  } catch (e) {
+    // Already worded for the desk - "this patient was admitted on…", with the
+    // date they can compare against. Do not flatten it to something generic.
+    if (e instanceof ChargeDateError) throw new ApiError(400, e.message);
+    throw e;
+  }
+
   const before = {
     description: charge.description,
     qty: charge.qty,
     unitPrice: Number(charge.unitPrice.toString()),
     gstRatePct: Number(charge.gstRatePct.toString()),
+    chargedAt: charge.createdAt.toISOString(),
   };
   const after = {
     description: input.description?.trim() || before.description,
     qty: input.qty ?? before.qty,
     unitPrice: input.unitPrice ?? before.unitPrice,
     gstRatePct: input.gstRatePct ?? before.gstRatePct,
+    chargedAt: (dated ?? charge.createdAt).toISOString(),
   };
 
   // Nothing actually moved - don't write a note claiming somebody changed the
   // bill. A ward record full of "changed X to X" is a record nobody reads.
-  const changed =
+  //
+  // The two kinds of change are counted SEPARATELY because only one of them is
+  // money: `repriced` is what a discharged stay's invoice has to be re-issued
+  // for, and a date-only correction must not drag a filed bill through that.
+  const repriced =
     before.description !== after.description || before.qty !== after.qty ||
     before.unitPrice !== after.unitPrice || before.gstRatePct !== after.gstRatePct ||
     (input.category !== undefined && input.category !== null);
-  if (!changed) return;
+  const reDated = before.chargedAt !== after.chargedAt;
+  if (!repriced && !reDated) return;
 
   await withInvoiceInStep(
-    actor, charge.admission.id, closed, ctx,
+    actor, charge.admission.id, closed && repriced, ctx,
     async () => {
       await prisma.$transaction(async (tx) => {
         await tx.admissionCharge.update({
           where: { id: chargeId },
           data: {
             ...(input.category ? { category: input.category as ChargeCategory } : {}),
+            ...(dated ? { createdAt: dated } : {}),
             description: after.description,
             qty: after.qty,
             unitPrice: after.unitPrice.toFixed(2),
@@ -1415,10 +1449,15 @@ export async function updateAdmissionCharge(
           data: {
             admissionId: charge.admission.id,
             kind: "NURSING",
-            body:
-              `Bill line repriced: "${before.description}" ${before.qty} × ₹${before.unitPrice.toFixed(2)}` +
-              ` → "${after.description}" ${after.qty} × ₹${after.unitPrice.toFixed(2)}` +
-              (closed ? " (after discharge - invoice re-issued)" : ""),
+            body: [
+              repriced &&
+                `Bill line repriced: "${before.description}" ${before.qty} × ₹${before.unitPrice.toFixed(2)}` +
+                ` → "${after.description}" ${after.qty} × ₹${after.unitPrice.toFixed(2)}`,
+              reDated &&
+                `Bill line re-dated: "${after.description}" ${wallClock(new Date(before.chargedAt))}` +
+                ` → ${wallClock(new Date(after.chargedAt))}`,
+            ].filter(Boolean).join(". ") +
+              (closed && repriced ? " (after discharge - invoice re-issued)" : ""),
             authorId: actor.id,
           },
         });
@@ -1431,6 +1470,7 @@ export async function updateAdmissionCharge(
         where: { id: chargeId },
         data: {
           category: charge.category,
+          createdAt: charge.createdAt,
           description: before.description,
           qty: before.qty,
           unitPrice: before.unitPrice.toFixed(2),

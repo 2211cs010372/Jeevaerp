@@ -9,11 +9,14 @@ import { PortalScroll } from "@/components/portal/portal-scroll";
 import { DischargeSummaryForm } from "@/components/portal/ipd/discharge-summary-form";
 import { CorrectStayDialog, type StayLeg } from "@/components/portal/ipd/correct-stay-dialog";
 import { ConvertToSelfPayDialog } from "@/components/portal/ipd/convert-to-self-pay-dialog";
+import { CorrectChargeDialog, chargeDateLabel } from "@/components/portal/ipd/correct-charge-dialog";
 import { api, ApiClientError } from "@/lib/api-client";
 import { bedLabel } from "@/lib/beds";
 import { EditBillDialog, useBillEditing } from "@/components/portal/billing/edit-bill-dialog";
 import { PatientHistoryPanel } from "@/components/portal/ipd/patient-history-panel";
-import { StatusPill } from "@/components/portal/insurance/claims-board";
+import { StatusPill, NewClaim, type ClaimPrefill } from "@/components/portal/insurance/claims-board";
+// The same rule the desk's worklist uses to decide a stay still owes a claim.
+import { authorisedAmount, excessOver, needsFinalClaim } from "@/lib/final-claim";
 
 /** One row of the hospital's published rate card. See prisma ServiceCharge. */
 interface ServiceCharge {
@@ -40,6 +43,9 @@ interface Sheet {
     wardName: string; bedNo: string; dailyCharge: string; gstRatePct: string;
     attendantName: string | null; attendantPhone: string | null; attendantRelation: string | null;
     payerType: string; insurer: string | null;
+    /** Taken by this desk when it works the claim, so both can be blank on a
+     *  stay reception admitted in a hurry - the claim form asks for them. */
+    policyNo: string | null; memberId: string | null;
     patient: { id: string; displayId: string; fullName: string; age: number | null; gender: string | null; phone: string };
     doctor: { name: string; department: string };
   };
@@ -156,6 +162,13 @@ export default function AdmissionSheetPage() {
   const [correctOpen, setCorrectOpen] = useState(false);
   /** The insurer refused - the stay and its bills become the family's. */
   const [rejectOpen, setRejectOpen] = useState(false);
+  /** The tab line whose date is being corrected - see CorrectChargeDialog. */
+  const [editingChargeId, setEditingChargeId] = useState<string | null>(null);
+  /** The final claim being raised off this stay, prefilled from it. */
+  const [raising, setRaising] = useState<ClaimPrefill | null>(null);
+  /** Only for the datalist behind the claim form's insurer box - fetched when
+   *  that form opens, not on every load of a screen that rarely shows it. */
+  const [insurers, setInsurers] = useState<string[]>([]);
 
   // add-charge form
   const [cat, setCat] = useState("PROCEDURE");
@@ -493,6 +506,74 @@ export default function AdmissionSheetPage() {
 
   const a = sheet.admission;
   const discharged = a.status !== "ADMITTED";
+  /** Read off the sheet rather than copied into state, so a reload behind the
+   *  open dialog cannot leave it showing a line that has since changed. */
+  const editingCharge = sheet.charges.find((c) => c.id === editingChargeId) ?? null;
+
+  // ── IS A FINAL CLAIM STILL OWED ON THIS STAY? ──
+  //
+  // The same rule `pendingWork` uses, asked of one stay - the two must agree or
+  // the desk's worklist and the stay's own screen tell different stories about
+  // the same patient.
+  //
+  // A pre-auth is raised on an ESTIMATE while the patient is in the bed, and a
+  // stay that lands inside that estimate is settled by the authorisation: there
+  // is no second claim to send. A final claim is for the stay that went OVER,
+  // and for the stay nobody ever got authorised at all.
+  //
+  // A CLOSED claim does not count as filed - that is the unused ₹0 pre-auth
+  // being tidied away, not a claim anybody sent.
+  const finalClaim = sc?.claims.find((c) => c.stage === "FINAL" && c.status !== "CLOSED") ?? null;
+  /** The discharge bill itself - the document a final claim is raised against. */
+  const ipdBill = sc?.insuranceBills.find((b) => b.source === "IPD") ?? null;
+  /** Everything pointed at the insurer: discharge bill + pharmacy + lab. */
+  const insuranceBilled = Number(sc?.insuranceBillsTotal ?? 0);
+  const preAuth = sc?.claims.find((c) => c.stage === "PRE_AUTH" && c.status !== "CLOSED") ?? null;
+  /** What the insurer authorised, and how far past it the stay landed. */
+  const authorised = authorisedAmount(preAuth);
+  const overBy = excessOver(insuranceBilled, authorised);
+  // `!finalClaim` is stricter here than on the worklist, on purpose. A DRAFT
+  // final claim keeps its place in that list - it is unfinished work - but on
+  // this screen it is already drawn above with its own "Set amount" and "Send to
+  // insurer". Offering "Raise" beside it is exactly how a stay ends up carrying
+  // two claims with nobody able to say which one is live.
+  const canRaiseFinal =
+    discharged && a.payerType === "INSURANCE" && !!sc && !!ipdBill && !finalClaim &&
+    needsFinalClaim({ billedToInsurer: insuranceBilled, authorised, finalClaimStatus: null });
+
+  /** `amount` lets the excess button claim the difference instead of the lot. */
+  function raiseFinalClaim(amount?: number) {
+    if (insurers.length === 0) {
+      api.get<{ insurers: string[] }>("/insurance?status=ALL")
+        .then((r) => setInsurers(r.insurers)).catch(() => {});
+    }
+    setRaising({
+      patient: {
+        id: a.patient.id, displayId: a.patient.displayId,
+        fullName: a.patient.fullName, phone: a.patient.phone, age: a.patient.age,
+      },
+      insurer: a.insurer ?? "",
+      policyNo: a.policyNo ?? "",
+      memberId: a.memberId ?? "",
+      stage: "FINAL",
+      // A stay flagged INSURANCE was treated on the promise of cashless. A
+      // reimbursement is the other shape - the family paid - and that button
+      // lives on the stays list, where a SELF_PAY stay can be found.
+      type: "CASHLESS",
+      // EVERY bill pointed at the insurer by default, not just the discharge
+      // bill: on a cashless stay the pharmacy and the lab go on the same claim,
+      // and a desk that claimed the IPD invoice alone would leave that money
+      // unasked for. The excess button passes the difference instead, for an
+      // insurer that wants only what is over the authorisation.
+      //
+      // Whole rupees, like the pending list - paise are noise on a covering
+      // letter - and editable, because only this desk knows what the policy
+      // actually covers.
+      claimedAmount: String(Math.round(amount ?? insuranceBilled)),
+      admissionId: a.id,
+      invoiceId: ipdBill?.id,
+    });
+  }
 
   return (
     <PortalScroll>
@@ -731,8 +812,12 @@ export default function AdmissionSheetPage() {
       {/* ── WHERE IT STANDS WITH THE INSURER ──
           On the bill's own screen, because "has this been approved" and "who am
           I billing" are the same question and they get asked while looking at
-          the bill. */}
-      {sc && sc.claims.length > 0 && (
+          the bill.
+          Drawn when there is a claim OR when one is owed: a stay that reached
+          discharge without any claim at all - admitted before pre-auths opened
+          themselves, or a pre-auth nobody raised - had no section here, which is
+          exactly the stay that most needs the button. */}
+      {sc && (sc.claims.length > 0 || canRaiseFinal) && (
         <section data-rise className="surface mb-5 overflow-hidden">
           <div className="border-b border-[var(--p-border)] px-5 py-3.5">
             <h2 className="text-[14px] font-semibold text-[var(--p-ink)]">With the insurer</h2>
@@ -853,6 +938,60 @@ export default function AdmissionSheetPage() {
               </div>
             ))}
           </div>
+
+          {/* ── THE FINAL CLAIM, RAISED FROM THE STAY ──
+              It could only be raised from "To raise" - a list the desk works
+              down by urgency - so the person who had just finished reading THIS
+              stay's bills, and knew what to claim, had to leave, find the same
+              patient in another list and start again. Prefilled from the stay
+              and its insurance bills, because re-keying a policy number off a
+              screen that already shows it is how the wrong number reaches an
+              insurer.
+
+              A pre-auth is deliberately NOT offered here: it is raised while the
+              patient is in the bed, and by then this screen is showing a bill
+              that is still running. The list on the desk's landing page is the
+              right place for the clock-driven work. */}
+          {canRaiseFinal && (
+            <div className="border-t border-[var(--p-border)] bg-[var(--p-blue-soft)]/50 px-5 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[13px] font-bold text-[var(--p-blue-deep)]">
+                    {authorised === null
+                      ? "Discharged and billed - nothing was ever authorised on this stay"
+                      : `This stay went ₹${money2(overBy ?? 0)} over what was authorised`}
+                  </p>
+                  {/* THE THREE FIGURES THE DECISION IS MADE ON, spelled out. The
+                      desk compares the estimate against the bill in its head
+                      otherwise, off two screens, on the one number an insurer
+                      will argue about. */}
+                  <p className="mt-1 max-w-xl text-[12.5px] leading-relaxed text-[var(--p-blue-deep)]">
+                    {authorised !== null && <>Authorised ₹{money2(authorised)} · </>}
+                    Billed ₹{money2(sc.insuranceBillsTotal)} across {sc.insuranceBills.length} bill
+                    {sc.insuranceBills.length === 1 ? "" : "s"} pointed at {a.insurer ?? "the insurer"}.
+                    {" "}
+                    {authorised === null
+                      ? "None of it has been asked for yet."
+                      : "The authorisation settles the estimate; this claim is for the rest."}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-1.5">
+                  <button onClick={() => raiseFinalClaim()}
+                    className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-[var(--p-blue-deep)]">
+                    <Icon name="shield" size={15} /> Raise for ₹{money2(sc.insuranceBillsTotal)}
+                  </button>
+                  {/* SOME INSURERS WANT THE WHOLE BILL, SOME WANT THE DIFFERENCE.
+                      Both are one click, and both land in the same editable box. */}
+                  {overBy !== null && overBy > 1 && (
+                    <button onClick={() => raiseFinalClaim(overBy)}
+                      className="text-[11.5px] font-semibold text-[var(--p-blue-deep)] underline underline-offset-2 hover:text-[var(--p-blue)]">
+                      or claim only the ₹{money2(overBy)} excess
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* ── THE INSURER SAID NO, OR NOT ALL OF IT ──
               Until this existed there was no way back: a bill marked INSURANCE
@@ -1101,9 +1240,26 @@ export default function AdmissionSheetPage() {
                     {CAT_LABEL[c.category] ?? c.category} · {c.qty} × ₹{money(c.unitPrice)}
                     {Number(c.gstRatePct) > 0 && ` · ${c.gstRatePct}% GST`} · {c.addedBy}
                   </div>
+                  {/* WHEN IT WAS GIVEN. This desk needs the date more than the
+                      ward does: a TPA checks it against the case sheet, and a
+                      whole stay's treatment stamped with the one afternoon it
+                      was keyed in is a query waiting to be raised. */}
+                  <div className="text-[12px] text-[var(--p-muted)]">{chargeDateLabel(c.createdAt)}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <span className="font-mono text-[14px] font-semibold text-[var(--p-ink)]">₹{money(c.amount)}</span>
+                  {/* Edit sits where Edit sits on the pharmacy and lab rows
+                      above, and opens a dialog like they do. Still there after
+                      discharge, which is when a claim is actually assembled and
+                      when this desk reprices a line to the payer's own tariff -
+                      see updateAdmissionCharge. */}
+                  {!c.fromPharmacy && (
+                    <button onClick={() => setEditingChargeId(c.id)}
+                      title="Correct this line - the rate, the qty, or the date it was given"
+                      className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
+                      Edit
+                    </button>
+                  )}
                   {!discharged && !c.fromPharmacy && (
                     <button onClick={() => removeCharge(c)} disabled={busy}
                       className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] text-[var(--p-muted)] hover:border-[var(--p-rose)] hover:text-[var(--p-rose)]">
@@ -1707,6 +1863,39 @@ export default function AdmissionSheetPage() {
           }}
           onClose={() => setCorrectOpen(false)}
           onSaved={(msg) => { setCorrectOpen(false); setFlash(msg); load(); loadHistory(); }}
+        />
+      )}
+
+      {/* The claim form the whole portal raises claims with - same component,
+          same rules, prefilled from this stay. It opens a DRAFT: sending it to
+          the insurer is the next step, and it is done from the row this reload
+          puts on the screen above. */}
+      {raising && (
+        <NewClaim
+          apiBase="/insurance"
+          insurers={insurers}
+          prefill={raising}
+          onClose={() => setRaising(null)}
+          onCreated={(c) => {
+            setRaising(null);
+            setFlash(`Claim ${c.claimNo} raised for ₹${money2(c.claimedAmount)} - it is a draft until you send it to the insurer.`);
+            load();
+          }}
+        />
+      )}
+
+      {/* One tab line - its figures and its date. The bills are reloaded too:
+          repricing a discharged stay re-issues the IPD invoice, which is one of
+          the documents this desk is looking at. */}
+      {editingCharge && (
+        <CorrectChargeDialog
+          charge={editingCharge}
+          admittedAt={a.admittedAt}
+          dischargedAt={a.dischargedAt}
+          discharged={discharged}
+          accent="teal"
+          onClose={() => setEditingChargeId(null)}
+          onSaved={(msg) => { setEditingChargeId(null); setFlash(msg); load(); loadHistory(); }}
         />
       )}
     </PortalScroll>

@@ -89,6 +89,38 @@ const ALL_KEYS = [...NARRATIVE, ...REST].map((f) => f.key).concat(EXAM_VITALS.ma
 const blank = (): Record<string, string> =>
   Object.fromEntries(ALL_KEYS.map((k) => [k, ""]));
 
+const ta = "w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-[13.5px] leading-relaxed text-[var(--p-ink)] outline-none transition-colors focus:border-[var(--p-blue)]";
+const inp = "w-full rounded-lg border border-[var(--p-border)] bg-white px-2.5 py-1.5 text-[13px] text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]";
+
+/**
+ * DECLARED OUT HERE, NOT INSIDE THE FORM, AND IT HAS TO STAY OUT HERE.
+ *
+ * A component defined inside DischargeSummaryForm is a brand new function on
+ * every render, so React cannot recognise it as the same component twice: it
+ * throws the old <textarea> away and mounts a fresh one. The doctor types one
+ * letter, state changes, the box being typed into is destroyed mid-word and the
+ * cursor goes with it - typing stops dead after the first character.
+ *
+ * Everything it needs now arrives as props.
+ */
+function Field({ label, rows, hint, value, disabled, onChange }: {
+  label: string;
+  rows: number;
+  hint?: string;
+  value: string;
+  disabled: boolean;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[11.5px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">{label}</span>
+      <textarea rows={rows} className={ta} value={value} disabled={disabled}
+        onChange={(e) => onChange(e.target.value)} />
+      {hint && <span className="mt-0.5 block text-[11.5px] text-[var(--p-muted)]">{hint}</span>}
+    </label>
+  );
+}
+
 export function DischargeSummaryForm({ admissionId, onClose }: {
   admissionId: string;
   onClose: () => void;
@@ -200,18 +232,7 @@ export function DischargeSummaryForm({ admissionId, onClose }: {
   }
 
   const set = (k: string) => (v: string) => setF((p) => ({ ...p, [k]: v }));
-  const ta = "w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-[13.5px] leading-relaxed text-[var(--p-ink)] outline-none transition-colors focus:border-[var(--p-blue)]";
-  const inp = "w-full rounded-lg border border-[var(--p-border)] bg-white px-2.5 py-1.5 text-[13px] text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]";
   const completed = status === "COMPLETED";
-
-  const Field = ({ k, label, rows, hint }: { k: string; label: string; rows: number; hint?: string }) => (
-    <label className="block">
-      <span className="mb-1 block text-[11.5px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">{label}</span>
-      <textarea rows={rows} className={ta} value={f[k] ?? ""} disabled={completed}
-        onChange={(e) => set(k)(e.target.value)} />
-      {hint && <span className="mt-0.5 block text-[11.5px] text-[var(--p-muted)]">{hint}</span>}
-    </label>
-  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4">
@@ -301,7 +322,10 @@ export function DischargeSummaryForm({ admissionId, onClose }: {
                   </div>
                 )}
 
-                {NARRATIVE.map((x) => <Field key={x.key} k={x.key} label={x.label} rows={x.rows} hint={x.hint} />)}
+                {NARRATIVE.map((x) => (
+                  <Field key={x.key} label={x.label} rows={x.rows} hint={x.hint}
+                    value={f[x.key] ?? ""} disabled={completed} onChange={set(x.key)} />
+                ))}
 
                 {/* ── EXAMINATION AT ADMISSION ──
                     Free text, not numbers: "Afebrile", "98% on RA", "S1, S2 (+)"
@@ -321,7 +345,10 @@ export function DischargeSummaryForm({ admissionId, onClose }: {
                   </div>
                 </div>
 
-                {REST.map((x) => <Field key={x.key} k={x.key} label={x.label} rows={x.rows} hint={x.hint} />)}
+                {REST.map((x) => (
+                  <Field key={x.key} label={x.label} rows={x.rows} hint={x.hint}
+                    value={f[x.key] ?? ""} disabled={completed} onChange={set(x.key)} />
+                ))}
 
                 {/* ── MEDICATIONS ADVISED ──
                     What the patient goes home on. Rows rather than a textarea

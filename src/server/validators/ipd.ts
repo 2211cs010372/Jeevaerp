@@ -98,6 +98,12 @@ export const updateChargeSchema = z.object({
   qty: z.coerce.number().int().min(1).max(999).optional(),
   unitPrice: z.coerce.number().min(0).optional(),
   gstRatePct: z.coerce.number().min(0).max(28).optional(),
+  /// WHEN THE SERVICE WAS GIVEN - the "Date & time" the printed tab shows
+  /// against this line, not when somebody found a minute to key it in. A full
+  /// INSTANT with an offset, like the stay's own dates: the tab prints the time
+  /// and sorts by it, so two rounds on one day have to be tellable apart.
+  /// Bounded by the stay itself in `resolveChargeDate`.
+  chargedAt: z.string().trim().datetime({ offset: true }).optional(),
 });
 
 /**

@@ -33,6 +33,9 @@ interface PendingItem {
   days: number;
   stage: "PRE_AUTH" | "FINAL";
   amount: string;
+  /** What the pre-auth was authorised for, and how far past it the bill went.
+   *  Null on a stay the insurer never answered with a figure. */
+  approvedAmount: string | null; excess: string | null;
   invoiceId: string | null; invoiceNo: string | null;
   waitingHours: number;
   claimId: string | null; claimNo: string | null;
@@ -168,7 +171,7 @@ export default function PendingPage() {
           {final.length > 0 && (
             <Group
               title="Final claim"
-              blurb="Discharged and billed. The money is already spent - this is the hospital asking for it back."
+              blurb="Discharged and billed for more than the pre-auth authorised - or never authorised at all. A stay that landed inside its estimate is settled by the authorisation and is not listed here."
               items={final} onRaise={raise}
             />
           )}
@@ -237,7 +240,20 @@ function Group({ title, blurb, items, onRaise }: {
               <div className="flex shrink-0 items-center gap-5">
                 <div className="text-right">
                   <div className="font-mono text-[15px] font-bold text-[var(--p-ink)]">{inr(it.amount)}</div>
-                  <div className="text-[11px] text-[var(--p-muted)]">{it.dischargedAt ? "final bill" : "run up so far"}</div>
+                  {/* WHY THIS ROW IS HERE, in the figures themselves. A final
+                      claim is now only asked for when the stay went over what
+                      the pre-auth was authorised for, so the row says by how
+                      much - and says when nothing was ever authorised, which is
+                      the more expensive of the two. */}
+                  {it.stage === "FINAL" && it.approvedAmount != null ? (
+                    <div className="text-[11px] text-[#8a6414]">
+                      {inr(it.excess ?? 0)} over the {inr(it.approvedAmount)} approved
+                    </div>
+                  ) : it.stage === "FINAL" ? (
+                    <div className="text-[11px] text-[var(--p-rose)]">never authorised</div>
+                  ) : (
+                    <div className="text-[11px] text-[var(--p-muted)]">run up so far</div>
+                  )}
                 </div>
                 {/* ONE button, and it does the next thing. A row that needs a
                     figure opens the bill; a row with no claim at all opens the
