@@ -66,7 +66,9 @@ export default function PharmacyDuesPage() {
    * `quiet` is what makes a live refresh feel live rather than broken. The first
    * load shows a spinner; every later one swaps the numbers underneath without
    * blanking the screen, because a list that flashes to "Loading…" every time
-   * another counter takes money reads as a fault, not a feature.
+   * another counter takes money reads as a fault, not a feature. The same goes
+   * for the refresh after a collection here - the sheets pass quiet too, so the
+   * settled row clears underneath instead of the page blanking and rising again.
    */
   const load = useCallback((quiet = false) => {
     if (!quiet) setLoading(true);
@@ -135,7 +137,7 @@ export default function PharmacyDuesPage() {
           invoiceId={editingId}
           accent="blue"
           onClose={() => setEditingId(null)}
-          onSaved={() => { setEditingId(null); load(); }}
+          onSaved={() => { setEditingId(null); load(true); }}
         />
       )}
 
@@ -143,14 +145,14 @@ export default function PharmacyDuesPage() {
         <CollectModal
           due={collect}
           onClose={() => setCollect(null)}
-          onDone={() => { setCollect(null); load(); }}
+          onDone={() => { setCollect(null); load(true); }}
         />
       )}
       {settle && (
         <SettleAllModal
           p={settle}
           onClose={() => setSettle(null)}
-          onDone={() => { setSettle(null); load(); }}
+          onDone={() => { setSettle(null); load(true); }}
         />
       )}
     </PortalScroll>

@@ -62,6 +62,7 @@ export function DayCloseStatement({
   subtitle = "What should be in the drawer, and whether it is.",
   accent = "teal",
   topics = [],
+  printHref,
 }: {
   /** API path, without the date query - e.g. "/pharmacy/day-close". */
   endpoint: string;
@@ -74,6 +75,16 @@ export function DayCloseStatement({
    * pins itself to `till=RECEPTION` even when an admin is looking.
    */
   topics?: Topic[];
+  /**
+   * Where this counter's paper version lives, e.g.
+   * "/reception/print/day-close?till=RECEPTION". The selected date is appended.
+   *
+   * Given one, Print opens that sheet. Without one it falls back to printing
+   * this screen, which puts the sidebar, the date picker and the Print button
+   * itself onto somebody's handover - so a counter that has no print route yet
+   * keeps a button that half works rather than losing it.
+   */
+  printHref?: string;
 }) {
   const [date, setDate] = useState(today());
   const [data, setData] = useState<Close | null>(null);
@@ -134,10 +145,18 @@ export function DayCloseStatement({
         <div className="flex items-center gap-2">
           <input type="date" value={date} max={today()} onChange={(e) => setDate(e.target.value)}
             className="rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-[13px] text-[var(--p-ink)] outline-none focus:border-[var(--p-teal)]" />
-          <button onClick={() => window.print()}
-            className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-3.5 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-teal)]">
-            <Icon name="file" size={14} /> Print
-          </button>
+          {printHref ? (
+            <a href={`${printHref}${printHref.includes("?") ? "&" : "?"}date=${date}`}
+              target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-3.5 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-teal)]">
+              <Icon name="file" size={14} /> Print
+            </a>
+          ) : (
+            <button onClick={() => window.print()}
+              className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-3.5 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-teal)]">
+              <Icon name="file" size={14} /> Print
+            </button>
+          )}
         </div>
       </div>
 

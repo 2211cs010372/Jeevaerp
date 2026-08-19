@@ -3,10 +3,19 @@
 /**
  * WHO THE TEST IS FOR - the first step of every lab counter screen.
  *
- * Two ways in, because the counter has two kinds of person in front of it:
+ * Three ways in, because the lab serves three kinds of person:
  *
  *   · someone with a file already - found by name, Jeeva ID or mobile;
- *   · someone with neither - a chit from an outside doctor, or nothing at all.
+ *   · someone with neither - a chit from an outside doctor, or nothing at all;
+ *   · someone who is upstairs in a bed.
+ *
+ * The third used to go through the same search box as the first, and that was
+ * a worse experience than it looks. A ward sends down a request slip carrying a
+ * bed number and an IP number, and neither of those is what the search box
+ * takes - so the technician had to work back to a name, type it, and hope the
+ * right record came up. Picking from the occupied beds is the same list the
+ * ward is looking at, and it carries the admission, so the test lands on that
+ * stay instead of against a patient who merely has the same name.
  *
  * The second used to be a dead end: the lab could not create a record, so a
  * walk-in was sent to reception to be typed in before a sample could be taken,
@@ -22,6 +31,7 @@ import { useEffect, useState } from "react";
 import { Icon } from "@/components/portal/ui/icons";
 import { Req, Spinner } from "@/components/portal/ui/form-atoms";
 import { api } from "@/lib/api-client";
+import { InpatientPicker } from "@/components/portal/reception/inpatient-picker";
 import { formatPhone, isIndianMobile, toBare10 } from "@/lib/phone";
 
 export interface LabPatient {
@@ -35,8 +45,16 @@ export interface PatientDraft {
   age: string; gender: "" | "MALE" | "FEMALE" | "OTHER";
 }
 
+/** Where an inpatient currently is, carried so the screen can say so. */
+export interface AdmissionContext {
+  admissionId: string;
+  ipNumber: string;
+  ward: string;
+  bedNo: string;
+}
+
 export type PatientChoice =
-  | { kind: "existing"; patient: LabPatient }
+  | { kind: "existing"; patient: LabPatient; admission?: AdmissionContext }
   | { kind: "new"; draft: PatientDraft };
 
 export const EMPTY_DRAFT: PatientDraft = { firstName: "", lastName: "", phone: "", age: "", gender: "" };
@@ -79,7 +97,7 @@ export function PatientStep({
   step?: string;
   className?: string;
 }) {
-  const [mode, setMode] = useState<"find" | "new">("find");
+  const [mode, setMode] = useState<"find" | "inpatient" | "new">("find");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<LabPatient[]>([]);
   const [recent, setRecent] = useState<LabPatient[]>([]);
@@ -89,6 +107,7 @@ export function PatientStep({
   const [dupes, setDupes] = useState<LabPatient[]>([]);
 
   const chosen = value?.kind === "existing" ? value.patient : null;
+  const ward = value?.kind === "existing" ? value.admission : undefined;
 
   useEffect(() => {
     api.get<{ patients: LabPatient[] }>("/reception/patients/recent")
@@ -170,6 +189,20 @@ export function PatientStep({
                   <span className="tabular">{chosen.displayId}</span> · {formatPhone(chosen.phone)}
                   {chosen.age != null && ` · ${chosen.age}y`}
                 </div>
+                {/* Said here, at the moment of choosing, because it changes what
+                    happens with the money: nothing is collected at the window
+                    and the test goes onto the stay. A technician who learns
+                    that only from the confirmation screen has already asked a
+                    relative to pay. */}
+                {ward && (
+                  <div className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-[10.5px] font-semibold text-[var(--p-teal-deep)]">
+                    <Icon name="bed" size={11} />
+                    <span className="tabular">{ward.ipNumber}</span>
+                    <span className="text-[var(--p-muted)]">·</span>
+                    {ward.ward} {ward.bedNo}
+                    <span className="text-[var(--p-muted)]">· billed to the stay</span>
+                  </div>
+                )}
               </div>
             </div>
             <button onClick={clear} className="rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-medium text-[var(--p-teal)]">
@@ -186,7 +219,7 @@ export function PatientStep({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--p-border)] px-6 py-4">
         <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">{step} · Patient</h3>
         <div className="flex gap-1 rounded-full border border-[var(--p-border)] bg-white p-1">
-          {([["find", "Registered"], ["new", "New walk-in"]] as const).map(([m, label]) => (
+          {([["find", "Registered"], ["inpatient", "Inpatient"], ["new", "New walk-in"]] as const).map(([m, label]) => (
             <button
               key={m}
               onClick={() => { setMode(m); onChange(m === "new" && draftValid(draft) ? { kind: "new", draft } : null); }}
@@ -201,7 +234,26 @@ export function PatientStep({
       </div>
 
       <div className="p-6">
-        {mode === "find" ? (
+        {mode === "inpatient" ? (
+          /* The occupied beds, exactly as the ward sees them. One click from a
+             request slip to an order - no name to retype and no wrong Jeeva ID
+             to pick. The admission rides along so the test is billed to the
+             stay rather than taken at the counter. */
+          <InpatientPicker
+            alwaysOpen
+            pickedPatientId={null}
+            onPick={(ip) =>
+              onChange({
+                kind: "existing",
+                patient: {
+                  id: ip.patient.id, displayId: ip.patient.displayId, fullName: ip.patient.fullName,
+                  phone: ip.patient.phone, age: ip.patient.age, gender: ip.patient.gender,
+                },
+                admission: { admissionId: ip.id, ipNumber: ip.ipNumber, ward: ip.ward, bedNo: ip.bedNo },
+              })
+            }
+          />
+        ) : mode === "find" ? (
           <>
             <div className="flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-3.5 py-2.5">
               <Icon name="search" size={16} />

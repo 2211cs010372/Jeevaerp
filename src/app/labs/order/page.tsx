@@ -64,7 +64,14 @@ export default function OrderTestsPage() {
   const lines = selected.map((c) => ({ id: c.id, label: c.name, amount: Number(c.price) }));
 
   const patientName = choice ? (choice.kind === "existing" ? choice.patient.fullName : draftName(choice.draft)) : "";
-  const canSubmit = !!choice && picked.size > 0 && !busy && (!billNow || settlement.valid);
+  /**
+   * An admitted patient is billed to their stay by the server, whatever this
+   * screen says - see labs.service. Leaving "Raise the bill now" switched on
+   * for them showed a payment box that took no money and reconciled to
+   * nothing, and a technician who filled it in believed they had collected.
+   */
+  const inpatient = choice?.kind === "existing" ? choice.admission : undefined;
+  const canSubmit = !!choice && picked.size > 0 && !busy && (inpatient ? true : !billNow || settlement.valid);
 
   async function submit() {
     if (!choice || picked.size === 0) return;
@@ -74,7 +81,7 @@ export default function OrderTestsPage() {
         ...(choice.kind === "existing" ? { patientId: choice.patient.id } : { newPatient: draftPayload(choice.draft) }),
         catalogIds: [...picked],
         referringDoctorId: referrerId || undefined,
-        bill: billNow
+        bill: billNow && !inpatient
           ? {
               discountAmount: settlement.discountAmount || undefined,
               payments: settlement.payments.length ? settlement.payments : undefined,
@@ -174,25 +181,27 @@ export default function OrderTestsPage() {
 
         <aside data-rise className="lg:sticky lg:top-6 lg:self-start">
           <BillAside
-            title={billNow ? "Order & bill" : "Order summary"}
+            title={inpatient ? "Goes on the stay" : billNow ? "Order & bill" : "Order summary"}
             lines={lines}
             emptyText="No tests selected."
-            billNow={billNow}
+            billNow={inpatient ? null : billNow}
             onBillNowChange={setBillNow}
             billNowLabel="Raise the bill now"
             onSettlementChange={setSettlement}
             error={error}
             footnote={
-              billNow
-                ? "GST is applied per test from the catalogue, server-side. An admitted patient is billed to their stay instead - the counter takes nothing."
-                : "The tests go to the queue unbilled. Raise the bill from the Billing page whenever the patient settles."
+              inpatient
+                ? `${inpatient.ipNumber} · ${inpatient.ward} ${inpatient.bedNo}. These tests are added to the running tab for this stay and settle at discharge. Take nothing at the counter.`
+                : billNow
+                  ? "GST is applied per test from the catalogue, server-side. An admitted patient is billed to their stay instead - the counter takes nothing."
+                  : "The tests go to the queue unbilled. Raise the bill from the Billing page whenever the patient settles."
             }
             action={
               <PrimaryButton onClick={submit} disabled={!canSubmit} full>
-                {busy ? <><Spinner /> {billNow ? "Ordering & billing…" : "Ordering…"}</> : (
+                {busy ? <><Spinner /> {billNow && !inpatient ? "Ordering & billing…" : "Ordering…"}</> : (
                   <>
-                    <Icon name={billNow ? "receipt" : "flask"} size={15} />
-                    {billNow ? "Order & bill" : "Order"} {picked.size || ""} test{picked.size === 1 ? "" : "s"}
+                    <Icon name={inpatient ? "bed" : billNow ? "receipt" : "flask"} size={15} />
+                    {inpatient ? "Add to the stay" : billNow ? "Order & bill" : "Order"} {picked.size || ""} test{picked.size === 1 ? "" : "s"}
                   </>
                 )}
               </PrimaryButton>

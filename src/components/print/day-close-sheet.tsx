@@ -29,6 +29,63 @@ const prettyDate = (iso: string) =>
   new Date(`${iso}T00:00:00`).toLocaleDateString("en-IN", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
 
+/**
+ * The day-close statement as PAPER: mono, medium, ink.
+ *
+ * IBM Plex Mono is loaded at 400 and 500 only (layout.tsx), so nothing here asks
+ * for 600+. The browser would synthesise a fake bold, and a synthesised bold at
+ * 9px on the counter's laser printer is a smear rather than emphasis. Hierarchy
+ * comes from 400 against 500, uppercase and the rules instead.
+ *
+ * Colour is flattened to ink for the reason the bill stationery flattened it
+ * (see BILL_MONO_CSS): a tint the office printer decides to drop takes the
+ * meaning with it. Refunds stay readable by their leading minus and the column
+ * they sit in, not by being red.
+ */
+const DAY_CLOSE_MONO_CSS = `
+  .print-stage {
+    --pr-ink: #111111;
+    --pr-primary: var(--pr-ink); --pr-accent: var(--pr-ink);
+    --pr-line: #9c9c9c; --pr-hair: #cfcfcf; --pr-muted: #3f3f3f;
+    /* A refund and an unpaid balance still carry meaning; on this sheet they
+       carry it as ink and a leading minus, so re-inking is a one-line change. */
+    --pr-neg: var(--pr-ink); --pr-warn: var(--pr-ink);
+  }
+  #print-sheet {
+    font-family: var(--font-mono, ui-monospace), "IBM Plex Mono", Consolas, monospace;
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    color: var(--pr-ink);
+  }
+  /* Medium, never black. Re-pointing the utilities inside the sheet keeps the
+     preview and the paper identical; editing thirty call sites would not. */
+  #print-sheet .font-extrabold,
+  #print-sheet .font-bold,
+  #print-sheet .font-semibold { font-weight: 500 !important; }
+  /* The sheet is mono throughout now, so .font-mono only still carries the
+     weight that makes a column of rupees scan. */
+  #print-sheet .font-mono { font-family: inherit; font-weight: 500; }
+  /* These greys were chosen against a screen. On paper they fade, so they all
+     settle on one muted ink a 600dpi laser still resolves at 9px. Matched by
+     attribute rather than as escaped class selectors: inside a template literal
+     a lone backslash is swallowed before CSS ever sees it, so the escaped form
+     parses as invalid and the rule drops in silence. */
+  #print-sheet [class~="text-[#3c4a45]"],
+  #print-sheet [class~="text-[#57655f]"],
+  #print-sheet [class~="text-[#5a6a66]"],
+  #print-sheet [class~="text-[#6b7772]"],
+  #print-sheet [class~="text-[#8b9691]"] { color: var(--pr-muted) !important; }
+  #print-sheet [class~="text-[#8a3b2e]"] { color: var(--pr-ink) !important; }
+  /* Mono sets about a fifth wider than the sans this sheet was drawn in. The
+     tables are percentage-width and reflow on their own; the two-column head is
+     not, so its gutter gives back the width the wider face takes. */
+  #print-sheet .gap-x-10 { column-gap: 24px; }
+  /* A busy day runs to two sheets, and a row torn in half at the fold is a row
+     somebody reads wrong. */
+  #print-sheet thead { break-inside: avoid; break-after: avoid; }
+  #print-sheet tr { break-inside: avoid; }
+`;
+
 export function DayCloseSheet() {
   return (
     <Suspense fallback={<div className="p-10 text-center text-[14px] text-[#5a6a66]">Preparing the statement…</div>}>
@@ -40,14 +97,29 @@ export function DayCloseSheet() {
 function DayCloseSheetInner() {
   const params = useSearchParams();
   const date = params.get("date") ?? "";
+  /**
+   * Which drawer this sheet is for. The API pins everyone except an ADMIN to
+   * their own till whatever they ask for, so this changes nothing for a
+   * receptionist printing their own handover. It matters when an ADMIN prints:
+   * the screen they clicked Print on was pinned to one counter, and a sheet
+   * that quietly widened to the whole hospital would be counted against the
+   * wrong drawer.
+   */
+  const till = params.get("till") ?? "";
   const [d, setD] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.get<Data>(`/reception/day-close${date ? `?date=${encodeURIComponent(date)}` : ""}`)
+    // Built from what was actually asked for - an empty string must not become
+    // "?date=", which the API would read as a date it cannot parse.
+    const q = new URLSearchParams();
+    if (date) q.set("date", date);
+    if (till) q.set("till", till);
+    const qs = q.toString();
+    api.get<Data>(`/reception/day-close${qs ? `?${qs}` : ""}`)
       .then(setD)
       .catch((e) => setError(e instanceof ApiClientError ? e.message : "Couldn't load the day."));
-  }, [date]);
+  }, [date, till]);
 
   if (error) return <div className="p-10 text-center text-[14px] text-[#8a3b2e]">{error}</div>;
   if (!d) return <div className="p-10 text-center text-[14px] text-[#5a6a66]">Preparing the statement…</div>;
@@ -59,7 +131,7 @@ function DayCloseSheetInner() {
   const Row = ({ k, v, strong, tone }: { k: string; v: string; strong?: boolean; tone?: "rose" | "primary" }) => (
     <div className={`flex items-baseline justify-between gap-4 py-[3px] ${strong ? "font-bold" : ""}`}>
       <span className={strong ? "text-[11px]" : "text-[10.5px] text-[#3c4a45]"}>{k}</span>
-      <span className="font-mono text-[11px]" style={tone ? { color: tone === "rose" ? "#8a3b2e" : "var(--pr-primary)" } : undefined}>{v}</span>
+      <span className="font-mono text-[11px]" style={tone ? { color: tone === "rose" ? "var(--pr-neg)" : "var(--pr-primary)" } : undefined}>{v}</span>
     </div>
   );
 
@@ -70,7 +142,7 @@ function DayCloseSheetInner() {
 
   return (
     <div className="print-stage">
-      <style dangerouslySetInnerHTML={{ __html: PRINT_CSS }} />
+      <style dangerouslySetInnerHTML={{ __html: PRINT_CSS + DAY_CLOSE_MONO_CSS }} />
       <PrintToolbar title={`Day close · ${prettyDate(d.date)}`} />
 
       <div id="print-sheet">
@@ -187,7 +259,7 @@ function DayCloseSheetInner() {
                   <tr key={i}>
                     <td className="rule py-[4px] pr-2 font-mono text-[9px]">{r.receiptNo}</td>
                     <td className="rule py-[4px] pr-2">{r.patient}</td>
-                    <td className="rule py-[4px] pr-2 text-right font-mono" style={{ color: "#8a3b2e" }}>−{money(r.amount)}</td>
+                    <td className="rule py-[4px] pr-2 text-right font-mono" style={{ color: "var(--pr-neg)" }}>−{money(r.amount)}</td>
                     <td className="rule py-[4px] pr-2">{r.mode}</td>
                     <td className="rule py-[4px] pr-2 text-[9px]">{r.reason}</td>
                     <td className="rule py-[4px] text-[9px]">{r.by} <span className="text-[#8b9691]">{timeOf(r.at)}</span></td>
@@ -213,7 +285,7 @@ function DayCloseSheetInner() {
                     <td className="rule py-[4px] pr-2">{o.patient}</td>
                     <td className="rule py-[4px] pr-2 text-right font-mono">{money(o.total)}</td>
                     <td className="rule py-[4px] pr-2 text-right font-mono">{money(o.paid)}</td>
-                    <td className="rule py-[4px] text-right font-mono font-bold" style={{ color: "#8a5a1a" }}>{money(o.due)}</td>
+                    <td className="rule py-[4px] text-right font-mono font-bold" style={{ color: "var(--pr-warn)" }}>{money(o.due)}</td>
                   </tr>
                 ))}
               </tbody>

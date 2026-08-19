@@ -15,6 +15,7 @@ export default function DayClosePage() {
       subtitle="What should be in the front desk drawer, and whether it is."
       accent="teal"
       topics={[TOPICS.RECEPTION]}
+      printHref="/reception/print/day-close?till=RECEPTION"
     />
   );
 }
