@@ -909,6 +909,11 @@ export async function medicineBatches(medicineId: string) {
     orderBy: { expiryDate: "asc" },
     select: {
       id: true, batchNo: true, expiryDate: true, quantity: true, mrp: true, purchasePrice: true,
+      // When this batch first went onto the shelf. Not every batch arrives on a
+      // goods receipt - one added by hand on this screen, or imported, has no
+      // GRN at all - and those still need a date, or the column is blank for
+      // exactly the rows somebody is trying to account for.
+      createdAt: true,
       // The distributor's own columns, so the shelf reads like the bill it
       // arrived on rather than a re-interpretation of it.
       pack: true, packSize: true, freeQty: true, oMrp: true,
@@ -924,6 +929,10 @@ export async function medicineBatches(medicineId: string) {
         take: 1,
         select: { goodsReceipt: { select: { id: true, grnNumber: true, invoiceNo: true, createdAt: true } } },
       },
+      // A batch number can be topped up by a later consignment - same strip,
+      // same expiry, second delivery. One date against a row that arrived twice
+      // is a small lie, so the count comes along and the screen says so.
+      _count: { select: { grnItems: true } },
     },
   });
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -933,7 +942,9 @@ export async function medicineBatches(medicineId: string) {
     pack: string | null; packSize: number; freeQty: number; oMrp: string | null;
     medicine: { hsnCode: string | null; gstRatePct: { toString(): string }; hsn: { code: string } | null };
     supplier: { id: string; name: string } | null;
+    createdAt: Date;
     grnItems: { goodsReceipt: { id: string; grnNumber: string; invoiceNo: string | null; createdAt: Date } }[];
+    _count: { grnItems: number };
   };
   return (rows as BatchRow[]).map((b) => {
     const mrp = Number(b.mrp.toString());
@@ -965,7 +976,23 @@ export async function medicineBatches(medicineId: string) {
       grnId: grn?.id ?? null,
       grnNumber: grn?.grnNumber ?? null,
       supplierInvoiceNo: grn?.invoiceNo ?? null,
-      receivedAt: grn ? grn.createdAt.toISOString() : null,
+      /**
+       * WHEN THIS STOCK ARRIVED.
+       *
+       * The goods receipt is the truth where there is one - it is dated by the
+       * delivery, not by whoever got round to typing it. Falling back to the
+       * batch row's own creation covers everything booked in another way (added
+       * by hand here, imported from a sheet, seeded), which would otherwise
+       * show nothing at all on the rows most likely to be queried.
+       *
+       * On a batch topped up twice this is the LATEST delivery: the useful
+       * answer to "how old is what is on the shelf" is when stock last came in.
+       */
+      receivedAt: (grn ? grn.createdAt : b.createdAt).toISOString(),
+      /** Whether that date came off a receipt or is just when the row appeared. */
+      receivedFromGrn: !!grn,
+      /** Consignments into this batch number. More than one, and one date is a summary. */
+      deliveries: b._count.grnItems,
     };
   });
 }

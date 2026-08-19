@@ -72,7 +72,9 @@ interface Batch {
   unitMrp: string; unitRate: string | null;
   hsn: string | null; gstRatePct: string;
   supplierId: string | null; supplierName: string | null;
-  grnId: string | null; grnNumber: string | null; supplierInvoiceNo: string | null; receivedAt: string | null;
+  grnId: string | null; grnNumber: string | null; supplierInvoiceNo: string | null;
+  /** When this stock arrived - the goods receipt's date, or the row's own. */
+  receivedAt: string; receivedFromGrn: boolean; deliveries: number;
 }
 interface Supplier { id: string; name: string }
 
@@ -474,6 +476,9 @@ export default function StockPage() {
                         <th>Expiry</th>
                         <th className="r">GST%</th>
                         <th>HSN</th>
+                        {/* The two provenance columns sit together: when it came
+                            in, and who it came from. A recall notice asks both. */}
+                        <th>Received</th>
                         <th>Received from</th>
                         <th />
                       </tr>
@@ -518,6 +523,22 @@ export default function StockPage() {
                           </td>
                           <td className="r num">{Number(b.gstRatePct) ? `${Number(b.gstRatePct)}%` : "—"}</td>
                           <td className="num">{b.hsn || "—"}</td>
+                          <td className="num">
+                            {dmy(b.receivedAt)}
+                            {/* Two things worth admitting rather than papering
+                                over: a date that is only when the row appeared,
+                                and a batch number that arrived more than once. */}
+                            {!b.receivedFromGrn && (
+                              <div className="per-unit" title="No goods receipt behind this batch - added on this screen or imported. This is when the row was created.">
+                                booked in
+                              </div>
+                            )}
+                            {b.deliveries > 1 && (
+                              <div className="per-unit" title={`This batch number was topped up by ${b.deliveries} separate deliveries. This is the latest.`}>
+                                {b.deliveries} deliveries
+                              </div>
+                            )}
+                          </td>
                           <td>
                             {/* The question a recall notice asks. */}
                             {b.supplierName ? (
