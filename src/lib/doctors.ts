@@ -1,13 +1,11 @@
-import { DOCTORS, type Doctor } from "./data";
+import type { Doctor } from "./data";
 import { slugify } from "./care";
 
 /**
  * Doctor URLs.
  *
- * A consultant's `id` is whatever the roster happens to carry - it has been a
- * short code ("d1") and it is currently the full name ("Dr. A. Shanthosh").
- * Neither belongs in a URL unedited: the first is meaningless to a patient and
- * to a search engine, and the second becomes
+ * A consultant's `id` is the ERP's cuid - meaningless to a patient and to a
+ * search engine. Earlier rosters put the full name there instead, giving
  *
  *     /doctors/Dr.%20A.%20Shanthosh
  *
@@ -42,16 +40,21 @@ function safeDecode(value: string): string {
 /**
  * Resolve a URL segment to a consultant - by slug, by id, or by name.
  * Returns undefined when nothing matches, which is the page's 404.
+ *
+ * The panel is passed in rather than imported. It comes from the database now
+ * (see server/services/public-doctors.service.ts), and a module that reaches
+ * for Prisma is a module no client component can import - which this one is,
+ * through `doctorHref`.
  */
-export function doctorByParam(param: string): Doctor | undefined {
+export function doctorByParam(doctors: Doctor[], param: string): Doctor | undefined {
   const raw = safeDecode(param).trim();
   const key = slugify(raw);
   if (!key) return undefined;
 
   return (
-    DOCTORS.find((d) => doctorSlug(d) === key) ??
-    DOCTORS.find((d) => d.id === raw) ??
-    DOCTORS.find((d) => slugify(d.id) === key)
+    doctors.find((d) => doctorSlug(d) === key) ??
+    doctors.find((d) => d.id === raw) ??
+    doctors.find((d) => slugify(d.id) === key)
   );
 }
 

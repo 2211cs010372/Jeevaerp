@@ -18,7 +18,8 @@
  * THE RULE, enforced everywhere below this file:
  *
  *   StockBatch.quantity is ALWAYS in dispensing units (tablets, ml, capsules).
- *   StockBatch.packSize says how many of those made up one purchased pack.
+ *   StockBatch.packSize says how many of those made up one purchased pack -
+ *     which is 1 for anything sold by the container (see PackSpec below).
  *   StockBatch.mrp and .purchasePrice stay PER PACK, exactly as printed on the
  *   strip and on the invoice - dividing by packSize gives the per-unit price.
  *
@@ -27,11 +28,39 @@
  * per-tablet number would make the bill disagree with the box in their hand.
  */
 
+/**
+ * A MEASURE IS NOT A COUNT - the second distinction, learned the hard way.
+ *
+ * "15T" and "200ML" look like the same kind of label and are not. Fifteen
+ * tablets leave the shelf one at a time, so a strip really is fifteen
+ * dispensing units. Two hundred millilitres is how much is INSIDE one bottle;
+ * the bottle is what leaves the shelf, and nobody at the counter measures out
+ * 30ml of it.
+ *
+ * Reading ML as a count did exactly what that mistake looks like:
+ *
+ *   ACIFIX RAFT 200ML   12 bottles received  ->  2,400 on the shelf
+ *   MRP Rs 231 a bottle                      ->  Rs 1.16 charged for one
+ *
+ * A patient handed a whole bottle would have been billed Rs 1.16, and a stock
+ * count would have gone looking for 2,388 bottles that never existed. Same for
+ * GM: a 20gm tube of gel is one tube, not twenty of anything.
+ *
+ * So volume and weight suffixes describe the CONTENTS of a single container and
+ * yield size 1. Counting suffixes - T, C, S, vials, ampoules, respules - are
+ * genuine counts and keep their size.
+ */
+
 /** What a pack label decomposes into. */
 export interface PackSpec {
-  /** Dispensing units in one pack. 15T -> 15, 200ML -> 200. Never below 1. */
+  /**
+   * Dispensing units in one pack. 15T -> 15, 10`S -> 10.
+   *
+   * ALWAYS 1 for a volume or weight label: 200ML is one bottle, not two
+   * hundred of anything. Never below 1.
+   */
   size: number;
-  /** The dispensing unit: "tablet", "ml", "capsule", "unit". */
+  /** What one dispensing unit is: "tablet", "capsule", "bottle", "tube", "unit". */
   unit: string;
   /** True when the label was understood. False -> size 1, treat as loose units. */
   known: boolean;
@@ -44,17 +73,23 @@ export interface PackSpec {
  * "10's", i.e. ten of whatever the product is - it is NOT a unit of its own.
  * OCR also reads the apostrophe as a backtick, a comma, or drops it entirely.
  */
-const SUFFIX_UNITS: { re: RegExp; unit: string }[] = [
-  { re: /^(?:ML|M L)$/i, unit: "ml" },
-  { re: /^(?:GM?|GRAM)$/i, unit: "gm" },
-  { re: /^T(?:AB)?$/i, unit: "tablet" },
-  { re: /^C(?:AP)?$/i, unit: "capsule" },
-  { re: /^(?:R|RESP|RESPULE)$/i, unit: "respule" },
-  { re: /^(?:V|VIAL)$/i, unit: "vial" },
-  { re: /^(?:AMP)$/i, unit: "ampoule" },
-  { re: /^(?:INJ)$/i, unit: "injection" },
-  { re: /^(?:SUPP?)$/i, unit: "suppository" },
-  { re: /^(?:['`’,]?S)$/i, unit: "unit" },       // 10'S / 15`S / 5S -> "10's"
+const SUFFIX_UNITS: { re: RegExp; unit: string; counts: boolean }[] = [
+  // MEASURES. The number is what is inside one container, so one container is
+  // what the pharmacy holds and hands over. "bottle" and "tube" cover the
+  // catalogue as it stands; a 100gm jar of powder would read "jar" more
+  // naturally, and reads "tube" instead - a wording cost, not an arithmetic one.
+  { re: /^(?:ML|M L)$/i, unit: "bottle", counts: false },
+  { re: /^(?:GM?|GRAM)$/i, unit: "tube", counts: false },
+
+  // COUNTS. These really are N things that leave the shelf one at a time.
+  { re: /^T(?:AB)?$/i, unit: "tablet", counts: true },
+  { re: /^C(?:AP)?$/i, unit: "capsule", counts: true },
+  { re: /^(?:R|RESP|RESPULE)$/i, unit: "respule", counts: true },
+  { re: /^(?:V|VIAL)$/i, unit: "vial", counts: true },
+  { re: /^(?:AMP)$/i, unit: "ampoule", counts: true },
+  { re: /^(?:INJ)$/i, unit: "injection", counts: true },
+  { re: /^(?:SUPP?)$/i, unit: "suppository", counts: true },
+  { re: /^(?:['`’,]?S)$/i, unit: "unit", counts: true },   // 10'S / 15`S / 5S -> "10's"
 ];
 
 /**
@@ -81,8 +116,10 @@ export function parsePack(label: string | null | undefined): PackSpec {
     // A bare number is a count of somethings - "10" means ten of them.
     return { size, unit: "unit", known: true };
   }
-  for (const { re, unit } of SUFFIX_UNITS) {
-    if (re.test(suffix)) return { size, unit, known: true };
+  for (const { re, unit, counts } of SUFFIX_UNITS) {
+    // A measure yields ONE container regardless of how big the number is: 200ML
+    // and 15ML are both a single bottle, differing only in what is in them.
+    if (re.test(suffix)) return { size: counts ? size : 1, unit, known: true };
   }
   // A suffix we don't recognise. Take the size (it is unambiguous) but don't
   // invent a unit name.

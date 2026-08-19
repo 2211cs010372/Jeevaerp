@@ -6,7 +6,7 @@ import Link from "next/link";
 import { Search, ArrowRight, CornerDownLeft } from "@/components/ui/hugeicons";
 import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
 import { searchDoctors } from "@/lib/doctor-search";
-import { DOCTORS } from "@/lib/data";
+import type { Doctor } from "@/lib/data";
 import { doctorHref } from "@/lib/doctors";
 
 /**
@@ -27,9 +27,12 @@ import { doctorHref } from "@/lib/doctors";
 const MAX_RESULTS = 6;
 
 export function DoctorSearchBox({
+  doctors,
   onNavigate,
   variant = "desktop",
 }: {
+  /** The panel, read from the ERP by a server parent - this box cannot. */
+  doctors: Doctor[];
   /** Close the surrounding menu/drawer once the user goes somewhere. */
   onNavigate?: () => void;
   variant?: "desktop" | "mobile";
@@ -45,10 +48,10 @@ export function DoctorSearchBox({
   const matches = useMemo(() => {
     const term = q.trim();
     if (term.length < 2) return [];           // one letter matches half the panel
-    return searchDoctors(DOCTORS, term).slice(0, MAX_RESULTS);
+    return searchDoctors(doctors, term).slice(0, MAX_RESULTS);
   }, [q]);
 
-  const total = searchDoctors(DOCTORS, q.trim()).length;
+  const total = searchDoctors(doctors, q.trim()).length;
   const showPanel = open && q.trim().length >= 2;
 
   // A new query invalidates the old highlight - otherwise Enter opens whoever
@@ -156,7 +159,7 @@ export function DoctorSearchBox({
                       className={`flex items-center gap-3 px-3 py-2.5 transition-colors ${i === active ? "bg-[var(--teal-soft)]" : "hover:bg-[var(--bone)]"}`}
                     >
                       <span className="h-10 w-10 shrink-0 overflow-hidden rounded-lg ring-1 ring-[var(--line)]">
-                        <DoctorAvatar name={m.doctor.name} image={m.doctor.image} className="h-full w-full text-[11px]" />
+                        <DoctorAvatar name={m.doctor.name} className="h-full w-full text-[11px]" />
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[13px] font-semibold text-[var(--ink)]">{m.doctor.name}</span>

@@ -7,7 +7,7 @@ import { ArrowUpRight } from "@/components/ui/hugeicons";
 import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
 import { OpdBand } from "@/components/marketing/opd-band";
 import { DoctorSlots } from "@/components/marketing/doctor-slots";
-import { DEPARTMENTS, DOCTORS, type Doctor } from "@/lib/data";
+import { DEPARTMENTS, type Doctor } from "@/lib/data";
 import { doctorHref } from "@/lib/doctors";
 
 /**
@@ -24,9 +24,9 @@ import { doctorHref } from "@/lib/doctors";
 
 const label = "font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--muted)]";
 
-export function BookingForm() {
+export function BookingForm({ doctors }: { doctors: Doctor[] }) {
   const params = useSearchParams();
-  const preselected = DOCTORS.find((d) => d.id === params.get("doctor"));
+  const preselected = doctors.find((d) => d.id === params.get("doctor"));
   const deptParam = params.get("dept");
 
   const [dept, setDept] = useState(
@@ -34,8 +34,8 @@ export function BookingForm() {
   );
   const [doctorId, setDoctorId] = useState(preselected?.id ?? "");
 
-  const doctors = useMemo(() => DOCTORS.filter((d) => !dept || d.department === dept), [dept]);
-  const doctor = DOCTORS.find((d) => d.id === doctorId);
+  const shown = useMemo(() => doctors.filter((d) => !dept || d.department === dept), [doctors, dept]);
+  const doctor = doctors.find((d) => d.id === doctorId);
 
   return (
     <div className="grid items-start gap-4 lg:grid-cols-[7fr_5fr]">
@@ -75,7 +75,7 @@ export function BookingForm() {
             </Link>
           </div>
           <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
-            {doctors.map((d) => {
+            {shown.map((d) => {
               const active = doctorId === d.id;
               return (
                 <button key={d.id} type="button"
@@ -86,7 +86,7 @@ export function BookingForm() {
                       ? "border-[var(--teal)] bg-[var(--teal-soft)] shadow-[var(--shadow-sm)]"
                       : "border-[var(--line)] hover:border-[var(--teal-tint)] hover:bg-[var(--bone)]"
                   }`}>
-                  <DoctorAvatar name={d.name} image={d.image} className="h-12 w-12 flex-none rounded-full text-[14px]" />
+                  <DoctorAvatar name={d.name} className="h-12 w-12 flex-none rounded-full text-[14px]" />
                   <span className="min-w-0">
                     <span className="block truncate text-[13.5px] font-semibold text-[var(--ink)]">{d.name}</span>
                     <span className="block truncate text-[11.5px] text-[var(--teal)]">{d.specialization}</span>
@@ -144,7 +144,7 @@ function DoctorRail({ doctor }: { doctor?: Doctor }) {
       <div className="rounded-[1.75rem] bg-[var(--peach-soft)] p-1.5 ring-1 ring-black/5">
         <div className="glass rounded-[1.35rem] p-5">
           <div className="flex items-start gap-4">
-            <DoctorAvatar name={doctor.name} image={doctor.image} className="h-[76px] w-[76px] flex-none rounded-[1rem] text-[20px]" />
+            <DoctorAvatar name={doctor.name} className="h-[76px] w-[76px] flex-none rounded-[1rem] text-[20px]" />
             <div className="min-w-0 flex-1">
               <h3 className="truncate text-[16px] font-semibold text-[var(--ink)]">{doctor.name}</h3>
               <p className="mt-0.5 text-[12.5px] font-medium text-[var(--teal)]">{doctor.specialization}</p>

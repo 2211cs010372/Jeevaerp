@@ -61,7 +61,7 @@ export function DoctorsDirectory({ doctors }: { doctors: Doctor[] }) {
             </div>
             <div className="relative z-10 mt-6 flex items-center isolate -space-x-2">
               {doctors.slice(0, 4).map((d) => (
-                <DoctorAvatar key={d.id} name={d.name} image={d.image}
+                <DoctorAvatar key={d.id} name={d.name}
                   className="h-9 w-9 rounded-full border-2 border-[var(--pine-ink)] text-[9px] shadow-sm" />
               ))}
               {doctors.length > 4 && (

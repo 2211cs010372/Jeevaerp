@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./(public)/site-theme.css";
 import { Navbar } from "@/components/marketing/navbar";
+import { listPublicDoctors } from "@/server/services/public-doctors.service";
 import { Footer } from "@/components/marketing/footer";
 import { NotFoundPanel } from "@/components/marketing/not-found-panel";
 
@@ -13,10 +14,10 @@ export const metadata: Metadata = { title: "Page not found" };
  * itself - otherwise a mistyped address drops someone onto an unbranded page
  * with no way back, which is where they leave.
  */
-export default function NotFound() {
+export default async function NotFound() {
   return (
     <div className="site">
-      <Navbar />
+      <Navbar doctors={await listPublicDoctors()} />
       <main>
         <NotFoundPanel />
       </main>

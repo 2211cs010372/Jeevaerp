@@ -2,15 +2,20 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { DoctorsDirectory } from "@/components/marketing/doctors-directory";
-import { DOCTORS, DEPARTMENTS, HOSPITAL } from "@/lib/data";
+import { DEPARTMENTS, HOSPITAL } from "@/lib/data";
+import { listPublicDoctors } from "@/server/services/public-doctors.service";
 import { SITE_URL, abs } from "@/lib/site";
 import { doctorHref } from "@/lib/doctors";
+import type { Doctor } from "@/lib/data";
 
 const TITLE = "Our doctors";
 const DESCRIPTION =
-  `${DOCTORS.length} consultants across ${DEPARTMENTS.length} departments at Jeeva Multispeciality Hospital, Hanamkonda. `
+  `Consultants across ${DEPARTMENTS.length} departments at Jeeva Multispeciality Hospital, Hanamkonda. `
   + "See each doctor's OPD hours, consulting days and fee, then book online.";
 
+// A count belongs in the copy only if it is the count. The panel is read from
+// the ERP now and changes when the hospital hires; a number frozen into a
+// static metadata export would be wrong the first time it did.
 export const metadata: Metadata = {
   title: TITLE,
   description: DESCRIPTION,
@@ -28,7 +33,7 @@ export const metadata: Metadata = {
     url: "/doctors",
     siteName: HOSPITAL.name,
     locale: "en_IN",
-    images: [{ url: DOCTORS[0]?.image ?? "/images/jeeva-logo.png", alt: `Consultants at ${HOSPITAL.name}` }],
+    images: [{ url: "/images/jeeva-logo.png", alt: `Consultants at ${HOSPITAL.name}` }],
   },
   twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION },
 };
@@ -40,15 +45,15 @@ export const metadata: Metadata = {
  * "<speciality> doctor Hanamkonda" without each profile having to be crawled
  * first.
  */
-function doctorsListJsonLd() {
+function doctorsListJsonLd(doctors: Doctor[]) {
   return {
     "@context": "https://schema.org",
     "@type": "ItemList",
     "@id": `${SITE_URL}/doctors#roster`,
     name: `Consultants at ${HOSPITAL.name}`,
     description: DESCRIPTION,
-    numberOfItems: DOCTORS.length,
-    itemListElement: DOCTORS.map((d, i) => ({
+    numberOfItems: doctors.length,
+    itemListElement: doctors.map((d, i) => ({
       "@type": "ListItem",
       position: i + 1,
       url: abs(doctorHref(d)),
@@ -57,7 +62,6 @@ function doctorsListJsonLd() {
         "@id": abs(`${doctorHref(d)}#physician`),
         name: d.name,
         medicalSpecialty: d.specialization,
-        image: abs(d.image),
         url: abs(doctorHref(d)),
         knowsLanguage: d.languages.split(",").map((l) => l.trim()),
         worksFor: { "@type": "Hospital", name: HOSPITAL.name, url: SITE_URL },
@@ -66,12 +70,13 @@ function doctorsListJsonLd() {
   };
 }
 
-export default function DoctorsPage() {
+export default async function DoctorsPage() {
+  const doctors = await listPublicDoctors();
   return (
     <div className="bg-[var(--bone)] pb-4">
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(doctorsListJsonLd()) }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(doctorsListJsonLd(doctors)) }}
       />
       <SectionHeading
         index="Our doctors"
@@ -79,7 +84,7 @@ export default function DoctorsPage() {
         subtitle="Open a profile to see when a consultant actually sits, what they treat and what the visit costs - then book the slot that suits you."
         meta={
           <>
-            <span className="chip chip-dark">{DOCTORS.length} consultants</span>
+            <span className="chip chip-dark">{doctors.length} consultants</span>
             <span className="chip chip-dark">{DEPARTMENTS.length} departments</span>
             <span className="chip chip-dark">Fees published</span>
           </>
@@ -94,7 +99,7 @@ export default function DoctorsPage() {
             </div>
           }
         >
-          <DoctorsDirectory doctors={DOCTORS} />
+          <DoctorsDirectory doctors={doctors} />
         </Suspense>
       </div>
     </div>

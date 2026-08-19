@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { PhoneCall, Check, ArrowRight, Loader2 } from "@/components/ui/hugeicons";
-import { DOCTORS } from "@/lib/data";
+import type { Doctor } from "@/lib/data";
 import { api, ApiClientError } from "@/lib/api-client";
 
 /**
@@ -57,7 +57,16 @@ interface Raised {
   preferredDate: string | null;
 }
 
-export function RequestCallbackForm({ initialDoctorId = "" }: { initialDoctorId?: string }) {
+/**
+ * `doctors` carries the ERP's cuids, and that is the whole point of the prop.
+ *
+ * This select used to be built from a hand-written marketing roster whose `id`
+ * was the doctor's NAME. It posted that name as `doctorId`, the server looked
+ * it up against Doctor.id, found nothing, and answered "That doctor isn't
+ * available. Pick another, or leave it blank." Every request naming a doctor
+ * failed, and the desk never learned there had been one.
+ */
+export function RequestCallbackForm({ doctors, initialDoctorId = "" }: { doctors: Doctor[]; initialDoctorId?: string }) {
   const [step, setStep] = useState<"details" | "code" | "done">("details");
 
   const [name, setName] = useState("");
@@ -220,7 +229,7 @@ export function RequestCallbackForm({ initialDoctorId = "" }: { initialDoctorId?
             {/* "Any" first and selected by default - forcing a choice makes
                 people pick the wrong speciality, and the desk then re-routes. */}
             <option value="">Any available doctor</option>
-            {DOCTORS.map((d) => (
+            {doctors.map((d) => (
               <option key={d.id} value={d.id}>{d.name} · {d.specialization}</option>
             ))}
           </select>

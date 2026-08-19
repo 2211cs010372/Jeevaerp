@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next";
-import { DOCTORS } from "@/lib/data";
+import { listPublicDoctors } from "@/server/services/public-doctors.service";
 import { departmentSlugs } from "@/lib/care";
 import { SITE_URL } from "@/lib/site";
 import { doctorHref } from "@/lib/doctors";
@@ -9,7 +9,8 @@ import { doctorHref } from "@/lib/doctors";
  * discoverable. The staff portals are deliberately absent - they're excluded
  * in robots.ts too, and nothing behind a login belongs in a sitemap.
  */
-export default function sitemap(): MetadataRoute.Sitemap {
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const doctors = await listPublicDoctors();
   const now = new Date();
 
   const staticPages = [
@@ -32,7 +33,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: "monthly" as const,
       priority: 0.8,
     })),
-    ...DOCTORS.map((d) => ({
+    ...doctors.map((d) => ({
       url: `${SITE_URL}${doctorHref(d)}`,
       lastModified: now,
       changeFrequency: "monthly" as const,

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { CarePage } from "@/components/marketing/care-page";
 import { departmentBySlug, departmentSlugs, careAreaFor, doctorsIn } from "@/lib/care";
+import { listPublicDoctors } from "@/server/services/public-doctors.service";
 import { HOSPITAL } from "@/lib/data";
 
 /** Eight departments, known at build time - every page is static HTML. */
@@ -35,7 +36,7 @@ export default async function DepartmentPage({ params }: { params: Promise<{ slu
     <CarePage
       dept={dept}
       area={careAreaFor(dept.name)}
-      doctors={doctorsIn(dept.name)}
+      doctors={doctorsIn(await listPublicDoctors(), dept.name)}
     />
   );
 }

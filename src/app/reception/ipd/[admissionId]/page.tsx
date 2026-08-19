@@ -782,7 +782,7 @@ export default function AdmissionSheetPage() {
         </div>
 
         {/* TOTAL */}
-        <aside data-rise className="surface h-fit overflow-hidden lg:sticky lg:top-4">
+        <aside data-rise className="surface h-fit overflow-hidden lg:sticky lg:top-20">
           <div className="border-b border-[var(--p-border)] px-5 py-3.5">
             <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">{discharged ? "Final bill" : "Running total"}</h3>
           </div>

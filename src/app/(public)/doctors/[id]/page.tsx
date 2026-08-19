@@ -1,19 +1,22 @@
 import type { Metadata } from "next";
 import { notFound, permanentRedirect } from "next/navigation";
-import { DOCTORS, HOSPITAL } from "@/lib/data";
+import { HOSPITAL } from "@/lib/data";
+import { listPublicDoctors } from "@/server/services/public-doctors.service";
 import { DoctorProfile } from "@/components/marketing/doctor-profile";
 import { SITE_URL, abs } from "@/lib/site";
 import { doctorByParam, doctorHref, doctorSlug, isCanonicalParam } from "@/lib/doctors";
 
-/** The whole panel is known at build time, so every profile is static HTML.
+/** The panel is read once at build time, so every profile is static HTML and a
+ *  patient's first paint costs no database round trip. A consultant added at
+ *  the reception desk appears on the next deploy, or on revalidation.
  *  The param is the NAME SLUG, never the raw id - see lib/doctors.ts. */
-export function generateStaticParams() {
-  return DOCTORS.map((d) => ({ id: doctorSlug(d) }));
+export async function generateStaticParams() {
+  return (await listPublicDoctors()).map((d) => ({ id: doctorSlug(d) }));
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
-  const doctor = doctorByParam(id);
+  const doctor = doctorByParam(await listPublicDoctors(), id);
   if (!doctor) return { title: "Doctor not found" };
   // Always the canonical slug, never whatever spelling the visitor arrived on -
   // two URLs for one consultant is two half-ranked pages instead of one.
@@ -34,6 +37,9 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
       ...doctor.treats.slice(0, 8).map((t) => `${t} treatment Hanamkonda`),
     ],
     alternates: { canonical: href },
+    // No portrait: the hospital has not photographed its panel, and the stock
+    // faces that used to fill this slot were shown under real doctors' names.
+    // The site mark is honest and still renders a card in a WhatsApp preview.
     openGraph: {
       type: "profile",
       title,
@@ -41,15 +47,16 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
       url: href,
       siteName: HOSPITAL.name,
       locale: "en_IN",
-      images: [{ url: doctor.image, alt: `${doctor.name}, ${doctor.specialization}` }],
+      images: [{ url: "/images/jeeva-logo.png", alt: `${doctor.name}, ${doctor.specialization}` }],
     },
-    twitter: { card: "summary_large_image", title, description, images: [doctor.image] },
+    twitter: { card: "summary", title, description },
   };
 }
 
 export default async function DoctorPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const doctor = doctorByParam(id);
+  const panel = await listPublicDoctors();
+  const doctor = doctorByParam(panel, id);
   if (!doctor) notFound();
 
   // A link with the raw id or the un-slugged name in it - an old bookmark, a
@@ -59,8 +66,8 @@ export default async function DoctorPage({ params }: { params: Promise<{ id: str
   // Jeeva currently runs one consultant per department, so a strict
   // same-department list would always be empty and the section would never
   // render. Fall back to the rest of the panel, relabelled honestly.
-  const sameDept = DOCTORS.filter((d) => d.department === doctor.department && d.id !== doctor.id);
-  const peers = (sameDept.length ? sameDept : DOCTORS.filter((d) => d.id !== doctor.id)).slice(0, 4);
+  const sameDept = panel.filter((d) => d.department === doctor.department && d.id !== doctor.id);
+  const peers = (sameDept.length ? sameDept : panel.filter((d) => d.id !== doctor.id)).slice(0, 4);
 
   return (
     <>
@@ -79,7 +86,6 @@ export default async function DoctorPage({ params }: { params: Promise<{ id: str
             jobTitle: doctor.designation,
             medicalSpecialty: doctor.specialization,
             description: doctor.bio,
-            image: abs(doctor.image),
             url: abs(doctorHref(doctor)),
             knowsLanguage: doctor.languages.split(",").map((l) => l.trim()),
             // Degrees the hospital holds on record, and nothing else - the

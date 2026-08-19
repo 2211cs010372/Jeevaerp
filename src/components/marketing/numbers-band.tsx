@@ -1,7 +1,8 @@
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowUpRight } from "@/components/ui/hugeicons";
-import { WARDS, DEPARTMENTS, DOCTORS, HOSPITAL } from "@/lib/data";
+import { WARDS, DEPARTMENTS, HOSPITAL } from "@/lib/data";
+import { listPublicDoctors } from "@/server/services/public-doctors.service";
 import { Chapter } from "./section";
 import { Counter, Parallax, Reveal, Stagger } from "./motion";
 
@@ -41,7 +42,8 @@ import { Counter, Parallax, Reveal, Stagger } from "./motion";
 const CARD =
   "flex min-h-[9.5rem] flex-col justify-between gap-7 rounded-[10px] bg-[var(--paper)] p-5 sm:p-6";
 
-export function NumbersBand() {
+export async function NumbersBand() {
+  const consultants = (await listPublicDoctors()).length;
   const beds = WARDS.reduce((s, w) => s + w.beds, 0);
   const icu = WARDS.find((w) => w.name === "ICU")?.beds ?? 0;
 
@@ -49,7 +51,7 @@ export function NumbersBand() {
     { value: beds, suffix: "", label: "Inpatient beds", sub: "Across four ward classes" },
     { value: icu, suffix: "", label: "ICU units", sub: "Continuously monitored" },
     { value: DEPARTMENTS.length, suffix: "", label: "Specialties", sub: "Consulting daily" },
-    { value: DOCTORS.length, suffix: "+", label: "Consultants", sub: "Named, with published fees" },
+    { value: consultants, suffix: "+", label: "Consultants", sub: "Named, with published fees" },
   ];
 
   return (

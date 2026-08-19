@@ -1,4 +1,4 @@
-import { CARE_AREAS, DEPARTMENTS, DOCTORS, type CareArea, type Department, type Doctor } from "./data";
+import { CARE_AREAS, DEPARTMENTS, type CareArea, type Department, type Doctor } from "./data";
 
 /**
  * Care-area routing.
@@ -25,8 +25,8 @@ export function careAreaFor(departmentName: string): CareArea | undefined {
   return CARE_AREAS.find((a) => a.departments.includes(departmentName));
 }
 
-export function doctorsIn(departmentName: string): Doctor[] {
-  return DOCTORS.filter((d) => d.department === departmentName);
+export function doctorsIn(doctors: Doctor[], departmentName: string): Doctor[] {
+  return doctors.filter((d) => d.department === departmentName);
 }
 
 /** Where a navbar service item should land. */

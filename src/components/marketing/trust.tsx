@@ -3,7 +3,8 @@ import Link from "next/link";
 import { ArrowUpRight } from "@/components/ui/hugeicons";
 import { SmartImage } from "@/components/ui/smart-image";
 import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
-import { DEPARTMENTS, DOCTORS, HOSPITAL } from "@/lib/data";
+import { DEPARTMENTS, HOSPITAL } from "@/lib/data";
+import { listPublicDoctors } from "@/server/services/public-doctors.service";
 import { Chapter, ChapterHead } from "./section";
 import { Counter, Reveal, Stagger } from "./motion";
 
@@ -40,9 +41,10 @@ import { Counter, Reveal, Stagger } from "./motion";
  * would only have been a second place to change the same thing.
  */
 
-export function Trust() {
-  const faces = DOCTORS.slice(0, 4);
-  const rest = Math.max(0, DOCTORS.length - faces.length);
+export async function Trust() {
+  const panel = await listPublicDoctors();
+  const faces = panel.slice(0, 4);
+  const rest = Math.max(0, panel.length - faces.length);
 
   return (
     <Chapter id="why" tone="light">
@@ -90,7 +92,6 @@ export function Trust() {
                   <DoctorAvatar
                     key={d.id}
                     name={d.name}
-                    image={d.image}
                     className="h-9 w-9 rounded-full border-2 border-[var(--paper)] text-[9px]"
                   />
                 ))}
@@ -115,7 +116,7 @@ export function Trust() {
 
         <Stat
           tile
-          value={DOCTORS.length}
+          value={panel.length}
           suffix="+"
           label="Consultants on the panel"
           title="You know who you are seeing before you book."

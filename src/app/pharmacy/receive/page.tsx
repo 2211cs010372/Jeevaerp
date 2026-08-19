@@ -39,8 +39,27 @@ interface GrnDetail extends Grn {
     id: string; name: string; unit: string; batchNo: string; expiryDate: string;
     qty: number; freeQty: number; unitCost: string; landedCost: string; mrp: string;
     lineValue: string; gstRatePct: string; lineTax: string; marginPct: number | null;
+    pack: string | null; packSize: number;
+    /** Units this line actually put on the shelf, and what is left of them. */
+    unitsReceived: number | null; onShelf: number | null;
+    /** Billed already - the pack size may not move under issued invoices. */
+    billed: boolean;
+    /** Something else references this batch, so batch no. and expiry are pinned. */
+    identityPinned: boolean;
   }[];
 }
+
+/** A pending correction to one received line. Blank means "leave it alone". */
+interface GrnEdit {
+  batchNo?: string; expiryDate?: string; qty?: string; freeQty?: string;
+  unitCost?: string; mrp?: string; pack?: string;
+}
+
+/** Compact input for the correction grid. `fld` is sized for a form column and
+ *  would push the ten-column receipt table into a horizontal scroll. */
+const gfld =
+  "rounded-md border border-[var(--p-border)] bg-white px-2 py-1 text-[12.5px] text-[var(--p-ink)] "
+  + "outline-none focus:border-[var(--p-blue)] disabled:cursor-not-allowed disabled:bg-[var(--p-bg)] disabled:text-[var(--p-muted)]";
 
 /** One row on the delivery being booked in. */
 interface Row {
@@ -95,6 +114,77 @@ function ReceiveInner() {
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [view, setView] = useState<GrnDetail | null>(null);
+  // Correcting a posted receipt. Kept out of `view` so cancelling is a discard,
+  // not an undo - nothing is written until Save.
+  const [editing, setEditing] = useState(false);
+  const [edits, setEdits] = useState<Record<string, GrnEdit>>({});
+  const [hdr, setHdr] = useState({ invoiceNo: "", invoiceDate: "", invoiceAmount: "", reason: "" });
+  const [saving, setSaving] = useState(false);
+
+  const setEdit = (id: string, patch: GrnEdit) =>
+    setEdits((m) => ({ ...m, [id]: { ...m[id], ...patch } }));
+
+  function startCorrection() {
+    if (!view) return;
+    setEdits({});
+    setHdr({
+      invoiceNo: view.invoiceNo ?? "",
+      invoiceDate: view.invoiceDate ?? "",
+      invoiceAmount: view.invoiceAmount ?? "",
+      reason: "",
+    });
+    setEditing(true);
+  }
+
+  /**
+   * Send only what was actually touched.
+   *
+   * Posting every field back would rewrite lines the pharmacist never looked
+   * at - and on this table that means re-deriving a pack size and moving the
+   * shelf for a row nobody questioned. An untouched field is absent from the
+   * payload, and the server leaves it alone.
+   */
+  async function saveCorrection() {
+    if (!view || !hdr.reason.trim()) return;
+    const items = Object.entries(edits)
+      .map(([id, e]) => {
+        const line: Record<string, unknown> = { id };
+        if (e.batchNo !== undefined && e.batchNo.trim()) line.batchNo = e.batchNo.trim();
+        if (e.expiryDate) line.expiryDate = e.expiryDate;
+        if (e.qty !== undefined && e.qty !== "") line.qty = Number(e.qty);
+        if (e.freeQty !== undefined && e.freeQty !== "") line.freeQty = Number(e.freeQty);
+        if (e.unitCost !== undefined && e.unitCost !== "") line.unitCost = Number(e.unitCost);
+        if (e.mrp !== undefined && e.mrp !== "") line.mrp = Number(e.mrp);
+        if (e.pack !== undefined) line.pack = e.pack.trim();
+        return line;
+      })
+      .filter((l) => Object.keys(l).length > 1);
+
+    if (!items.length) { setEditing(false); return; }
+
+    setSaving(true); setError(null);
+    try {
+      const r = await api.patch<{ grnNumber: string; changed: string[]; receipt: GrnDetail }>(
+        `/pharmacy/receipts/${view.id}`,
+        {
+          reason: hdr.reason.trim(),
+          invoiceNo: hdr.invoiceNo.trim() || undefined,
+          invoiceDate: hdr.invoiceDate || undefined,
+          invoiceAmount: hdr.invoiceAmount ? Number(hdr.invoiceAmount) : undefined,
+          items,
+        },
+      );
+      setView(r.receipt);
+      setEditing(false);
+      setEdits({});
+      setFlash(r.changed.length ? `${r.grnNumber} corrected. ${r.changed.join("; ")}.` : `${r.grnNumber} updated.`);
+      await load();
+    } catch (e) {
+      setError(e instanceof ApiClientError ? e.message : "Could not save the correction.");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   // ── The delivery being booked ──────────────────────────────────────────────
   const [open, setOpen] = useState(false);
@@ -424,7 +514,7 @@ function ReceiveInner() {
                       : <Tag tone="mute">due {dmy(p.expectedDate)}</Tag>
                   )}
                   <button onClick={() => loadPo(p.id)}
-                    className="btn-primary ml-auto rounded-md px-3 py-1.5 text-[12px] font-semibold text-white">
+                    className="btn-primary ml-auto rounded-md px-3 py-2 text-[12px] font-semibold text-white">
                     Receive
                   </button>
                 </div>
@@ -812,8 +902,22 @@ function ReceiveInner() {
           title={view.grnNumber}
           sub={`${view.supplier.name} · received ${dmyFromISO(view.createdAt)} by ${view.receivedByName}`}
           wide
-          onClose={() => setView(null)}
-          footer={<GhostButton onClick={() => setView(null)}>Close</GhostButton>}
+          onClose={() => { setView(null); setEditing(false); }}
+          footer={
+            editing ? (
+              <>
+                <GhostButton onClick={() => { setEditing(false); setEdits({}); }} disabled={saving}>Cancel</GhostButton>
+                <PrimaryButton onClick={saveCorrection} disabled={saving || !hdr.reason.trim()}>
+                  {saving ? <><Spinner /> Saving…</> : <><Icon name="check" size={14} /> Save the correction</>}
+                </PrimaryButton>
+              </>
+            ) : (
+              <>
+                <GhostButton onClick={startCorrection}><Icon name="file" size={14} /> Correct this receipt</GhostButton>
+                <GhostButton onClick={() => setView(null)}>Close</GhostButton>
+              </>
+            )
+          }
         >
           <div className="space-y-5 p-6">
             <div className="grid gap-3 sm:grid-cols-3">
@@ -847,30 +951,132 @@ function ReceiveInner() {
               <table className="ptable">
                 <thead>
                   <tr>
-                    <th>Medicine</th><th>Batch</th><th>Expiry</th>
+                    <th>Medicine</th><th>Batch</th><th>Expiry</th><th>Pack</th>
                     <th className="r">Qty</th><th className="r">Free</th>
-                    <th className="r">Rate</th><th className="r">Cost/unit</th><th className="r">MRP</th><th className="r">Margin</th>
+                    <th className="r">Rate</th><th className="r">Cost/unit</th><th className="r">MRP</th>
+                    {editing ? <th className="r">On the shelf</th> : <th className="r">Margin</th>}
                   </tr>
                 </thead>
                 <tbody>
-                  {view.items.map((i) => (
-                    <tr key={i.id}>
-                      <td className="font-semibold">{i.name}</td>
-                      <td className="num">{i.batchNo}</td>
-                      <td className="num">{dmy(i.expiryDate)}</td>
-                      <td className="r num">{i.qty}</td>
-                      <td className="r num text-[var(--p-cyan-deep)]">{i.freeQty || "-"}</td>
-                      <td className="r num">{inr(i.unitCost, 2)}</td>
-                      <td className="r num font-semibold">{inr(i.landedCost, 2)}</td>
-                      <td className="r num">{inr(i.mrp, 2)}</td>
-                      <td className={`r num font-semibold ${(i.marginPct ?? 0) > 0 ? "text-[var(--p-cyan-deep)]" : "text-[var(--p-rose)]"}`}>
-                        {i.marginPct === null ? "-" : `${i.marginPct}%`}
-                      </td>
-                    </tr>
-                  ))}
+                  {view.items.map((i) => {
+                    const e = edits[i.id] ?? {};
+                    const val = <K extends keyof GrnEdit>(k: K, fallback: string) =>
+                      (e[k] as string | undefined) ?? fallback;
+                    // What this line would put on the shelf if saved. The number
+                    // the pack bug hid: 12 x 200ML reading as 2,400.
+                    const size = e.pack !== undefined ? parsePack(e.pack).size : i.packSize;
+                    const wouldBe = packsToUnits(
+                      (Number(val("qty", String(i.qty))) || 0) + (Number(val("freeQty", String(i.freeQty))) || 0),
+                      size,
+                    );
+                    const moved = i.unitsReceived !== null && wouldBe !== i.unitsReceived;
+
+                    if (!editing) {
+                      return (
+                        <tr key={i.id}>
+                          <td className="font-semibold">{i.name}</td>
+                          <td className="num">{i.batchNo}</td>
+                          <td className="num">{dmy(i.expiryDate)}</td>
+                          <td className="num">{i.pack ?? "-"}{i.packSize > 1 && <span className="text-[var(--p-muted)]"> ×{i.packSize}</span>}</td>
+                          <td className="r num">{i.qty}</td>
+                          <td className="r num text-[var(--p-cyan-deep)]">{i.freeQty || "-"}</td>
+                          <td className="r num">{inr(i.unitCost, 2)}</td>
+                          <td className="r num font-semibold">{inr(i.landedCost, 2)}</td>
+                          <td className="r num">{inr(i.mrp, 2)}</td>
+                          <td className={`r num font-semibold ${(i.marginPct ?? 0) > 0 ? "text-[var(--p-cyan-deep)]" : "text-[var(--p-rose)]"}`}>
+                            {i.marginPct === null ? "-" : `${i.marginPct}%`}
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    return (
+                      <tr key={i.id}>
+                        <td className="font-semibold">
+                          {i.name}
+                          {i.billed && (
+                            <span className="ml-1.5 rounded bg-[var(--p-amber-soft)] px-1.5 py-0.5 text-[9.5px] font-semibold uppercase text-[#8a6414]"
+                              title="Already billed from this batch - the pack size is fixed, because changing it would re-price invoices patients are holding.">
+                              billed
+                            </span>
+                          )}
+                        </td>
+                        <td>
+                          <input className={`${gfld} w-[104px]`} value={val("batchNo", i.batchNo)} disabled={i.identityPinned}
+                            title={i.identityPinned ? "This batch has other history - a second delivery, a sale or a return. Reverse the line and receive it again." : undefined}
+                            onChange={(ev) => setEdit(i.id, { batchNo: ev.target.value })} />
+                        </td>
+                        <td>
+                          <input type="date" className={`${gfld} w-[132px]`} value={val("expiryDate", i.expiryDate)} disabled={i.identityPinned}
+                            onChange={(ev) => setEdit(i.id, { expiryDate: ev.target.value })} />
+                        </td>
+                        <td>
+                          <input className={`${gfld} w-[74px]`} value={val("pack", i.pack ?? "")} disabled={i.billed}
+                            placeholder="15T"
+                            title={i.billed ? "Already billed - the pack size cannot move under issued invoices." : "15T · 200ML · 10`S. A volume is one container; tablets multiply."}
+                            onChange={(ev) => setEdit(i.id, { pack: ev.target.value })} />
+                        </td>
+                        <td className="r">
+                          <input className={`${gfld} w-[62px] text-right`} inputMode="numeric" value={val("qty", String(i.qty))}
+                            onChange={(ev) => setEdit(i.id, { qty: ev.target.value })} />
+                        </td>
+                        <td className="r">
+                          <input className={`${gfld} w-[56px] text-right`} inputMode="numeric" value={val("freeQty", String(i.freeQty))}
+                            onChange={(ev) => setEdit(i.id, { freeQty: ev.target.value })} />
+                        </td>
+                        <td className="r">
+                          <input className={`${gfld} w-[76px] text-right`} inputMode="decimal" value={val("unitCost", i.unitCost)}
+                            onChange={(ev) => setEdit(i.id, { unitCost: ev.target.value })} />
+                        </td>
+                        <td className="r num text-[var(--p-muted)]">{inr(i.landedCost, 2)}</td>
+                        <td className="r">
+                          <input className={`${gfld} w-[76px] text-right`} inputMode="decimal" value={val("mrp", i.mrp)}
+                            onChange={(ev) => setEdit(i.id, { mrp: ev.target.value })} />
+                        </td>
+                        <td className="r num">
+                          <span className={moved ? "font-bold text-[var(--p-rose)]" : "text-[var(--p-muted)]"}>
+                            {wouldBe}
+                          </span>
+                          {moved && i.unitsReceived !== null && (
+                            <span className="block text-[10px] text-[var(--p-muted)]">was {i.unitsReceived}</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
+
+            {editing && (
+              <div className="space-y-3 rounded-xl border border-[var(--p-border)] bg-[var(--p-bg)] p-4">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div>
+                    <div className="lbl">Their invoice no.</div>
+                    <input className={`${gfld} mt-1.5 w-full`} value={hdr.invoiceNo} onChange={(ev) => setHdr({ ...hdr, invoiceNo: ev.target.value })} />
+                  </div>
+                  <div>
+                    <div className="lbl">Invoice date</div>
+                    <input type="date" className={`${gfld} mt-1.5 w-full`} value={hdr.invoiceDate} onChange={(ev) => setHdr({ ...hdr, invoiceDate: ev.target.value })} />
+                  </div>
+                  <div>
+                    <div className="lbl">Invoice amount</div>
+                    <input className={`${gfld} mt-1.5 w-full`} inputMode="decimal" value={hdr.invoiceAmount} onChange={(ev) => setHdr({ ...hdr, invoiceAmount: ev.target.value })} />
+                  </div>
+                </div>
+                <div>
+                  <div className="lbl">What was wrong?</div>
+                  <input className={`${gfld} mt-1.5 w-full`} value={hdr.reason} autoFocus
+                    placeholder="e.g. Read the quantity off the wrong row - invoice says 21, not 12"
+                    onChange={(ev) => setHdr({ ...hdr, reason: ev.target.value })} />
+                  <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--p-muted)]">
+                    This goes on the stock ledger beside the original receipt. The receipt is not
+                    rewritten - the difference is posted as its own correction, so a year from now
+                    the batch still shows what arrived, what changed and why.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {view.notes && (
               <p className="rounded-lg bg-[var(--p-bg)] px-3 py-2.5 text-[12.5px] leading-relaxed text-[var(--p-text)]">{view.notes}</p>

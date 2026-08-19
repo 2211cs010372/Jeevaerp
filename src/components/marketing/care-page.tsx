@@ -129,7 +129,6 @@ export function CarePage({
               >
                 <DoctorAvatar
                   name={doc.name}
-                  image={doc.image}
                   className="h-[112px] w-[112px] shrink-0 rounded-[var(--r-md)] text-[24px]"
                 />
 

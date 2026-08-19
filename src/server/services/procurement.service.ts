@@ -1153,6 +1153,18 @@ export async function goodsReceiptDetail(id: string) {
           gstRatePct: true,
           medicine: { select: { id: true, name: true, unit: true } },
           batchId: true,
+          // The correction screen needs to know what the shelf currently holds
+          // and what it is allowed to change: a pack size cannot move once the
+          // batch has been billed, and an identity cannot move once anything
+          // else references it. Answering that here means the screen can grey
+          // the field out rather than letting a pharmacist type a correction
+          // the server is going to reject.
+          batch: {
+            select: {
+              id: true, quantity: true, packSize: true, pack: true,
+              _count: { select: { invoiceItems: true, grnItems: true, returnItems: true } },
+            },
+          },
         },
       },
     },
@@ -1194,6 +1206,18 @@ export async function goodsReceiptDetail(id: string) {
         gstRatePct: i.gstRatePct.toString(),
         lineTax: dec(lineTax(i.qty, cost, Number(i.gstRatePct.toString()))),
         marginPct: mrp > 0 ? Math.round(((mrp - landed) / mrp) * 1000) / 10 : null,
+        pack: i.batch?.pack ?? null,
+        packSize: i.batch?.packSize ?? 1,
+        onShelf: i.batch?.quantity ?? null,
+        /** Units this line put on the shelf - what a correction moves. */
+        unitsReceived: i.batch ? packsToUnits(i.qty + i.freeQty, i.batch.packSize) : null,
+        /** Billed already: the pack size is load-bearing for issued invoices. */
+        billed: (i.batch?._count.invoiceItems ?? 0) > 0,
+        /** Anything else references this batch, so its identity is pinned. */
+        identityPinned:
+          (i.batch?._count.grnItems ?? 0) > 1 ||
+          (i.batch?._count.invoiceItems ?? 0) > 0 ||
+          (i.batch?._count.returnItems ?? 0) > 0,
       };
     }),
   };
@@ -1440,4 +1464,247 @@ export async function procurementStats(): Promise<{
     suppliers,
     invoiceMismatches,
   };
+}
+
+// ===========================================================================
+// Correcting a receipt already posted
+// ===========================================================================
+
+export interface GrnCorrectionLine {
+  id: string;
+  batchNo?: string;
+  expiryDate?: string;
+  qty?: number;
+  freeQty?: number;
+  unitCost?: number;
+  mrp?: number;
+  pack?: string;
+  packSize?: number;
+}
+
+/**
+ * CROSS-CHECK A DELIVERY AGAINST THE PAPER BILL, THEN FIX WHAT WAS TYPED WRONG.
+ *
+ * Receiving happens with a delivery man waiting and a phone ringing. The
+ * quantity comes off the wrong row of a fifteen-line invoice; the free-goods
+ * column is missed; a pack label is read as "157" instead of "15T". None of
+ * these are noticed at the counter - they are noticed an hour later with the
+ * invoice flat on the desk. Until now the only repair was an adjustment on the
+ * stock page, which moved the shelf and left the receipt still claiming
+ * something else. The GRN and the batch then disagreed permanently, and the GRN
+ * is the document the supplier gets paid against.
+ *
+ * So the correction moves both, or neither.
+ *
+ * WHAT IT REFUSES, AND WHY EACH REFUSAL IS THE POINT:
+ *
+ *   - A correction that would push the shelf below zero. The stock has gone
+ *     somewhere; saying less arrived does not bring it back.
+ *   - A pack-size change on a batch that has already been billed. Those invoice
+ *     lines priced their quantity against the old pack size, and re-basing it
+ *     underneath them makes issued bills disagree with the shelf. A bill a
+ *     family is holding is not something this may quietly contradict.
+ *   - A batch number or expiry change on a batch with other history - a second
+ *     delivery into it, a sale, a return. That is not a correction; it is
+ *     moving an identity under rows that already reference it.
+ *
+ * The PURCHASE ledger row is never rewritten. The difference is posted as an
+ * ADJUSTMENT naming the GRN and carrying the pharmacist's reason, so a year
+ * later the batch still shows what arrived, what was corrected, and why.
+ */
+export async function correctGoodsReceipt(
+  actor: AuthUser,
+  grnId: string,
+  input: {
+    invoiceNo?: string;
+    invoiceDate?: string;
+    invoiceAmount?: number;
+    notes?: string;
+    reason: string;
+    items: GrnCorrectionLine[];
+  },
+  ctx: { ipAddress?: string; userAgent?: string },
+): Promise<{ grnNumber: string; changed: string[] }> {
+  const changed: string[] = [];
+
+  const grnNumber = await prisma.$transaction(async (tx) => {
+    const grn = await tx.goodsReceipt.findUnique({
+      where: { id: grnId },
+      select: {
+        id: true, grnNumber: true, supplierId: true,
+        items: {
+          select: {
+            id: true, batchId: true, batchNo: true, expiryDate: true, qty: true, freeQty: true,
+            unitCost: true, mrp: true, gstRatePct: true,
+            medicine: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+    if (!grn) throw new ApiError(404, "Goods receipt not found");
+
+    for (const edit of input.items) {
+      const line = grn.items.find((i) => i.id === edit.id);
+      if (!line) throw new ApiError(404, `That line is not on ${grn.grnNumber}`);
+
+      const batch = line.batchId
+        ? await tx.stockBatch.findUnique({
+            where: { id: line.batchId },
+            select: {
+              id: true, quantity: true, packSize: true, batchNo: true, expiryDate: true,
+              _count: { select: { invoiceItems: true, grnItems: true, returnItems: true } },
+            },
+          })
+        : null;
+
+      const oldPackSize = batch?.packSize ?? 1;
+      const newPackSize = Math.max(1, Math.floor(
+        edit.packSize ?? (edit.pack !== undefined ? parsePack(edit.pack).size : oldPackSize),
+      ));
+      const newQty = edit.qty ?? line.qty;
+      const newFree = edit.freeQty ?? line.freeQty;
+      const newCost = edit.unitCost ?? Number(line.unitCost.toString());
+      const newMrp = edit.mrp ?? Number(line.mrp.toString());
+
+      const oldUnits = packsToUnits(line.qty + line.freeQty, oldPackSize);
+      const newUnits = packsToUnits(newQty + newFree, newPackSize);
+      const delta = newUnits - oldUnits;
+
+      if (batch) {
+        if (newPackSize !== oldPackSize && batch._count.invoiceItems > 0) {
+          throw new ApiError(
+            409,
+            `${line.medicine.name} has already been billed from batch ${batch.batchNo}. Changing the pack size now would re-price those bills. Correct the bills first, or adjust the shelf on the stock page.`,
+          );
+        }
+
+        const wantsIdentityChange =
+          (edit.batchNo !== undefined && edit.batchNo.trim() !== batch.batchNo) ||
+          (edit.expiryDate !== undefined && iso(asDate(edit.expiryDate)) !== iso(batch.expiryDate));
+
+        if (wantsIdentityChange) {
+          const soleSource =
+            batch._count.grnItems <= 1 && batch._count.invoiceItems === 0 && batch._count.returnItems === 0;
+          if (!soleSource) {
+            throw new ApiError(
+              409,
+              `Batch ${batch.batchNo} of ${line.medicine.name} has other history - another delivery, a sale or a return references it. A batch number or expiry cannot be moved underneath those. Reverse this line and receive it again.`,
+            );
+          }
+          if (edit.expiryDate !== undefined) {
+            // The rule the receive path enforces: one batch number, one expiry.
+            const elsewhere = await tx.stockBatch.findFirst({
+              where: {
+                medicineId: line.medicine.id,
+                batchNo: edit.batchNo?.trim() ?? batch.batchNo,
+                id: { not: batch.id },
+              },
+              select: { expiryDate: true, supplier: { select: { name: true } } },
+            });
+            if (elsewhere && iso(elsewhere.expiryDate) !== iso(asDate(edit.expiryDate))) {
+              throw new ApiError(
+                400,
+                `That batch number is already on the shelf from ${elsewhere.supplier.name} expiring ${iso(elsewhere.expiryDate)}. Same batch number, two expiry dates - check the strip.`,
+              );
+            }
+          }
+        }
+
+        const nextQuantity = batch.quantity + delta;
+        if (nextQuantity < 0) {
+          throw new ApiError(
+            409,
+            `${line.medicine.name} would go to ${nextQuantity} on the shelf - ${Math.abs(delta)} fewer units than there are. The stock has already moved, so adjust it on the stock page and say where it went.`,
+          );
+        }
+
+        await tx.stockBatch.update({
+          where: { id: batch.id },
+          data: {
+            quantity: nextQuantity,
+            packSize: newPackSize,
+            freeQty: packsToUnits(newFree, newPackSize),
+            mrp: dec(newMrp),
+            purchasePrice: dec(effectiveUnitCost(newQty, newFree, newCost)),
+            ...(edit.pack !== undefined ? { pack: edit.pack.trim() || null } : {}),
+            ...(edit.batchNo !== undefined ? { batchNo: edit.batchNo.trim() } : {}),
+            ...(edit.expiryDate !== undefined ? { expiryDate: asDate(edit.expiryDate) } : {}),
+          },
+        });
+
+        // The shelf moved, so the ledger says so - in its own row, beside the
+        // receipt it corrects, never by editing that receipt.
+        if (delta !== 0) {
+          await tx.stockTransaction.create({
+            data: {
+              batchId: batch.id,
+              type: "ADJUSTMENT",
+              qty: delta,
+              refId: grn.grnNumber,
+              reason: `${grn.grnNumber} corrected: ${oldUnits} to ${newUnits} units (${line.qty}+${line.freeQty} x ${oldPackSize} became ${newQty}+${newFree} x ${newPackSize}). ${input.reason.trim()}`,
+              performedById: actor.id,
+            },
+          });
+        }
+      }
+
+      await tx.goodsReceiptItem.update({
+        where: { id: line.id },
+        data: {
+          qty: newQty,
+          freeQty: newFree,
+          unitCost: dec(newCost),
+          mrp: dec(newMrp),
+          ...(edit.batchNo !== undefined ? { batchNo: edit.batchNo.trim() } : {}),
+          ...(edit.expiryDate !== undefined ? { expiryDate: asDate(edit.expiryDate) } : {}),
+        },
+      });
+
+      if (delta !== 0
+        || newCost !== Number(line.unitCost.toString())
+        || newMrp !== Number(line.mrp.toString())) {
+        changed.push(
+          `${line.medicine.name}: ${line.qty}+${line.freeQty} to ${newQty}+${newFree}`
+          + (delta ? ` (${delta > 0 ? "+" : ""}${delta} on the shelf)` : ""),
+        );
+      }
+    }
+
+    // The receipt's totals are DERIVED, so they are recomputed from what the
+    // lines now say rather than patched. A total that drifts from its own lines
+    // is what makes a supplier's ledger unarguable.
+    const after = await tx.goodsReceiptItem.findMany({
+      where: { goodsReceiptId: grn.id },
+      select: { qty: true, unitCost: true, gstRatePct: true },
+    });
+    const value = after.reduce((s, i) => s + lineValue(i.qty, Number(i.unitCost.toString())), 0);
+    const tax = after.reduce(
+      (s, i) => s + lineTax(i.qty, Number(i.unitCost.toString()), Number(i.gstRatePct.toString())),
+      0,
+    );
+
+    await tx.goodsReceipt.update({
+      where: { id: grn.id },
+      data: {
+        receivedValue: dec(value),
+        receivedTax: dec(tax),
+        ...(input.invoiceNo !== undefined ? { invoiceNo: input.invoiceNo.trim() || null } : {}),
+        ...(input.invoiceDate !== undefined ? { invoiceDate: asDate(input.invoiceDate) } : {}),
+        ...(input.invoiceAmount !== undefined ? { invoiceAmount: dec(input.invoiceAmount) } : {}),
+        ...(input.notes !== undefined ? { notes: input.notes.trim() || null } : {}),
+      },
+    });
+
+    return grn.grnNumber;
+  });
+
+  await logAudit(actor, {
+    action: "GRN_CORRECTED",
+    targetTable: "GoodsReceipt",
+    targetId: grnId,
+    meta: { grnNumber, reason: input.reason.trim(), changed },
+    ...ctx,
+  });
+  await publishLive([TOPICS.PHARMACY, TOPICS.ADMIN], EVENTS.STOCK_CHANGED);
+  return { grnNumber, changed };
 }

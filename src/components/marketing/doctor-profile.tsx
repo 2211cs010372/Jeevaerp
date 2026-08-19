@@ -66,17 +66,47 @@ export function DoctorProfile({
     doctor.publications?.length,
   );
 
-  const sections: ProfileSection[] = [
-    { id: "about", label: "About the practice" },
-    { id: "training", label: "Education" },
-    { id: "conditions", label: "Conditions treated" },
-    { id: "procedures", label: "Procedures" },
-    { id: "when", label: "When to book" },
-    { id: "hours", label: "Consulting hours" },
-    { id: "visit", label: "Your visit" },
-    ...(hasCredentials ? [{ id: "credentials", label: "Credentials" }] : []),
-    { id: "faq", label: "Questions" },
-  ];
+  /**
+   * WHICH SECTIONS THIS PROFILE ACTUALLY HAS.
+   *
+   * The panel is read from the ERP, and the ERP does not hold a list of
+   * procedures or a paragraph of biography for anybody - the array that used to
+   * supply them was written by hand for consultants who never saw it. So a
+   * section appears when there is something real to put in it and is absent
+   * otherwise. A heading over an empty list reads as a page that failed to
+   * load, which is worse than a shorter page.
+   *
+   * The numbering has to be derived for the same reason. Written down, it would
+   * run (01) (03) (06) on a profile with three sections missing, and a reader
+   * counts those gaps as things the hospital is not telling them.
+   */
+  const shows = {
+    about: doctor.about.length > 0,
+    training: doctor.education.length > 0,
+    conditions: doctor.treats.length > 0,
+    procedures: doctor.procedures.length > 0,
+    when: doctor.seeIf.length > 0,
+    hours: true,
+    visit: doctor.prepare.length > 0,
+    credentials: hasCredentials,
+    faq: true,
+  };
+
+  const LABELS: Record<keyof typeof shows, string> = {
+    about: "About the practice",
+    training: "Education",
+    conditions: "Conditions treated",
+    procedures: "Procedures",
+    when: "When to book",
+    hours: "Consulting hours",
+    visit: "Your visit",
+    credentials: "Credentials",
+    faq: "Questions",
+  };
+
+  const visible = (Object.keys(LABELS) as (keyof typeof shows)[]).filter((k) => shows[k]);
+  const sections: ProfileSection[] = visible.map((id) => ({ id, label: LABELS[id] }));
+  const idx = (k: keyof typeof shows) => String(visible.indexOf(k) + 1).padStart(2, "0");
 
   return (
     <div className="bg-[var(--bone)]">
@@ -137,7 +167,6 @@ export function DoctorProfile({
           <div className="rounded-[16px] bg-[var(--paper)] p-2.5">
             <DoctorAvatar
               name={doctor.name}
-              image={doctor.image}
               eager
               className="aspect-[4/5] w-full rounded-[9px] text-[38px]"
             />
@@ -211,7 +240,8 @@ export function DoctorProfile({
 
           <div className="min-w-0 space-y-14 sm:space-y-[4.75rem]">
             {/* ── about ─────────────────────────────────────────────────── */}
-            <Part id="about" index="01" kicker="About the practice" title={`What ${surname} does`}>
+            {shows.about && (
+            <Part id="about" index={idx("about")} kicker="About the practice" title={`What ${surname} does`}>
               <div className="space-y-5">
                 {doctor.about.map((para, i) => (
                   <Reveal
@@ -230,6 +260,7 @@ export function DoctorProfile({
                 ))}
               </div>
 
+              {doctor.interests.length > 0 && (
               <Reveal className="mt-8 rounded-[16px] bg-[var(--paper)] p-6" y={18}>
                 <p className="mono text-[9.5px] uppercase tracking-[0.16em] text-[var(--muted)]">
                   Special interests
@@ -245,12 +276,15 @@ export function DoctorProfile({
                   ))}
                 </ul>
               </Reveal>
+              )}
             </Part>
+            )}
 
             {/* ── education ─────────────────────────────────────────────── */}
+            {shows.training && (
             <Part
               id="training"
-              index="02"
+              index={idx("training")}
               kicker="Education"
               title="Qualifications, in plain words"
             >
@@ -280,11 +314,13 @@ export function DoctorProfile({
                 </p>
               )}
             </Part>
+            )}
 
             {/* ── conditions ────────────────────────────────────────────── */}
+            {shows.conditions && (
             <Part
               id="conditions"
-              index="03"
+              index={idx("conditions")}
               kicker="Conditions treated"
               title="What this clinic sees"
             >
@@ -320,11 +356,13 @@ export function DoctorProfile({
                 </Reveal>
               )}
             </Part>
+            )}
 
             {/* ── procedures ────────────────────────────────────────────── */}
+            {shows.procedures && (
             <Part
               id="procedures"
-              index="04"
+              index={idx("procedures")}
               kicker="Procedures"
               title="Procedures and services"
             >
@@ -342,11 +380,13 @@ export function DoctorProfile({
                 ))}
               </Stagger>
             </Part>
+            )}
 
             {/* ── when to book ──────────────────────────────────────────── */}
+            {shows.when && (
             <Part
               id="when"
-              index="05"
+              index={idx("when")}
               kicker="When to book"
               title="Reasons to see this clinic"
             >
@@ -376,9 +416,10 @@ export function DoctorProfile({
                 </p>
               </Reveal>
             </Part>
+            )}
 
             {/* ── hours ─────────────────────────────────────────────────── */}
-            <Part id="hours" index="06" kicker="Consulting hours" title="When they sit">
+            <Part id="hours" index={idx("hours")} kicker="Consulting hours" title="When they sit">
               <Reveal className="rounded-[16px] bg-[var(--paper)] p-6 sm:p-8" y={20}>
                 <OpdBand opd={doctor.opd} days={doctor.days} variant="full" />
                 <dl className="mt-8 grid gap-x-8 gap-y-5 border-t border-[var(--line)] pt-6 sm:grid-cols-2">
@@ -394,7 +435,8 @@ export function DoctorProfile({
             </Part>
 
             {/* ── your visit ────────────────────────────────────────────── */}
-            <Part id="visit" index="07" kicker="Your visit" title="What to bring, what happens">
+            {shows.visit && (
+            <Part id="visit" index={idx("visit")} kicker="Your visit" title="What to bring, what happens">
               <Stagger as="ul" each={0.04} y={16} className="grid gap-2 sm:grid-cols-2">
                 {doctor.prepare.map((p) => (
                   <li
@@ -446,12 +488,13 @@ export function DoctorProfile({
                 </a>
               </Reveal>
             </Part>
+            )}
 
             {/* ── credentials · only when the consultant has supplied them ─ */}
             {hasCredentials && (
               <Part
                 id="credentials"
-                index="08"
+                index={idx("credentials")}
                 kicker="Credentials"
                 title="Registration and recognition"
               >
@@ -520,7 +563,7 @@ export function DoctorProfile({
             {/* ── faq ───────────────────────────────────────────────────── */}
             <Part
               id="faq"
-              index={hasCredentials ? "09" : "08"}
+              index={idx("faq")}
               kicker="Questions"
               title="Before you book"
             >

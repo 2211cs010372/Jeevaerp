@@ -27,6 +27,9 @@ node_modules
 # GitHub refused the push over a 278 MB webpack pack - the whole branch is
 # blocked by it, so the name goes here rather than being remembered.
 /.next-build-check/
+# And the plain -build name, committed the same way: its server-production
+# webpack pack reached 446 MB. Same rejection, same blocked branch.
+/.next-build/
 /out/
 /build
 next-env.d.ts

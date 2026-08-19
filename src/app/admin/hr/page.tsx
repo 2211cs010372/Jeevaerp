@@ -424,7 +424,7 @@ export default function HrPage() {
                         <button type="button" onClick={() => setD({ ...d, photoUrl: "" })} className="text-[12px] font-semibold text-[var(--p-rose)] hover:underline">Remove</button>
                       )}
                     </div>
-                    <input className={`${fld} mt-2 font-mono text-[12px]`} value={d.photoUrl} onChange={(e) => setD({ ...d, photoUrl: e.target.value })} placeholder="…or paste a URL / /images/doctor-1.avif" />
+                    <input className={`${fld} mt-2 font-mono text-[12px]`} value={d.photoUrl} onChange={(e) => setD({ ...d, photoUrl: e.target.value })} placeholder="…or paste a URL to a photo of them" />
                   </Field>
 
                   <Field label="About (shown on their profile page)">

@@ -15,10 +15,41 @@ describe("reading a pack label", () => {
     expect(parsePack("10TAB")).toEqual({ size: 10, unit: "tablet", known: true });
   });
 
-  it("reads liquid volumes - the reason one number cannot serve", () => {
-    // A 200ml bottle and a 500ml bottle of the same syrup are different stock.
-    expect(parsePack("200ML")).toEqual({ size: 200, unit: "ml", known: true });
-    expect(parsePack("500ML")).toEqual({ size: 500, unit: "ml", known: true });
+  it("treats a volume as ONE bottle, not as that many units", () => {
+    // This assertion used to read `size: 200`, and it was wrong in production.
+    // ACIFIX RAFT 200ML was received as twelve bottles and landed on the shelf
+    // as 2,400 - because 200 was read as a count of dispensing units instead of
+    // as how much is inside one bottle. Its Rs 231 MRP then divided down to
+    // Rs 1.16, which is what the counter would have charged for a whole bottle.
+    //
+    // Nobody measures out 30ml at the counter. The bottle is the unit.
+    expect(parsePack("200ML")).toEqual({ size: 1, unit: "bottle", known: true });
+    expect(parsePack("500ML")).toEqual({ size: 1, unit: "bottle", known: true });
+    expect(parsePack("15ML")).toEqual({ size: 1, unit: "bottle", known: true });
+  });
+
+  it("treats a weight as ONE tube, for the same reason", () => {
+    // PLACENTREX GEL 20 GM: one tube, not twenty grams off a shelf.
+    expect(parsePack("20GM")).toEqual({ size: 1, unit: "tube", known: true });
+    expect(parsePack("100G")).toEqual({ size: 1, unit: "tube", known: true });
+  });
+
+  it("keeps counting labels counting - the distinction is the whole point", () => {
+    // Tablets and capsules DO leave the shelf one at a time, so their pack size
+    // is a real multiplier. Collapsing these to 1 would be the mirror-image bug:
+    // a strip of fifteen would read as one, and dispensing two would be refused.
+    expect(parsePack("15T").size).toBe(15);
+    expect(parsePack("10C").size).toBe(10);
+    expect(parsePack("10`S").size).toBe(10);
+    expect(parsePack("5V").size).toBe(5);
+    expect(parsePack("2R").size).toBe(2);
+  });
+
+  it("prices a bottle at the printed MRP, not at a fraction of it", () => {
+    // The arithmetic the bug got wrong, stated as money.
+    const { size } = parsePack("200ML");
+    expect(perUnitPrice(231, size)).toBe(231);
+    expect(packsToUnits(12, size)).toBe(12);
   });
 
   it("reads capsules and the other dosage forms on these invoices", () => {

@@ -6,11 +6,12 @@ import { SmartImage } from "@/components/ui/smart-image";
 import { Chapter, ChapterHead } from "@/components/marketing/section";
 import { Counter, Reveal, Stagger } from "@/components/marketing/motion";
 import { careHref } from "@/lib/care";
-import { CARE_AREAS, DEPARTMENTS, DOCTORS, HOSPITAL, WARDS } from "@/lib/data";
+import { CARE_AREAS, DEPARTMENTS, HOSPITAL, WARDS } from "@/lib/data";
+import { listPublicDoctors } from "@/server/services/public-doctors.service";
 
 export const metadata: Metadata = {
   title: "About the hospital",
-  description: `About ${HOSPITAL.name} in ${HOSPITAL.locality} - ${DEPARTMENTS.length} departments, ${DOCTORS.length}+ consultants and one hospital ID that carries every visit, prescription and report you have ever had here.`,
+  description: `About ${HOSPITAL.name} in ${HOSPITAL.locality} - ${DEPARTMENTS.length} departments, consultants across every one of them, and one hospital ID that carries every visit, prescription and report you have ever had here.`,
   alternates: { canonical: "/about" },
 };
 
@@ -29,7 +30,8 @@ export const metadata: Metadata = {
  * act on. They are listed as gaps for the hospital to supply rather than filled
  * with placeholder text that could be mistaken for fact.
  */
-export default function AboutPage() {
+export default async function AboutPage() {
+  const consultants = (await listPublicDoctors()).length;
   const beds = WARDS.reduce((s, w) => s + w.beds, 0);
   const phone = HOSPITAL.phone.replace(/\s/g, "");
 
@@ -42,7 +44,7 @@ export default function AboutPage() {
         meta={
           <>
             <span className="chip chip-dark">{DEPARTMENTS.length} departments</span>
-            <span className="chip chip-dark">{DOCTORS.length}+ consultants</span>
+            <span className="chip chip-dark">{consultants}+ consultants</span>
             <span className="chip chip-dark">{beds} beds</span>
           </>
         }
@@ -88,7 +90,7 @@ export default function AboutPage() {
 
           <Fact value={DEPARTMENTS.length} label="Departments, staffed"
             text="Medicine, surgery, women's and children's health and more, consulting under one roof." />
-          <Fact value={DOCTORS.length} suffix="+" label="Consultants on the panel"
+          <Fact value={consultants} suffix="+" label="Consultants on the panel"
             text="Named doctors with published fees, days and OPD hours." />
           <Fact value={30} suffix=" min" label="Routine report turnaround" className="lg:col-span-2"
             text="Bloods are processed in this building and land on your record - and your phone - usually before you have left." />

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Search, CalendarCheck, Bed, PhoneCall, ArrowUpRight } from "@/components/ui/hugeicons";
-import { HOSPITAL, DOCTORS } from "@/lib/data";
+import { HOSPITAL } from "@/lib/data";
+import { listPublicDoctors } from "@/server/services/public-doctors.service";
 import { Stagger } from "./motion";
 
 /**
@@ -19,12 +20,12 @@ import { Stagger } from "./motion";
  * all, which still reads as a directory rather than a billboard while giving
  * each lane a tap target with an actual edge to it.
  */
-const LANES = [
+const lanes = (consultants: number) => [
   {
     href: "/doctors",
     title: "Find a doctor",
     sub: "By name, specialty or condition",
-    meta: `${DOCTORS.length}+ consultants`,
+    meta: `${consultants}+ consultants`,
     icon: Search,
   },
   {
@@ -41,7 +42,7 @@ const LANES = [
     meta: "From ₹1,500/day",
     icon: Bed,
   },
-] as const;
+];
 
 /* One padding scale for all four lanes. The emergency lane used to run px-4
    against the others' px-1, so on a phone the red card's text sat on a
@@ -49,7 +50,8 @@ const LANES = [
 const CARD =
   "group relative flex min-h-[9.5rem] flex-col justify-between gap-7 rounded-[10px] p-5 transition-colors duration-250 sm:p-6";
 
-export function ActionBar() {
+export async function ActionBar() {
+  const consultants = (await listPublicDoctors()).length;
   const emergency = HOSPITAL.emergency.replace(/\s/g, "");
 
   return (
@@ -60,7 +62,7 @@ export function ActionBar() {
           y={20}
           className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4"
         >
-          {LANES.map((l) => {
+          {lanes(consultants).map((l) => {
             const Icon = l.icon;
             return (
               <Link

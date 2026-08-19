@@ -7,7 +7,7 @@ import { DeptIcon } from "@/components/marketing/dept-icon";
 import { MenuIcon } from "@/components/marketing/menu-icon";
 import { DoctorSearchBox } from "@/components/marketing/doctor-search-box";
 import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
-import { HOSPITAL, DEPARTMENTS, DOCTORS, CARE_AREAS, type CareArea, type Department } from "@/lib/data";
+import { HOSPITAL, DEPARTMENTS, CARE_AREAS, type CareArea, type Department, type Doctor } from "@/lib/data";
 import { careHref } from "@/lib/care";
 import { doctorHref } from "@/lib/doctors";
 import { api } from "@/lib/api-client";
@@ -54,7 +54,7 @@ import { api } from "@/lib/api-client";
  */
 
 const deptsOf = (a: CareArea) => DEPARTMENTS.filter((d) => a.departments.includes(d.name));
-const doctorsOf = (dept: string) => DOCTORS.filter((d) => d.department === dept);
+const doctorsOf = (doctors: Doctor[], dept: string) => doctors.filter((d) => d.department === dept);
 
 /**
  * Services land on the department page, not straight on a doctor.
@@ -90,7 +90,15 @@ function opdState(now: Date) {
   return { open, text: `OPD closed · opens ${from}` };
 }
 
-export function Navbar() {
+/**
+ * The panel is handed in, not imported.
+ *
+ * It comes from the ERP now, and this is a client component - it owns menu
+ * state, scroll listeners and focus traps, none of which survive on the server.
+ * So the layout reads the doctors and passes them down. See
+ * server/services/public-doctors.service.ts.
+ */
+export function Navbar({ doctors }: { doctors: Doctor[] }) {
   const [menu, setMenu] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [mobileArea, setMobileArea] = useState<string | null>(null);
@@ -264,7 +272,7 @@ export function Navbar() {
             </span>
           </Link>
 
-          <DoctorSearchBox onNavigate={close} />
+          <DoctorSearchBox doctors={doctors} onNavigate={close} />
 
           {/* `ml-auto` is load-bearing below `md`. The search box is the only
               flexible child in this row, and it is display:none on a phone -
@@ -367,7 +375,7 @@ export function Navbar() {
             className="mega-in absolute inset-x-0 top-full bg-[var(--paper)] shadow-[var(--shadow-lift)]"
             onMouseEnter={() => hold(menu)}
           >
-            <CarePanel area={CARE_AREAS.find((a) => a.label === menu)!} onNavigate={close} />
+            <CarePanel area={CARE_AREAS.find((a) => a.label === menu)!} doctors={doctors} onNavigate={close} />
           </div>
         )}
       </div>
@@ -451,7 +459,7 @@ export function Navbar() {
             className="drawer-scroll min-h-0 flex-1 overflow-y-auto"
           >
             <div className="space-y-3 px-4 py-4">
-            <DoctorSearchBox variant="mobile" onNavigate={close} />
+            <DoctorSearchBox doctors={doctors} variant="mobile" onNavigate={close} />
 
             {CARE_AREAS.map((area) => {
               const on = mobileArea === area.label;
@@ -532,10 +540,10 @@ export function Navbar() {
    is the full list of what it covers, in newspaper columns so a long list
    stays scannable instead of becoming a scroll.
    ───────────────────────────────────────────────────────────────────────── */
-function CarePanel({ area, onNavigate }: { area: CareArea; onNavigate: () => void }) {
+function CarePanel({ area, doctors, onNavigate }: { area: CareArea; doctors: Doctor[]; onNavigate: () => void }) {
   const depts = deptsOf(area);
   const multi = depts.length > 1;
-  const consultants = depts.flatMap((d) => doctorsOf(d.name));
+  const consultants = depts.flatMap((d) => doctorsOf(doctors, d.name));
 
   return (
     <div className="mx-auto max-w-[1320px] px-6 py-7">
@@ -557,7 +565,7 @@ function CarePanel({ area, onNavigate }: { area: CareArea; onNavigate: () => voi
                 <Link key={doc.id} href={doctorHref(doc)} onClick={onNavigate}
                   className="group flex items-center gap-3 rounded-[10px] bg-[var(--paper)] p-2 transition-colors hover:bg-[var(--bone)]">
                   <span className="h-11 w-11 shrink-0 overflow-hidden rounded-[8px]">
-                    <DoctorAvatar name={doc.name} image={doc.image} className="h-full w-full text-[11px]" />
+                    <DoctorAvatar name={doc.name} className="h-full w-full text-[11px]" />
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[12.5px] font-semibold text-[var(--ink)]">{doc.name}</span>

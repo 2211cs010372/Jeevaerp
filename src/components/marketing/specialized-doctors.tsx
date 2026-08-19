@@ -1,5 +1,5 @@
 import { DoctorCard } from "@/components/marketing/doctor-card";
-import { DOCTORS } from "@/lib/data";
+import { listPublicDoctors } from "@/server/services/public-doctors.service";
 import { Chapter, ChapterHead } from "./section";
 import { Stagger } from "./motion";
 
@@ -18,8 +18,9 @@ import { Stagger } from "./motion";
  * off the browsing card. The lede above still promises the fee is published
  * before you book, which remains true.
  */
-export function SpecializedDoctors() {
-  const featured = DOCTORS.slice(0, 8);
+export async function SpecializedDoctors() {
+  const panel = await listPublicDoctors();
+  const featured = panel.slice(0, 8);
 
   return (
     <Chapter id="doctors" tone="paper">
@@ -28,7 +29,7 @@ export function SpecializedDoctors() {
         label="The panel"
         lines={[{ text: "The people who" }, { text: "will treat you." }]}
         lede="Every consultant here is named, with their qualification, their days and their fee published before you book. You should know who you are seeing."
-        action={{ href: "/doctors", label: `All ${DOCTORS.length} consultants` }}
+        action={{ href: "/doctors", label: `All ${panel.length} consultants` }}
       />
 
       <Stagger

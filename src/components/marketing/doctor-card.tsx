@@ -109,7 +109,6 @@ export function DoctorCard({ doctor: d }: { doctor: Doctor }) {
       <div className="zoom-media relative aspect-[3/4] overflow-hidden rounded-[8px] bg-[var(--bone-deep)]">
         <DoctorAvatar
           name={d.name}
-          image={d.image}
           className="h-full w-full text-3xl"
         />
 

@@ -521,26 +521,26 @@ export default function AdmissionSheetPage() {
           {!discharged && (
             <button onClick={() => setAdvOpen(true)}
               title="The deposit. Comes off the discharge bill."
-              className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
+              className="inline-flex items-center gap-2 rounded-md border border-[var(--p-pink)] px-4 py-1.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
               <Icon name="rupee" size={15} /> Take advance
             </button>
           )}
           {!discharged && (
             <button onClick={openTransfer}
               title="Move them to another bed. The bill keeps each leg at its own rate."
-              className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+              className="inline-flex items-center gap-2 rounded-md border border-[var(--p-border)] px-4 py-1.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
               <Icon name="bed" size={15} /> Transfer bed
             </button>
           )}
           {!discharged && (
             <button onClick={() => setRxOpen(true)}
-              className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+              className="inline-flex items-center gap-2 rounded-md border border-[var(--p-border)] px-4 py-1.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
               <Icon name="file" size={15} /> Add prescription
             </button>
           )}
           {!discharged && (
             <button onClick={() => setLabsOpen(true)}
-              className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+              className="inline-flex items-center gap-2 rounded-md border border-[var(--p-border)] px-4 py-1.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
               <Icon name="flask" size={15} /> Order labs
             </button>
           )}
@@ -570,15 +570,15 @@ export default function AdmissionSheetPage() {
           )}
           <button onClick={() => setSummaryOpen(true)}
             title="Write or edit this stay's discharge summary. The insurance desk edits the same record."
-            className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+            className="inline-flex items-center gap-2 rounded-md border border-[var(--p-border)] px-4 py-1.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
             <Icon name="file" size={15} /> Discharge summary
           </button>
           <a href={`/print/discharge/${a.id}`} target="_blank" rel="noopener noreferrer"
             title={discharged ? "Print the discharge summary for this stay" : "Interim summary - the discharge document, as it stands"}
-            className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+            className="inline-flex items-center gap-2 rounded-md border border-[var(--p-border)] px-4 py-1.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
             <Icon name="printer" size={15} /> Print summary
           </a>
-          <Link href="/stays" className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+          <Link href="/stays" className="inline-flex items-center gap-2 rounded-md border border-[var(--p-border)] px-4 py-1.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
             Insurance stays
           </Link>
         </div>

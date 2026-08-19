@@ -1,5 +1,6 @@
 import "./site-theme.css";
 import { Navbar } from "@/components/marketing/navbar";
+import { listPublicDoctors } from "@/server/services/public-doctors.service";
 import { SmoothScroll, ScrollProgress } from "@/components/marketing/smooth-scroll";
 import { Footer } from "@/components/marketing/footer";
 import { siteThemeBootScript } from "@/lib/site/theme";
@@ -16,7 +17,7 @@ import { siteThemeBootScript } from "@/lib/site/theme";
  * two-row navbar and a six-item mega menu, which is a long way to tab past
  * when you only came for the emergency number.
  */
-export default function PublicLayout({
+export default async function PublicLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   // suppressHydrationWarning because the boot script below writes inline custom
@@ -35,7 +36,7 @@ export default function PublicLayout({
       </a>
       <SmoothScroll />
       <ScrollProgress />
-      <Navbar />
+      <Navbar doctors={await listPublicDoctors()} />
       <main id="main">{children}</main>
       <Footer />
     </div>

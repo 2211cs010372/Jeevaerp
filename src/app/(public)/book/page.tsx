@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { BookingForm } from "@/components/booking/booking-form";
 import { RequestCallbackForm } from "@/components/booking/request-callback-form";
+import { listPublicDoctors } from "@/server/services/public-doctors.service";
 
 export const metadata: Metadata = {
   title: "Book an appointment",
@@ -11,7 +12,8 @@ export const metadata: Metadata = {
   alternates: { canonical: "/book" },
 };
 
-export default function BookPage() {
+export default async function BookPage() {
+  const doctors = await listPublicDoctors();
   return (
     <div className="bg-[var(--bone)] pb-24">
       <SectionHeading
@@ -42,7 +44,7 @@ export default function BookPage() {
             <div className="mt-4 h-40 animate-pulse rounded-[var(--r-md)] bg-[var(--bone)]" />
           </div>
         }>
-          <BookingForm />
+          <BookingForm doctors={doctors} />
         </Suspense>
 
         {/* The second door. Plenty of people won't commit to an exact minute
@@ -53,7 +55,7 @@ export default function BookPage() {
             <span className="rule-label">Or let us call you</span>
             <span className="rule-line" />
           </div>
-          <RequestCallbackForm />
+          <RequestCallbackForm doctors={doctors} />
         </div>
       </div>
     </div>

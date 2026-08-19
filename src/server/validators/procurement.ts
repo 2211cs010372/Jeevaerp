@@ -114,3 +114,38 @@ export const returnStatusSchema = z.object({
   creditedAmount: money.optional(),
   notes: optText(500),
 });
+
+/**
+ * CORRECTING A RECEIPT AFTER CROSS-CHECKING IT AGAINST THE PAPER INVOICE.
+ *
+ * Every field here is one that gets mistyped at a counter while a delivery man
+ * waits: a quantity read off the wrong row, a free-goods column missed, a pack
+ * label that turned twelve bottles into 2,400 on the shelf. What is NOT here is
+ * as deliberate: the medicine cannot change (that is a different product and a
+ * different batch), and quantities stay integers because half a strip is not a
+ * thing a distributor invoices.
+ *
+ * Batch number and expiry ARE here, because a typo in either is common and
+ * dangerous - a wrong expiry puts real stock into expiry-first dispensing
+ * behind a false date. The service refuses them when the batch has other
+ * history, since moving an identity under existing rows is not a correction.
+ */
+export const correctGoodsReceiptSchema = z.object({
+  invoiceNo: optText(60),
+  invoiceDate: ymd.optional(),
+  invoiceAmount: money.optional(),
+  notes: optText(500),
+  /** Why the correction was made. Required - a silent edit to stock is not one. */
+  reason: z.string().trim().min(3, "Say what was corrected - this goes on the ledger").max(300),
+  items: z.array(z.object({
+    id: z.string().trim().min(1),
+    batchNo: z.string().trim().min(1, "Batch number is on the strip").max(40).optional(),
+    expiryDate: ymd.optional(),
+    qty: z.coerce.number().int().min(1, "Received quantity must be at least 1").optional(),
+    freeQty: z.coerce.number().int().min(0).optional(),
+    unitCost: money.optional(),
+    mrp: money.optional(),
+    pack: z.string().trim().max(20).optional(),
+    packSize: z.coerce.number().int().min(1).max(5000).optional(),
+  })).min(1, "Nothing to correct"),
+});
