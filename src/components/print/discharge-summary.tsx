@@ -80,7 +80,8 @@ interface Data {
   };
 }
 
-const money = (v: string | number) => "₹" + Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// No money formatter here any more - see the Billing Summary note below. The
+// figures on this document are the bill's job, and the bill has its own sheet.
 const date = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "-");
 const dateTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "-");
 const GENDER: Record<string, string> = { MALE: "Male", FEMALE: "Female", OTHER: "Other" };
@@ -247,8 +248,6 @@ function DischargeSummaryInner() {
     return (fallback ?? "").trim() || null;
   };
   const drafting = d.summary?.status === "DRAFT";
-  /** The raised bill, when there is one. Carries the discount. */
-  const inv = d.bill.invoice;
 
   const ageSex = [p.age != null ? `${p.age} Y` : null, p.gender ? GENDER[p.gender] ?? p.gender : null]
     .filter(Boolean).join(" / ") || "-";
@@ -327,7 +326,14 @@ function DischargeSummaryInner() {
               <td>
         {drafting && <div className="ds-draft">DRAFT &mdash; NOT YET COMPLETED</div>}
 
-        {a.reason && <Sec t="Reason for Admission"><p className="ds-body">{a.reason}</p></Sec>}
+        {/* REASON FOR ADMISSION IS NOT PRINTED.
+            Removed at the hospital's request. It is a line the desk types at
+            admission, before anybody has examined the patient - "fever since 3
+            days", "for surgery" - and the document already says the same thing
+            properly a few inches below, in Diagnosis and History of Presenting
+            Illness, written by the doctor who saw them. Two versions of why
+            somebody was admitted is one version too many on a paper an insurer
+            and the next doctor both read. It is still stored on the admission. */}
 
         <Sec t="Diagnosis">
           <p className="ds-body ds-pre">{say("diagnosis", d.clinical.diagnosis) ?? "Not recorded."}</p>
@@ -363,19 +369,22 @@ function DischargeSummaryInner() {
           </Sec>
         )}
 
+        {/* THE WARD'S NURSING AND OBSERVATION NOTES ARE NOT PRINTED.
+            Removed at the hospital's request. They are a shift handover - every
+            vitals round, every "patient slept well" - written for the next
+            nurse, not for the patient going home or the doctor reading this in
+            another hospital. Printed here they ran for pages and buried the
+            doctor's own account of the stay, which is the paragraph below and
+            the thing a reader is actually looking for.
+
+            NOT DELETED ANYWHERE. The notes stay on the stay's record, still
+            append-only, still visible on the ward screen and still available to
+            a medico-legal request - they simply do not travel home with the
+            family. */}
         <Sec t="Course in Hospital">
           {say("courseInHospital")
             ? <p className="ds-body ds-pre">{say("courseInHospital")}</p>
             : <p className="ds-body ds-muted">Not recorded.</p>}
-          {a.observations.map((n) => (
-            <div key={n.id} className="ds-note">
-              <p className="ds-note-m ds-mono">
-                {dateTime(n.createdAt)} · {n.authorName ?? "author not recorded"}
-                {n.kind === "DISCHARGE" ? " · on discharge" : ""}
-              </p>
-              <p className="ds-body ds-pre">{n.body}</p>
-            </div>
-          ))}
         </Sec>
 
         {say("procedureNotes") && (
@@ -415,69 +424,17 @@ function DischargeSummaryInner() {
             Removed at the hospital's request: the advice that matters travels
             on the discharge prescription the patient is handed, and two places
             saying what to do next is how they end up disagreeing. */}
-        <Sec t="Billing Summary">
-          <table className="ds-tbl">
-            <tbody>
-              {d.bill.legs.length > 0 ? d.bill.legs.map((l, i) => (
-                <tr key={i}>
-                  <td>Bed · {bedLabel(l.wardName, l.bedNo)} <span className="ds-muted">({l.days}d × {money(l.dailyCharge)})</span></td>
-                  <td className="ds-r ds-mono">{money(l.total)}</td>
-                </tr>
-              )) : <tr><td>Bed charges</td><td className="ds-r ds-mono">{money(d.bill.bedTotal)}</td></tr>}
-              <tr>
-                <td>Nursing care <span className="ds-muted">({a.days}d × {money(d.bill.nursePerDay)})</span></td>
-                <td className="ds-r ds-mono">{money(d.bill.nurseTotal)}</td>
-              </tr>
-              {d.bill.charges.map((c, i) => (
-                <tr key={`c${i}`}>
-                  <td>{c.description} <span className="ds-muted">({c.qty} × {money(c.unitPrice)})</span></td>
-                  <td className="ds-r ds-mono">{money(c.amount)}</td>
-                </tr>
-              ))}
-              {/* ── WHAT WAS ACTUALLY CHARGED ──
-                  The lines above are what the stay was made of. Once discharge
-                  raises the bill, THESE are the figures the family was asked
-                  for - and the discount is the difference between the two. A
-                  summary showing only the gross total sends a family back to the
-                  desk asking why their bill was lower than their summary. */}
-              {inv ? (
-                <>
-                  <tr className="ds-tot"><td>Gross total</td><td className="ds-r ds-mono">{money(inv.subtotal)}</td></tr>
-                  {Number(inv.discount) > 0 && (
-                    <tr><td>Discount</td><td className="ds-r ds-mono">− {money(inv.discount)}</td></tr>
-                  )}
-                  {Number(inv.gst) > 0 && (
-                    <tr><td>GST</td><td className="ds-r ds-mono">{money(inv.gst)}</td></tr>
-                  )}
-                  <tr className="ds-tot">
-                    <td>Net bill <span className="ds-muted">({inv.receiptNo})</span></td>
-                    <td className="ds-r ds-mono">{money(inv.total)}</td>
-                  </tr>
-                  {Number(d.bill.advanceTotal) > 0 && (
-                    <tr><td>Advance received</td><td className="ds-r ds-mono">− {money(d.bill.advanceTotal)}</td></tr>
-                  )}
-                  {Number(inv.paid) > 0 && (
-                    <tr><td>Paid</td><td className="ds-r ds-mono"> {money(inv.paid)}</td></tr>
-                  )}
-                  
-                </>
-              ) : (
-                <>
-                  <tr className="ds-tot"><td>Running total</td><td className="ds-r ds-mono">{money(d.bill.grandTotal)}</td></tr>
-                  {Number(d.bill.advanceTotal) > 0 && (
-                    <>
-                      <tr><td>Advance received</td><td className="ds-r ds-mono">− {money(d.bill.advanceTotal)}</td></tr>
-                      <tr className="ds-tot">
-                        <td>{Number(d.bill.balance) > 0 ? "Balance so far" : "Settled"}</td>
-                        <td className="ds-r ds-mono">{money(d.bill.balance)}</td>
-                      </tr>
-                    </>
-                  )}
-                </>
-              )}
-            </tbody>
-          </table>
-        </Sec>
+        {/* THE BILL IS NOT PRINTED ON THIS DOCUMENT.
+            Removed at the hospital's request. The family is handed the bill
+            itself - itemised, GST-compliant, with the receipt number on it -
+            and this summary is a CLINICAL handover: what was wrong, what was
+            done, what to take, when to come back. A second set of figures on a
+            paper that is not a bill can only ever disagree with the real one,
+            and the version an insurer or a family quotes back is whichever they
+            happen to be holding.
+
+            The bill data still arrives on this payload - the sheet is shared
+            with the ward screen - and nothing about billing changed. */}
 
         {/* SIGN-OFF - the lab report's foot, with the two signatures the
             hospital's discharge paper carries. The RMO line is left blank on
