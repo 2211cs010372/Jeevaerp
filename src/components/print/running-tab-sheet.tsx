@@ -49,6 +49,8 @@ interface Data {
   /** One row per bed occupied. Two rows means they were transferred. */
   legs: { wardName: string; bedNo: string; dailyCharge: string; days: number; total: string; current: boolean }[];
   bedTotal: string; nurseTotal: string; nursePerDay: string;
+  /** False since the per-day nursing fee was withdrawn - see ipd.service. */
+  nursingApplies: boolean;
   chargesTotal: string; grandTotal: string;
   charges: Charge[];
   counterBills: CounterBill[];
@@ -160,9 +162,10 @@ export function RunningTabSheet() {
             </tr>
           </thead>
           <tbody>
-            {/* Bed and nursing are derived per day, not stored as rows - they
-                are printed first because they are what the stay costs before
-                anybody adds anything to it. */}
+            {/* Bed - and, on a stay old enough to carry it, nursing - are
+                derived per day rather than stored as rows, and are printed
+                first because they are what the stay costs before anybody adds
+                anything to it. */}
             {/* ONE ROW PER BED, not one row for the stay.
                 This printed a single line - the CURRENT ward, the whole stay's
                 days, the admission rate - with the leg-summed total beside it.
@@ -187,13 +190,19 @@ export function RunningTabSheet() {
                 <td className="py-[3px] text-right font-mono">₹{money(l.total)}</td>
               </tr>
             ))}
-            <tr>
-              <td className="py-[3px] pr-1 font-mono text-[8.5px]">{dt(a.admittedAt)}</td>
-              <td className="py-[3px] pr-1">Nursing care</td>
-              <td className="py-[3px] pr-1 text-right font-mono">{s.days}</td>
-              <td className="py-[3px] pr-1 text-right font-mono">{money(s.nursePerDay)}</td>
-              <td className="py-[3px] text-right font-mono">₹{money(s.nurseTotal)}</td>
-            </tr>
+            {/* The per-day nursing fee is withdrawn, so this row prints only
+                on a stay that was actually billed for it. A family comparing
+                this sheet against their invoice has to find the same lines on
+                both. */}
+            {s.nursingApplies && (
+              <tr>
+                <td className="py-[3px] pr-1 font-mono text-[8.5px]">{dt(a.admittedAt)}</td>
+                <td className="py-[3px] pr-1">Nursing care</td>
+                <td className="py-[3px] pr-1 text-right font-mono">{s.days}</td>
+                <td className="py-[3px] pr-1 text-right font-mono">{money(s.nursePerDay)}</td>
+                <td className="py-[3px] text-right font-mono">₹{money(s.nurseTotal)}</td>
+              </tr>
+            )}
             {s.charges.map((c) => (
               <tr key={c.id}>
                 <td className="py-[3px] pr-1 font-mono text-[8.5px]">{dt(c.createdAt)}</td>

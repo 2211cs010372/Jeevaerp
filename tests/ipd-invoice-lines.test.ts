@@ -16,7 +16,7 @@ import { describe, it, expect, vi } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
-const { buildIpdInvoiceLines } = await import("@/server/services/ipd.service");
+const { buildIpdInvoiceLines, hasNursingLine, isNursingLine } = await import("@/server/services/ipd.service");
 
 const d = (s: string) => new Date(`${s}T12:00:00`);
 
@@ -66,16 +66,32 @@ describe("an IPD bill is the bed, the nursing and the running tab", () => {
     expect(beds[1].description).toContain("ICU BED 2");
   });
 
-  it("always bills nursing, once, across the whole stay", () => {
+  it("bills NO nursing on a bill being raised - the fee is withdrawn", () => {
+    // The per-day nursing fee was withdrawn as a service. Discharge calls this
+    // without asking for nursing, and this is the assertion that a stay
+    // admitted today is not quietly charged ₹600 a night for it.
     const lines = buildIpdInvoiceLines(admission(), [stay("General Ward", "GW-04", 1500, "2026-08-01", null)]);
-    const nursing = lines.filter((l) => l.description.startsWith("Nursing care"));
+    expect(lines.filter(isNursingLine)).toHaveLength(0);
+  });
+
+  it("bills nursing, once, when re-issuing a bill that already had it", () => {
+    // A stay billed BEFORE the withdrawal. Its invoice carries a nursing line,
+    // and a correction to some other charge re-issues that invoice - which must
+    // come back with the nursing still on it. Dropping it here would take ₹600
+    // a night off a document the family has already paid against.
+    const lines = buildIpdInvoiceLines(
+      admission(),
+      [stay("General Ward", "GW-04", 1500, "2026-08-01", null)],
+      { nursing: true },
+    );
+    const nursing = lines.filter(isNursingLine);
     expect(nursing).toHaveLength(1);
     expect(nursing[0].qty).toBe(4);
     expect(nursing[0].unitPrice).toBe(600);
     expect(nursing[0].gstRatePct).toBe(0);
   });
 
-  it("bills nursing at the STAY'S rate once a desk has corrected it", () => {
+  it("re-issues nursing at the STAY'S rate once a desk has corrected it", () => {
     // An insurer settling nursing at its own tariff. The correction lives on
     // the stay, so the re-issued invoice has to carry it - a bill that quietly
     // reverted to ₹600 is exactly the disagreement between the claim bill and
@@ -83,22 +99,29 @@ describe("an IPD bill is the bed, the nursing and the running tab", () => {
     const lines = buildIpdInvoiceLines(
       admission({ nursePerDay: { toString: () => "450.00" } }),
       [stay("General Ward", "GW-04", 1500, "2026-08-01", null)],
+      { nursing: true },
     );
-    const nursing = lines.find((l) => l.description.startsWith("Nursing care"))!;
+    const nursing = lines.find(isNursingLine)!;
     expect(nursing.unitPrice).toBe(450);
     expect(nursing.qty).toBe(4);
     expect(nursing.description).toContain("₹450");
   });
 
-  it("bills no nursing at all when a stay has it waived", () => {
+  it("keeps a WAIVED nursing line on the re-issue rather than dropping it", () => {
     // ₹0 is a real answer and must not fall back to the hospital's rate the way
-    // null does. Waiving nursing on a long stay is an ordinary concession, and
+    // null does. Waiving nursing on a long stay was an ordinary concession, and
     // the desk's old workaround was a negative line on the tab.
+    //
+    // The line still prints, at ₹0. That is the whole difference between a stay
+    // whose nursing was WAIVED and one admitted after the fee was WITHDRAWN:
+    // the waived stay shows the concession on its bill, and the withdrawn one
+    // has no nursing to show at all.
     const lines = buildIpdInvoiceLines(
       admission({ nursePerDay: { toString: () => "0.00" } }),
       [stay("General Ward", "GW-04", 1500, "2026-08-01", null)],
+      { nursing: true },
     );
-    const nursing = lines.find((l) => l.description.startsWith("Nursing care"))!;
+    const nursing = lines.find(isNursingLine)!;
     expect(nursing.unitPrice).toBe(0);
   });
 
@@ -136,6 +159,10 @@ describe("an IPD bill is the bed, the nursing and the running tab", () => {
     const adm = admission({ charges: [charge("Dressing", 2, 250), charge("Oxygen", 3, 400, 5)] });
     const stays = [stay("General Ward", "GW-04", 1500, "2026-08-01", null)];
     expect(buildIpdInvoiceLines(adm, stays)).toEqual(buildIpdInvoiceLines(adm, stays));
+    // And for a stay old enough to still carry nursing, which builds down the
+    // other branch entirely.
+    expect(buildIpdInvoiceLines(adm, stays, { nursing: true }))
+      .toEqual(buildIpdInvoiceLines(adm, stays, { nursing: true }));
   });
 
   it("moves the total when a charge is corrected, and only by that charge", () => {
@@ -147,5 +174,47 @@ describe("an IPD bill is the bed, the nursing and the running tab", () => {
     // The insurance desk reprices the dressing to the policy's tariff.
     const after = buildIpdInvoiceLines(admission({ charges: [charge("Dressing", 2, 180)] }), stays);
     expect(sum(after)).toBe(sum(before) - 140);
+  });
+});
+
+/**
+ * WHICH STAYS STILL CARRY NURSING - asked of the stay's own invoice, never of a
+ * cutover date. A date would have to be recorded somewhere and would be wrong
+ * for any stay that straddled it. The invoice cannot be wrong: a stay was
+ * billed for nursing if and only if its IPD bill says so.
+ */
+describe("a stay carries nursing only if its own invoice already did", () => {
+  const inv = (source: string, ...descriptions: string[]) => ({
+    source,
+    items: descriptions.map((description) => ({ description })),
+  });
+  const BED = "Bed · General Ward BED 4 · 4 days";
+
+  it("says yes for a stay whose IPD bill has the line", () => {
+    expect(hasNursingLine([inv("IPD", BED, "Nursing care · 4 day(s) × ₹600")])).toBe(true);
+  });
+
+  it("says no for a stay billed since the fee was withdrawn", () => {
+    expect(hasNursingLine([inv("IPD", BED, "Dressing")])).toBe(false);
+  });
+
+  it("says no for a stay still running, which has no invoice at all", () => {
+    expect(hasNursingLine([])).toBe(false);
+  });
+
+  it("ignores the pharmacy's and the lab's own invoices", () => {
+    // Those are separate documents raised against the same stay. Whether the
+    // STAY was billed for nursing is only ever answered by the IPD bill.
+    expect(hasNursingLine([inv("PHARMACY", "Nursing care · 4 day(s) × ₹600")])).toBe(false);
+  });
+
+  it("still recognises a waived line, which reads ₹0 and is still a line", () => {
+    expect(isNursingLine({ description: "Nursing care · 4 day(s) × ₹0" })).toBe(true);
+  });
+
+  it("does not mistake a hand-typed ward charge for the derived fee", () => {
+    // "night nursing" is the placeholder the add-charge box suggests. A desk
+    // that types one is raising an ordinary tab line, not reinstating the fee.
+    expect(isNursingLine({ description: "Night nursing attendant" })).toBe(false);
   });
 });

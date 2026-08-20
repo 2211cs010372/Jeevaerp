@@ -45,6 +45,9 @@ interface Sheet {
   };
   days: number; bedTotal: string; charges: Charge[]; chargesTotal: string; grandTotal: string;
   nurseTotal: string; nursePerDay: string;
+  /** False since the per-day nursing fee was withdrawn. True only on a stay
+   *  already billed for it, which keeps its row. See ipd.service. */
+  nursingApplies: boolean;
   /** Append-only chronology - see AdmissionNote. Never edited in place. */
   notes: { id: string; body: string; kind: "NURSING" | "DISCHARGE"; authorName: string | null; createdAt: string }[];
   /** One row per bed occupied. Two rows = they were transferred mid-stay. */
@@ -471,12 +474,13 @@ export default function AdmissionSheetPage() {
           <div className="flex items-center justify-between border-b border-[var(--p-border)] px-5 py-3.5">
             <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">The running tab</h3>
             <div className="flex items-center gap-2">
-              {/* +2 for the bed and the nursing fee, which are derived rather than
-                  stored, plus every counter bill on the stay - the count has to
-                  match what is under it, and what is under it now includes the
-                  bills that have already been paid. */}
+              {/* +1 for the bed, which is derived rather than stored, +1 more
+                  on a stay old enough to still carry nursing, plus every counter
+                  bill on the stay - the count has to match what is under it, and
+                  what is under it now includes the bills that have already been
+                  paid. */}
               <span className="badge">
-                {sheet.charges.length + (sheet.counterBills?.length ?? 0) + 2} lines
+                {sheet.charges.length + (sheet.counterBills?.length ?? 0) + 1 + (sheet.nursingApplies ? 1 : 0)} lines
               </span>
               {/* THE TAB, ON PAPER. Until now it existed only on this screen, so
                   a ward round asking what the stay is at, or a family wanting to
@@ -529,26 +533,32 @@ export default function AdmissionSheetPage() {
               </div>
             </div>
 
-            {/* nursing care - assigned by default, accrues per day like the bed */}
-            <div className="flex items-center justify-between gap-3 bg-[var(--p-bg)] px-5 py-3.5">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-[14px] font-semibold text-[var(--p-ink)]">Nursing care</span>
-                  <span className="shrink-0 rounded bg-[var(--p-blue-soft)] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[var(--p-blue-deep)]">Assigned</span>
+            {/* NURSING - WITHDRAWN AS A SERVICE, and so drawn on no stay
+                admitted since. A stay from before the withdrawal keeps its row:
+                it was billed for nursing, the invoice in the family's hand says
+                so, and a tab that silently dropped the line would disagree with
+                the document it is supposed to explain. */}
+            {sheet.nursingApplies && (
+              <div className="flex items-center justify-between gap-3 bg-[var(--p-bg)] px-5 py-3.5">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[14px] font-semibold text-[var(--p-ink)]">Nursing care</span>
+                    <span className="shrink-0 rounded bg-[var(--p-blue-soft)] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[var(--p-blue-deep)]">Assigned</span>
+                  </div>
+                  <div className="text-[12px] text-[var(--p-muted)]">
+                    {sheet.days} day{sheet.days === 1 ? "" : "s"} × ₹{money(sheet.nursePerDay)} · charged automatically
+                  </div>
                 </div>
-                <div className="text-[12px] text-[var(--p-muted)]">
-                  {sheet.days} day{sheet.days === 1 ? "" : "s"} × ₹{money(sheet.nursePerDay)} · charged automatically
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="font-mono text-[14px] font-bold text-[var(--p-ink)]">₹{money(sheet.nurseTotal)}</span>
+                  <button onClick={() => setCorrectOpen(true)}
+                    title="Correct the nursing rate, the bed rate or the stay's dates"
+                    className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
+                    Edit
+                  </button>
                 </div>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <span className="font-mono text-[14px] font-bold text-[var(--p-ink)]">₹{money(sheet.nurseTotal)}</span>
-                <button onClick={() => setCorrectOpen(true)}
-                  title="Correct the nursing rate, the bed rate or the stay's dates"
-                  className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
-                  Edit
-                </button>
-              </div>
-            </div>
+            )}
 
             {/* ── ON A CLAIM, THE OTHER COUNTERS' BILLS ARE ON THIS TAB TOO ──
                 Pharmacy and lab raise their own invoices against the stay. For a
@@ -838,10 +848,12 @@ export default function AdmissionSheetPage() {
               </div>
             )}
 
-            <div className="flex items-center justify-between text-[14px]">
-              <span className="text-[var(--p-muted)]">Nursing ({sheet.days}d × ₹{money(sheet.nursePerDay)})</span>
-              <span className="font-mono text-[var(--p-ink)]">₹{money(sheet.nurseTotal)}</span>
-            </div>
+            {sheet.nursingApplies && (
+              <div className="flex items-center justify-between text-[14px]">
+                <span className="text-[var(--p-muted)]">Nursing ({sheet.days}d × ₹{money(sheet.nursePerDay)})</span>
+                <span className="font-mono text-[var(--p-ink)]">₹{money(sheet.nurseTotal)}</span>
+              </div>
+            )}
 
             <div className="flex items-center justify-between text-[14px]">
               <span className="text-[var(--p-muted)]">Charges ({sheet.charges.length})</span>
@@ -1266,6 +1278,7 @@ export default function AdmissionSheetPage() {
             status: a.status,
             dailyCharge: a.dailyCharge,
             nursePerDay: sheet.nursePerDay,
+            nursingApplies: sheet.nursingApplies,
             legs: sheet.legs,
           }}
           onClose={() => setCorrectOpen(false)}

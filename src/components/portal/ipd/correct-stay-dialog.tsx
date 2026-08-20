@@ -9,20 +9,26 @@ import { bedLabel } from "@/lib/beds";
 /**
  * CORRECTING THE THREE FIGURES THE BILL IS BUILT ON.
  *
- * The bed, the nursing and the number of days are the largest lines on almost
- * every inpatient bill, and until now they were the only ones nobody could
- * touch: two of them came from rates snapshotted onto the stay, and the third
- * from a pair of timestamps no screen exposed. Everything smaller - a dressing,
- * an oxygen hour - had an edit button.
+ * The bed and the number of days are the largest lines on almost every
+ * inpatient bill, and until now they were the only ones nobody could touch: one
+ * came from a rate snapshotted onto the stay, the other from a pair of
+ * timestamps no screen exposed. Everything smaller - a dressing, an oxygen hour
+ * - had an edit button.
+ *
+ * A NURSING RATE IS THE THIRD FIGURE, on the stays that still have one. The
+ * per-day nursing fee has been withdrawn, so a current stay carries no nursing
+ * line and is offered no rate for it - but a stay billed before the withdrawal
+ * keeps both, because its invoice has the line on it and a desk repricing that
+ * stay to a policy's tariff still has to reach it.
  *
  * So the desk's workaround was an "adjustment" line on the tab. On a discharge
  * sheet that is a charge the family is entitled to ask about and nobody can
  * explain; on a claim it reads as the hospital correcting its own bill.
  *
  * ONE DIALOG, TWO DESKS. Reception opens it to fix an admission typed in the
- * next morning; the insurance room opens it to reprice bed and nursing to the
- * tariff the policy actually settles. Written twice it would drift twice, and
- * these are the numbers a TPA checks first.
+ * next morning; the insurance room opens it to reprice the bed - and, on an
+ * older stay, its nursing - to the tariff the policy actually settles. Written
+ * twice it would drift twice, and these are the numbers a TPA checks first.
  *
  * WHAT IT SHOWS BEFORE YOU SAVE, and why that matters more here than elsewhere:
  * days are charged per STARTED day, so moving an admission by forty minutes can
@@ -50,6 +56,16 @@ export interface StayBillingSnapshot {
   /** The whole-stay rate. The only bed rate there is when `legs` is empty. */
   dailyCharge: string;
   nursePerDay: string;
+  /**
+   * Was this stay ever billed for nursing? The per-day fee is withdrawn, so on
+   * a current stay this is false and the rate field is not offered at all -
+   * there is no nursing on the bill for a rate to be about.
+   *
+   * A stay from before the withdrawal keeps the field, INCLUDING one whose
+   * nursing was waived to ₹0. That waiver is a concession the desk may need to
+   * take back, and hiding the field on ₹0 alone would make it a one-way door.
+   */
+  nursingApplies: boolean;
   legs: StayLeg[];
 }
 
@@ -167,7 +183,10 @@ export function CorrectStayDialog({
       await api.patch(`/ipd/admissions/${admissionId}/billing`, {
         admittedAt: new Date(admittedAt).toISOString(),
         ...(closed && dischargedAt ? { dischargedAt: new Date(dischargedAt).toISOString() } : {}),
-        nursePerDay: num(nurse),
+        // Only where the stay actually carries nursing. Writing a rate onto a
+        // stay that has no nursing line would freeze a figure against it - and
+        // a ₹0 frozen there reads as a WAIVER, not as "the fee was withdrawn".
+        ...(stay.nursingApplies ? { nursePerDay: num(nurse) } : {}),
         ...(stay.legs.length === 0 ? { bedRate: num(bedRate) } : {}),
         legs: stay.legs.map((l) => ({ id: l.id, dailyCharge: num(legRates[l.id] ?? l.dailyCharge) })),
         ...(reason.trim() ? { reason: reason.trim() } : {}),
@@ -196,7 +215,7 @@ export function CorrectStayDialog({
           <div>
             <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Correct the stay&apos;s charges</h3>
             <p className="mt-0.5 text-[11.5px] text-[var(--p-muted)]">
-              The dates, the bed rate and the nursing rate. Everything else on the tab is edited as a line.
+              The dates{stay.nursingApplies ? ", the bed rate and the nursing rate" : " and the bed rate"}. Everything else on the tab is edited as a line.
             </p>
           </div>
           <button onClick={onClose} className="text-[var(--p-muted)] hover:text-[var(--p-ink)]">✕</button>
@@ -294,23 +313,28 @@ export function CorrectStayDialog({
             )}
           </div>
 
-          {/* ── NURSING ── */}
-          <div className="mt-5">
-            <label className={label}>Nursing care — per day</label>
-            <div className="flex flex-wrap items-center gap-3">
-              <input className={`${fld} !w-[120px]`} value={nurse} inputMode="decimal"
-                onFocus={(e) => (e.currentTarget.style.borderColor = ring)}
-                onBlur={(e) => (e.currentTarget.style.borderColor = "")}
-                onChange={(e) => setNurse(e.target.value.replace(/[^\d.]/g, ""))} />
-              <span className="font-mono text-[12.5px] text-[var(--p-muted)]">
-                × {preview?.days ?? wasDays}d = ₹{money(preview?.nurseTotal ?? wasNurse)}
-              </span>
+          {/* ── NURSING ── only where there is nursing on the bill to reprice.
+              The fee is withdrawn: a current stay carries none, and offering a
+              rate for it would invite a desk to set a figure that changes
+              nothing. See StayBillingSnapshot.nursingApplies. */}
+          {stay.nursingApplies && (
+            <div className="mt-5">
+              <label className={label}>Nursing care — per day</label>
+              <div className="flex flex-wrap items-center gap-3">
+                <input className={`${fld} !w-[120px]`} value={nurse} inputMode="decimal"
+                  onFocus={(e) => (e.currentTarget.style.borderColor = ring)}
+                  onBlur={(e) => (e.currentTarget.style.borderColor = "")}
+                  onChange={(e) => setNurse(e.target.value.replace(/[^\d.]/g, ""))} />
+                <span className="font-mono text-[12.5px] text-[var(--p-muted)]">
+                  × {preview?.days ?? wasDays}d = ₹{money(preview?.nurseTotal ?? wasNurse)}
+                </span>
+              </div>
+              <p className="mt-1.5 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+                Set on this stay alone. Changing it here never touches the hospital&apos;s standard rate or any
+                other patient&apos;s bill.
+              </p>
             </div>
-            <p className="mt-1.5 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
-              Set on this stay alone. Changing it here never touches the hospital&apos;s standard rate or any
-              other patient&apos;s bill.
-            </p>
-          </div>
+          )}
 
           {/* ── WHY ── */}
           <div className="mt-5">
@@ -345,12 +369,14 @@ export function CorrectStayDialog({
                   <span className="text-[var(--p-muted)]">Bed</span>
                   <span className="font-mono text-[var(--p-ink)]">₹{money(preview.bedTotal)}</span>
                 </div>
-                <div className="mt-1 flex items-center justify-between text-[13px]">
-                  <span className="text-[var(--p-muted)]">Nursing</span>
-                  <span className="font-mono text-[var(--p-ink)]">₹{money(preview.nurseTotal)}</span>
-                </div>
+                {stay.nursingApplies && (
+                  <div className="mt-1 flex items-center justify-between text-[13px]">
+                    <span className="text-[var(--p-muted)]">Nursing</span>
+                    <span className="font-mono text-[var(--p-ink)]">₹{money(preview.nurseTotal)}</span>
+                  </div>
+                )}
                 <div className="mt-2 flex items-center justify-between border-t border-[var(--p-border)] pt-2">
-                  <span className="text-[13px] font-semibold text-[var(--p-ink)]">Bed + nursing</span>
+                  <span className="text-[13px] font-semibold text-[var(--p-ink)]">{stay.nursingApplies ? "Bed + nursing" : "Bed"}</span>
                   <span className="font-mono text-[15px] font-bold text-[var(--p-ink)]">₹{money(preview.total)}</span>
                 </div>
                 {Math.abs(delta) >= 0.01 && (

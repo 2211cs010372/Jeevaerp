@@ -31,10 +31,11 @@ const IP_CHARGES: { name: string; price: number; category: ChargeCategory; perDa
   { name: "Doctor Consultation", price: 1000, category: "DOCTOR_VISIT" },
   { name: "DMO Charges", price: 800, category: "DOCTOR_VISIT" },
   // "Nursing charges … 600/-" IS on the board, and is deliberately NOT here.
-  // Nursing is assigned to every inpatient automatically and accrues per day of
-  // stay (NURSE_FEE_PER_DAY in ipd.service). Offering it in the picker as well
-  // would let a desk add a second nursing line by hand and bill the family - or
-  // an insurer - twice for the same care. Change the rate in that constant.
+  // The hospital has WITHDRAWN the per-day nursing fee: no stay admitted since
+  // is charged for it, and stays billed before the withdrawal keep the line
+  // their invoice already carries (see NURSE_FEE_PER_DAY in ipd.service).
+  // Putting it in the picker would hand a desk a way to charge it again, one
+  // stay at a time, off a board that has not been repainted yet.
   { name: "Monitor Charges", price: 1000, category: "PROCEDURE", perDay: true },
   { name: "Emergency Charges", price: 1000, category: "PROCEDURE" },
   { name: "Blood Transfusion (IO Charges)", price: 2500, category: "PROCEDURE" },

@@ -663,7 +663,11 @@ type IpdBillBase = {
  * patient was in it: a mid-stay price revision must never reach back and
  * re-price nights already lived.
  */
-export function buildIpdInvoiceLines(adm: IpdBillBase, stays: BedStayRow[]) {
+export function buildIpdInvoiceLines(
+  adm: IpdBillBase,
+  stays: BedStayRow[],
+  opts: { nursing?: boolean } = {},
+) {
   const days = stayDays(adm.admittedAt, adm.dischargedAt);
 
   // Days shared out across the legs, so a transfer cannot bill one day twice.
@@ -687,19 +691,29 @@ export function buildIpdInvoiceLines(adm: IpdBillBase, stays: BedStayRow[]) {
         gstRatePct: Number(adm.gstRatePctAtAdmit.toString()),
       }];
 
-  // Assigned by default, at whatever this stay's nursing rate is - the standard
-  // fee unless a desk has corrected it. The same figure the running tab has been
-  // showing all along, because both read it from the same place.
+  // ── NURSING IS NO LONGER CHARGED, AND OLD BILLS DO NOT LOSE IT ──
+  //
+  // The hospital withdrew the per-day nursing fee. A stay that was never billed
+  // for it must not start being, so this is OFF by default and discharge never
+  // asks for it.
+  //
+  // A RE-ISSUE does ask for it, when the invoice it is rebuilding already
+  // carries a nursing line. Rebuilding a closed stay's bill without it would
+  // quietly subtract a day-rate per night from a document the family has
+  // already paid against and a TPA may have already assessed - the correction
+  // was to one charge, and it has to move that charge and nothing else.
   const nurse = nursePerDayOf(adm);
 
   return [
     ...bedLines,
-    {
-      description: `Nursing care · ${days} day(s) × ₹${nurse}`,
-      qty: days,
-      unitPrice: nurse,
-      gstRatePct: 0,
-    },
+    ...(opts.nursing
+      ? [{
+          description: `Nursing care · ${days} day(s) × ₹${nurse}`,
+          qty: days,
+          unitPrice: nurse,
+          gstRatePct: 0,
+        }]
+      : []),
     // Each line keeps its own GST rate: a ₹5,500 room and a 12% syrup are not
     // taxed the same way.
     ...adm.charges.map((c) => ({
@@ -750,7 +764,10 @@ async function reissueIpdInvoice(
         where: { source: "IPD", status: { not: "CANCELLED" } },
         orderBy: { createdAt: "desc" },
         take: 1,
-        select: { id: true, discountAmount: true },
+        // The lines it was RAISED with. Nursing is withdrawn for new stays, so
+        // whether this rebuild carries one is not a question about today - it
+        // is a question about what this bill already said.
+        select: { id: true, discountAmount: true, source: true, items: { select: { description: true } } },
       },
     },
   });
@@ -768,7 +785,14 @@ async function reissueIpdInvoice(
     actor,
     {
       invoiceId: inv.id,
-      lines: buildIpdInvoiceLines({ ...adm, dischargedAt: adm.dischargedAt }, stays as BedStayRow[]),
+      // A bill raised WITH nursing is re-issued with nursing. Dropping it here
+      // would take a day-rate per night off a document already paid against,
+      // over a correction to some other line entirely.
+      lines: buildIpdInvoiceLines(
+        { ...adm, dischargedAt: adm.dischargedAt },
+        stays as BedStayRow[],
+        { nursing: inv.items.some(isNursingLine) },
+      ),
       // The discount was a decision taken at discharge about this stay. A
       // corrected line is not a reason to quietly withdraw it.
       discountAmount: Number(inv.discountAmount.toString()),
@@ -1084,9 +1108,13 @@ export async function dischargePatient(
       // person who agreed the cashless arrangement went off shift days ago.
       payer: adm.payerType,
       payerName: adm.insurer ?? undefined,
-      // The bed, the nursing and the whole running tab - built by the one
-      // function a post-discharge correction also rebuilds them with, so the two
-      // can never describe the same stay differently.
+      // The bed and the whole running tab - built by the one function a
+      // post-discharge correction also rebuilds them with, so the two can never
+      // describe the same stay differently.
+      //
+      // No nursing: the per-day nursing fee is withdrawn, and this is a bill
+      // being raised for the first time. Stays billed for it before the
+      // withdrawal keep it - see buildIpdInvoiceLines.
       lines: buildIpdInvoiceLines(
         { ...adm, dischargedAt: adm.dischargedAt, charges: adm.charges as ChargeLine[] },
         stays as BedStayRow[],
@@ -2112,22 +2140,50 @@ export async function dischargeSummaryData(admissionId: string) {
 }
 
 /**
- * Nursing care is assigned to every admitted patient by default and accrues at a
- * flat rate per day - like the bed, it grows with the length of stay and is
- * derived (not a stored charge line) so it can never go stale or be half-removed.
+ * WITHDRAWN. Nursing is no longer charged as a service on a stay.
  *
- * ₹600 is the hospital's published rate ("Nursing charges … 600/-" on the
- * inpatient board at Balasamudram). It sat at ₹200 here, which is not a rate
- * this hospital has ever charged - so every inpatient bill since the ward
- * opened under-billed nursing by ₹400 a day, quietly, on the one line nobody
- * checks because the software supplied it.
+ * It was, until this was withdrawn: a flat per-day fee assigned to every
+ * inpatient and derived (never a stored charge line), so it grew with the
+ * length of stay exactly the way the bed does. ₹600 is the rate it was
+ * withdrawn AT - the hospital's published figure ("Nursing charges … 600/-"
+ * on the inpatient board at Balasamudram).
  *
- * Applied everywhere at once, because it is read in one place: the running tab
- * the ward sees, the discharge invoice, and the claim bill the insurer settles
- * all take this constant. Bills already RAISED are untouched - an invoice is a
- * tax document and is never rewritten by a rate change.
+ * The constant is kept, and so is every path that reads it, because STAYS
+ * ALREADY BILLED FOR NURSING STILL CARRY IT. An invoice is a tax document: a
+ * bill raised with a nursing line keeps that line, is re-issued with it when a
+ * charge on it is corrected, and prints with it on the claim sheet. What
+ * changed is that no NEW stay is given one - see hasNursingLine, which is how
+ * every one of those paths decides, per stay, rather than by a date nobody
+ * recorded.
  */
 export const NURSE_FEE_PER_DAY = 600;
+
+/**
+ * Does this invoice line describe the withdrawn nursing fee?
+ *
+ * Matched on the description because that is all the line ever was - nursing is
+ * derived at billing time and has no catalogue row and no id to match on. The
+ * text is `buildIpdInvoiceLines`' own, written by this file and read back by
+ * it, so the two cannot drift apart.
+ */
+export function isNursingLine(it: { description: string }): boolean {
+  return it.description.trim().toLowerCase().startsWith("nursing care");
+}
+
+/**
+ * WAS THIS STAY BILLED FOR NURSING? - the one question every nursing path now
+ * asks, and it asks the stay's own invoice rather than a cutover date.
+ *
+ * A date would need recording somewhere and would be wrong for any stay that
+ * straddled it. The invoice cannot be wrong: a stay was billed for nursing if
+ * and only if its IPD bill says so. A stay still running has no invoice and so
+ * carries no nursing, which is exactly the intent.
+ */
+export function hasNursingLine(
+  invoices: { source: string; items: { description: string }[] }[],
+): boolean {
+  return invoices.some((i) => i.source === "IPD" && i.items.some(isNursingLine));
+}
 
 /**
  * What nursing costs per day ON THIS STAY - the hospital's rate unless somebody
@@ -2162,7 +2218,21 @@ export async function admissionSheet(admissionId: string): Promise<{
   };
   days: number;
   bedTotal: string;
-  /** Assigned nursing care, days × nursePerDay. Derived, not a stored line. */
+  /**
+   * Does a nursing line belong on this stay at all?
+   *
+   * FALSE on every stay admitted since the per-day nursing fee was withdrawn -
+   * the screens and prints that render this sheet drop the row entirely.
+   *
+   * This is NOT the same as `nurseTotal` being "0.00", which is why it is its
+   * own field. A stay from before the withdrawal can have nursing WAIVED to
+   * ₹0 as a concession, and that stay must keep its row and its editable rate
+   * so the desk can put the fee back. Withdrawn and waived look identical in
+   * the money and are completely different in what the desk may do about it.
+   */
+  nursingApplies: boolean;
+  /** Nursing care, days × nursePerDay. Derived, not a stored line. ₹0 unless
+   *  the stay predates the fee's withdrawal - see nursingApplies. */
   nurseTotal: string;
   /** This stay's nursing rate - the hospital's, or a corrected one. */
   nursePerDay: string;
@@ -2239,6 +2309,14 @@ export async function admissionSheet(admissionId: string): Promise<{
           gstRatePct: true, sourceRef: true, createdAt: true,
           addedBy: { select: { name: true } },
         },
+      },
+      // Read for one question only: was this stay billed for nursing? The fee
+      // is withdrawn, so the tab shows a nursing line on a stay whose invoice
+      // already carries one and on no other - the tab and the bill in the
+      // family's hand have to say the same thing about the same stay.
+      invoices: {
+        where: { source: "IPD", status: { not: "CANCELLED" } },
+        select: { source: true, items: { select: { description: true } } },
       },
     },
   });
@@ -2323,9 +2401,16 @@ export async function admissionSheet(admissionId: string): Promise<{
   });
   const chargesTotal = charges.reduce((s, c) => s + Number(c.amount), 0);
 
-  // ── NURSING ── assigned by default, one flat fee per day of stay, at this
-  // stay's own rate where a desk has corrected it.
-  const nursePerDay = nursePerDayOf(a);
+  // ── NURSING ── withdrawn as a service, so ₹0 on every stay that was not
+  // already billed for it. One that WAS keeps its old rate here, because this
+  // sheet is what the desk answers "what does this stay come to" from and the
+  // invoice it must agree with has the line on it.
+  //
+  // `nursingApplies` below is what every screen and print reads to decide
+  // whether to draw the row at all, rather than each of them re-deciding for
+  // itself whether nursing still exists.
+  const nursingApplies = hasNursingLine(a.invoices);
+  const nursePerDay = nursingApplies ? nursePerDayOf(a) : 0;
   const nurseTotal = days * nursePerDay;
   const grandTotal = bedTotal + nurseTotal + chargesTotal;
 
@@ -2372,6 +2457,7 @@ export async function admissionSheet(admissionId: string): Promise<{
     },
     days,
     bedTotal: bedTotal.toFixed(2),
+    nursingApplies,
     nurseTotal: nurseTotal.toFixed(2),
     nursePerDay: nursePerDay.toFixed(2),
     notes: (a.noteEntries as NoteRow[]).map(toNoteDTO),
@@ -3226,20 +3312,25 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   // oxygen, a syringe pump and the MRD fee are all "what the hospital did",
   // and a policy is read against that subtotal as a whole.
   //
-  // Nursing care is per-day and derived rather than stored - the same figure the
-  // ward sheet and the discharge bill have always shown, at this stay's own rate.
-  const nurseRate = nursePerDayOf(a);
+  // NURSING IS WITHDRAWN, and this sheet prints it only for a stay that was
+  // actually billed for it. It is derived rather than stored, so nothing in the
+  // invoice rows below would have stopped it printing on a stay that never paid
+  // it - and a claim sheet carrying a line the tax invoice does not is the
+  // exact disagreement an assessor finds months later. See hasNursingLine.
+  const nurseRate = hasNursingLine(a.invoices) ? nursePerDayOf(a) : 0;
   push("HOSPITAL SERVICES", [
     ...wardLines,
-    {
-      // Nursing accrues from the moment the patient is in a bed, so the stay's
-      // start dates it - the same day the first bed line carries.
-      date: a.admittedAt.toISOString(),
-      issueNo: null, code: null,
-      description: "Nursing Charges",
-      batchNo: null, expiry: null,
-      rate: m2(nurseRate), qty: days, amount: m2(nurseRate * days),
-    },
+    ...(nurseRate > 0
+      ? [{
+          // Nursing accrued from the moment the patient was in a bed, so the
+          // stay's start dates it - the same day the first bed line carries.
+          date: a.admittedAt.toISOString(),
+          issueNo: null, code: null,
+          description: "Nursing Charges",
+          batchNo: null, expiry: null,
+          rate: m2(nurseRate), qty: days, amount: m2(nurseRate * days),
+        }]
+      : []),
     ...(bySection.get("SERVICES") ?? []),
   ]);
 

@@ -31,6 +31,8 @@ interface Inpatient {
 /** The full running bill for the discharge estimate - everything, not just the bed. */
 interface DischSheet {
   days: number; bedTotal: string; nurseTotal: string; nursePerDay: string;
+  /** False since the per-day nursing fee was withdrawn - see ipd.service. */
+  nursingApplies: boolean;
   chargesTotal: string; grandTotal: string; advanceTotal: string; balance: string;
   charges: { id: string; category: string; description: string; amount: string; fromPharmacy: boolean }[];
   /** Pharmacy and lab bills for this stay, still unpaid. NOT part of the
@@ -500,7 +502,12 @@ export default function InpatientsPage() {
                     ) : (
                       <>
                         <Line k={`Bed · ${sheet.days} day${sheet.days > 1 ? "s" : ""}`} v={sheet.bedTotal} />
-                        <Line k={`Nursing · ${sheet.days}d × ₹${money(sheet.nursePerDay)}`} v={sheet.nurseTotal} />
+                        {/* Only on a stay old enough to have been billed for
+                            nursing. The fee is withdrawn; an estimate that
+                            listed it would quote money nobody will be asked for. */}
+                        {sheet.nursingApplies && (
+                          <Line k={`Nursing · ${sheet.days}d × ₹${money(sheet.nursePerDay)}`} v={sheet.nurseTotal} />
+                        )}
                         {Number(sheet.chargesTotal) > 0 && <Line k={`Charges & pharmacy (${sheet.charges.length})`} v={sheet.chargesTotal} />}
                         <div className="mt-2 flex justify-between border-t border-[var(--p-border)] pt-2">
                           <span className="font-semibold text-[var(--p-ink)]">Grand total</span>
