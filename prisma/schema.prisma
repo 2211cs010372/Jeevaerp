@@ -2347,6 +2347,25 @@ model BedStay {
   toDate   DateTime?
   reason   String?
 
+  /// HOW MANY DAYS THIS BED IS BILLED FOR, when that is not simply how long the
+  /// patient lay in it.
+  ///
+  /// Normally NULL, and the day count is derived from the stay's dates and split
+  /// across the legs (see splitStayDays) - every night of the stay lands on
+  /// exactly one bed, so a transfer can never bill a day twice or lose one.
+  ///
+  /// Set, it OVERRIDES that split for this leg alone. The case it exists for: a
+  /// long stay where the ward is billed as a bed for the first few days and the
+  /// rest is raised as its own line - a package, a procedure, a rate the insurer
+  /// settles separately. The desk was doing this with a negative adjustment on
+  /// the tab, which on a claim reads as the hospital correcting its own bill.
+  ///
+  /// The nights it takes OFF the bed line are not billed anywhere by this
+  /// column. Whoever sets it is expected to raise the remainder as a charge, and
+  /// every screen that shows a capped bed says how many days are uncovered so it
+  /// cannot be forgotten quietly.
+  billedDays Int?
+
   movedById String
   movedBy   User     @relation("BedStayMovedBy", fields: [movedById], references: [id])
   createdAt DateTime @default(now())

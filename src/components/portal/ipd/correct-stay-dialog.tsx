@@ -46,6 +46,17 @@ import { bedLabel } from "@/lib/beds";
 export interface StayLeg {
   id: string; wardName: string; bedNo: string; dailyCharge: string;
   from: string; to: string | null; days: number; total: string; current: boolean;
+  /**
+   * The cap, as stored. Null = this bed bills the nights the stay's dates give
+   * it, which is the ordinary case and what the days box shows by default.
+   *
+   * Kept separate from `days` because they answer different questions: `days` is
+   * what the bed bills TODAY, and this is whether anybody DECIDED that. A box
+   * seeded from `days` alone could not tell "3 nights, because the dates say so"
+   * from "3 nights, because somebody capped it", and would freeze the first into
+   * the second the moment anyone pressed Save.
+   */
+  billedDays: number | null;
 }
 
 export interface StayBillingSnapshot {
@@ -122,6 +133,13 @@ export function CorrectStayDialog({
   const [legRates, setLegRates] = useState<Record<string, string>>(() =>
     Object.fromEntries(stay.legs.map((l) => [l.id, String(Number(l.dailyCharge))]))
   );
+  // HOW MANY DAYS EACH BED BILLS. `null` means nobody has capped this leg, so it
+  // follows the stay's dates - and the box below shows the live derived count,
+  // which keeps moving as the dates are edited. A string is a deliberate cap and
+  // stops following. Clearing the box goes back to null.
+  const [legDays, setLegDays] = useState<Record<string, string | null>>(() =>
+    Object.fromEntries(stay.legs.map((l) => [l.id, l.billedDays == null ? null : String(l.billedDays)]))
+  );
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -146,16 +164,25 @@ export function CorrectStayDialog({
     const legs = stay.legs.map((l, i) => {
       const legFrom = i === 0 ? from : new Date(l.from);
       const legTo = l.to ? new Date(l.to) : until;
-      const d = stayDays(legFrom, legTo);
+      // What the dates give this leg, and what it will actually bill - the same
+      // two numbers the server keeps apart.
+      const derived = stayDays(legFrom, legTo);
+      const capped = legDays[l.id];
+      const d = capped == null ? derived : Math.max(0, Math.floor(num(capped)));
       const rate = num(legRates[l.id] ?? l.dailyCharge);
-      return { ...l, days: d, rate, total: d * rate };
+      return { ...l, days: d, derived, capped: capped != null, rate, total: d * rate };
     });
     const bedTotal = legs.length
       ? legs.reduce((s, l) => s + l.total, 0)
       : days * num(bedRate);
     const nurseTotal = days * num(nurse);
-    return { days, legs, bedTotal, nurseTotal, total: bedTotal + nurseTotal };
-  }, [admittedAt, dischargedAt, legRates, bedRate, nurse, stay.legs]);
+    // Nights no bed line covers. Only ever above zero because somebody capped a
+    // bed, and then it is the thing they still have to raise a charge for.
+    const uncovered = legs.length
+      ? Math.max(0, days - legs.reduce((t, l) => t + l.days, 0))
+      : 0;
+    return { days, legs, bedTotal, nurseTotal, uncovered, total: bedTotal + nurseTotal };
+  }, [admittedAt, dischargedAt, legRates, legDays, bedRate, nurse, stay.legs]);
 
   // What it costs today, so the dialog can show the swing rather than only the
   // new figure. A desk correcting a date wants to know what it moved.
@@ -188,7 +215,19 @@ export function CorrectStayDialog({
         // a ₹0 frozen there reads as a WAIVER, not as "the fee was withdrawn".
         ...(stay.nursingApplies ? { nursePerDay: num(nurse) } : {}),
         ...(stay.legs.length === 0 ? { bedRate: num(bedRate) } : {}),
-        legs: stay.legs.map((l) => ({ id: l.id, dailyCharge: num(legRates[l.id] ?? l.dailyCharge) })),
+        legs: stay.legs.map((l) => {
+          const seeded = l.billedDays == null ? null : String(l.billedDays);
+          const now = legDays[l.id] ?? null;
+          return {
+            id: l.id,
+            dailyCharge: num(legRates[l.id] ?? l.dailyCharge),
+            // Three different answers, and the server reads all three: omitted
+            // leaves the cap exactly as it is, null clears it back to the dates,
+            // a number caps it. Sending `days` unconditionally would freeze
+            // today's derived count onto every leg anybody ever saved.
+            ...(now === seeded ? {} : { billedDays: now === null ? null : Math.max(0, Math.floor(num(now))) }),
+          };
+        }),
         ...(reason.trim() ? { reason: reason.trim() } : {}),
       });
       onSaved(
@@ -268,10 +307,11 @@ export function CorrectStayDialog({
             23:40 to 00:10 the next morning is one whole day less on the bill.
           </p>
 
-          {/* ── BED ── one rate per leg. A transferred patient has two, and one
-              averaged figure cannot tell an insurer which nights were ICU. */}
+          {/* ── BED ── one rate per leg, and one day count per leg. A
+              transferred patient has two of each, and one averaged figure cannot
+              tell an insurer which nights were ICU. */}
           <div className="mt-6 border-t border-[var(--p-border)] pt-5">
-            <label className={label}>Bed charges — per day</label>
+            <label className={label}>Bed charges — rate per day × days billed</label>
             {stay.legs.length === 0 ? (
               <div className="max-w-[220px]">
                 <input className={fld} value={bedRate} inputMode="decimal"
@@ -293,20 +333,58 @@ export function CorrectStayDialog({
                           </span>
                         )}
                       </span>
-                      <input className={`${fld} !w-[120px]`} value={legRates[l.id] ?? ""} inputMode="decimal"
+                      <input className={`${fld} !w-[110px]`} value={legRates[l.id] ?? ""} inputMode="decimal"
+                        title="What this bed costs per day"
                         onFocus={(e) => (e.currentTarget.style.borderColor = ring)}
                         onBlur={(e) => (e.currentTarget.style.borderColor = "")}
                         onChange={(e) => setLegRates((r) => ({ ...r, [l.id]: e.target.value.replace(/[^\d.]/g, "") }))} />
-                      <span className="w-[150px] shrink-0 text-right font-mono text-[12.5px] text-[var(--p-muted)]">
-                        × {p?.days ?? l.days}d = ₹{money(p?.total ?? num(l.total))}
+                      <span className="shrink-0 text-[12.5px] text-[var(--p-muted)]">×</span>
+                      {/* THE DAY COUNT, EDITABLE.
+                          Left alone it shows the nights the dates give this bed
+                          and keeps following them as the dates are edited above.
+                          Typed into, it stops following and bills exactly that -
+                          which is how a stay gets its first few days as a bed
+                          and the rest raised as its own line. Emptied, it goes
+                          back to following the dates. */}
+                      <input className={`${fld} !w-[72px] ${legDays[l.id] != null ? "!border-[var(--p-blue)]" : ""}`}
+                        value={legDays[l.id] ?? String(p?.derived ?? l.days)} inputMode="numeric"
+                        title="How many days this bed is billed for. Clear the box to go back to the stay's dates."
+                        onFocus={(e) => (e.currentTarget.style.borderColor = ring)}
+                        onBlur={(e) => (e.currentTarget.style.borderColor = "")}
+                        onChange={(e) => {
+                          const v = e.target.value.replace(/[^\d]/g, "");
+                          setLegDays((d) => ({ ...d, [l.id]: v === "" ? null : v }));
+                        }} />
+                      <span className="shrink-0 text-[12.5px] text-[var(--p-muted)]">d</span>
+                      <span className="w-[110px] shrink-0 text-right font-mono text-[12.5px] text-[var(--p-muted)]">
+                        = ₹{money(p?.total ?? num(l.total))}
                       </span>
                     </div>
                   );
                 })}
+                <p className="text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+                  The <strong>days</strong> box follows the stay&apos;s dates until you type in it. Type a
+                  number to bill this bed for exactly that many days — and <strong>clear the box</strong> to
+                  go back to following the dates.
+                </p>
                 {stay.legs.length > 1 && (
                   <p className="text-[11.5px] leading-relaxed text-[var(--p-muted)]">
                     Two rows means this patient was transferred. Each leg keeps its own rate — an insurer
                     paying an ICU entitlement has to see which nights were actually ICU.
+                  </p>
+                )}
+                {/* A CAPPED BED UNDER-BILLS UNTIL SOMEBODY FINISHES THE JOB.
+                    The nights taken off the bed line are not billed anywhere by
+                    the cap itself - the remainder is meant to be raised as its
+                    own charge on the tab. Said here, in nights, because this is
+                    the screen where the decision is being made and the only
+                    moment anyone is thinking about it. */}
+                {!!preview?.uncovered && (
+                  <p className="rounded-lg border border-[#e5c07b] bg-[#fdf6e3] px-3 py-2 text-[11.5px] leading-relaxed text-[#8a6414]">
+                    <strong>{preview.uncovered} day{preview.uncovered === 1 ? "" : "s"} of this stay
+                    {preview.uncovered === 1 ? " is" : " are"} not on any bed line.</strong>{" "}
+                    That is what capping a bed does — add the rest to the tab as its own charge, or the
+                    stay bills short.
                   </p>
                 )}
               </div>

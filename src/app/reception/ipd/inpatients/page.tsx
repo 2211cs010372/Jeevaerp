@@ -33,6 +33,8 @@ interface DischSheet {
   days: number; bedTotal: string; nurseTotal: string; nursePerDay: string;
   /** False since the per-day nursing fee was withdrawn - see ipd.service. */
   nursingApplies: boolean;
+  /** Nights no bed line covers, because a bed was capped - see ipd.service. */
+  uncoveredDays: number;
   chargesTotal: string; grandTotal: string; advanceTotal: string; balance: string;
   charges: { id: string; category: string; description: string; amount: string; fromPharmacy: boolean }[];
   /** Pharmacy and lab bills for this stay, still unpaid. NOT part of the
@@ -501,7 +503,14 @@ export default function InpatientsPage() {
                       <div className="flex items-center justify-center gap-2 py-4 text-[13px] text-[var(--p-muted)]"><Spinner size={14} /> Totting up the full bill…</div>
                     ) : (
                       <>
-                        <Line k={`Bed · ${sheet.days} day${sheet.days > 1 ? "s" : ""}`} v={sheet.bedTotal} />
+                        {/* The days the BED bills, not the days the stay ran -
+                            they differ on a capped bed, and an estimate whose
+                            qty does not make its own amount is the one the
+                            family queries at the window. */}
+                        <Line k={`Bed · ${sheet.days - sheet.uncoveredDays} day${sheet.days - sheet.uncoveredDays === 1 ? "" : "s"}`} v={sheet.bedTotal} />
+                        {sheet.uncoveredDays > 0 && (
+                          <Line k={`+ ${sheet.uncoveredDays} day${sheet.uncoveredDays === 1 ? "" : "s"} billed as charges, not bed`} v={"—"} />
+                        )}
                         {/* Only on a stay old enough to have been billed for
                             nursing. The fee is withdrawn; an estimate that
                             listed it would quote money nobody will be asked for. */}

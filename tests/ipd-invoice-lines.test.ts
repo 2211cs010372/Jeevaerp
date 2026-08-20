@@ -16,7 +16,8 @@ import { describe, it, expect, vi } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
-const { buildIpdInvoiceLines, hasNursingLine, isNursingLine } = await import("@/server/services/ipd.service");
+const { buildIpdInvoiceLines, hasNursingLine, isNursingLine, billedLegDays, uncoveredStayDays } =
+  await import("@/server/services/ipd.service");
 
 const d = (s: string) => new Date(`${s}T12:00:00`);
 
@@ -26,12 +27,18 @@ const charge = (description: string, qty: number, unitPrice: number, gstRatePct 
   gstRatePct: { toString: () => gstRatePct.toFixed(2) },
 });
 
-const stay = (wardName: string, bedNo: string, dailyCharge: number, from: string, to: string | null, gst = 0) => ({
+const stay = (
+  wardName: string, bedNo: string, dailyCharge: number,
+  from: string, to: string | null, gst = 0,
+  billedDays: number | null = null,
+) => ({
   wardName,
   dailyCharge: { toString: () => dailyCharge.toFixed(2) },
   gstRatePct: { toString: () => gst.toFixed(2) },
   fromDate: d(from), toDate: to ? d(to) : null,
   bed: { bedNo },
+  // Null on almost every call - the bed bills the nights the dates give it.
+  billedDays,
 });
 
 const admission = (over: Partial<Parameters<typeof buildIpdInvoiceLines>[0]> = {}) => ({
@@ -216,5 +223,87 @@ describe("a stay carries nursing only if its own invoice already did", () => {
     // "night nursing" is the placeholder the add-charge box suggests. A desk
     // that types one is raising an ordinary tab line, not reinstating the fee.
     expect(isNursingLine({ description: "Night nursing attendant" })).toBe(false);
+  });
+});
+
+/**
+ * CAPPING A BED - billing it for fewer days than the patient lay in it.
+ *
+ * The case it exists for: a long stay where the first few days are billed as a
+ * bed and the rest is raised as its own line, because it is a package, a
+ * procedure, or a rate the insurer settles separately. The desk's workaround
+ * was a negative "adjustment" on the tab, which on a claim reads as the
+ * hospital correcting its own bill.
+ *
+ * The property that matters most is the one at the bottom: a cap takes nights
+ * OFF the bill and puts them nowhere. Something has to count them.
+ */
+describe("a bed leg can be billed for fewer days than it held", () => {
+  const legs = (...over: (number | null)[]) => [
+    { fromDate: d("2026-08-17"), toDate: d("2026-08-21"), billedDays: over[0] ?? null },
+  ];
+  const from = d("2026-08-17");
+  const until = d("2026-08-25");
+
+  it("bills the nights the dates give it when nothing is capped", () => {
+    expect(billedLegDays(from, until, legs(null))).toEqual([8]);
+    expect(uncoveredStayDays(from, until, legs(null))).toBe(0);
+  });
+
+  it("bills exactly the capped number instead", () => {
+    // Admitted 17/08, 8 nights on the ward, but only 3 billed as a bed.
+    expect(billedLegDays(from, until, legs(3))).toEqual([3]);
+  });
+
+  it("counts the nights the cap took off, so they cannot vanish quietly", () => {
+    // THE WHOLE POINT. A cap does not move those five nights anywhere - the
+    // desk is expected to raise them as their own charge, and this is the
+    // number every screen shows them so they remember to.
+    expect(uncoveredStayDays(from, until, legs(3))).toBe(5);
+  });
+
+  it("treats a cap of 0 as a real answer, not as 'not capped'", () => {
+    // A ward billed entirely as a package. Falling back to the dates here would
+    // put the whole stay back on the bill under a line nobody meant to raise.
+    expect(billedLegDays(from, until, legs(0))).toEqual([0]);
+    expect(uncoveredStayDays(from, until, legs(0))).toBe(8);
+  });
+
+  it("floors a negative cap rather than subtracting a night from the bill", () => {
+    expect(billedLegDays(from, until, legs(-3))).toEqual([0]);
+  });
+
+  it("caps ONE leg of a transfer and leaves the other on its dates", () => {
+    const transferred = [
+      { fromDate: d("2026-08-17"), toDate: d("2026-08-20"), billedDays: 1 },
+      { fromDate: d("2026-08-20"), toDate: null, billedDays: null },
+    ];
+    // The split gives 3 and 5; the first leg is capped to 1, the second is not.
+    expect(billedLegDays(from, until, transferred)).toEqual([1, 5]);
+    expect(uncoveredStayDays(from, until, transferred)).toBe(2);
+  });
+
+  it("puts the cap on the INVOICE line, qty and description together", () => {
+    // The description is what a family reads on the bill. A line saying "5 days"
+    // beside a qty of 3 is the disagreement this whole path has to avoid.
+    const lines = buildIpdInvoiceLines(
+      admission({ admittedAt: d("2026-08-17"), dischargedAt: d("2026-08-25") }),
+      [stay("General Ward", "GW-04", 1500, "2026-08-17", null, 0, 3)],
+    );
+    const bed = lines.find((l) => l.description.startsWith("Bed ·"))!;
+    expect(bed.qty).toBe(3);
+    expect(bed.description).toContain("3 days");
+    expect(bed.qty * bed.unitPrice).toBe(4500);
+  });
+
+  it("leaves an uncapped bill exactly as it was - this is the no-op property", () => {
+    // Every existing row has billedDays null. If this ever stops matching, the
+    // column has quietly re-priced every stay in the hospital.
+    const uncapped = buildIpdInvoiceLines(
+      admission({ admittedAt: d("2026-08-17"), dischargedAt: d("2026-08-25") }),
+      [stay("General Ward", "GW-04", 1500, "2026-08-17", null)],
+    );
+    const bed = uncapped.find((l) => l.description.startsWith("Bed ·"))!;
+    expect(bed.qty).toBe(8);
   });
 });

@@ -1,0 +1,25 @@
+-- HOW MANY DAYS A BED IS BILLED FOR, when that is not how long the patient lay
+-- in it.
+--
+-- The bed's day count was derived and only derived: stayDays over the stay's
+-- dates, split across the legs so every night landed on exactly one bed. That
+-- is right for an ordinary stay and has no answer at all for the ordinary case
+-- underneath it - a long admission where the first few days are billed as a
+-- bed and the rest is raised as its own line, because it is a package, a
+-- procedure, or a rate the insurer settles separately.
+--
+-- With nowhere to record that, the desk's workaround was a negative
+-- "adjustment" line on the tab. On a discharge sheet that is a charge the
+-- family is entitled to ask about and nobody can explain; on a claim it reads
+-- as the hospital correcting its own bill.
+--
+-- PER LEG, not per admission: a transferred stay has a bed on each side of the
+-- move and either one of them may be the capped one.
+--
+-- NULLABLE, so there is no backfill and no behaviour change. NULL means "bill
+-- this leg for the nights the dates say", which is what every existing row
+-- means and what every new one will mean unless a desk deliberately says
+-- otherwise.
+
+-- AlterTable
+ALTER TABLE "BedStay" ADD COLUMN     "billedDays" INTEGER;

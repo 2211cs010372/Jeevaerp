@@ -91,6 +91,51 @@ export function splitStayDays(
   return out;
 }
 
+/** A bed leg as every day-count path needs to see it. */
+type BilledLeg = { fromDate: Date; toDate: Date | null; billedDays?: number | null };
+
+/**
+ * WHAT EACH BED LEG IS BILLED FOR - the derived split, with a desk's deliberate
+ * override on top.
+ *
+ * `splitStayDays` answers "where was the patient", and that is the right answer
+ * almost always. It is not the answer when a stay is priced some other way: the
+ * first few days billed as a bed and the rest raised as its own line, because it
+ * is a package, or a procedure, or a rate the insurer settles separately. A desk
+ * with nowhere to record that was putting a negative adjustment on the tab.
+ *
+ * So `billedDays` on the leg wins where it is set, and NOTHING else changes:
+ * null - which is every existing row and every new one - still reads the dates.
+ *
+ * ONE function, called by the running tab, the discharge invoice and the claim
+ * bill. They read one day count or they drift, and the drift shows up as a
+ * claim bill and a tax invoice that disagree about how many nights a bed was.
+ */
+export function billedLegDays(admittedAt: Date, end: Date, legs: BilledLeg[]): number[] {
+  const derived = splitStayDays(admittedAt, end, legs);
+  return derived.map((d, i) => {
+    const override = legs[i].billedDays;
+    // Negative is rejected at the door in correctStayBilling; floored here too,
+    // because a stored -1 would subtract a night from a bill rather than fail.
+    return override == null ? d : Math.max(0, override);
+  });
+}
+
+/**
+ * Nights of the stay that NO bed line covers, once the overrides are applied.
+ *
+ * Zero on an ordinary stay - the split hands out every night. Above zero only
+ * where a desk has capped a bed deliberately, and then it is the number the
+ * screens have to say out loud: those nights are not on the bed line, and the
+ * remainder was supposed to be raised as its own charge. A cap nobody finished
+ * is an under-billed stay, and it is invisible unless something counts it.
+ */
+export function uncoveredStayDays(admittedAt: Date, end: Date, legs: BilledLeg[]): number {
+  if (!legs.length) return 0;
+  const billed = billedLegDays(admittedAt, end, legs).reduce((t, d) => t + d, 0);
+  return Math.max(0, stayDays(admittedAt, end) - billed);
+}
+
 // ---------------------------------------------------------------------------
 // Wards & beds (setup lives with admin; the board is for everyone clinical)
 // ---------------------------------------------------------------------------
@@ -635,6 +680,8 @@ type ChargeLine = {
 type BedStayRow = {
   wardName: string; dailyCharge: { toString(): string }; gstRatePct: { toString(): string };
   fromDate: Date; toDate: Date | null; bed: { bedNo: string } | null;
+  /** Null = bill the nights the dates say. See billedLegDays. */
+  billedDays?: number | null;
 };
 
 type IpdBillBase = {
@@ -670,8 +717,10 @@ export function buildIpdInvoiceLines(
 ) {
   const days = stayDays(adm.admittedAt, adm.dischargedAt);
 
-  // Days shared out across the legs, so a transfer cannot bill one day twice.
-  const legDays = splitStayDays(adm.admittedAt, adm.dischargedAt, stays);
+  // Days shared out across the legs, so a transfer cannot bill one day twice -
+  // and then any leg a desk has deliberately capped, at the number they capped
+  // it to rather than the nights it actually held.
+  const legDays = billedLegDays(adm.admittedAt, adm.dischargedAt, stays);
   const bedLines = stays.length > 0
     ? stays.map((st, i) => {
         const d = legDays[i];
@@ -778,7 +827,10 @@ async function reissueIpdInvoice(
   const stays = await prisma.bedStay.findMany({
     where: { admissionId },
     orderBy: { fromDate: "asc" },
-    select: { wardName: true, dailyCharge: true, gstRatePct: true, fromDate: true, toDate: true, bed: { select: { bedNo: true } } },
+    select: {
+      wardName: true, dailyCharge: true, gstRatePct: true, fromDate: true, toDate: true,
+      billedDays: true, bed: { select: { bedNo: true } },
+    },
   });
 
   await updateInvoice(
@@ -1094,7 +1146,10 @@ export async function dischargePatient(
   const stays = await prisma.bedStay.findMany({
     where: { admissionId: adm.id },
     orderBy: { fromDate: "asc" },
-    select: { wardName: true, dailyCharge: true, gstRatePct: true, fromDate: true, toDate: true, bed: { select: { bedNo: true } } },
+    select: {
+      wardName: true, dailyCharge: true, gstRatePct: true, fromDate: true, toDate: true,
+      billedDays: true, bed: { select: { bedNo: true } },
+    },
   });
 
   const invoice = await createInvoice(
@@ -1619,8 +1674,15 @@ export async function correctStayBilling(
     /** ISO instant. Only on a stay that is already closed. */
     dischargedAt?: string;
     nursePerDay?: number;
-    /** Per-leg bed rates. A leg not named here keeps the rate it had. */
-    legs?: { id: string; dailyCharge: number }[];
+    /**
+     * Per-leg bed corrections. A leg not named here is left exactly as it was.
+     *
+     * `billedDays` is how many days this bed is BILLED for, which is not always
+     * how many nights it held: undefined leaves the cap alone, null clears it
+     * back to billing the stay's dates, and a number caps it there. See
+     * BedStay.billedDays for why a desk needs this.
+     */
+    legs?: { id: string; dailyCharge: number; billedDays?: number | null }[];
     /** The whole-stay bed rate, for a stay with no BedStay rows (pre-migration). */
     bedRate?: number;
     reason?: string;
@@ -1634,7 +1696,7 @@ export async function correctStayBilling(
       dailyChargeAtAdmit: true, nursePerDay: true,
       bedStays: {
         orderBy: { fromDate: "asc" },
-        select: { id: true, wardName: true, dailyCharge: true, fromDate: true, toDate: true, bed: { select: { bedNo: true } } },
+        select: { id: true, wardName: true, dailyCharge: true, fromDate: true, toDate: true, billedDays: true, bed: { select: { bedNo: true } } },
       },
     },
   });
@@ -1671,6 +1733,21 @@ export async function correctStayBilling(
     if (!legById.has(e.id)) throw new ApiError(400, "That bed isn't part of this stay.");
     if (e.dailyCharge < 0) throw new ApiError(400, "A bed rate can't be negative.");
   }
+  // ── THE BED DAY COUNTS ──
+  //
+  // Capping a bed takes nights OFF the bill. That is the point - the remainder
+  // is raised as its own line - but it means every guard here is guarding
+  // against an under-bill, which is the kind nobody complains about and nobody
+  // notices either.
+  const cappedTo = (e: { billedDays?: number | null }) => e.billedDays;
+  for (const e of legEdits) {
+    const d = cappedTo(e);
+    if (d === undefined || d === null) continue;
+    if (!Number.isInteger(d) || d < 0) {
+      throw new ApiError(400, "A bed's billed days has to be a whole number, and can't be negative.");
+    }
+  }
+
   const firstLeg = a.bedStays[0];
   const lastLeg = a.bedStays[a.bedStays.length - 1];
   const admittedMoved = afterAdmittedAt.getTime() !== beforeAdmittedAt.getTime();
@@ -1691,6 +1768,26 @@ export async function correctStayBilling(
       `That end date is before this patient was moved into ${lastLeg.wardName}. Correct the transfer first.`
     );
   }
+
+  // A bed cannot be billed for more nights than the stay lasted. Checked
+  // against the dates AS CORRECTED, because one save can move both - somebody
+  // shortening a stay and capping a bed in the same breath must not be able to
+  // leave the bed billing more days than the stay now has.
+  const spanDays = stayDays(afterAdmittedAt, afterDischargedAt ?? now);
+  for (const e of legEdits) {
+    const d = cappedTo(e);
+    if (d != null && d > spanDays) {
+      throw new ApiError(
+        400,
+        `This stay is ${spanDays} day${spanDays === 1 ? "" : "s"} long. A bed can't be billed for more than that.`,
+      );
+    }
+  }
+
+  const legDayChanges = legEdits
+    .filter((e) => e.billedDays !== undefined)
+    .map((e) => ({ leg: legById.get(e.id)!, to: e.billedDays ?? null }))
+    .filter((x) => (x.leg.billedDays ?? null) !== x.to);
 
   // ── THE RATES ──
   const beforeNurse = nursePerDayOf(a);
@@ -1718,7 +1815,8 @@ export async function correctStayBilling(
     (afterDischargedAt?.getTime() ?? null) !== (beforeDischargedAt?.getTime() ?? null) ||
     afterNurse !== beforeNurse ||
     afterBedRate !== beforeBedRate ||
-    legChanges.length > 0;
+    legChanges.length > 0 ||
+    legDayChanges.length > 0;
   if (!changed) return;
 
   const fmt = (d: Date) =>
@@ -1738,6 +1836,18 @@ export async function correctStayBilling(
   }
   if (afterNurse !== beforeNurse) {
     parts.push(`nursing ₹${beforeNurse.toFixed(2)}/day → ₹${afterNurse.toFixed(2)}/day`);
+  }
+  // Spelled out in nights rather than as a field name. This note is read by
+  // whoever is asked why the bill changed, months later, and "billedDays: 3"
+  // does not answer that question.
+  for (const c of legDayChanges) {
+    const bed = bedLabel(c.leg.wardName, c.leg.bed?.bedNo);
+    const was = c.leg.billedDays == null ? "the stay's dates" : `${c.leg.billedDays} day(s)`;
+    parts.push(
+      c.to == null
+        ? `${bed} billed days ${was} → the stay's dates`
+        : `${bed} billed days ${was} → ${c.to} day(s)`,
+    );
   }
 
   await withInvoiceInStep(
@@ -1760,6 +1870,9 @@ export async function correctStayBilling(
         });
         for (const c of legChanges) {
           await tx.bedStay.update({ where: { id: c.leg.id }, data: { dailyCharge: c.to.toFixed(2) } });
+        }
+        for (const c of legDayChanges) {
+          await tx.bedStay.update({ where: { id: c.leg.id }, data: { billedDays: c.to } });
         }
         if (admittedMoved && firstLeg) {
           await tx.bedStay.update({ where: { id: firstLeg.id }, data: { fromDate: afterAdmittedAt } });
@@ -1796,6 +1909,11 @@ export async function correctStayBilling(
         for (const c of legChanges) {
           await tx.bedStay.update({ where: { id: c.leg.id }, data: { dailyCharge: c.leg.dailyCharge } });
         }
+        // NULL included - a rollback that leaves a cap standing has quietly
+        // shortened a bed the desk never got to save.
+        for (const c of legDayChanges) {
+          await tx.bedStay.update({ where: { id: c.leg.id }, data: { billedDays: c.leg.billedDays } });
+        }
         if (admittedMoved && firstLeg) {
           await tx.bedStay.update({ where: { id: firstLeg.id }, data: { fromDate: firstLeg.fromDate } });
         }
@@ -1815,6 +1933,7 @@ export async function correctStayBilling(
         bedRate: beforeBedRate,
         nursePerDay: beforeNurse,
         legs: legChanges.map((c) => ({ id: c.leg.id, dailyCharge: Number(c.leg.dailyCharge.toString()) })),
+        legDays: legDayChanges.map((c) => ({ id: c.leg.id, billedDays: c.leg.billedDays })),
       },
       after: {
         admittedAt: afterAdmittedAt.toISOString(),
@@ -1822,6 +1941,7 @@ export async function correctStayBilling(
         bedRate: afterBedRate,
         nursePerDay: afterNurse,
         legs: legChanges.map((c) => ({ id: c.leg.id, dailyCharge: c.to })),
+        legDays: legDayChanges.map((c) => ({ id: c.leg.id, billedDays: c.to })),
       },
     },
     ...ctx,
@@ -2247,8 +2367,24 @@ export async function admissionSheet(admissionId: string): Promise<{
   legs: {
     id: string; wardName: string; bedNo: string; dailyCharge: string;
     from: string; to: string | null;
-    days: number; total: string; current: boolean;
+    /** Days BILLED. Normally the nights the dates give this leg; where a desk
+     *  has capped the bed, the number they capped it to. */
+    days: number;
+    /** The cap itself, as stored. Null = billing the dates. The correction
+     *  dialog needs the raw value to put back in the field. */
+    billedDays: number | null;
+    total: string; current: boolean;
   }[];
+  /**
+   * Nights of the stay no bed line covers, because a bed was capped and the
+   * remainder has not been raised as its own charge yet.
+   *
+   * 0 on every ordinary stay. Above 0 it is a warning, not a total: those nights
+   * are simply not billed, and whoever capped the bed meant to add a line for
+   * them. Shown on the tab so a half-finished correction cannot sit there
+   * quietly under-billing a stay.
+   */
+  uncoveredDays: number;
   /** Deposit already held. Comes off the discharge bill. */
   advanceTotal: string;
   /** Each deposit slip, so a lost receipt can be reprinted from the stay. */
@@ -2338,17 +2474,23 @@ export async function admissionSheet(admissionId: string): Promise<{
     orderBy: { fromDate: "asc" },
     select: {
       id: true, wardName: true, dailyCharge: true, fromDate: true, toDate: true,
+      billedDays: true,
       bed: { select: { bedNo: true } },
     },
   });
 
   type StayRow = {
     id: string; wardName: string; dailyCharge: { toString(): string };
-    fromDate: Date; toDate: Date | null; bed: { bedNo: string } | null;
+    fromDate: Date; toDate: Date | null; billedDays: number | null;
+    bed: { bedNo: string } | null;
   };
 
   const until = a.dischargedAt ?? new Date();
-  const sheetLegDays = splitStayDays(a.admittedAt, until, stays as StayRow[]);
+  // What each leg BILLS - the nights its dates give it, or the number a desk
+  // has capped it to. What it HELD is not sent: the correction dialog derives
+  // it locally to seed its own box, and a second copy on the wire would be one
+  // more thing that can disagree with the first.
+  const sheetLegDays = billedLegDays(a.admittedAt, until, stays as StayRow[]);
   const legs = (stays as StayRow[]).map((st, i) => {
     const d = sheetLegDays[i];
     const daily = Number(st.dailyCharge.toString());
@@ -2360,6 +2502,7 @@ export async function admissionSheet(admissionId: string): Promise<{
       from: st.fromDate.toISOString(),
       to: st.toDate?.toISOString() ?? null,
       days: d,
+      billedDays: st.billedDays,
       total: (d * daily).toFixed(2),
       current: st.toDate === null,
     };
@@ -2457,6 +2600,7 @@ export async function admissionSheet(admissionId: string): Promise<{
     },
     days,
     bedTotal: bedTotal.toFixed(2),
+    uncoveredDays: uncoveredStayDays(a.admittedAt, until, stays as StayRow[]),
     nursingApplies,
     nurseTotal: nurseTotal.toFixed(2),
     nursePerDay: nursePerDay.toFixed(2),
@@ -3104,7 +3248,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
       },
       bedStays: {
         orderBy: { fromDate: "asc" },
-        select: { wardName: true, dailyCharge: true, fromDate: true, toDate: true, bed: { select: { bedNo: true } } },
+        select: { wardName: true, dailyCharge: true, fromDate: true, toDate: true, billedDays: true, bed: { select: { bedNo: true } } },
       },
       labTests: {
         // Only tests no invoice has billed yet. A test that HAS been invoiced
@@ -3166,7 +3310,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   // ── WARD ── one line per LEG, so a General to ICU transfer prints as two rows
   // at two rates. An insurer paying an ICU entitlement has to see which nights
   // were actually ICU, and one averaged line cannot tell them.
-  const billLegDays = splitStayDays(a.admittedAt, end, a.bedStays);
+  const billLegDays = billedLegDays(a.admittedAt, end, a.bedStays);
   const wardLines: BillLineDTO[] = a.bedStays.length
     ? a.bedStays.map((st, i) => {
         const d = billLegDays[i];

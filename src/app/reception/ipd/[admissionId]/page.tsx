@@ -52,6 +52,9 @@ interface Sheet {
   notes: { id: string; body: string; kind: "NURSING" | "DISCHARGE"; authorName: string | null; createdAt: string }[];
   /** One row per bed occupied. Two rows = they were transferred mid-stay. */
   legs: StayLeg[];
+  /** Nights no bed line covers, because a bed was capped and the rest has not
+   *  been raised as a charge yet. 0 on an ordinary stay. See ipd.service. */
+  uncoveredDays: number;
   advanceTotal: string;
   /** Each deposit slip taken on this stay - listed so any can be reprinted. */
   advances: (Advance & { takenAt: string })[];
@@ -355,6 +358,8 @@ export default function AdmissionSheetPage() {
 
   const a = sheet.admission;
   const discharged = a.status !== "ADMITTED";
+  /** Days the BED bills - the stay, less anything a desk has capped off it. */
+  const bedDaysBilled = sheet.days - sheet.uncoveredDays;
   /** Read off the sheet rather than copied into state, so a reload behind the
    *  open dialog cannot leave it showing a line that has since changed. */
   const editingCharge = sheet.charges.find((c) => c.id === editingChargeId) ?? null;
@@ -514,10 +519,21 @@ export default function AdmissionSheetPage() {
                   Bed charges · {bedLabel(a.wardName, a.bedNo)}
                 </div>
                 <div className="text-[12px] text-[var(--p-muted)]">
-                  {sheet.days} day{sheet.days === 1 ? "" : "s"} × ₹{money(a.dailyCharge)}
+                  {bedDaysBilled} day{bedDaysBilled === 1 ? "" : "s"} × ₹{money(a.dailyCharge)}
                   {Number(a.gstRatePct) > 0 && ` · ${a.gstRatePct}% GST`}
                   {" · rate taken at admission"}
                 </div>
+                {/* A CAPPED BED SAYS SO, ON THE ROW ITSELF.
+                    Without this the line reads as an ordinary bed charge that
+                    has simply come out low, and the stay is billed short by
+                    however many nights somebody took off it. */}
+                {sheet.uncoveredDays > 0 && (
+                  <div className="mt-1 text-[11.5px] font-medium text-[#8a6414]">
+                    Capped — {sheet.uncoveredDays} more day{sheet.uncoveredDays === 1 ? "" : "s"} of this
+                    stay {sheet.uncoveredDays === 1 ? "is" : "are"} not on any bed line. Add them to the
+                    tab as their own charge.
+                  </div>
+                )}
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <span className="font-mono text-[14px] font-bold text-[var(--p-ink)]">₹{money(sheet.bedTotal)}</span>

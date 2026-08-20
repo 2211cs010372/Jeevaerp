@@ -145,6 +145,15 @@ export const correctStaySchema = z.object({
   legs: z.array(z.object({
     id: z.string().trim().min(1),
     dailyCharge: z.coerce.number().min(0).max(1_000_000),
+    /// How many days this bed BILLS for, where that is not the nights the dates
+    /// give it. Omit to leave the cap alone; null clears it back to the dates;
+    /// a whole number caps it there. NULLABLE and OPTIONAL are different
+    /// answers here, which is why this is not just `.optional()`.
+    ///
+    /// The 3,650 ceiling is ten years - long past any real stay, and there to
+    /// catch a date typed into a day box rather than to price a ward. The real
+    /// limit is the stay's own length, which only the service knows.
+    billedDays: z.coerce.number().int().min(0).max(3_650).nullable().optional(),
   })).max(20).optional(),
   /// Why. Free text, kept on the stay's chronology with the figures - "the bill
   /// was changed after the treatment" is the first thing an insurer asks.

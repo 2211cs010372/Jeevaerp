@@ -48,6 +48,10 @@ interface Data {
   days: number;
   /** One row per bed occupied. Two rows means they were transferred. */
   legs: { wardName: string; bedNo: string; dailyCharge: string; days: number; total: string; current: boolean }[];
+  /** Nights no bed line covers, because a bed was capped. 0 on an ordinary
+   *  stay - see ipd.service. Printed so the sheet cannot look complete when it
+   *  is short. */
+  uncoveredDays: number;
   bedTotal: string; nurseTotal: string; nursePerDay: string;
   /** False since the per-day nursing fee was withdrawn - see ipd.service. */
   nursingApplies: boolean;
@@ -190,6 +194,22 @@ export function RunningTabSheet() {
                 <td className="py-[3px] text-right font-mono">₹{money(l.total)}</td>
               </tr>
             ))}
+            {/* NIGHTS NO BED LINE COVERS. A capped bed bills fewer days than
+                the stay ran, and the remainder is raised as its own charge
+                further down. Printed as its own row so the bed block adds up in
+                front of whoever is reading it - a sheet where the day counts
+                silently fall short of the stay is the one nobody queries. */}
+            {s.uncoveredDays > 0 && (
+              <tr>
+                <td className="py-[3px] pr-1" />
+                <td className="py-[3px] pr-1 italic text-[#8a6414]">
+                  {s.uncoveredDays} day{s.uncoveredDays === 1 ? "" : "s"} of this stay billed separately below, not as a bed
+                </td>
+                <td className="py-[3px] pr-1 text-right font-mono">{s.uncoveredDays}</td>
+                <td className="py-[3px] pr-1 text-right font-mono">—</td>
+                <td className="py-[3px] text-right font-mono">—</td>
+              </tr>
+            )}
             {/* The per-day nursing fee is withdrawn, so this row prints only
                 on a stay that was actually billed for it. A family comparing
                 this sheet against their invoice has to find the same lines on
