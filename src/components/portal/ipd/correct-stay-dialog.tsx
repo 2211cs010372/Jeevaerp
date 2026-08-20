@@ -313,12 +313,26 @@ export function CorrectStayDialog({
           <div className="mt-6 border-t border-[var(--p-border)] pt-5">
             <label className={label}>Bed charges — rate per day × days billed</label>
             {stay.legs.length === 0 ? (
-              <div className="max-w-[220px]">
-                <input className={fld} value={bedRate} inputMode="decimal"
-                  onFocus={(e) => (e.currentTarget.style.borderColor = ring)}
-                  onBlur={(e) => (e.currentTarget.style.borderColor = "")}
-                  onChange={(e) => setBedRate(e.target.value.replace(/[^\d.]/g, ""))} />
-              </div>
+              /* NO BED LEG ON THIS STAY - so a rate, and no day count.
+                 The days are editable PER LEG, and this stay has none: it
+                 predates BedStay and was never backfilled. Every stay admitted
+                 since opens a leg at admission, so this is a repair job rather
+                 than a missing feature - scripts/backfill-bed-stays.ts. Said out
+                 loud because the desk otherwise sees the day box on one patient,
+                 not on the next, and has no way to tell why. */
+              <>
+                <div className="max-w-[220px]">
+                  <input className={fld} value={bedRate} inputMode="decimal"
+                    onFocus={(e) => (e.currentTarget.style.borderColor = ring)}
+                    onBlur={(e) => (e.currentTarget.style.borderColor = "")}
+                    onChange={(e) => setBedRate(e.target.value.replace(/[^\d.]/g, ""))} />
+                </div>
+                <p className="mt-2 rounded-lg border border-[#e5c07b] bg-[#fdf6e3] px-3 py-2 text-[11.5px] leading-relaxed text-[#8a6414]">
+                  This stay has no bed record of its own, so only the rate can be corrected here — the
+                  days follow the stay&apos;s dates. It is an old stay that predates per-bed billing; ask
+                  for it to be repaired and the day count becomes editable like every other stay.
+                </p>
+              </>
             ) : (
               <div className="space-y-2">
                 {stay.legs.map((l) => {
