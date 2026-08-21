@@ -408,6 +408,16 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
             <tr className="text-left">
               <th className="w-[18px] px-1 py-[4px] text-center">#</th>
               <th className="px-1.5 py-[4px]">Description</th>
+              {/* GATED TOGETHER WITH ITS CELL BELOW, and they must stay that
+                  way. The header was conditional and the body cell was not, so
+                  on every bill with no batch on it - a lab bill, an OP consult,
+                  a discharge bill; everything except pharmacy - the row carried
+                  one more cell than the header did. Each value printed under
+                  the heading of the column to its left (S.PROFILE under QTY,
+                  the qty under RATE, the rate under GST) and the AMOUNT fell
+                  off the end of the ruled table into an eighth column that had
+                  no heading at all. The bill added up and every figure on it
+                  was against the wrong word. */}
               {showBatch && <th className="w-[58px] px-1 py-[4px]">Batch</th>}
               <th className="w-[45px] px-1 py-[4px]">HSN/SAC</th>
               <th className="w-[27px] px-1 py-[4px] text-right">Qty</th>
@@ -421,7 +431,7 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
               <tr key={i} className="align-top">
                 <td className="px-1 py-[3px] text-center font-mono text-[7px] text-[#3f3f3f]">{i + 1}</td>
                 <td className="px-1.5 py-[3px] font-medium">{billItemName(it.description)}</td>
-                <td className="px-1 py-[3px] font-mono text-[7px] text-[#3f3f3f]">{billItemBatch(it.description) ?? "—"}</td>
+                {showBatch && <td className="px-1 py-[3px] font-mono text-[7px] text-[#3f3f3f]">{billItemBatch(it.description) ?? "—"}</td>}
                 <td className="px-1 py-[3px] font-mono text-[7px] text-[#3f3f3f]">{it.hsnSac ?? "—"}</td>
                 <td className="px-1 py-[3px] text-right font-mono">{it.qty}</td>
                 <td className="px-1 py-[3px] text-right font-mono">{money(it.unitPrice)}</td>

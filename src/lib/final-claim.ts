@@ -32,6 +32,44 @@
  */
 export const CLAIM_TOLERANCE = 1;
 
+/**
+ * ── WHICH OF THE TWO CLAIMS A STAY IS STILL MISSING ──
+ *
+ * A stay has exactly two claims in its life and the desk raises them at
+ * different moments: the PRE-AUTH against an estimate while the patient is in
+ * the bed, the FINAL against the bill once the stay is over. Two screens draw a
+ * button for each - the stays list and the stay's own sheet - and the button has
+ * to vanish the moment its claim exists, or the desk raises a second one and
+ * nobody can afterwards say which of the two is live.
+ *
+ * A CLOSED CLAIM DOES NOT COUNT AS RAISED. That is the unused ₹0 draft somebody
+ * tidied away, not a claim anybody sent - the same reading `needsFinalClaim`
+ * takes of it.
+ *
+ * NEITHER DOES A REJECTED PRE-AUTH. A refusal authorises nothing (see
+ * `authorisedAmount`, which returns null for exactly this reason) and the way
+ * back from one is a fresh pre-auth, not a stay with no button on it.
+ *
+ * A REJECTED FINAL CLAIM IS DIFFERENT and stays counted: the stay's own screen
+ * has a whole panel for that decision - re-submit it, or move the bills back to
+ * the family - and a second "raise" button competing with that panel is how a
+ * refused stay ends up with two claims and one argument.
+ */
+export interface StageClaim {
+  stage: string;
+  status: string;
+}
+
+/** The pre-auth standing on this stay, or null when the desk may raise one. */
+export function openPreAuth<T extends StageClaim>(claims: readonly T[]): T | null {
+  return claims.find((c) => c.stage === "PRE_AUTH" && c.status !== "CLOSED" && c.status !== "REJECTED") ?? null;
+}
+
+/** The final claim standing on this stay, or null when the desk may raise one. */
+export function openFinalClaim<T extends StageClaim>(claims: readonly T[]): T | null {
+  return claims.find((c) => c.stage === "FINAL" && c.status !== "CLOSED") ?? null;
+}
+
 /** The shape of a pre-auth claim, as much of it as this rule reads. */
 export interface AuthorisingClaim {
   status: string;

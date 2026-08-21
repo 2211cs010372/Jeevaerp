@@ -149,6 +149,11 @@ export const PORTALS: Record<string, PortalMeta> = {
       // stay, not only the insured ones.
       { label: "Beds & admit", href: "/ipd", icon: "bed", hint: "The ward board - admit a patient and open any stay" },
       { label: "Claims", href: "/claims", icon: "shield", hint: "Everything raised, and where it stands with the insurer" },
+      // The list every "Insurer / TPA" box in the building suggests from -
+      // reception's admission form included. It was compiled into the app, so a
+      // newly empanelled TPA could only be typed free-hand, differently each
+      // time, and one insurer became three rows on the analytics board.
+      { label: "Insurers & TPAs", href: "/insurers", icon: "box", hint: "The names every insurer box suggests" },
       {
         // The other end of a claim. "Approved" is not the end of the story -
         // REFUSED is, and a refusal leaves bills pointed at an insurer who has
@@ -192,6 +197,7 @@ export const PORTALS: Record<string, PortalMeta> = {
         title: "With the insurer",
         items: [
           { label: "Claims", href: "/claims", icon: "shield" },
+          { label: "Insurers & TPAs", href: "/insurers", icon: "box" },
           {
             // Last, because it is where a claim ENDS - and the only place the
             // consequence of a refusal is visible as money somebody must chase.

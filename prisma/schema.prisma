@@ -2421,7 +2421,30 @@ model InsuranceClaim {
 
   diagnosis      String?
   claimedAmount  Decimal  @db.Decimal(12, 2)
+  /// WHAT THE INSURER WILL ACTUALLY PAY - already net of the co-pay below.
+  ///
+  /// Its meaning is unchanged by co-pay existing, and that is the point: every
+  /// downstream figure in this building is derived from it (see
+  /// syncStayCoverage, allocateCoverage, splitStay), and a column that meant
+  /// "gross" on rows written after today and "net" on rows written before it
+  /// would put two different answers on one dues list.
   approvedAmount Decimal? @db.Decimal(12, 2)
+
+  /// THE FAMILY'S SHARE OF AN APPROVED CLAIM - the policy's co-pay.
+  ///
+  /// A policy with a 10% co-pay on a ₹1,00,000 sanction has the insurer paying
+  /// ₹90,000 and the family ₹10,000, and the hospital has to COLLECT that
+  /// ₹10,000 at discharge. The system could already represent the money - the
+  /// insurer approves less, the difference falls to the family through
+  /// splitStay - but it could not say WHY, so the desk read a part-approval and
+  /// went looking for a shortfall to argue with the TPA about.
+  ///
+  /// Both nullable, and null is not zero: it means nobody recorded a co-pay on
+  /// this claim, which is what every claim written before this column existed
+  /// means. `copayPct` is kept alongside the rupees because the approval letter
+  /// states the percentage and the desk checks the arithmetic against it.
+  copayPct    Decimal? @db.Decimal(5, 2)
+  copayAmount Decimal? @db.Decimal(12, 2)
   settledAmount  Decimal? @db.Decimal(12, 2)
   /// The insurer's / TPA's own reference (authorization or claim number).
   insurerRef     String?
@@ -2547,6 +2570,61 @@ model ClaimEvent {
   createdAt DateTime       @default(now())
 
   @@index([claimId, createdAt])
+}
+
+/// AN INSURER, TPA OR SCHEME THE FRONT OFFICE MAY BILL - the list the hospital
+/// maintains itself.
+///
+/// Every "Insurer / TPA" box in the building reads one list: reception's
+/// admission form, the insurance desk's ward view, and the claim form. That list
+/// was a hardcoded array and STILL IS - see src/lib/insurers.ts. These rows are
+/// what the hospital adds ON TOP of it, and the two are merged at read time by
+/// `mergeInsurers`.
+///
+/// WHY THE HARDCODED LIST SURVIVES. It is the floor. An empty table, a failed
+/// query, a database being restored - none of those may leave a receptionist
+/// staring at a box with no suggestions while a patient is being wheeled in.
+/// Seeding these rows into the table instead would have made the table the only
+/// source, and the only source is the thing that must never be empty.
+///
+/// NOTHING STORES AN ID FROM HERE. An admission and a claim keep the insurer's
+/// NAME, as a plain string, snapshotted when somebody typed it. That is on
+/// purpose: the analytics board groups by that string, and a row renamed here
+/// must not silently re-bucket two years of settled claims. Renaming changes
+/// what is SUGGESTED tomorrow and nothing that already happened.
+model Insurer {
+  id String @id @default(cuid())
+
+  /// As it is typed into the box and stored on the admission. Unique - and the
+  /// service compares case-insensitively before writing, so the list cannot grow
+  /// "Star Health" and "star health" as two TPAs that then split one insurer's
+  /// row on the analytics board between them.
+  name String @unique
+
+  /// COMPANY · PUBLIC_SECTOR · TPA · SCHEME. Grouping for the manage screen
+  /// only - every box that reads the list reads one flat array of names.
+  kind String @default("COMPANY")
+
+  /// Deactivated, never deleted.
+  ///
+  /// A row carrying a name that is ALSO in the hardcoded list, with active
+  /// false, is how the hospital hides one of the built-in suggestions - there is
+  /// no row to delete for those, so hiding has to be something a row SAYS.
+  /// Deleting instead would throw that instruction away and the name would
+  /// reappear on the next page load.
+  active Boolean @default(true)
+
+  /// Who added it. A plain column, not a relation to User - the same choice
+  /// InsuranceClaim.admissionId makes. It buys a name on a screen nobody has
+  /// asked for yet, and a foreign key here would mean altering the User table
+  /// to add the back-relation, which is a far bigger thing to do to a live
+  /// database than adding one standalone table.
+  createdById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active])
 }
 
 /// One staff sign-in session - when they logged in and out. Powers the admin

@@ -14,11 +14,6 @@ import { resolveBillDate, BillDateError } from "@/server/billing/calc";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, ClaimStatus } from "@prisma/client";
 
-/** Re-exported so the existing API routes keep their import. The list itself
- *  moved to @/lib/insurers when the admission form started needing it too - see
- *  the note there on why it can't live in a server service. */
-export { INSURERS } from "@/lib/insurers";
-
 const money = (d: Prisma.Decimal | null | undefined): string | null =>
   d == null ? null : Number(d).toFixed(2);
 
@@ -65,7 +60,7 @@ function toListDTO(r: Prisma.InsuranceClaimGetPayload<{ select: typeof listSelec
 export async function createClaim(
   actor: AuthUser,
   input: {
-    patientId: string; insurer: string; policyNo: string; memberId?: string; sumInsured?: number;
+    patientId: string; insurer: string; policyNo?: string; memberId?: string; sumInsured?: number;
     type: "CASHLESS" | "REIMBURSEMENT"; stage: "PRE_AUTH" | "FINAL"; diagnosis?: string;
     claimedAmount: number; admissionId?: string; invoiceId?: string; remarks?: string;
   },
@@ -83,7 +78,10 @@ export async function createClaim(
         admissionId: input.admissionId?.trim() || null,
         invoiceId: input.invoiceId?.trim() || null,
         insurer: input.insurer.trim(),
-        policyNo: input.policyNo.trim(),
+        // EMPTY, NOT ABSENT - the column is NOT NULL and this is the same
+        // reading the automatic pre-auth takes at admission (see ipd.service).
+        // "" says nobody has given us this yet; setStayPolicy fills it in.
+        policyNo: input.policyNo?.trim() || "",
         memberId: input.memberId?.trim() || null,
         sumInsured: input.sumInsured !== undefined ? input.sumInsured.toFixed(2) : null,
         type: input.type,
@@ -573,7 +571,13 @@ export async function getClaim(id: string): Promise<ClaimDetailDTO> {
 export async function actOnClaim(
   actor: AuthUser,
   id: string,
-  input: { action: "AMOUNT" | "SUBMIT" | "QUERY" | "APPROVE" | "REJECT" | "SETTLE" | "NOTE"; amount?: number; insurerRef?: string; detail?: string },
+  input: {
+    action: "AMOUNT" | "SUBMIT" | "QUERY" | "APPROVE" | "REJECT" | "SETTLE" | "NOTE";
+    amount?: number; insurerRef?: string; detail?: string;
+    /** APPROVE only - the policy's co-pay. See the APPROVE branch for which of
+     *  the two wins when both are given, and why approvedAmount ends up net. */
+    copayPct?: number; copayAmount?: number;
+  },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<ClaimDetailDTO> {
   const claim = await prisma.insuranceClaim.findUnique({ where: { id }, select: { id: true, status: true, stage: true, claimedAmount: true, approvedAmount: true, admissionId: true, insurer: true } });
@@ -774,6 +778,82 @@ export async function actOnClaim(
 
   await logAudit(actor, { action: `CLAIM_${input.action}`, targetTable: "InsuranceClaim", targetId: id, meta: { amount: input.amount, insurerRef: input.insurerRef }, ...ctx });
   return getClaim(id);
+}
+
+/**
+ * RECORD THE POLICY NUMBER NOBODY HAD AT ADMISSION.
+ *
+ * Reception admits a cashless patient on the promise of a card the family is
+ * still looking for; the number turns up hours later, at this desk, and until
+ * now there was nowhere to put it. The stay kept a blank policy number, the
+ * draft pre-auth opened at admission kept a blank one too, and the desk's only
+ * way to attach the number to anything was to raise a second claim by hand.
+ *
+ * IT WRITES THE STAY, THEN THE CLAIMS THAT ARE STILL IN PLAY. The admission is
+ * where every screen reads the policy from - the pending list, the stays list,
+ * the prefill on the claim form - so the stay alone would fix the screens and
+ * still send the TPA a document with a blank field on it.
+ *
+ * A DECIDED CLAIM IS LEFT ALONE. Approved, rejected, settled, closed - those are
+ * the record of a conversation that already happened, and back-dating a policy
+ * number onto one would make the file say the insurer was shown something it
+ * never saw. Only the claims that have yet to be answered are corrected, and
+ * only where they carry no number at all: a claim raised against a DIFFERENT
+ * policy number is somebody's deliberate act, not a blank to be filled.
+ */
+export async function setStayPolicy(
+  actor: AuthUser,
+  admissionId: string,
+  input: { policyNo: string },
+  ctx: { ipAddress?: string; userAgent?: string }
+): Promise<{ policyNo: string | null; claimsUpdated: number }> {
+  const adm = await prisma.admission.findUnique({
+    where: { id: admissionId },
+    select: { id: true, ipNumber: true, policyNo: true },
+  });
+  if (!adm) throw new ApiError(404, "Admission not found");
+
+  // Empty clears it. Null on the stay and "" on a claim are the same statement -
+  // nobody has given us this - said in the two shapes those columns allow.
+  const next = input.policyNo.trim() || null;
+  const before = adm.policyNo;
+
+  const claimsUpdated = await prisma.$transaction(async (tx) => {
+    await tx.admission.update({ where: { id: adm.id }, data: { policyNo: next } });
+
+    // Nothing to push down onto the claims when the number is being cleared -
+    // and pushing "" onto them would quietly erase numbers this never set.
+    if (!next) return 0;
+
+    const open = await tx.insuranceClaim.findMany({
+      where: {
+        admissionId: adm.id,
+        status: { in: ["DRAFT", "SUBMITTED", "QUERIED"] },
+        policyNo: "",
+      },
+      select: { id: true },
+    });
+    for (const c of open) {
+      await tx.insuranceClaim.update({ where: { id: c.id }, data: { policyNo: next } });
+      await tx.claimEvent.create({
+        data: {
+          claimId: c.id,
+          kind: "NOTE",
+          detail: `Policy number recorded as ${next} - it was not taken at admission`,
+          byId: actor.id,
+        },
+      });
+    }
+    return open.length;
+  });
+
+  await logAudit(actor, {
+    action: "STAY_POLICY_SET", targetTable: "Admission", targetId: adm.id,
+    meta: { ipNumber: adm.ipNumber, from: before, to: next, claimsUpdated },
+    ...ctx,
+  });
+
+  return { policyNo: next, claimsUpdated };
 }
 
 /**

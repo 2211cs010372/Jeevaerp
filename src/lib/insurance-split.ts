@@ -162,6 +162,33 @@ export function allocateCoverage(
   });
 }
 
+/**
+ * THE POLICY'S CO-PAY ON A SANCTIONED AMOUNT.
+ *
+ * A co-pay is the slice of an admissible claim the policyholder carries: 10% of
+ * a ₹1,00,000 sanction is ₹10,000 the family pays and the insurer does not.
+ *
+ * RUPEES BEAT PERCENT when the desk gives both. The approval letter is the
+ * authority and TPAs round their own way - if it says ₹10,000, that is the
+ * number to collect, whatever 10% of the sanction works out to here.
+ *
+ * CAPPED AT THE SANCTION. A co-pay larger than the amount it comes off would
+ * make the insurer's share negative, and a negative approval spread across a
+ * stay's bills is a bill that covers itself.
+ */
+export function copayOn(
+  sanctioned: number,
+  opts: { pct?: number | null; amount?: number | null }
+): number {
+  const base = r2(Math.max(0, sanctioned));
+  const raw =
+    opts.amount != null ? Number(opts.amount)
+    : opts.pct != null ? base * (Number(opts.pct) / 100)
+    : 0;
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  return r2(Math.min(base, raw));
+}
+
 /** The fields of an InsuranceClaim this arithmetic needs. Structural, so both
  *  the DTO the portal serves and a raw Prisma row satisfy it. */
 export interface ClaimLike {

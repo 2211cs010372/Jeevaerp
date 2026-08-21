@@ -24,6 +24,9 @@ export interface Claim {
   patient: { id: string; displayId: string; fullName: string; phone?: string; age?: number | null };
   insurer: string; policyNo: string; type: string; stage: string; status: string;
   claimedAmount: string; approvedAmount: string | null; settledAmount: string | null;
+  /** The family's share of an approval, when the policy carries a co-pay.
+   *  `approvedAmount` is already net of it - this is the other side. */
+  copayAmount: string | null; copayPct: string | null;
   insurerRef: string | null; createdAt: string; submittedAt: string | null; updatedAt: string;
 }
 export interface ClaimDetail extends Claim {
@@ -271,7 +274,12 @@ export function NewClaim({ apiBase, insurers, prefill, onClose, onCreated }: {
     return () => clearTimeout(t);
   }, [apiBase, pq, patient]);
 
-  const ready = patient && f.insurer.trim() && f.policyNo.trim() && Number(f.claimedAmount) >= 1;
+  // THE POLICY NUMBER IS NOT A GATE. Reception no longer takes one at
+  // admission, so demanding it here made the hand-raised claim the only claim in
+  // the system that could not be started without it - and a desk blocked by a
+  // required field types something to get past it. A blank goes to the server as
+  // "" and can be recorded later from the stays list, against the stay itself.
+  const ready = patient && f.insurer.trim() && Number(f.claimedAmount) >= 1;
   async function submit() {
     if (!ready) return;
     setBusy(true); setErr(null);
@@ -329,7 +337,7 @@ export function NewClaim({ apiBase, insurers, prefill, onClose, onCreated }: {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div><label className={lbl}>Insurer / TPA<Req /></label><input list="insurers" className={inp} value={f.insurer} onChange={(e) => set("insurer")(e.target.value)} placeholder="Star Health / Medi Assist…" /><datalist id="insurers">{insurers.map((x) => <option key={x} value={x} />)}</datalist></div>
-            <div><label className={lbl}>Policy number<Req /></label><input className={inp} value={f.policyNo} onChange={(e) => set("policyNo")(e.target.value)} placeholder="P/1234/5678" /></div>
+            <div><label className={lbl}>Policy number</label><input className={inp} value={f.policyNo} onChange={(e) => set("policyNo")(e.target.value)} placeholder="P/1234/5678 - optional" /></div>
             <div><label className={lbl}>Member ID</label><input className={inp} value={f.memberId} onChange={(e) => set("memberId")(e.target.value)} placeholder="Optional" /></div>
             <div><label className={lbl}>Sum insured (₹)</label><input className={inp} inputMode="numeric" value={f.sumInsured} onChange={(e) => set("sumInsured")(e.target.value.replace(/[^\d]/g, ""))} placeholder="500000" /></div>
             <div>
@@ -371,7 +379,11 @@ export function ClaimModal({ apiBase, claim, onClose, onChanged }: { apiBase: st
   const [c, setC] = useState<ClaimDetail | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [form, setForm] = useState<{ action: string; amount: string; insurerRef: string; detail: string } | null>(null);
+  const [form, setForm] = useState<{
+    action: string; amount: string; insurerRef: string; detail: string;
+    /** APPROVE only. Percent by default - that is how a letter states it. */
+    copayPct: string; copayAmount: string;
+  } | null>(null);
 
   const refresh = useCallback(async () => {
     try { const r = await api.get<{ claim: ClaimDetail }>(`${apiBase}/${claim.id}`); setC(r.claim); }
@@ -381,7 +393,11 @@ export function ClaimModal({ apiBase, claim, onClose, onChanged }: { apiBase: st
 
   function startAction(a: string) {
     setErr(null);
-    setForm({ action: a, amount: a === "APPROVE" ? (c?.claimedAmount ?? "") : a === "SETTLE" ? (c?.approvedAmount ?? "") : "", insurerRef: c?.insurerRef ?? "", detail: "" });
+    setForm({
+      action: a,
+      amount: a === "APPROVE" ? (c?.claimedAmount ?? "") : a === "SETTLE" ? (c?.approvedAmount ?? "") : "",
+      insurerRef: c?.insurerRef ?? "", detail: "", copayPct: "", copayAmount: "",
+    });
   }
   async function confirm() {
     if (!form) return;
@@ -390,6 +406,14 @@ export function ClaimModal({ apiBase, claim, onClose, onChanged }: { apiBase: st
       await api.post(`${apiBase}/${claim.id}/action`, {
         action: form.action,
         ...((form.action === "APPROVE" || form.action === "SETTLE") && form.amount ? { amount: Number(form.amount) } : {}),
+        // Only one of the two is sent. Rupees win on the server when both
+        // arrive, but sending both would make the form look like it decides
+        // something it does not - see copayOn.
+        ...(form.action === "APPROVE" && Number(form.copayAmount) > 0
+          ? { copayAmount: Number(form.copayAmount) }
+          : form.action === "APPROVE" && Number(form.copayPct) > 0
+            ? { copayPct: Number(form.copayPct) }
+            : {}),
         ...(form.insurerRef.trim() ? { insurerRef: form.insurerRef.trim() } : {}),
         ...(form.detail.trim() ? { detail: form.detail.trim() } : {}),
       });
@@ -421,11 +445,27 @@ export function ClaimModal({ apiBase, claim, onClose, onChanged }: { apiBase: st
           <>
             <div className="flex-1 space-y-5 overflow-y-auto p-6">
               {/* money */}
-              <div className="grid grid-cols-3 gap-2 text-center">
+              <div className={`grid gap-2 text-center ${c.copayAmount ? "grid-cols-4" : "grid-cols-3"}`}>
                 <Money k="Claimed" v={inr2(c.claimedAmount)} />
-                <Money k="Approved" v={inr2(c.approvedAmount)} tone="cyan" />
+                {/* THE FAMILY'S SIDE OF THE SAME DECISION, next to the
+                    insurer's. A part-approval and a co-pay look identical on a
+                    screen that only shows what was approved, and the desk that
+                    cannot tell them apart goes to argue with a TPA about a
+                    shortfall the policy always said the family would carry. */}
+                {c.copayAmount && (
+                  <Money
+                    k={`Co-pay${c.copayPct && Number(c.copayPct) > 0 ? ` · ${Number(c.copayPct)}%` : ""}`}
+                    v={inr2(c.copayAmount)} tone="amber" />
+                )}
+                <Money k="Insurer pays" v={inr2(c.approvedAmount)} tone="cyan" />
                 <Money k="Settled" v={inr2(c.settledAmount)} tone="cyan" />
               </div>
+              {c.copayAmount && (
+                <p className="-mt-2 text-[12px] leading-relaxed text-[#8a5a14]">
+                  The policy leaves {inr2(c.copayAmount)} with the family. It is on their side of the
+                  stay&apos;s bill and has to be collected at the counter - the insurer is not sending it.
+                </p>
+              )}
               {/* policy */}
               <div className="grid grid-cols-2 gap-x-6 gap-y-2.5 rounded-xl border border-[var(--p-border)] p-4 text-[12.5px]">
                 {/* Blank on a claim opened automatically at admission: the desk
@@ -465,7 +505,22 @@ export function ClaimModal({ apiBase, claim, onClose, onChanged }: { apiBase: st
                   <p className="text-[13px] font-semibold text-[var(--p-ink)]">{actionTitle(form.action)}</p>
                   <div className="grid gap-2 sm:grid-cols-2">
                     {(form.action === "APPROVE" || form.action === "SETTLE") && (
-                      <input className={inp} inputMode="numeric" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value.replace(/[^\d.]/g, "") })} placeholder={form.action === "APPROVE" ? "Approved amount ₹" : "Amount received ₹"} />
+                      <input className={inp} inputMode="numeric" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value.replace(/[^\d.]/g, "") })} placeholder={form.action === "APPROVE" ? "Amount sanctioned ₹" : "Amount received ₹"} />
+                    )}
+                    {/* ── THE CO-PAY, WHERE THE APPROVAL IS TYPED IN ──
+                        The letter states both in the same breath, so they are
+                        entered in the same breath. Percent first because that is
+                        how a policy is written; the rupee box is for the TPA
+                        that has done its own rounding, and it wins. */}
+                    {form.action === "APPROVE" && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <input className={inp} inputMode="decimal" value={form.copayPct}
+                          onChange={(e) => setForm({ ...form, copayPct: e.target.value.replace(/[^\d.]/g, "") })}
+                          placeholder="Co-pay % (optional)" />
+                        <input className={inp} inputMode="numeric" value={form.copayAmount}
+                          onChange={(e) => setForm({ ...form, copayAmount: e.target.value.replace(/[^\d.]/g, "") })}
+                          placeholder="or co-pay ₹" />
+                      </div>
                     )}
                     {(form.action === "SUBMIT" || form.action === "APPROVE") && (
                       <input className={inp} value={form.insurerRef} onChange={(e) => setForm({ ...form, insurerRef: e.target.value })} placeholder="Insurer ref / auth no (optional)" />
@@ -473,6 +528,15 @@ export function ClaimModal({ apiBase, claim, onClose, onChanged }: { apiBase: st
                     <input className={`${inp} sm:col-span-2`} value={form.detail} onChange={(e) => setForm({ ...form, detail: e.target.value })}
                       placeholder={form.action === "REJECT" ? "Reason for rejection" : form.action === "QUERY" ? "What did the insurer ask for?" : form.action === "NOTE" ? "Note" : "Note (optional)"} />
                   </div>
+                  {/* WHAT IS ABOUT TO BE SAVED, IN WORDS, before it is saved.
+                      The desk is copying two numbers off a letter into a form
+                      that stores a third, and a subtraction done silently by a
+                      server is one nobody checks against the letter. */}
+                  {form.action === "APPROVE" && copayPreview(form) && (
+                    <p className="rounded-lg border border-[var(--p-amber)]/40 bg-[var(--p-amber-soft)] px-3.5 py-2.5 text-[12.5px] leading-relaxed text-[#8a5a14]">
+                      {copayPreview(form)}
+                    </p>
+                  )}
                   <div className="flex justify-end gap-2">
                     <button onClick={() => setForm(null)} className="rounded-md border border-[var(--p-border)] px-4 py-2 text-[13px] font-medium text-[var(--p-text)]">Cancel</button>
                     <button onClick={confirm} disabled={busy} className="btn-primary inline-flex items-center gap-2 rounded-md px-5 py-2 text-[13px] font-semibold text-white disabled:opacity-40">
@@ -508,10 +572,14 @@ export function ClaimModal({ apiBase, claim, onClose, onChanged }: { apiBase: st
   );
 }
 
-const Money = ({ k, v, tone }: { k: string; v: string; tone?: "cyan" }) => (
+// Amber, not cyan, for the co-pay: cyan is the insurer's money on every screen
+// in this portal, and the co-pay is the one figure in this row that is NOT
+// coming from them.
+const Money = ({ k, v, tone }: { k: string; v: string; tone?: "cyan" | "amber" }) => (
   <div className="rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] px-2 py-2.5">
     <div className="text-[9.5px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">{k}</div>
-    <div className={`mt-0.5 font-mono text-[14px] font-bold ${tone === "cyan" ? "text-[var(--p-cyan-deep)]" : "text-[var(--p-ink)]"}`}>{v}</div>
+    <div className={`mt-0.5 font-mono text-[14px] font-bold ${
+      tone === "cyan" ? "text-[var(--p-cyan-deep)]" : tone === "amber" ? "text-[#8a5a14]" : "text-[var(--p-ink)]"}`}>{v}</div>
   </div>
 );
 const Row = ({ k, v, mono, span }: { k: string; v: string; mono?: boolean; span?: boolean }) => (
@@ -520,6 +588,24 @@ const Row = ({ k, v, mono, span }: { k: string; v: string; mono?: boolean; span?
     <div className={`text-[13px] text-[var(--p-ink)] ${mono ? "font-mono text-[12.5px]" : ""}`}>{v}</div>
   </div>
 );
+
+/**
+ * The sentence under the approve form - the same arithmetic the server will do,
+ * said out loud before it happens. Mirrors `copayOn`: rupees beat percent,
+ * and the co-pay can never exceed the amount it comes off.
+ */
+function copayPreview(f: { amount: string; copayPct: string; copayAmount: string }): string | null {
+  const sanctioned = Number(f.amount);
+  if (!(sanctioned > 0)) return null;
+  const pct = Number(f.copayPct);
+  const flat = Number(f.copayAmount);
+  const raw = flat > 0 ? flat : pct > 0 ? (sanctioned * pct) / 100 : 0;
+  if (!(raw > 0)) return null;
+  const copay = Math.min(sanctioned, Math.round(raw * 100) / 100);
+  const insurer = Math.round((sanctioned - copay) * 100) / 100;
+  return `Sanctioned ${inr2(sanctioned)}. The insurer pays ${inr2(insurer)}; `
+    + `${inr2(copay)} stays with the family and has to be collected at the counter.`;
+}
 
 function eventLabel(k: string) {
   return ({ CREATED: "Claim raised", SUBMITTED: "Submitted to insurer", QUERIED: "Insurer queried", APPROVED: "Approved", PARTIALLY_APPROVED: "Partly approved", REJECTED: "Rejected", SETTLED: "Settled", NOTE: "Note" } as Record<string, string>)[k] ?? k;

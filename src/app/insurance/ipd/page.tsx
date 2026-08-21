@@ -28,7 +28,7 @@ import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
 import { TOPICS } from "@/lib/realtime/topics";
-import { INSURERS } from "@/lib/insurers";
+import { useInsurers } from "@/lib/use-insurers";
 import { bedLabel, bedShort } from "@/lib/beds";
 
 interface Bed {
@@ -135,6 +135,10 @@ export default function BedBoardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+
+  // The hospital's own insurer list, not the one compiled into this file. Falls
+  // back to the built-in names until the fetch lands - see useInsurers.
+  const insurerOptions = useInsurers();
 
   // ── admit panel (always on screen, like the demo) ──
   const [freeWards, setFreeWards] = useState<FreeWard[]>([]);
@@ -570,7 +574,7 @@ export default function BedBoardPage() {
                         <input id="admit-insurer" className={fld} list="ins-list" value={form.insurer}
                           onChange={(e) => setForm({ ...form, insurer: e.target.value })}
                           placeholder="Star Health, Care, CGHS…" />
-                        <datalist id="ins-list">{INSURERS.map((x) => <option key={x} value={x} />)}</datalist>
+                        <datalist id="ins-list">{insurerOptions.map((x) => <option key={x} value={x} />)}</datalist>
                       </div>
                       <p className="text-[12px] leading-relaxed text-[var(--p-muted)]">
                         This puts the stay on the <b className="text-[var(--p-ink)]">insurance desk&apos;s</b> list straight away,

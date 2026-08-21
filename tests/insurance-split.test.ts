@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  approvalOf, splitStay, splitInvoice, allocateCoverage, type ClaimLike,
+  approvalOf, splitStay, splitInvoice, allocateCoverage, copayOn, type ClaimLike,
 } from "@/lib/insurance-split";
 
 /**
@@ -390,5 +390,97 @@ describe("splitStay - arithmetic that must not drift", () => {
       const s = split({ approval: approvalOf([claim({ approvedAmount: approved })]) });
       expect(s.patientPayable + s.insuranceApproved).toBeCloseTo(s.stayTotal, 2);
     }
+  });
+});
+
+/**
+ * THE POLICY'S CO-PAY.
+ *
+ * The slice of an admissible claim the family carries. The hospital has to
+ * COLLECT it - the insurer is not sending it - so the arithmetic that decides
+ * how big it is has to be right and has to be the same everywhere it is shown.
+ */
+describe("the co-pay on a sanctioned amount", () => {
+  it("is nothing when the policy has none", () => {
+    expect(copayOn(100_000, {})).toBe(0);
+    expect(copayOn(100_000, { pct: null, amount: null })).toBe(0);
+  });
+
+  it("is the percentage of the sanction the letter quotes", () => {
+    expect(copayOn(100_000, { pct: 10 })).toBe(10_000);
+    expect(copayOn(160_750, { pct: 20 })).toBe(32_150);
+  });
+
+  it("rounds to the paisa, like every other figure on a claim", () => {
+    expect(copayOn(33_333, { pct: 10 })).toBe(3_333.3);
+  });
+
+  it("takes rupees as stated when both are given - the letter is the authority", () => {
+    // TPAs round their own way. If the letter says ₹10,000, that is what the
+    // family is charged, whatever 12% of the sanction works out to here.
+    expect(copayOn(100_000, { pct: 12, amount: 10_000 })).toBe(10_000);
+  });
+
+  it("never exceeds the sanction it comes off", () => {
+    // A co-pay bigger than the amount would make the insurer's share negative,
+    // and a negative approval spread over a stay's bills is a bill that pays
+    // for itself.
+    expect(copayOn(50_000, { amount: 80_000 })).toBe(50_000);
+    expect(copayOn(50_000, { pct: 100 })).toBe(50_000);
+  });
+
+  it("ignores nonsense rather than producing it", () => {
+    expect(copayOn(100_000, { pct: 0 })).toBe(0);
+    expect(copayOn(100_000, { amount: -5_000 })).toBe(0);
+    expect(copayOn(-100, { pct: 10 })).toBe(0);
+    expect(copayOn(100_000, { amount: Number.NaN })).toBe(0);
+  });
+});
+
+describe("a co-pay is the family's, all the way through the split", () => {
+  // What the APPROVE path stores: the insurer's NET share.
+  const sanctioned = 100_000;
+  const copay = copayOn(sanctioned, { pct: 10 });
+  const approved = sanctioned - copay;
+
+  it("leaves the insurer owing only its own share", () => {
+    const split = splitStay({
+      billTotal: 100_000,
+      isInsurance: true,
+      approval: {
+        approved, settled: 0, decided: true, rejected: false,
+        pending: false, claimNo: "CLM-1", ref: null,
+      },
+    });
+    expect(split.insuranceApproved).toBe(90_000);
+    expect(split.insuranceReceivable).toBe(90_000);
+  });
+
+  it("puts the co-pay on the family, to be collected at the counter", () => {
+    const split = splitStay({
+      billTotal: 100_000,
+      isInsurance: true,
+      approval: {
+        approved, settled: 0, decided: true, rejected: false,
+        pending: false, claimNo: "CLM-1", ref: null,
+      },
+    });
+    expect(split.patientPayable).toBe(10_000);
+    expect(split.patientDue).toBe(10_000);
+  });
+
+  it("lets the family's own deposit settle it, and hands back the rest", () => {
+    const split = splitStay({
+      billTotal: 100_000,
+      advance: 25_000,
+      isInsurance: true,
+      approval: {
+        approved, settled: 0, decided: true, rejected: false,
+        pending: false, claimNo: "CLM-1", ref: null,
+      },
+    });
+    expect(split.advanceApplied).toBe(10_000);
+    expect(split.patientDue).toBe(0);
+    expect(split.refundDue).toBe(15_000);
   });
 });

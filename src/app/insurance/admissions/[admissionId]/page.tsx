@@ -16,7 +16,7 @@ import { EditBillDialog, useBillEditing } from "@/components/portal/billing/edit
 import { PatientHistoryPanel } from "@/components/portal/ipd/patient-history-panel";
 import { StatusPill, NewClaim, type ClaimPrefill } from "@/components/portal/insurance/claims-board";
 // The same rule the desk's worklist uses to decide a stay still owes a claim.
-import { authorisedAmount, excessOver, needsFinalClaim } from "@/lib/final-claim";
+import { authorisedAmount, excessOver, needsFinalClaim, openPreAuth, openFinalClaim } from "@/lib/final-claim";
 
 /** One row of the hospital's published rate card. See prisma ServiceCharge. */
 interface ServiceCharge {
@@ -103,6 +103,8 @@ interface StayClaims {
   claims: {
     id: string; claimNo: string; type: string; stage: string; status: string;
     claimedAmount: string; approvedAmount: string | null; settledAmount: string | null;
+    /** The family's share of this approval. approvedAmount is already net. */
+    copayAmount: string | null; copayPct: string | null;
     insurerRef: string | null; submittedAt: string | null; decisionAt: string | null;
   }[];
   insuranceBills: { id: string; receiptNo: string; source: string; total: string; paid: string }[];
@@ -531,26 +533,65 @@ export default function AdmissionSheetPage() {
   //
   // A CLOSED claim does not count as filed - that is the unused ₹0 pre-auth
   // being tidied away, not a claim anybody sent.
-  const finalClaim = sc?.claims.find((c) => c.stage === "FINAL" && c.status !== "CLOSED") ?? null;
+  const finalClaim = sc ? openFinalClaim(sc.claims) : null;
   /** The discharge bill itself - the document a final claim is raised against. */
   const ipdBill = sc?.insuranceBills.find((b) => b.source === "IPD") ?? null;
   /** Everything pointed at the insurer: discharge bill + pharmacy + lab. */
   const insuranceBilled = Number(sc?.insuranceBillsTotal ?? 0);
+  // Every pre-auth that is not tidied away, refusals included - `authorisedAmount`
+  // reads a refusal as "nothing authorised", and the panel says so out loud.
   const preAuth = sc?.claims.find((c) => c.stage === "PRE_AUTH" && c.status !== "CLOSED") ?? null;
   /** What the insurer authorised, and how far past it the stay landed. */
   const authorised = authorisedAmount(preAuth);
   const overBy = excessOver(insuranceBilled, authorised);
-  // `!finalClaim` is stricter here than on the worklist, on purpose. A DRAFT
-  // final claim keeps its place in that list - it is unfinished work - but on
-  // this screen it is already drawn above with its own "Set amount" and "Send to
-  // insurer". Offering "Raise" beside it is exactly how a stay ends up carrying
-  // two claims with nobody able to say which one is live.
-  const canRaiseFinal =
-    discharged && a.payerType === "INSURANCE" && !!sc && !!ipdBill && !finalClaim &&
+
+  // ── THE TWO THINGS THIS DESK CAN SEND AN INSURER, SIDE BY SIDE ──
+  //
+  // A stay has exactly two claims in its life and they are raised at different
+  // moments: the PRE-AUTH against an estimate while the patient is in the bed,
+  // and the FINAL against the bill once the stay is over. This screen offered
+  // only the second, so the desk that had just finished reading THIS stay had to
+  // go and find another list to raise the pre-auth from.
+  //
+  // EACH BUTTON DISAPPEARS THE MOMENT ITS OWN CLAIM EXISTS. That is what takes
+  // the pre-auth away once the insurer approves it: an approved pre-auth IS the
+  // claim on this stay, and the only thing left to send afterwards is the final
+  // one. `preAuth` and `finalClaim` both ignore CLOSED, so the unused ₹0 draft
+  // somebody tidied away does not count as raised and the button comes back.
+  //
+  // `!finalClaim` matters as much as the rest: a draft final claim is already
+  // drawn above with its own "Set amount" and "Send to insurer", and offering
+  // "Raise" beside it is exactly how a stay ends up carrying two claims with
+  // nobody able to say which one is live.
+  //
+  // A REFUSED pre-auth is not one of them. The insurer said no, which authorises
+  // nothing - `authorisedAmount` already reads a refusal that way - and the way
+  // back from it is a fresh pre-auth, not a stay with no button on it.
+  const onPolicy = a.payerType === "INSURANCE" && !!sc;
+  const standingPreAuth = sc ? openPreAuth(sc.claims) : null;
+  const canRaisePreAuth = onPolicy && !standingPreAuth;
+  const canRaiseFinal = onPolicy && !finalClaim;
+
+  // WHETHER A FINAL CLAIM IS OWED is a stricter question than whether one can be
+  // raised, and it is the WORKLIST's question - the same rule `pendingWork` uses.
+  // It no longer hides the button (the desk asked for both stages to be offered
+  // from the stay), it decides what this panel SAYS. A stay that came in under
+  // its authorisation is finished, and it should read as finished here even
+  // while the button to claim anyway is on the screen.
+  const finalClaimOwed =
+    discharged && onPolicy && !!ipdBill && !finalClaim &&
     needsFinalClaim({ billedToInsurer: insuranceBilled, authorised, finalClaimStatus: null });
 
+  /** The stay's own total - bills and open tab together, the figure the sheet
+   *  foots to. A pre-auth is estimated off this, and while the patient is still
+   *  in a bed it is the only figure there is. */
+  const stayTotal = Number(sheet.claimTotal);
+  /** What a final claim asks for: everything pointed at the insurer once bills
+   *  exist, and the running total before any have been raised. */
+  const finalBase = insuranceBilled > 0 ? insuranceBilled : stayTotal;
+
   /** `amount` lets the excess button claim the difference instead of the lot. */
-  function raiseFinalClaim(amount?: number) {
+  function raiseClaim(stage: "PRE_AUTH" | "FINAL", amount?: number) {
     if (insurers.length === 0) {
       api.get<{ insurers: string[] }>("/insurance?status=ALL")
         .then((r) => setInsurers(r.insurers)).catch(() => {});
@@ -563,7 +604,7 @@ export default function AdmissionSheetPage() {
       insurer: a.insurer ?? "",
       policyNo: a.policyNo ?? "",
       memberId: a.memberId ?? "",
-      stage: "FINAL",
+      stage,
       // A stay flagged INSURANCE was treated on the promise of cashless. A
       // reimbursement is the other shape - the family paid - and that button
       // lives on the stays list, where a SELF_PAY stay can be found.
@@ -574,12 +615,21 @@ export default function AdmissionSheetPage() {
       // unasked for. The excess button passes the difference instead, for an
       // insurer that wants only what is over the authorisation.
       //
+      // A PRE-AUTH IS ESTIMATED OFF THE WHOLE STAY instead. There is no bill to
+      // point at yet, and an insurer authorises the treatment rather than the
+      // two days of it that have happened so far - so the desk gets the stay's
+      // total as a starting figure and raises it for what the surgeon has
+      // planned.
+      //
       // Whole rupees, like the pending list - paise are noise on a covering
       // letter - and editable, because only this desk knows what the policy
       // actually covers.
-      claimedAmount: String(Math.round(amount ?? insuranceBilled)),
+      claimedAmount: String(Math.round(amount ?? (stage === "PRE_AUTH" ? stayTotal : finalBase))),
       admissionId: a.id,
-      invoiceId: ipdBill?.id,
+      // Only the final claim carries the bill. A pre-auth is raised against an
+      // estimate, and attaching the discharge invoice to one would have two
+      // claims on this stay pointing at the same document.
+      invoiceId: stage === "FINAL" ? ipdBill?.id : undefined,
     });
   }
 
@@ -666,6 +716,21 @@ export default function AdmissionSheetPage() {
             title={discharged ? "Print the discharge summary for this stay" : "Interim summary - the discharge document, as it stands"}
             className="inline-flex items-center gap-2 rounded-md border border-[var(--p-border)] px-4 py-1.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
             <Icon name="printer" size={15} /> Print summary
+          </a>
+          {/* ── THE BILL ITSELF, FROM THE STAY ──
+              The stays LIST has always had this button and the stay's own screen
+              did not, which is the wrong way round: the desk that has just
+              finished reading these charges is the desk being asked for the
+              bill. "Print tab" and "Print all bills" further down are different
+              documents - the tab is a dated statement of position and says on
+              its face that it is not a bill, and "all bills" is a run of
+              separate tax invoices. This is the one sheet a TPA asks for. */}
+          <a href={`/print/bill/${a.id}`} target="_blank" rel="noopener noreferrer"
+            title={discharged
+              ? "Print the detailed bill for this stay - the sheet the claim is raised against"
+              : "Print the detailed bill as it stands - the stay is still running"}
+            className="inline-flex items-center gap-2 rounded-md border border-[var(--p-border)] px-4 py-1.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+            <Icon name="receipt" size={15} /> Detailed bill
           </a>
           <Link href="/stays" className="inline-flex items-center gap-2 rounded-md border border-[var(--p-border)] px-4 py-1.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
             Insurance stays
@@ -825,7 +890,7 @@ export default function AdmissionSheetPage() {
           discharge without any claim at all - admitted before pre-auths opened
           themselves, or a pre-auth nobody raised - had no section here, which is
           exactly the stay that most needs the button. */}
-      {sc && (sc.claims.length > 0 || canRaiseFinal) && (
+      {sc && (sc.claims.length > 0 || canRaisePreAuth || canRaiseFinal) && (
         <section data-rise className="surface mb-5 overflow-hidden">
           <div className="border-b border-[var(--p-border)] px-5 py-3.5">
             <h2 className="text-[14px] font-semibold text-[var(--p-ink)]">With the insurer</h2>
@@ -863,6 +928,18 @@ export default function AdmissionSheetPage() {
                       <div className="font-mono font-semibold text-[var(--p-ink)]">₹{money2(c.claimedAmount)} claimed</div>
                       {c.approvedAmount != null && (
                         <div className="text-[var(--p-muted)]">₹{money2(c.approvedAmount)} approved</div>
+                      )}
+                      {/* THE CO-PAY IS SAID ON THE ROW, not left to be worked
+                          out by subtracting two numbers on different lines. A
+                          part-approval and a co-pay look identical otherwise,
+                          and only one of them is worth arguing with a TPA
+                          about - the other is money to collect at the counter. */}
+                      {c.copayAmount != null && Number(c.copayAmount) > 0 && (
+                        <div className="text-[#8a5a14]">
+                          ₹{money2(c.copayAmount)} co-pay
+                          {c.copayPct != null && Number(c.copayPct) > 0 && <> ({Number(c.copayPct)}%)</>}
+                          {" · the family’s"}
+                        </div>
                       )}
                     </>
                   )}
@@ -947,51 +1024,95 @@ export default function AdmissionSheetPage() {
             ))}
           </div>
 
-          {/* ── THE FINAL CLAIM, RAISED FROM THE STAY ──
-              It could only be raised from "To raise" - a list the desk works
-              down by urgency - so the person who had just finished reading THIS
-              stay's bills, and knew what to claim, had to leave, find the same
-              patient in another list and start again. Prefilled from the stay
-              and its insurance bills, because re-keying a policy number off a
-              screen that already shows it is how the wrong number reaches an
-              insurer.
+          {/* ── RAISE A CLAIM ON THIS STAY - PRE-AUTH, OR THE FINAL ONE ──
+              Both stages, side by side, on the screen that already carries the
+              figures they are raised on. A claim could only be started from "To
+              raise" - a list the desk works down by urgency - so the person who
+              had just finished reading THIS stay's bills, and knew what to
+              claim, had to leave, find the same patient in another list and
+              start again. Prefilled from the stay, because re-keying a policy
+              number off a screen that already shows it is how the wrong number
+              reaches an insurer.
 
-              A pre-auth is deliberately NOT offered here: it is raised while the
-              patient is in the bed, and by then this screen is showing a bill
-              that is still running. The list on the desk's landing page is the
-              right place for the clock-driven work. */}
-          {canRaiseFinal && (
+              THE PRE-AUTH LEAVES THIS ROW ONCE ONE EXISTS - approved above all,
+              which is the moment the only claim left to send is the final one.
+              The final button stays, and stands alone once it is the only one. */}
+          {(canRaisePreAuth || canRaiseFinal) && (
             <div className="border-t border-[var(--p-border)] bg-[var(--p-blue-soft)]/50 px-5 py-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-[13px] font-bold text-[var(--p-blue-deep)]">
-                    {authorised === null
-                      ? "Discharged and billed - nothing was ever authorised on this stay"
-                      : `This stay went ₹${money2(overBy ?? 0)} over what was authorised`}
+                    {finalClaimOwed
+                      ? authorised === null
+                        ? "Discharged and billed - nothing was ever authorised on this stay"
+                        : `This stay went ₹${money2(overBy ?? 0)} over what was authorised`
+                      : authorised !== null
+                        ? `Authorised for ₹${money2(authorised)} - a final claim is the only one left to send`
+                        : standingPreAuth
+                          ? `Pre-auth ${standingPreAuth.claimNo} is already open on this stay`
+                          : preAuth
+                            ? `The insurer refused pre-auth ${preAuth.claimNo} - nothing stands authorised`
+                            : discharged
+                              ? "Nothing has been sent to the insurer on this stay yet"
+                              : "Still in a bed - the pre-authorisation is the one that matters now"}
                   </p>
-                  {/* THE THREE FIGURES THE DECISION IS MADE ON, spelled out. The
-                      desk compares the estimate against the bill in its head
+                  {/* THE FIGURES THE DECISION IS MADE ON, spelled out. The desk
+                      compares the estimate against the bill in its head
                       otherwise, off two screens, on the one number an insurer
                       will argue about. */}
                   <p className="mt-1 max-w-xl text-[12.5px] leading-relaxed text-[var(--p-blue-deep)]">
                     {authorised !== null && <>Authorised ₹{money2(authorised)} · </>}
-                    Billed ₹{money2(sc.insuranceBillsTotal)} across {sc.insuranceBills.length} bill
-                    {sc.insuranceBills.length === 1 ? "" : "s"} pointed at {a.insurer ?? "the insurer"}.
-                    {" "}
-                    {authorised === null
-                      ? "None of it has been asked for yet."
-                      : "The authorisation settles the estimate; this claim is for the rest."}
+                    {insuranceBilled > 0 ? (
+                      <>
+                        Billed ₹{money2(sc.insuranceBillsTotal)} across {sc.insuranceBills.length} bill
+                        {sc.insuranceBills.length === 1 ? "" : "s"} pointed at {a.insurer ?? "the insurer"}.
+                        {" "}
+                        {authorised === null
+                          ? "None of it has been asked for yet."
+                          : "The authorisation settles the estimate; a final claim is for the rest."}
+                      </>
+                    ) : (
+                      <>
+                        Nothing is billed to {a.insurer ?? "the insurer"} yet - the stay has run up
+                        {" ₹"}{money2(stayTotal)} so far. A pre-auth covers the WHOLE stay, so raise it for
+                        what is planned rather than for what has happened.
+                      </>
+                    )}
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1.5">
-                  <button onClick={() => raiseFinalClaim()}
-                    className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-[var(--p-blue-deep)]">
-                    <Icon name="shield" size={15} /> Raise for ₹{money2(sc.insuranceBillsTotal)}
-                  </button>
+                  {/* ── THE TWO STAGES, SIDE BY SIDE ──
+                      Either can be pressed. The SOLID one is the stage this stay
+                      is actually at - authorising while they are in a bed,
+                      claiming once they have gone home - because two identical
+                      buttons make the desk read both labels every time, and that
+                      is how the wrong one eventually gets pressed. */}
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    {canRaisePreAuth && (
+                      <button onClick={() => raiseClaim("PRE_AUTH")}
+                        title="Raise a pre-authorisation - an estimate for the whole stay, sent before the insurer is billed"
+                        className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-[13px] font-semibold transition-colors ${
+                          discharged
+                            ? "border border-[var(--p-border)] bg-white text-[var(--p-blue-deep)] hover:border-[var(--p-blue)]"
+                            : "bg-[var(--p-blue)] text-white hover:bg-[var(--p-blue-deep)]"}`}>
+                        <Icon name="shield" size={15} /> Pre-auth ₹{money2(stayTotal)}
+                      </button>
+                    )}
+                    {canRaiseFinal && (
+                      <button onClick={() => raiseClaim("FINAL")}
+                        title="Raise the final claim - what has actually been billed to the insurer"
+                        className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-[13px] font-semibold transition-colors ${
+                          discharged || !canRaisePreAuth
+                            ? "bg-[var(--p-blue)] text-white hover:bg-[var(--p-blue-deep)]"
+                            : "border border-[var(--p-border)] bg-white text-[var(--p-blue-deep)] hover:border-[var(--p-blue)]"}`}>
+                        <Icon name="receipt" size={15} /> Final claim ₹{money2(finalBase)}
+                      </button>
+                    )}
+                  </div>
                   {/* SOME INSURERS WANT THE WHOLE BILL, SOME WANT THE DIFFERENCE.
                       Both are one click, and both land in the same editable box. */}
-                  {overBy !== null && overBy > 1 && (
-                    <button onClick={() => raiseFinalClaim(overBy)}
+                  {canRaiseFinal && overBy !== null && overBy > 1 && (
+                    <button onClick={() => raiseClaim("FINAL", overBy)}
                       className="text-[11.5px] font-semibold text-[var(--p-blue-deep)] underline underline-offset-2 hover:text-[var(--p-blue)]">
                       or claim only the ₹{money2(overBy)} excess
                     </button>
@@ -1907,7 +2028,7 @@ export default function AdmissionSheetPage() {
           onClose={() => setRaising(null)}
           onCreated={(c) => {
             setRaising(null);
-            setFlash(`Claim ${c.claimNo} raised for ₹${money2(c.claimedAmount)} - it is a draft until you send it to the insurer.`);
+            setFlash(`${c.stage === "PRE_AUTH" ? "Pre-auth" : "Final claim"} ${c.claimNo} raised for ₹${money2(c.claimedAmount)} - it is a draft until you send it to the insurer.`);
             load();
           }}
         />

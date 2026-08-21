@@ -10,6 +10,9 @@ import { useLive } from "@/lib/realtime/use-live";
 import { TOPICS } from "@/lib/realtime/topics";
 import { StatusPill, NewClaim, type ClaimPrefill } from "@/components/portal/insurance/claims-board";
 import { bedLabel } from "@/lib/beds";
+// One definition of which stage a stay still owes, shared with the stay's own
+// screen - both draw these two buttons. See final-claim.ts.
+import { openPreAuth, openFinalClaim } from "@/lib/final-claim";
 
 /**
  * INSURANCE STAYS - every patient this desk is responsible for.
@@ -79,6 +82,11 @@ export default function StaysPage() {
   const [insurers, setInsurers] = useState<string[]>([]);
   const [flash, setFlash] = useState<string | null>(null);
 
+  /** The stay whose policy number is being typed in, and what is in the box. */
+  const [policyFor, setPolicyFor] = useState<string | null>(null);
+  const [policyVal, setPolicyVal] = useState("");
+  const [policyBusy, setPolicyBusy] = useState(false);
+
   const load = useCallback(async () => {
     try {
       setStays((await api.get<{ stays: Stay[] }>(`/insurance/stays?payer=${payer}`)).stays);
@@ -92,9 +100,9 @@ export default function StaysPage() {
     api.get<{ insurers: string[] }>("/insurance?status=ALL")
       .then((r) => setInsurers(r.insurers)).catch(() => {});
   }, []);
-  // Not while the claim form is open - a reload behind it is harmless, but the
-  // list jumping under a half-filled dialog is not.
-  useLive([TOPICS.INSURANCE], load, { enabled: !raising });
+  // Not while the claim form or a policy box is open - a reload behind them is
+  // harmless, but the list jumping under a half-typed entry is not.
+  useLive([TOPICS.INSURANCE], load, { enabled: !raising && !policyFor });
 
   const shown = useMemo(() => stays.filter((s) => {
     if (tab === "IN_BED" && s.dischargedAt) return false;
@@ -109,6 +117,50 @@ export default function StaysPage() {
   }), [stays, tab, q]);
 
   const inBed = stays.filter((s) => !s.dischargedAt).length;
+
+  /**
+   * Raise one of the two stages off a row, prefilled from it.
+   *
+   * CASHLESS, not reimbursement: a stay on this tab was treated on the promise
+   * that the insurer pays directly. The reimbursement button below is the other
+   * shape and belongs to the self-paying tab, where the family has already
+   * settled at the counter.
+   *
+   * The amount is a starting point in whole rupees - the running total for a
+   * stay still going, the final bill for one that has ended - and the form
+   * leaves it editable, because a pre-auth estimates the WHOLE stay and only the
+   * desk knows what the surgeon has planned for tomorrow.
+   */
+  function raise(s: Stay, stage: "PRE_AUTH" | "FINAL") {
+    setRaising({
+      patient: { ...s.patient, age: null },
+      stage,
+      type: "CASHLESS",
+      claimedAmount: String(Math.round(Number(s.amount))),
+      admissionId: s.admissionId,
+      insurer: s.insurer ?? undefined,
+      policyNo: s.policyNo ?? undefined,
+    });
+  }
+
+  /** Write the policy number onto the stay - and onto the claims still waiting
+   *  on an answer, which is the half that reaches the TPA. See setStayPolicy. */
+  async function savePolicy(s: Stay) {
+    setPolicyBusy(true);
+    try {
+      const r = await api.patch<{ policyNo: string | null; claimsUpdated: number }>(
+        `/insurance/admissions/${s.admissionId}/policy`, { policyNo: policyVal.trim() });
+      setPolicyFor(null); setPolicyVal(""); setError(null);
+      setFlash(r.policyNo
+        ? `Policy ${r.policyNo} saved on ${s.ipNumber}${r.claimsUpdated > 0
+            ? ` and onto ${r.claimsUpdated} claim${r.claimsUpdated === 1 ? "" : "s"} still with the insurer`
+            : ""}.`
+        : `Policy number cleared on ${s.ipNumber}.`);
+      load();
+    }
+    catch (e) { setError(e instanceof ApiClientError ? e.message : "Couldn't save the policy number."); }
+    finally { setPolicyBusy(false); }
+  }
 
   return (
     <PortalScroll>
@@ -204,11 +256,60 @@ export default function StaysPage() {
                   </div>
                   <div className="mt-0.5 truncate text-[12.5px] text-[var(--p-muted)]">
                     {s.payerType === "SELF_PAY" ? "Paying at the counter" : (s.insurer ?? "Insurer not recorded")}
-                    {s.policyNo && <> · <span className="font-mono">{s.policyNo}</span></>}
+                    {/* ── THE POLICY NUMBER NOBODY TOOK AT ADMISSION ──
+                        Reception admits on the promise of a card the family is
+                        still looking for, so this is blank far more often than
+                        the form suggests - and the number turns up here, at the
+                        desk holding the card, with nowhere to be typed. Printing
+                        nothing at all read as "this stay has no policy", which
+                        is a different thing from "nobody has given us it yet".
+
+                        An existing number opens the same box, because the second
+                        commonest state of a hand-copied policy number is a typo.
+                        `pointer-events-auto` because the row is covered by a
+                        stretched link - see the overlay above. */}
+                    {s.payerType === "INSURANCE" && (
+                      s.policyNo ? (
+                        <> · <button onClick={() => { setPolicyFor(s.admissionId); setPolicyVal(s.policyNo ?? ""); }}
+                          title="Correct this policy number"
+                          className="pointer-events-auto relative font-mono underline decoration-dotted underline-offset-2 hover:text-[var(--p-blue)]">
+                          {s.policyNo}
+                        </button></>
+                      ) : (
+                        <> · <button onClick={() => { setPolicyFor(s.admissionId); setPolicyVal(""); }}
+                          title="Record the policy number on this stay - it goes onto the claims still with the insurer too"
+                          className="pointer-events-auto relative font-semibold text-[var(--p-amber)] underline decoration-dotted underline-offset-2 hover:text-[var(--p-blue)]">
+                          + policy no
+                        </button></>
+                      )
+                    )}
+                    {s.payerType === "SELF_PAY" && s.policyNo && <> · <span className="font-mono">{s.policyNo}</span></>}
                     {" · "}{bedLabel(s.ward, s.bedNo)}
                     {" · "}
                     {s.dischargedAt ? `discharged ${day(s.dischargedAt)}` : `admitted ${day(s.admittedAt)}`}
                   </div>
+
+                  {/* Its own line, not inline in the meta above: that line
+                      truncates, and a box you are typing into must never be the
+                      thing that gets cut off. Empty + Save clears it. */}
+                  {policyFor === s.admissionId && (
+                    <div className="pointer-events-auto relative mt-1.5 flex flex-wrap items-center gap-2">
+                      <input autoFocus value={policyVal} maxLength={60}
+                        onChange={(e) => setPolicyVal(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !policyBusy) savePolicy(s);
+                          if (e.key === "Escape") { setPolicyFor(null); setPolicyVal(""); }
+                        }}
+                        placeholder="P/1234/5678"
+                        className="w-48 rounded-md border border-[var(--p-border)] bg-white px-2.5 py-1.5 font-mono text-[12px] text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]" />
+                      <button onClick={() => savePolicy(s)} disabled={policyBusy}
+                        className="inline-flex items-center gap-1.5 rounded-md bg-[var(--p-blue)] px-3 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-[var(--p-blue-deep)] disabled:opacity-40">
+                        {policyBusy ? <Spinner size={12} /> : <Icon name="check" size={13} />} Save
+                      </button>
+                      <button onClick={() => { setPolicyFor(null); setPolicyVal(""); }}
+                        className="text-[12px] font-medium text-[var(--p-muted)] hover:text-[var(--p-ink)]">Cancel</button>
+                    </div>
+                  )}
                   {/* Where each claim stands. No claim yet says so in words - a
                       blank row would read as "nothing to do". */}
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
@@ -232,22 +333,49 @@ export default function StaysPage() {
                     ))}
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-5">
-                  <div className="pointer-events-none text-right">
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2.5">
+                  <div className="pointer-events-none mr-1 text-right">
                     <div className="font-mono text-[15px] font-bold text-[var(--p-ink)]">{inr(s.amount)}</div>
                     <div className="text-[11px] text-[var(--p-muted)]">{s.dischargedAt ? "final bill" : "run up so far"}</div>
                   </div>
                   {/* Both tabs get this. A stay still in a bed prints the running
-                      total as a PROVISIONAL bill - which is exactly what a
-                      pre-authorisation needs - and a discharged one prints the
-                      final. Same sheet, same route; the only difference is
-                      whether an invoice exists behind it yet. */}
+                      total, which is exactly what a pre-authorisation needs, and
+                      a discharged one prints the closed stay. Same sheet, same
+                      route; the only difference is whether an invoice exists
+                      behind it yet. The sheet itself is headed IP BILL either
+                      way - it does not caveat a running stay on the page. */}
                   <a href={`/print/bill/${s.admissionId}`} target="_blank" rel="noreferrer"
-                    title={s.dischargedAt ? "Print the final claim bill" : "Print the bill as it stands - marked provisional"}
+                    title={s.dischargedAt ? "Print the final claim bill" : "Print the bill as it stands - the stay is still running"}
                     className="relative inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--p-blue)] transition-colors hover:border-[var(--p-blue)]">
                     <Icon name="printer" size={13} />
                     {s.dischargedAt ? "Bill" : "Provisional"}
                   </a>
+
+                  {/* ── BOTH STAGES, SIDE BY SIDE, ON THE ROW ──
+                      Each one disappears once its own claim exists - which is
+                      what takes "Pre-auth" away the moment the insurer approves
+                      one, leaving the final claim as the only thing left to
+                      send. See openPreAuth / openFinalClaim in final-claim.ts.
+
+                      Outlined rather than filled, both of them. This is a list
+                      the desk SCANS - the claim pills to the left already say
+                      where each stay stands - and a column of solid blue buttons
+                      turns every row into a call to action. The stay's own
+                      screen is where one of the two gets emphasis. */}
+                  {s.payerType === "INSURANCE" && !openPreAuth(s.claims) && (
+                    <button onClick={() => raise(s, "PRE_AUTH")}
+                      title="Raise a pre-authorisation on this stay - an estimate for the whole stay, sent before the insurer is billed"
+                      className="relative inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--p-cyan-deep)] transition-colors hover:border-[var(--p-cyan)]">
+                      <Icon name="shield" size={13} /> Pre-auth
+                    </button>
+                  )}
+                  {s.payerType === "INSURANCE" && !openFinalClaim(s.claims) && (
+                    <button onClick={() => raise(s, "FINAL")}
+                      title="Raise the final claim on this stay - what is actually billed to the insurer"
+                      className="relative inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--p-blue-deep)] transition-colors hover:border-[var(--p-blue)]">
+                      <Icon name="receipt" size={13} /> Final
+                    </button>
+                  )}
 
                   {/* ── THE REIMBURSEMENT ──
                       Only on a self-paying stay, and only where no claim exists
@@ -293,7 +421,9 @@ export default function StaysPage() {
           onClose={() => setRaising(null)}
           onCreated={(c) => {
             setRaising(null);
-            setFlash(`${c.claimNo} raised for reimbursement. Nothing collected has changed - this is the paperwork the family claims with.`);
+            setFlash(c.type === "REIMBURSEMENT"
+              ? `${c.claimNo} raised for reimbursement. Nothing collected has changed - this is the paperwork the family claims with.`
+              : `${c.stage === "PRE_AUTH" ? "Pre-auth" : "Final claim"} ${c.claimNo} raised for ₹${Number(c.claimedAmount).toLocaleString("en-IN")} - it is a draft until you send it to the insurer.`);
             load();
           }}
         />

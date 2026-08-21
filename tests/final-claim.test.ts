@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { authorisedAmount, excessOver, needsFinalClaim } from "@/lib/final-claim";
+import { authorisedAmount, excessOver, needsFinalClaim, openPreAuth, openFinalClaim } from "@/lib/final-claim";
 
 /**
  * WHICH DISCHARGED STAYS THE INSURANCE DESK STILL OWES A CLAIM ON.
@@ -93,5 +93,78 @@ describe("how far over the estimate", () => {
 
   it("is null when nothing was authorised - there is no estimate to be over", () => {
     expect(excessOver(160_000, null)).toBeNull();
+  });
+});
+
+/**
+ * WHICH OF THE TWO BUTTONS A STAY GETS.
+ *
+ * Both the stays list and the stay's own sheet draw a "Pre-auth" and a "Final
+ * claim" button, and each has to vanish the moment its claim exists - otherwise
+ * one stay ends up carrying two claims of the same stage and nobody can say
+ * afterwards which one the insurer is looking at.
+ */
+const c = (stage: string, status: string) => ({ stage, status });
+
+describe("the pre-auth still standing on a stay", () => {
+  it("is null when no claim has been raised at all - so the button shows", () => {
+    expect(openPreAuth([])).toBeNull();
+  });
+
+  it("is the draft the admission opened - one pre-auth per stay, not two", () => {
+    expect(openPreAuth([c("PRE_AUTH", "DRAFT")])).toEqual(c("PRE_AUTH", "DRAFT"));
+  });
+
+  it("is the approved one, which is what takes the button away", () => {
+    // The desk's own words: once the insurer authorises, the only claim left to
+    // send is the final one.
+    expect(openPreAuth([c("PRE_AUTH", "APPROVED")])).toEqual(c("PRE_AUTH", "APPROVED"));
+  });
+
+  it("ignores a refusal - a rejection authorises nothing, so a fresh one is owed", () => {
+    expect(openPreAuth([c("PRE_AUTH", "REJECTED")])).toBeNull();
+  });
+
+  it("ignores a CLOSED draft - that is the unused ₹0 one somebody tidied away", () => {
+    expect(openPreAuth([c("PRE_AUTH", "CLOSED")])).toBeNull();
+  });
+
+  it("does not mistake the final claim for one", () => {
+    expect(openPreAuth([c("FINAL", "SUBMITTED")])).toBeNull();
+  });
+});
+
+describe("the final claim still standing on a stay", () => {
+  it("is null when none has been raised - so the button shows", () => {
+    expect(openFinalClaim([c("PRE_AUTH", "APPROVED")])).toBeNull();
+  });
+
+  it("counts a draft - it is already on the screen with its own Send button", () => {
+    expect(openFinalClaim([c("FINAL", "DRAFT")])).toEqual(c("FINAL", "DRAFT"));
+  });
+
+  it("counts a REJECTED one, unlike a pre-auth", () => {
+    // The refusal panel owns that stay - re-submit, or move the bills back to
+    // the family. A second "raise" button would compete with it.
+    expect(openFinalClaim([c("FINAL", "REJECTED")])).toEqual(c("FINAL", "REJECTED"));
+  });
+
+  it("ignores a CLOSED one", () => {
+    expect(openFinalClaim([c("FINAL", "CLOSED")])).toBeNull();
+  });
+});
+
+describe("a stay carrying both", () => {
+  const both = [c("PRE_AUTH", "APPROVED"), c("FINAL", "DRAFT")];
+
+  it("offers neither button", () => {
+    expect(openPreAuth(both)).not.toBeNull();
+    expect(openFinalClaim(both)).not.toBeNull();
+  });
+
+  it("offers the pre-auth again once that one is refused", () => {
+    const refused = [c("PRE_AUTH", "REJECTED"), c("FINAL", "DRAFT")];
+    expect(openPreAuth(refused)).toBeNull();
+    expect(openFinalClaim(refused)).not.toBeNull();
   });
 });

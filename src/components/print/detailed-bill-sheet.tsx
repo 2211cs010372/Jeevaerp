@@ -8,7 +8,7 @@ import { amountInWords } from "@/lib/amount-words";
 import { BillHead, PrintToolbar, type HospitalInfo } from "@/components/print/stationery";
 
 /**
- * IP FINAL BILL - the discharge bill for a stay.
+ * IP BILL - the itemised bill for a stay, printed mid-stay or at discharge.
  *
  * ONE DOCUMENT, TWO READERS, and that is the whole reason it looks the way it
  * does. A family gets it at the counter and checks it line by line against what
@@ -256,15 +256,7 @@ export function DetailedBillSheet() {
                     printing our own on top of it would strike through theirs. */}
                 {!onStationery && <BillHead hospital={b.hospital} />}
                 <div className="mt-1 text-center text-[13px] font-bold tracking-wide">
-                  IP FINAL BILL
-                  {/* Said on the sheet, not just in the UI. A bill for a stay
-                      that is still running WILL be filed by somebody as if it
-                      were final. */}
-                  {b.provisional && (
-                    <span className="ml-2 rounded border border-[#8a5a1a] px-1.5 py-[1px] text-[8.5px] font-bold uppercase tracking-wide text-[#8a5a1a]">
-                      Provisional · stay in progress
-                    </span>
-                  )}
+                  IP BILL
                 </div>
 
                 {/* ── WHO, AND WHICH BILL ── two columns of label/value pairs,
@@ -515,9 +507,7 @@ export function DetailedBillSheet() {
                 )}
 
                 <div className="mt-4 border-t border-[#333] pt-1 text-center text-[8.5px] text-[#57655f]">
-                  {b.provisional
-                    ? "Provisional bill for pre-authorisation. The final bill is raised at discharge."
-                    : "Computer-generated bill. Submitted for insurance settlement."}
+                  Computer-generated bill. Submitted for insurance settlement.
                 </div>
               </td>
             </tr>
