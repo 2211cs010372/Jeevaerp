@@ -378,6 +378,35 @@ export default function AdmissionSheetPage() {
             <span className="font-mono">{a.patient.displayId}</span> · <b className="text-[var(--p-ink)]">{bedLabel(a.wardName, a.bedNo)}</b> ·
             Dr. {a.doctor.name} ({a.doctor.department})
           </p>
+          {/* THE STAY'S DATES, WHERE SOMEBODY ACTUALLY LOOKS FOR THEM.
+              The admission date was on this screen nowhere at all, and the only
+              way to correct it was the Edit button on the BED CHARGES row -
+              which is where the arithmetic belongs, but not where anybody looks
+              for a date. The commonest correction on this page is a patient
+              admitted at 11pm and typed in the next morning, and finding it
+              should not depend on knowing that the bed-rate dialog also owns
+              the clock.
+
+              SAME DIALOG, SECOND DOOR - and deliberately not a second editor.
+              The day count, every bed leg and, on a discharged stay, the
+              re-issued invoice all move with these dates. A lighter "just the
+              date" form here would be a way to change the bill without seeing
+              what it did to it, which is the whole thing CorrectStayDialog's
+              live preview exists to prevent. */}
+          <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">
+            Admitted <b className="text-[var(--p-ink)]">{chargeDateLabel(a.admittedAt)}</b>
+            {a.dischargedAt && (
+              <> · Discharged <b className="text-[var(--p-ink)]">{chargeDateLabel(a.dischargedAt)}</b></>
+            )}
+            {" · "}
+            <button
+              onClick={() => setCorrectOpen(true)}
+              title="Correct the stay's dates - the day count, the bed lines and the bill move with them"
+              className="font-semibold text-[var(--p-teal)] underline underline-offset-2 hover:text-[var(--p-ink)]"
+            >
+              Edit dates
+            </button>
+          </p>
           {a.reason && <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">Reason: {a.reason}</p>}
           {a.attendantName && (
             <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">

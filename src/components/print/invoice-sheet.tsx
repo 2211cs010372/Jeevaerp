@@ -97,6 +97,15 @@ const BILL_MONO_CSS = `
   .invoice-section-title, .invoice-section-label { font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--pr-ink); }
   .invoice-meta-label, .invoice-meta-title { font-size: 8px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--pr-muted); }
   .invoice-meta-value { font-size: 10px; font-weight: 650; color: var(--pr-ink); }
+  /* THE PATIENT BLOCK IS SET THE WAY THE LAB REPORT SETS ITS IDENTITY BLOCK:
+     "Label : value" on one line, colons aligned down each column, label in
+     sentence case rather than the tracked uppercase used for the bill's own
+     meta. Same row, a shade under the report's own size - the report is a full
+     A4 at 12px and this is half an A4, so the block sits at 10.5px: the largest
+     the patient's name reads at without crowding the item table beneath it,
+     which is the part of the sheet the bill exists to carry. */
+  .invoice-id-label { font-size: 10.5px; font-weight: 500; color: var(--pr-ink); line-height: 3.9mm; }
+  .invoice-id-value { font-size: 10.5px; font-weight: 700; color: var(--pr-ink); line-height: 3.9mm; }
   /* The patient block was a tint. A tint is a background too - same driver, same
      disappearing act - so it is a ruled box now. */
   .invoice-soft { background: #fff; border: .5px solid var(--pr-hair); }
@@ -182,6 +191,29 @@ function Barcode({ value }: { value: string }) {
 }
 const money = (v: string | number) => `₹${Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const GENDER: Record<string, string> = { MALE: "M", FEMALE: "F", OTHER: "O" };
+
+/**
+ * One "Label : value" line of the patient block, colon-aligned down its column.
+ *
+ * The counterpart of IdRow in lab-report-sheet, and deliberately the same shape:
+ * the two documents are handed across the same counter, often for the same
+ * visit, and a patient holding both should be reading one hospital's paper
+ * rather than two departments' house styles.
+ *
+ * THE COLON HAS A COLUMN OF ITS OWN, unheaded, between label and value. Left
+ * inside the label's cell it would ride at the end of the text and step left and
+ * right down the block as the labels change length; in the value's cell it would
+ * move with the wrapping. Its own track is what makes the colons line up.
+ */
+function InvoiceIdRow({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
+  return (
+    <>
+      <span className="invoice-id-label">{k}</span>
+      <span className="invoice-id-label">:</span>
+      <span className={`invoice-id-value ${mono ? "font-mono tracking-tight" : ""}`}>{v || "-"}</span>
+    </>
+  );
+}
 
 /**
  * The Jeeva bill - one Bill-of-Supply layout used by every portal.
@@ -362,40 +394,19 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
           Patient & Visit Details
         </div>
 
-        <div className="grid grid-cols-5 gap-x-3">
-          <div className="min-w-0 ">
-            <div className="invoice-meta-title">Patient Name</div>
-            <div className="invoice-meta-value truncate">
-              {inv.patient.fullName}
-            </div>
+        {/* Two colon-aligned columns, as on the lab report. The fields were
+            previously stacked - label above value, five of them across a row -
+            which reads as a form to be filled rather than a record already
+            written, and gave the address a single truncated line to live on. */}
+        <div className="grid grid-cols-2 gap-x-6">
+          <div className="grid grid-cols-[72px_6px_1fr] items-baseline">
+            <InvoiceIdRow k="Patient Name" v={inv.patient.fullName} />
+            <InvoiceIdRow k="Age / Sex" v={ageSex} />
+            <InvoiceIdRow k="UHID" v={inv.patient.displayId} mono />
           </div>
-
-          <div className="min-w-0">
-            <div className="invoice-meta-title">UHID</div>
-            <div className="invoice-meta-value font-mono truncate">
-              {inv.patient.displayId}
-            </div>
-          </div>
-
-          <div className="min-w-0">
-            <div className="invoice-meta-label">Age / Sex</div>
-            <div className="invoice-meta-value truncate">
-              {ageSex}
-            </div>
-          </div>
-
-          <div className="min-w-0">
-            <div className="invoice-meta-label">Mobile</div>
-            <div className="invoice-meta-value font-mono truncate">
-              {inv.patient.phone}
-            </div>
-          </div>
-
-          <div className="min-w-0">
-            <div className="invoice-meta-label">Address</div>
-            <div className="invoice-meta-value truncate">
-              {inv.patient.address || "-"}
-            </div>
+          <div className="grid grid-cols-[72px_6px_1fr] items-baseline">
+            <InvoiceIdRow k="Mobile" v={inv.patient.phone} mono />
+            <InvoiceIdRow k="Address" v={inv.patient.address || "-"} />
           </div>
         </div>
       </div>
