@@ -530,6 +530,10 @@ export const LAB_CATALOG: CatalogSpec[] = [
   {
     code: "GRAVINDEX",
     name: "Gravindex Test (Urine Pregnancy)",
+    // Ordering-screen shelf only. It sits with the serology kits because that
+    // is where the desk goes looking for it, but the PRINTED report carries no
+    // department band for this test - the sample is urine, not serum. See the
+    // GRAVINDEX entry in DEPARTMENTS (src/lib/lab-reference.ts).
     group: "Serology",
     analytes: [
       // "Positive" is the hospital's own wording for this row, and it prints in

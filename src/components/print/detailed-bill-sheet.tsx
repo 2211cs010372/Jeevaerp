@@ -51,7 +51,11 @@ interface BillLine {
   date: string | null; issueNo: string | null; code: string | null;
   description: string; batchNo: string | null; expiry: string | null;
   rate: string; qty: number; amount: string;
-  /** Nothing has invoiced this yet. Printed, marked, and counted in the total. */
+  /**
+   * Nothing has invoiced this yet. Printed and counted in the total like any
+   * other line, and NOT marked as different - see the note at the description
+   * cell. Still read here for one thing only: an unpriced draft prints a dash.
+   */
   draft?: boolean;
   /** False when the amount is not knowable yet - prints a dash, adds nothing. */
   priced?: boolean;
@@ -88,6 +92,11 @@ interface Data {
   policyNo: string | null;
   groups: BillGroup[];
   gross: string; discount: string; gst: string; netBill: string; advance: string; netPayable: string;
+  // `draftTotal` and `draftUnpricedCount` are on the wire and deliberately not
+  // read here. They split the Total into billed and not-yet-billed, which is
+  // the hospital's own paperwork rather than anything the family or the
+  // assessor can act on. Kept on the DTO because the service computes them
+  // anyway and dropping them would be an API change for a cosmetic one.
   draftTotal: string;
   draftUnpricedCount: number;
   counterPaid: string;
@@ -98,6 +107,11 @@ interface Data {
 const money = (v: string | number) =>
   Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const GENDER: Record<string, string> = { MALE: "MALE", FEMALE: "FEMALE", OTHER: "OTHER" };
+
+const pad = (n: number) => String(n).padStart(2, "0");
+/** A Date as `<input type="datetime-local">` wants it: local wall clock. */
+const toLocalInput = (d: Date): string =>
+  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 /**
  * Some doctors are stored with the honorific already on the name and some are
  * not, so prefixing unconditionally printed "Dr. Dr. Aditya Bellala" on a bill
@@ -170,17 +184,25 @@ function BillRow({ l, withDate, indent }: { l: BillLine; withDate?: boolean; ind
       <td className={`py-[3px] pr-1 ${indent ? "pl-3" : ""}`}>
         {withDate && l.date && <span className="font-mono text-[8.5px]">{dt(l.date)} - </span>}
         {l.description}
-        {/* PER-LINE PAID/DUE MARKERS ARE DELIBERATELY NOT HERE. They were, and
-            they made a settled bill read as an argument about who owed what -
-            on a document a family takes away and an insurer files. What has
-            been collected is a MONEY question, answered once in the totals and
-            itemised in Payment Details. The stay screen's running tab is where
-            a desk needs it line by line, and that is where it still is. */}
-        {l.draft && (
-          <span className="ml-1.5 rounded-sm border border-[#8a6414] px-[3px] py-px align-middle text-[7px] font-bold uppercase tracking-wide text-[#8a6414]">
-            not yet billed
-          </span>
-        )}
+        {/* NO PER-LINE STATUS MARKERS AT ALL - neither paid/due nor
+            billed/not-yet-billed.
+
+            The paid/due pair went first: they made a settled bill read as an
+            argument about who owed what, on a document a family takes away and
+            an insurer files. What has been collected is a MONEY question,
+            answered once in the totals and itemised in Payment Details.
+
+            "Not yet billed" has now gone the same way, for the same reason. It
+            marked an internal distinction - whether a counter had got round to
+            raising its own invoice - on the one sheet whose readers cannot act
+            on it. A family reading it asked whether the line was really theirs
+            to pay; an assessor read a hedge into a figure the hospital was
+            nonetheless asking for. The line is on the bill, it is in the total,
+            and it is charged: that is the whole statement, and the badge only
+            ever undermined it.
+
+            The stay screen's running tab is where a desk needs any of this line
+            by line, and that is where it still is. */}
       </td>
       <td className="py-[3px] pr-1 text-right font-mono">{l.qty}</td>
       {/* An unpriced draft prints a dash, never 0.00 - a zero in a money column
@@ -201,6 +223,18 @@ export function DetailedBillSheet() {
    * on blank paper is the exception here, not the rule.
    */
   const [onStationery, setOnStationery] = useState(true);
+  /**
+   * THE DISCHARGE DATE ON THIS BILL, WHEN THE PORTAL HAS NOT STAMPED ONE.
+   *
+   * Same box, same rule and the same reason as the discharge summary's: the
+   * family leaves before the desk closes the stay, and a bill that prints a dash
+   * where the discharge date belongs is one a TPA sends back. Typed here it
+   * changes the PAPER only - nothing is saved, the stay is not closed, the bed
+   * is not freed, no invoice is raised, and not one figure on this bill moves.
+   *
+   * Empty is exactly the old behaviour: the recorded date, or a dash.
+   */
+  const [pickedDischarge, setPickedDischarge] = useState("");
   const ipBar = useRef<SVGSVGElement>(null);
   const billBar = useRef<SVGSVGElement>(null);
 
@@ -227,26 +261,65 @@ export function DetailedBillSheet() {
   if (error) return <div className="p-10 text-center text-[14px] text-[#8a3b2e]">{error}</div>;
   if (!b) return <div className="p-10 text-center text-[14px] text-[#5a6a66]">Loading…</div>;
 
+  // Only a date this stay could have - nobody leaves before they arrive.
+  const pickedAt = pickedDischarge ? new Date(pickedDischarge) : null;
+  const pickedBad = !!pickedAt && (Number.isNaN(pickedAt.getTime()) || pickedAt < new Date(b.admission.admittedAt));
+  const pickedIso = pickedAt && !pickedBad ? pickedAt.toISOString() : null;
+
   return (
     <div className="print-stage">
       <style>{CSS(onStationery)}</style>
-      <div className="mx-auto mb-2 flex w-full max-w-[210mm] items-center justify-end print:hidden">
+      <div className="mx-auto mb-2 flex w-full max-w-[210mm] flex-wrap items-center justify-end gap-x-5 gap-y-2 print:hidden">
+        <label className="flex items-center gap-2 text-[13px] text-[#3a4744]">
+          Discharge date on this bill
+          <input type="datetime-local" value={pickedDischarge}
+            min={toLocalInput(new Date(b.admission.admittedAt))}
+            onChange={(e) => setPickedDischarge(e.target.value)}
+            className="rounded border border-[#c8ccc9] bg-white px-2 py-1 text-[12.5px] text-[#3a4744]" />
+        </label>
+        {pickedDischarge && (
+          <button type="button" onClick={() => setPickedDischarge("")}
+            className="rounded border border-[#c8ccc9] bg-white px-2.5 py-1 text-[12px] font-medium text-[#3a4744] hover:border-[#0b5f55] hover:text-[#0b5f55]">
+            Use the recorded date
+          </button>
+        )}
         <label className="flex items-center gap-2 text-[13px] text-[#3a4744]">
           <input type="checkbox" checked={onStationery} onChange={(e) => setOnStationery(e.target.checked)} />
           Printing on the hospital&apos;s pre-printed sheet
         </label>
       </div>
+
+      {pickedBad && (
+        <div className="mx-auto mb-2 w-full max-w-[210mm] rounded-lg border border-[#d9b8ae] bg-[#fdf3f0] px-3 py-2 text-[12.5px] text-[#8a3b2e] print:hidden">
+          That is before the admission on {dt(b.admission.admittedAt)}, so the bill is still printing the recorded date.
+        </div>
+      )}
+
+      {pickedIso && (
+        <div className="mx-auto mb-2 w-full max-w-[210mm] rounded-lg border border-[#c8ccc9] bg-white px-3 py-2 text-[12.5px] leading-relaxed text-[#3a4744] print:hidden">
+          This bill prints <b>{dt(pickedIso)}</b> as the discharge date. Nothing is saved - the stay is not closed and
+          every figure below is unchanged.
+        </div>
+      )}
       <PrintToolbar title={`Detailed bill · ${b.admission.ipNumber}`} />
 
       <div id="print-sheet">
         {/* ── THE DOCUMENT, AS ONE TABLE ──
-            A claim bill runs to three pages as often as one, and page two of a
-            bill carrying no patient name and no bill number is unattributable
-            the moment a TPA separates it from page one - which is exactly what
-            happens inside their file.
             A `thead` is the one thing browsers reliably repeat on every printed
-            page, so the masthead and the patient box live in one. Everything
-            below flows normally and breaks wherever it needs to. */}
+            page. It now carries the masthead and the words IP BILL, and nothing
+            else. Everything below flows normally and breaks where it needs to.
+
+            THE PATIENT AND DOCTOR BOXES USED TO LIVE IN IT TOO. A claim bill
+            runs to three pages as often as one, and re-printing both boxes at
+            the head of every sheet spent a third of each page restating what
+            page one already said. The hospital asked for them once, on page
+            one, and that is where they are now - first thing in the body.
+
+            What that bought, and what is now given back: a page separated from
+            page one inside a TPA's file carries the hospital's name but not the
+            patient's, the IP number or the bill number. If that ever bites, the
+            answer is a slim one-line strip in the thead (name · IP no · bill
+            no), not the whole block back. */}
         <table className="doc">
           <thead>
             <tr>
@@ -258,12 +331,17 @@ export function DetailedBillSheet() {
                 <div className="mt-1 text-center text-[13px] font-bold tracking-wide">
                   IP BILL
                 </div>
+              </td>
+            </tr>
+          </thead>
 
+          <tbody>
+            <tr>
+              <td>
                 {/* ── WHO, AND WHICH BILL ── two columns of label/value pairs,
             read across rather than down: MR against Reg No, admit against
-            discharge. Kept together so it never splits across a page - a
-            continuation page whose header is on the previous sheet is the
-            single easiest way to lose a page of a claim. */}
+            discharge. PAGE ONE ONLY - see the note above the table. Still kept
+            together, so the box itself never splits across a page break. */}
                 <div className="keep-together mt-2 grid grid-cols-2 gap-x-4 border border-[#333] p-1.5">
                   <F k="MR Number" v={b.patient.displayId} />
                   <F k="Patient Reg.No." v={b.admission.ipNumber} />
@@ -272,9 +350,13 @@ export function DetailedBillSheet() {
                   <F k="Age / Gender" v={`${b.patient.age != null ? `${b.patient.age}Y` : "-"} / ${GENDER[b.patient.gender ?? ""] ?? "-"}`} />
                   <F k="Room Info" v={b.admission.roomInfo} />
                   <F k="Admit Date" v={dt(b.admission.admittedAt)} />
-                  <F k="Date of Discharge" v={b.admission.dischargedAt ? dt(b.admission.dischargedAt) : "-"} />
+                  {/* A typed date wins over the recorded one - see `pickedDischarge`. */}
+                  <F k="Date of Discharge" v={pickedIso ? dt(pickedIso) : b.admission.dischargedAt ? dt(b.admission.dischargedAt) : "-"} />
                   <F k="Bill No" v={b.billNo} strong />
-                  <F k="Discharge Type" v={b.admission.dischargeType} />
+                  {/* A bill carrying a discharge date must not print ADMITTED next
+                      to it. The recorded status is still what wins wherever the
+                      stay has actually been closed - including as LAMA or EXPIRED. */}
+                  <F k="Discharge Type" v={pickedIso && b.admission.dischargeType === "ADMITTED" ? "DISCHARGED" : b.admission.dischargeType} />
                   <F k="Source Type" v={b.sourceType} />
                 </div>
 
@@ -292,12 +374,6 @@ export function DetailedBillSheet() {
                 </div>
 
                 <div className="mt-1.5 text-[9.5px] font-bold uppercase">Payment Information</div>
-              </td>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>
 
                 {/* ── THE LINES ── its own thead, which repeats too, so a continuation
             page carries the column headings rather than nine bare numbers. */}
@@ -448,13 +524,11 @@ export function DetailedBillSheet() {
                   <table className="w-[250px] text-[10px]">
                     <tbody>
                       <T k="Total" v={money(b.gross)} />
-                      {/* Called out INSIDE the money block rather than as a footnote.
-                  The figure above already contains it, and a reader who takes
-                  the Total as settled needs to meet the caveat in the same
-                  glance - not three inches lower in small print. */}
-                      {Number(b.draftTotal) > 0 && (
-                        <T k="…of which not yet billed" v={money(b.draftTotal)} />
-                      )}
+                      {/* NO "…of which not yet billed" SPLIT. The Total is the
+                  Total. Carving out the part no counter had invoiced yet
+                  described the hospital's paperwork, not the family's debt -
+                  and a caveat sitting inside the money block reads as a figure
+                  that might come off, which it never does. */}
                       <T k="Discount" v={money(b.discount)} />
                       {Number(b.gst) > 0 && <T k="Total GST" v={money(b.gst)} />}
                       <T k="Net Amount" v={money(b.netBill)} rule />
@@ -483,28 +557,14 @@ export function DetailedBillSheet() {
 
                 </div>
 
-                {/* SAID ON THE SHEET, because the sheet is what leaves the building.
-            Whoever reads this - a family at the counter, a TPA assessor weeks
-            later - is entitled to know that part of the total is not yet an
-            invoice, and how much. Kept above the standard footer so it is not
-            mistaken for boilerplate. */}
-                {Number(b.draftTotal) > 0 && (
-                  <div className="keep-together mt-4 border border-[#8a6414] bg-[#fdf8ec] px-3 py-2 text-[8.5px] leading-relaxed text-[#8a6414]">
-                    <b className="uppercase">Includes items not yet billed.</b>{" "}
-                    Lines marked <i>not yet billed</i> total <b>{money(b.draftTotal)}</b> and are already counted in
-                    the figures above. They are medicines and investigations raised against this stay that the
-                    pharmacy or the laboratory has not yet invoiced.
-                    {b.draftUnpricedCount > 0 && (
-                      <>
-                        {" "}
-                        A further <b>{b.draftUnpricedCount}</b>{" "}
-                        {b.draftUnpricedCount === 1 ? "item is" : "items are"} shown with a dash: the price is set
-                        when the pharmacy dispenses the batch, so {b.draftUnpricedCount === 1 ? "it is" : "they are"} not
-                        in the total and will be added when billed.
-                      </>
-                    )}
-                  </div>
-                )}
+                {/* NO "INCLUDES ITEMS NOT YET BILLED" BOX. It existed to explain
+            the badges and the totals split above, and both are gone - an amber
+            warning box left behind on its own would be a caveat about markings
+            the sheet no longer carries.
+
+            A line that genuinely has no price yet still prints a dash rather
+            than a figure (see BillRow), which is the honest form of the same
+            fact and needs no paragraph under it. */}
 
                 <div className="mt-4 border-t border-[#333] pt-1 text-center text-[8.5px] text-[#57655f]">
                   Computer-generated bill. Submitted for insurance settlement.

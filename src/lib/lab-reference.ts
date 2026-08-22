@@ -552,6 +552,9 @@ export function specimenFor(code: string | null | undefined): string | null {
  * report finds the sugars by looking for BIOCHEMISTRY, not by reading every
  * analyte name. Kept here beside the specimen map for the same reason - it is a
  * property of the catalogue entry, not of a particular patient's sample.
+ *
+ * An entry may be "" - a test the lab files under no band at all. That is not
+ * the same as being absent, which means the code is unknown to this build.
  */
 const DEPARTMENTS: Record<string, string> = {
   CBP: "HAEMATOLOGY",
@@ -626,7 +629,15 @@ const DEPARTMENTS: Record<string, string> = {
   "MP-PF-PV": "SEROLOGY",
   "MP-PF-PAN": "SEROLOGY",
   MONTOUX: "SEROLOGY",
-  GRAVINDEX: "SEROLOGY",
+  // Deliberately BLANK, not missing. The gravindex is run on urine, not on
+  // serum, and the lab does not want a pregnancy test printing under the band
+  // its blood-borne markers print under - so this report goes out with no
+  // department band at all.
+  //
+  // "" is the difference between "this test has no band" and null's "this code
+  // is unknown". An unknown code still falls back to LABORATORY; this one must
+  // not, or removing the heading would only have renamed it.
+  GRAVINDEX: "",
   CUE: "CLINICAL PATHOLOGY",
   FLUID: "CLINICAL PATHOLOGY",
   SEMEN: "CLINICAL PATHOLOGY",
@@ -634,9 +645,36 @@ const DEPARTMENTS: Record<string, string> = {
   SURGICAL: "PROFILES",
 };
 
-/** The department band for a test, or null when the code is unknown. */
+/**
+ * The department band for a test. Null when the code is unknown; "" when the
+ * catalogue files this test under no band (see GRAVINDEX above). The report
+ * tells the two apart - only null takes the LABORATORY fallback.
+ */
 export function departmentFor(code: string | null | undefined): string | null {
   return code ? DEPARTMENTS[code.toUpperCase()] ?? null : null;
+}
+
+/**
+ * THE BAND A REPORT ACTUALLY PRINTS - what the lab typed, or the map above.
+ *
+ * `LabTestCatalog.group` is editable from the catalogue screen, and the map in
+ * this file is what was transcribed from the hospital's own report forms. The
+ * two are not rivals: the map is the DEFAULT, the column is this hospital
+ * having since said otherwise.
+ *
+ * NULL AND "" MEAN DIFFERENT THINGS ON THE WAY IN. Null is "nobody has set one"
+ * and defers to the map - so a catalogue full of nulls, which is what the
+ * column held the day it was added, prints exactly what it printed before.
+ * Empty string is "print no band", a decision somebody made on the screen, and
+ * it overrides the map rather than falling through it. Collapsing the two with
+ * `||` would make the blank unsavable: every attempt to clear a band would come
+ * back as whatever the map said.
+ */
+export function bandFor(
+  group: string | null | undefined,
+  code: string | null | undefined,
+): string | null {
+  return group == null ? departmentFor(code) : group;
 }
 
 /**

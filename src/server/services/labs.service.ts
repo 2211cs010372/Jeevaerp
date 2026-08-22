@@ -856,6 +856,12 @@ export interface LabReportDTO {
     id: string; testName: string;
     /** Catalogue code - drives the specimen line, and prints as the test code. */
     code: string | null;
+    /**
+     * The section band the catalogue says to print, or null when it says
+     * nothing and the transcribed map decides. See bandFor in lib/lab-reference
+     * - "" here is a real answer ("no band"), not a missing one.
+     */
+    group: string | null;
     status: string;
     /** When the sample was registered, i.e. when the test was ordered. */
     orderedAt: string;
@@ -888,7 +894,7 @@ export async function labReportData(labTestId: string): Promise<LabReportDTO> {
     select: {
       id: true, testName: true, status: true, createdAt: true, orderedAt: true, completedAt: true,
       impression: true, reportFileUrl: true,
-      catalog: { select: { code: true } },
+      catalog: { select: { code: true, group: true } },
       technician: { select: { name: true } },
       referringDoctor: { select: { name: true } },
       // The non-doctor referrer - the hospital itself, most often. Feeds the
@@ -934,7 +940,11 @@ export async function labReportData(labTestId: string): Promise<LabReportDTO> {
   return {
     hospital,
     test: {
-      id: t.id, testName: t.testName, code: t.catalog?.code ?? null, status: t.status,
+      id: t.id, testName: t.testName, code: t.catalog?.code ?? null,
+      // A walk-in raised against no catalogue row has no opinion to carry, and
+      // null is the right answer for it - the map still gets its turn.
+      group: t.catalog?.group ?? null,
+      status: t.status,
       // The desk's correction where it made one - see LabTest.orderedAt. What
       // this prints as is "Registered On", and the patient can read it.
       orderedAt: (t.orderedAt ?? t.createdAt).toISOString(),

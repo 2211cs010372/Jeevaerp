@@ -235,6 +235,18 @@ export const labCatalogItemSchema = z.object({
   name: z.string().trim().min(2, "Give the test a name").max(120),
   code: z.string().trim().max(20).optional().or(z.literal("")),
   price: z.coerce.number().min(0, "A price cannot be negative"),
+  /**
+   * The section band this test's report prints under - "HAEMATOLOGY", and the
+   * bench's call, which is why it is on this door and not on admin's.
+   *
+   * OPTIONAL, AND "" IS NOT THE SAME AS ABSENT. Absent leaves the column alone.
+   * Empty means print no band at all, which this lab wanted for the gravindex -
+   * it is read off urine and does not belong under the heading the blood-borne
+   * markers print under. The screen sends this on every save because it shows
+   * the value it is about to write, resolved fallback and all, so a save can
+   * never quietly mean something the technician could not see.
+   */
+  group: z.string().trim().max(40, "That section name is too long").optional(),
   active: z.boolean().optional().default(true),
 });
 

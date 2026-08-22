@@ -818,6 +818,21 @@ model LabTestCatalog {
   gstRatePct Decimal @default(0) @db.Decimal(4, 2)
   active     Boolean @default(true)
 
+  /// THE SECTION BAND PRINTED ABOVE THIS TEST ON ITS REPORT ("HAEMATOLOGY").
+  ///
+  /// NULL MEANS UNSET, not "no band". Nobody at this hospital has had an
+  /// opinion about this test yet, so the report falls back to the map
+  /// transcribed from the lab's own report forms (DEPARTMENTS in
+  /// lib/lab-reference). Every row meant that on the day this column was added,
+  /// which is why adding it changed no report.
+  ///
+  /// EMPTY STRING IS AN OPINION - "print this one with no band at all". The
+  /// gravindex is read off urine, and this lab did not want a pregnancy test
+  /// printing under the heading its blood-borne markers print under. Without
+  /// the null/"" distinction the screen would have no way to say "none" as
+  /// against "not my department".
+  group      String?
+
   labTests  LabTest[]
   analytes  LabAnalyte[]
   advisedOn PrescriptionUploadLab[]

@@ -3265,8 +3265,26 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
       // Only prescriptions with no invoice behind them: once the pharmacy bills
       // one, it arrives below as an invoice line and counting it from both
       // sources would charge the family twice for the same strip.
+      //
+      // THE DISCHARGE ADVICE IS NOT ONE OF THEM. "Medications advised" on the
+      // discharge summary is what the patient is told to TAKE AT HOME - a
+      // prescription to fill after they leave, not stock this hospital handed
+      // over. It is stored as a PrescriptionUpload because that is what it is
+      // (see setDischargeMedicines), and it has no invoice behind it because
+      // nobody dispensed it - which is exactly the shape the filter above was
+      // written to catch, so every advised drug was landing under PHARMACY
+      // CHARGES and being charged for at the counter. The family paid for
+      // tablets they were only told to go and buy.
+      //
+      // Matched on the title, the same marker setDischargeMedicines writes and
+      // getDischargeMedicines reads back. Spelt as an OR rather than `not`
+      // because a prescription with NO title at all is an ordinary ward one and
+      // must still be billed.
       prescriptionUploads: {
-        where: { invoices: { none: {} } },
+        where: {
+          invoices: { none: {} },
+          OR: [{ title: null }, { title: { not: DISCHARGE_RX_TITLE } }],
+        },
         orderBy: { createdAt: "asc" },
         select: {
           createdAt: true,

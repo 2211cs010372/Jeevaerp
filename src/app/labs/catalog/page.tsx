@@ -36,11 +36,32 @@ import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 import { suggestTestCode } from "@/lib/lab-code";
+import { departmentFor } from "@/lib/lab-reference";
 
 interface Item {
   id: string; name: string; code: string | null;
-  price: string; gstRatePct: string; active: boolean;
+  price: string; gstRatePct: string;
+  /**
+   * The section band, RAW from the catalogue. Null is "nobody has set one" and
+   * "" is "print none" - two different things that look identical once the
+   * fallback has been applied, which is why the API hands them over unresolved.
+   */
+  group: string | null;
+  active: boolean;
 }
+
+/**
+ * WHAT THIS TEST'S REPORT WILL ACTUALLY PRINT AS ITS BAND.
+ *
+ * A null group is still deferring to the map transcribed from the lab's own
+ * report forms, so that is what the screen shows and what the box is filled
+ * with when the test is opened. Showing the resolved value is the point: this
+ * screen SAVES what it shows, so a technician correcting a price can never
+ * silently rewrite a band that was never on their screen. Pinning a band that
+ * was already the fallback changes nothing about what prints.
+ */
+const bandOf = (i: { group: string | null; code: string | null }) =>
+  i.group ?? departmentFor(i.code) ?? "";
 
 /** One normal-value row, held as strings because that is what the inputs give. */
 interface Row {
@@ -49,7 +70,7 @@ interface Row {
 }
 const emptyRow: Row = { name: "", unit: "", refLow: "", refHigh: "", refText: "" };
 
-const blank = { id: "", name: "", code: "", price: "", active: true };
+const blank = { id: "", name: "", code: "", price: "", group: "", active: true };
 type Draft = typeof blank;
 
 /** "Inactive" is a real state, not an error - a retired test keeps its history. */
@@ -69,6 +90,8 @@ export default function LabCatalogPage() {
   const [rowsBusy, setRowsBusy] = useState(false);
   /** True once the technician types in the code box - stops the suggester. */
   const [codeTouched, setCodeTouched] = useState(false);
+  /** Delete is armed but not fired - see the footer. */
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -87,6 +110,17 @@ export default function LabCatalogPage() {
 
   const unpriced = useMemo(() => items.filter((i) => i.active && Number(i.price) === 0).length, [items]);
 
+  /**
+   * Every band already in use, offered as a datalist rather than a dropdown.
+   * A free-text box that SUGGESTS keeps "HAEMATOLOGY" spelled one way without
+   * making a new section something only a developer can add - which is the
+   * thing that sent this setting into a code file in the first place.
+   */
+  const sections = useMemo(
+    () => [...new Set(items.map(bandOf).filter(Boolean))].sort(),
+    [items],
+  );
+
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return items.filter((i) => {
@@ -99,9 +133,12 @@ export default function LabCatalogPage() {
 
   /** Open the modal on a test - existing or new - and fetch its normal values. */
   const open = useCallback(async (item: Item | null) => {
-    setSaved(null); setError(null); setCodeTouched(false);
+    setSaved(null); setError(null); setCodeTouched(false); setConfirmDelete(false);
     if (!item) { setEdit({ ...blank }); setRows([]); return; }
-    setEdit({ id: item.id, name: item.name, code: item.code ?? "", price: item.price, active: item.active });
+    setEdit({
+      id: item.id, name: item.name, code: item.code ?? "", price: item.price,
+      group: bandOf(item), active: item.active,
+    });
     setRows(null);
     setRowsBusy(true);
     try {
@@ -135,6 +172,10 @@ export default function LabCatalogPage() {
         name: edit.name,
         code: edit.code || undefined,
         price: Number(edit.price),
+        // ALWAYS SENT, including empty. The box is showing the resolved band,
+        // so what goes is what the technician was looking at - and "" is a real
+        // answer here ("print no heading"), not a field left out.
+        group: edit.group.trim(),
         active: edit.active,
       });
 
@@ -166,6 +207,30 @@ export default function LabCatalogPage() {
       await load();
     } catch (e) {
       setError(e instanceof ApiClientError ? e.message : "Could not save.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Take the test out of the catalogue for good.
+   *
+   * The API refuses anything with history and says why - "ordered 41 times,
+   * retire it instead" - so the refusal is shown VERBATIM rather than swapped
+   * for a generic failure. That sentence is the useful half: it names the
+   * number that makes retiring obviously the right call.
+   */
+  async function destroy() {
+    if (!edit?.id) return;
+    setBusy(true); setError(null); setSaved(null);
+    try {
+      await api.del(`/labs/catalog/${edit.id}`);
+      setSaved(`${edit.name} deleted from the catalog.`);
+      setEdit(null); setRows(null); setConfirmDelete(false);
+      await load();
+    } catch (e) {
+      setError(e instanceof ApiClientError ? e.message : "Could not delete this test.");
+      setConfirmDelete(false);
     } finally {
       setBusy(false);
     }
@@ -255,6 +320,7 @@ export default function LabCatalogPage() {
               <tr className="border-b border-[var(--p-border)] bg-[var(--p-bg)] text-[11px] uppercase tracking-wide text-[var(--p-muted)]">
                 <th className="px-6 py-2.5 font-semibold">Test</th>
                 <th className="py-2.5 font-semibold">Code</th>
+                <th className="py-2.5 font-semibold">Section</th>
                 <th className="py-2.5 text-right font-semibold">Price</th>
                 <th className="py-2.5 text-center font-semibold">GST</th>
                 <th className="py-2.5 text-center font-semibold">Status</th>
@@ -268,6 +334,12 @@ export default function LabCatalogPage() {
                   <tr key={i.id} className={i.active ? "" : "opacity-55"}>
                     <td className="px-6 py-3 font-medium text-[var(--p-ink)]">{i.name}</td>
                     <td className="py-3 font-mono text-[12px] text-[var(--p-muted)]">{i.code ?? "-"}</td>
+                    {/* "No band" is a setting, not an absence, so it is written
+                        out. An empty cell here would read as a gap in the data
+                        and somebody would helpfully fill it back in. */}
+                    <td className="py-3 text-[12px] text-[var(--p-muted)]">
+                      {bandOf(i) || <span className="italic opacity-70">No band</span>}
+                    </td>
                     <td className={`py-3 text-right font-mono ${zero ? "font-semibold text-[#8a6414]" : ""}`}>
                       ₹{i.price}
                     </td>
@@ -300,6 +372,23 @@ export default function LabCatalogPage() {
               <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">{edit.id ? "Edit test" : "Add test"}</h3>
             </div>
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6">
+              {/* The page's own banner is BEHIND this overlay, so a failed save
+                  or delete would report into a strip nobody can see. A refused
+                  delete carries the whole answer in its message, so it has to
+                  land here. */}
+              {error && (
+                <div className="rounded-lg border border-[var(--p-rose)]/25 bg-[var(--p-rose-soft)] px-4 py-3 text-[13px] leading-relaxed text-[var(--p-rose)]">
+                  {error}
+                </div>
+              )}
+              {confirmDelete && (
+                <div className="rounded-lg border border-[var(--p-rose)]/25 bg-[var(--p-rose-soft)] px-4 py-3 text-[13px] leading-relaxed text-[var(--p-rose)]">
+                  <strong>Delete {edit.name} from the catalog?</strong> The test and its normal values go for
+                  good. This only works on a test nothing points at - never ordered, and on no doctor&apos;s
+                  advice line. If it has any history at all, untick <strong>Active</strong> instead: that takes
+                  it off the ordering screens and keeps every report it ever printed.
+                </div>
+              )}
               <Field label="Test name" required>
                 <input
                   className={fld}
@@ -336,6 +425,24 @@ export default function LabCatalogPage() {
                   />
                 </Field>
               </div>
+              <Field label="Section band on the report">
+                <input
+                  className={fld}
+                  value={edit.group}
+                  onChange={(e) => setEdit({ ...edit, group: e.target.value })}
+                  list="lab-sections"
+                  placeholder="Leave empty to print no heading"
+                />
+              </Field>
+              <datalist id="lab-sections">
+                {sections.map((s) => <option key={s} value={s} />)}
+              </datalist>
+              <p className="rounded-lg bg-[var(--p-bg)] px-3 py-2 text-[11px] leading-relaxed text-[var(--p-muted)]">
+                The heading printed across the middle of this test&apos;s report, above the results - how a
+                doctor finds a section on a report that runs to several pages. <strong>Leave it empty to print
+                no heading at all</strong>, which is what a urine pregnancy test wants: it does not belong
+                under the band the blood-borne markers print under.
+              </p>
               <p className="rounded-lg bg-[var(--p-bg)] px-3 py-2 text-[11px] leading-relaxed text-[var(--p-muted)]">
                 GST is set by Admin under <strong>Lab catalog &amp; GST</strong> and is not changed by saving here -
                 a new test starts exempt, which is what a diagnostic service normally is.
@@ -430,8 +537,40 @@ export default function LabCatalogPage() {
                 )}
               </div>
             </div>
-            <div className="flex justify-end gap-3 border-t border-[var(--p-border)] p-5">
-              <button onClick={() => { setEdit(null); setRows(null); }} className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm text-[var(--p-text)]">
+            <div className="flex items-center justify-between gap-3 border-t border-[var(--p-border)] p-5">
+              {/* Delete sits at the FAR END of the footer, away from Save. It
+                  is the only control in this modal that cannot be undone, and
+                  it must never be what a thumb finds on the way to Save. Only
+                  on a saved test - there is nothing to delete before that - and
+                  it arms before it fires. */}
+              <div>
+                {edit.id && (confirmDelete ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={destroy}
+                      disabled={busy}
+                      className="rounded-lg bg-[var(--p-rose)] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-60"
+                    >
+                      {busy ? <><Spinner /> Deleting…</> : "Yes, delete for good"}
+                    </button>
+                    <button
+                      onClick={() => setConfirmDelete(false)}
+                      className="rounded-lg border border-[var(--p-border)] px-3 py-2 text-[12px] text-[var(--p-text)]"
+                    >
+                      Keep it
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => { setError(null); setConfirmDelete(true); }}
+                    className="rounded-lg border border-[var(--p-border)] px-3 py-2 text-[12px] font-medium text-[var(--p-muted)] hover:border-[var(--p-rose)] hover:text-[var(--p-rose)]"
+                  >
+                    <Icon name="x" size={13} /> Delete
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-3">
+              <button onClick={() => { setEdit(null); setRows(null); setConfirmDelete(false); }} className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm text-[var(--p-text)]">
                 Cancel
               </button>
               <PrimaryButton
@@ -451,6 +590,7 @@ export default function LabCatalogPage() {
               >
                 {busy ? <><Spinner /> Saving…</> : <><Icon name="check" size={15} /> Save</>}
               </PrimaryButton>
+              </div>
             </div>
           </div>
         </div>

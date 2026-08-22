@@ -671,29 +671,123 @@ function doctorCreateData(d: DoctorProfileInput): DoctorProfileColumns &
  * create it starts at 0 - exempt, which is what a diagnostic service is under
  * Notification 12/2017. Omitting it is not the same as sending 0; the first
  * preserves a rate somebody decided on, the second overwrites it.
+ *
+ * `group` - the section band its report prints under - follows the SAME rule
+ * for the same reason, with the doors the other way round. Admin's screen has
+ * no section box, so it sends nothing and whatever the bench set stays put. The
+ * labs screen sends it on every save, because that screen shows the value it is
+ * about to write; "" from there is a decision ("no band"), and undefined from
+ * either is "not mine to touch".
  */
 export async function upsertCatalogItem(
   actor: AuthUser,
-  input: { id?: string; name: string; code?: string; price: number; gstRatePct?: number; active: boolean },
+  input: { id?: string; name: string; code?: string; price: number; gstRatePct?: number; group?: string; active: boolean },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<void> {
   const gst = input.gstRatePct == null ? {} : { gstRatePct: input.gstRatePct.toFixed(2) };
+  const band = input.group === undefined ? {} : { group: input.group };
   if (input.id) {
     await prisma.labTestCatalog.update({
       where: { id: input.id },
-      data: { name: input.name, code: input.code || null, price: input.price.toFixed(2), ...gst, active: input.active },
+      data: { name: input.name, code: input.code || null, price: input.price.toFixed(2), ...gst, ...band, active: input.active },
     });
-    await logAudit(actor, { action: "CATALOG_UPDATED", targetTable: "LabTestCatalog", targetId: input.id, meta: { gstRatePct: input.gstRatePct ?? null }, ...ctx });
+    await logAudit(actor, {
+      action: "CATALOG_UPDATED", targetTable: "LabTestCatalog", targetId: input.id,
+      // `group: null` in the meta reads "this door did not touch the band",
+      // which is not the same as the band having been cleared - that is the
+      // empty string, and the log has to be able to say which of the two.
+      meta: { gstRatePct: input.gstRatePct ?? null, group: input.group ?? null },
+      ...ctx,
+    });
   } else {
     const created = await prisma.labTestCatalog.create({
       data: {
         name: input.name, code: input.code || null, price: input.price.toFixed(2),
-        gstRatePct: (input.gstRatePct ?? 0).toFixed(2), active: input.active,
+        gstRatePct: (input.gstRatePct ?? 0).toFixed(2), group: input.group ?? null, active: input.active,
       },
       select: { id: true },
     });
     await logAudit(actor, { action: "CATALOG_CREATED", targetTable: "LabTestCatalog", targetId: created.id, ...ctx });
   }
+}
+
+/**
+ * REMOVE A TEST FROM THE CATALOGUE FOR GOOD - only one nothing points at.
+ *
+ * THIS IS NOT THE USUAL WAY TO GET RID OF A TEST. Retiring one (active: false)
+ * is, and it is what the screen offers first: a retired test drops off every
+ * ordering picker while every report ever printed against it stays readable and
+ * every bill it appears on still adds up. That is almost always what "delete
+ * this test" actually means at a bench.
+ *
+ * What retiring cannot do is clear away a MISTAKE - the test somebody typed
+ * twice, or created with a name they immediately regretted. Those rows have no
+ * history to protect and sit in the list forever, and the Retired filter is not
+ * a bin. This is for those, and for nothing else.
+ *
+ * SO IT REFUSES THE MOMENT ANYTHING POINTS AT THE ROW. A LabTest carries a
+ * snapshot of the name and price it was ordered at, so a patient's report and
+ * bill survive the catalogue row going away - but `LabTest.catalogId` is what
+ * the printed report reads its code, specimen line and section band through,
+ * and a report re-opened after the row vanished would lose all three and print
+ * as an unbanded LABORATORY sheet with no specimen. A doctor's advice line
+ * (PrescriptionUploadLab) resolves to the catalogue the same way, and would
+ * stop being one-click orderable. Neither is worth a tidy list, so both are
+ * checked and the answer is to retire it instead.
+ *
+ * The COUNT is in the message on purpose. "Ordered 41 times" tells a technician
+ * why the answer is no far better than a rule does, and it is the number that
+ * makes retiring obviously the right call.
+ *
+ * The analytes go with it. LabAnalyte cascades from this row by schema, and
+ * a template with no test is not a thing anybody would want kept.
+ */
+export async function deleteCatalogItem(
+  actor: AuthUser,
+  id: string,
+  ctx: { ipAddress?: string; userAgent?: string }
+): Promise<{ name: string }> {
+  const row = await prisma.labTestCatalog.findUnique({
+    where: { id },
+    select: { id: true, name: true, code: true, price: true, group: true, active: true },
+  });
+  if (!row) throw new ApiError(404, "That test is not in the catalogue any more - reload the page");
+
+  const [ordered, advised] = await Promise.all([
+    prisma.labTest.count({ where: { catalogId: id } }),
+    prisma.prescriptionUploadLab.count({ where: { catalogId: id } }),
+  ]);
+  if (ordered > 0) {
+    throw new ApiError(409,
+      `${row.name} has been ordered ${ordered} time${ordered === 1 ? "" : "s"}. ` +
+      `Deleting it would take the code, specimen line and section band off ${ordered === 1 ? "that report" : "those reports"} ` +
+      `the next time ${ordered === 1 ? "it is" : "they are"} printed. Retire it instead - it drops off the ordering screens and keeps its history.`);
+  }
+  if (advised > 0) {
+    throw new ApiError(409,
+      `${row.name} is on ${advised} doctor's advice line${advised === 1 ? "" : "s"} waiting to be ordered. ` +
+      `Retire it instead, or clear those first.`);
+  }
+
+  // Audited INSIDE the transaction, and the whole row goes into the meta. After
+  // this commits there is nothing left to look the test up by, so the log entry
+  // is the only remaining record that it ever existed - an entry naming just an
+  // id that resolves to nothing would answer none of the questions somebody
+  // asks a month later.
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    await tx.labTestCatalog.delete({ where: { id } });
+    await logAudit(actor, {
+      action: "CATALOG_DELETED",
+      targetTable: "LabTestCatalog",
+      targetId: id,
+      meta: {
+        name: row.name, code: row.code, price: row.price.toString(),
+        group: row.group, active: row.active,
+      },
+      ...ctx,
+    }, tx);
+  });
+  return { name: row.name };
 }
 
 /**
@@ -848,10 +942,15 @@ export async function replaceCatalogAnalytes(
   });
 }
 
-export async function listAllCatalog(): Promise<{ id: string; name: string; code: string | null; price: string; gstRatePct: string; active: boolean }[]> {
+export async function listAllCatalog(): Promise<{ id: string; name: string; code: string | null; price: string; gstRatePct: string; group: string | null; active: boolean }[]> {
   const rows = await prisma.labTestCatalog.findMany({ orderBy: { name: "asc" } });
-  return rows.map((c: { id: string; name: string; code: string | null; price: { toString(): string }; gstRatePct: { toString(): string }; active: boolean }) => ({
-    id: c.id, name: c.name, code: c.code, price: c.price.toString(), gstRatePct: c.gstRatePct.toString(), active: c.active,
+  // `group` is handed over RAW - null stays null rather than being resolved to
+  // whatever the transcribed map would print. The screen needs to tell "nobody
+  // set one" from "somebody set none", because those two look identical once
+  // the fallback has been applied and only one of them is safe to re-save.
+  return rows.map((c: { id: string; name: string; code: string | null; price: { toString(): string }; gstRatePct: { toString(): string }; group: string | null; active: boolean }) => ({
+    id: c.id, name: c.name, code: c.code, price: c.price.toString(), gstRatePct: c.gstRatePct.toString(),
+    group: c.group, active: c.active,
   }));
 }
 

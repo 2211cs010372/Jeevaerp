@@ -241,9 +241,20 @@ describe("the printed report still finds everything", () => {
   });
 
   it("knows the department band for every test", () => {
+    // Null means the code is unknown here and the report falls back to
+    // LABORATORY. "" passes on purpose - that is a test the lab prints with no
+    // band, which the case below pins down by name.
     for (const c of LAB_CATALOG) {
       expect(departmentFor(c.code), `no department for ${c.code}`).not.toBeNull();
     }
+  });
+
+  it("prints the gravindex with no department band", () => {
+    // Run on urine, not serum, so it does not go out under the band the
+    // blood-borne markers print under. "" rather than a missing entry: a
+    // missing one would print LABORATORY and the heading would only have been
+    // renamed.
+    expect(departmentFor("GRAVINDEX")).toBe("");
   });
 
   it("agrees with the spec's own grouping", () => {
@@ -262,10 +273,13 @@ describe("the printed report still finds everything", () => {
       "Clinical Pathology": "CLINICAL PATHOLOGY",
       Profiles: "PROFILES",
     };
+    // Shelved under Serology at the ordering screen, printed under nothing:
+    // the gravindex reads urine, and the band is a claim about the sample.
+    const UNBANDED = new Set(["GRAVINDEX"]);
     for (const c of LAB_CATALOG) {
       const expected = GROUP_PRINTS_AS[c.group];
       expect(expected, `${c.code} sits in unknown group "${c.group}"`).toBeDefined();
-      expect(departmentFor(c.code), c.code).toBe(expected);
+      expect(departmentFor(c.code), c.code).toBe(UNBANDED.has(c.code) ? "" : expected);
     }
   });
 

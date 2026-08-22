@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { api, ApiClientError } from "@/lib/api-client";
-import { specimenFor, departmentFor, methodFor } from "@/lib/lab-reference";
+import { specimenFor, bandFor, methodFor } from "@/lib/lab-reference";
 import { rowsThatFit, repack, pageSlices } from "@/lib/lab-pagination";
 import {
   multiSheetPrintCss, PrintToolbar, LetterHead, PreprintedGuide,
@@ -71,6 +71,12 @@ export interface Report {
   hospital: HospitalInfo | null;
   test: {
     id: string; testName: string; code: string | null; status: string;
+    /**
+     * The section band the catalogue says to print. Null means it says nothing
+     * and the transcribed map decides; "" means the lab set "no band". See
+     * bandFor - the two are not interchangeable.
+     */
+    group: string | null;
     orderedAt: string; completedAt: string | null; impression: string | null;
     technicianName: string | null; reportFileUrl: string | null;
   };
@@ -328,7 +334,7 @@ export function LabReportPages({ data, onStationery, printedAt, onLayout }: {
 }) {
   const { hospital, test, patient, referral, refDoctorName, admission, results, abnormal } = data;
   const entered = results.length > 0;
-  const department = departmentFor(test.code);
+  const department = bandFor(test.group, test.code);
   const specimen = specimenFor(test.code);
 
   // ── PACKING THE ANALYTES ONTO SHEETS ──
@@ -510,8 +516,14 @@ export function LabReportPages({ data, onStationery, printedAt, onLayout }: {
                 <tr>
                   <td colSpan={5} className="pb-[2px] pt-[7px]">
                     <div className="relative text-center">
+                      {/* "" is a test the catalogue files under no band; null
+                          is a code this build has never heard of, which still
+                          gets a heading. The blank keeps a non-breaking space
+                          rather than emptying the span: the out-of-range chip
+                          beside it is absolutely positioned, so a collapsed
+                          line box would drop it onto the test name below. */}
                       <span className="text-[16px] font-bold uppercase tracking-[0.04em]" style={{ color: "var(--pr-ink)" }}>
-                        {department ?? "LABORATORY"}
+                        {department === "" ? "\u00A0" : (department ?? "LABORATORY")}
                       </span>
                       <span
                         className={`absolute right-0 top-[1px] uppercase ${abnormal > 0 ? "text-[9px] font-bold tracking-[0.18em]" : "text-[8.5px] font-semibold tracking-[0.14em]"}`}

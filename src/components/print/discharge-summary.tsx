@@ -86,6 +86,11 @@ const date = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en
 const dateTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "-");
 const GENDER: Record<string, string> = { MALE: "Male", FEMALE: "Female", OTHER: "Other" };
 
+const pad = (n: number) => String(n).padStart(2, "0");
+/** A Date as `<input type="datetime-local">` wants it: local wall clock. */
+const toLocalInput = (d: Date): string =>
+  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
 /** The examination readings, in the order the hospital's own paper lists them. */
 const EXAM: [string, string][] = [
   ["vitalTemp", "Temp"], ["vitalPulse", "PR"], ["vitalBp", "BP"], ["vitalSpo2", "SpO₂"],
@@ -222,6 +227,32 @@ function DischargeSummaryInner() {
   // Same default as the lab report: the tray usually has the hospital's own
   // paper in it, and the desk unticks when it does not.
   const [onStationery, setOnStationery] = useState(params.get("paper") !== "plain");
+  /**
+   * THE DISCHARGE DATE ON THIS SHEET, WHEN THE PORTAL HAS NOT STAMPED ONE.
+   *
+   * A family goes home on the morning round. The stay is closed in the portal
+   * later - that afternoon, the next day, or once the insurer has answered -
+   * because closing it frees the bed and raises the invoice, and those are not
+   * things the desk wants to do while the discharge is still being arranged.
+   *
+   * In between, the summary handed to the family printed "Still admitted" where
+   * the discharge date belongs. That is a document no insurer will file and no
+   * next doctor can date, and the workaround was to close the stay early just to
+   * get a printable date onto the paper - which is the wrong thing to do to a
+   * bed board and a bill.
+   *
+   * So the date can be TYPED here instead. Screen-only and paper-only: nothing is
+   * saved, the stay is not closed, the bed stays occupied, no invoice is raised.
+   * Empty is the old behaviour exactly - the recorded date, or "Still admitted".
+   *
+   * WHAT DOES NOT MOVE WITH IT: the length of stay, and every figure on the bill.
+   * Those come from the stay's own timestamps and have to keep agreeing with the
+   * invoice; a sheet that quietly repriced itself from a box on a print screen is
+   * how a discharge summary and a bill end up contradicting each other inside a
+   * claim file. Changing what the stay actually COST is still the stay sheet's
+   * Edit, which writes it down and re-issues the invoice.
+   */
+  const [pickedDischarge, setPickedDischarge] = useState("");
   const [d, setD] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -238,6 +269,14 @@ function DischargeSummaryInner() {
   const a = d.admission;
   const closed = isClosed(a.status);
   const outcomeNote = closed && a.status !== "DISCHARGED" ? OUTCOME_LABEL[a.status as AdmissionStatusValue] : null;
+
+  // The typed date, only if it is a date this stay could have. Before the
+  // admission it is not - nobody leaves before they arrive - so it prints
+  // nothing and the desk is told why, rather than the sheet going out to an
+  // insurer with an impossible date on it.
+  const pickedAt = pickedDischarge ? new Date(pickedDischarge) : null;
+  const pickedBad = !!pickedAt && (Number.isNaN(pickedAt.getTime()) || pickedAt < new Date(a.admittedAt));
+  const pickedIso = pickedAt && !pickedBad ? pickedAt.toISOString() : null;
 
   /** The typed value wins; the derived one is a fallback for stays written
    *  before the shared record existed. */
@@ -265,10 +304,20 @@ function DischargeSummaryInner() {
   ];
   const rightFields: { k: string; v: string; mono?: boolean }[] = [
     { k: "Admission Date", v: dateTime(a.admittedAt), mono: true },
-    { k: "Discharge Date", v: closed ? dateTime(a.dischargedAt) : "Still admitted", mono: true },
-    { k: "Type of Discharge", v: outcomeNote ?? (closed ? "Normal Discharge" : "Interim summary") },
+    // A typed date wins over both the recorded one and "Still admitted" - see
+    // the note on `pickedDischarge`.
+    { k: "Discharge Date", v: pickedIso ? dateTime(pickedIso) : closed ? dateTime(a.dischargedAt) : "Still admitted", mono: true },
+    // ...and a sheet carrying a discharge date must not call itself an interim
+    // one two lines down. An outcome that is NOT an ordinary discharge still
+    // wins over both: a death does not become a normal discharge because
+    // somebody typed a date on a print screen.
+    { k: "Type of Discharge", v: outcomeNote ?? (closed || pickedIso ? "Normal Discharge" : "Interim summary") },
     { k: "Length of Stay", v: `${a.days} day${a.days === 1 ? "" : "s"}` },
-    { k: "Blood Group", v: p.bloodGroup ?? "-" },
+    // BLOOD GROUP IS NOT PRINTED. Removed at the hospital's request: it is taken
+    // at admission only if somebody thought to ask, so the field went out as a
+    // dash on most sheets - and a blank blood group on a discharge summary is
+    // worse than no line at all, because the next doctor reads it as "not known"
+    // when it may simply never have been typed. It stays on the patient record.
     { k: "Follow-up Date", v: d.summary?.followUpDate ? date(d.summary.followUpDate) : "-" },
     { k: "Address", v: [p.address, p.city].filter(Boolean).join(", ") || "-" },
   ];
@@ -280,14 +329,57 @@ function DischargeSummaryInner() {
       <style dangerouslySetInnerHTML={{ __html: DS_CSS(onStationery) }} />
       <PrintToolbar title={`Discharge summary · ${a.ipNumber} · ${p.fullName}`} />
 
-      {/* Screen-only desk control: which paper is in the tray. Same control,
-          same place and same wording as the lab report. */}
+      {/* Screen-only desk controls: which paper is in the tray, and which
+          discharge date this sheet carries. The paper toggle keeps the lab
+          report's wording and place; the date box sits beside it because both
+          answer the same question - what comes out of the printer. */}
       <div className="mx-auto mb-3 flex w-full max-w-[210mm] flex-wrap items-center gap-x-5 gap-y-2 print:hidden">
         <label className="flex items-center gap-2 text-[12.5px] text-[#3a4744]">
           <input type="checkbox" checked={onStationery} onChange={(e) => setOnStationery(e.target.checked)} />
           Printing on the hospital&apos;s pre-printed paper
         </label>
+
+        <label className="flex items-center gap-2 text-[12.5px] text-[#3a4744]">
+          Discharge date on this sheet
+          <input type="datetime-local" value={pickedDischarge}
+            min={toLocalInput(new Date(a.admittedAt))}
+            onChange={(e) => setPickedDischarge(e.target.value)}
+            className="rounded border border-[#c8ccc9] bg-white px-2 py-1 text-[12.5px] text-[#3a4744]" />
+        </label>
+
+        {pickedDischarge ? (
+          <button type="button" onClick={() => setPickedDischarge("")}
+            className="rounded border border-[#c8ccc9] bg-white px-2.5 py-1 text-[12px] font-medium text-[#3a4744] hover:border-[#0b5f55] hover:text-[#0b5f55]">
+            Use the recorded date
+          </button>
+        ) : (
+          <span className="text-[12px] text-[#5a6a66]">
+            {closed
+              ? "Left empty, the sheet prints the recorded discharge date."
+              : "Left empty, the sheet prints \u201cStill admitted\u201d."}
+          </span>
+        )}
       </div>
+
+      {/* Typed a date the stay cannot have. Said out loud rather than silently
+          ignored - the desk is standing at the printer expecting that date. */}
+      {pickedBad && (
+        <div className="mx-auto mb-3 w-full max-w-[210mm] rounded-lg border border-[#d9b8ae] bg-[#fdf3f0] px-3 py-2 text-[12.5px] text-[#8a3b2e] print:hidden">
+          That is before the admission on {dateTime(a.admittedAt)}, so the sheet is still printing the recorded date.
+        </div>
+      )}
+
+      {/* What the typed date does and, more importantly, what it does not. The
+          desk has to be able to see that this closes nothing. */}
+      {pickedIso && (
+        <div className="mx-auto mb-3 w-full max-w-[210mm] rounded-lg border border-[#c8ccc9] bg-white px-3 py-2 text-[12.5px] leading-relaxed text-[#3a4744] print:hidden">
+          This sheet prints <b>{dateTime(pickedIso)}</b> as the discharge date.
+          {closed
+            ? " The stay stays closed on its own recorded date - nothing here changes it."
+            : " Nothing is saved: the stay stays open, the bed stays occupied and no bill is raised."}
+          {" "}Length of stay and charges are unchanged.
+        </div>
+      )}
 
       <div id="print-sheet">
         {/* Screen-only guide showing where the pre-printed ink already sits. */}
@@ -295,9 +387,21 @@ function DischargeSummaryInner() {
 
         {/* ── ONE TABLE FOR THE WHOLE DOCUMENT ──
             The <thead> below is the only construct print engines reliably
-            repeat at the top of every page. So sheet two of a long summary
-            arrives carrying the patient's name and IP number instead of being
-            a loose page of prose nobody can match to a file. */}
+            repeat at the top of every page, so whatever sits in it is what
+            EVERY sheet carries. That is now the letterhead and the words
+            "Discharge Summary", and nothing else.
+
+            THE PATIENT BLOCK USED TO LIVE IN IT, so that a page two separated
+            from page one still had a name and an IP number on it. The cost was
+            the whole identity block re-printed at the head of every sheet of a
+            long summary, and the hospital asked for it once instead. It now
+            prints ONCE, as the first thing in the body - page one only.
+
+            The trade-off that arrangement was bought with is live again, and is
+            worth knowing: a loose continuation sheet of this document names the
+            hospital but not the patient. If that ever bites, the answer is a
+            slim one-line strip back in the thead (name · IP no), not the whole
+            block. */}
         <table className="ds-doc">
           <thead>
             <tr>
@@ -307,7 +411,14 @@ function DischargeSummaryInner() {
                 {!onStationery && <LetterHead hospital={d.hospital} doctor={null} />}
 
                 <div className={onStationery ? "ds-title" : "ds-title mt-2"}>Discharge Summary</div>
+              </th>
+            </tr>
+          </thead>
 
+          <tbody>
+            <tr>
+              <td>
+                {/* WHO THIS IS. Page one only - see the note above the table. */}
                 <div className="ds-id">
                   <div className="ds-id-col">
                     {leftFields.map((x) => <IdRow key={x.k} {...x} />)}
@@ -317,13 +428,7 @@ function DischargeSummaryInner() {
                   </div>
                 </div>
                 <div className="ds-gap" />
-              </th>
-            </tr>
-          </thead>
 
-          <tbody>
-            <tr>
-              <td>
         {drafting && <div className="ds-draft">DRAFT &mdash; NOT YET COMPLETED</div>}
 
         {/* REASON FOR ADMISSION IS NOT PRINTED.

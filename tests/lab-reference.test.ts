@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyteDescription, analyteFlagNote, analyteNote, specimenFor } from "@/lib/lab-reference";
+import { analyteDescription, analyteFlagNote, analyteNote, bandFor, departmentFor, specimenFor } from "@/lib/lab-reference";
 
 /**
  * The reference notes are the only prose on a lab report, and the patient reads
@@ -92,5 +92,50 @@ describe("specimenFor", () => {
     expect(specimenFor(null)).toBeNull();
     expect(specimenFor(undefined)).toBeNull();
     expect(specimenFor("NOPE")).toBeNull();
+  });
+});
+
+/**
+ * The band is now TWO sources: a column the lab edits and the map transcribed
+ * from its report forms. Everything here is about the seam between them, and
+ * the case that matters most is the one that looks like a rounding error -
+ * null and "" are both falsy and mean opposite things.
+ */
+describe("bandFor", () => {
+  it("defers to the transcribed map when the catalogue has no opinion", () => {
+    // Null is what every row held the day the column was added, so this is the
+    // case that decides whether adding it changed anybody's report. It did not.
+    expect(bandFor(null, "CBP")).toBe("HAEMATOLOGY");
+    expect(bandFor(undefined, "CBP")).toBe(departmentFor("CBP"));
+  });
+
+  it("lets the catalogue override the map", () => {
+    expect(bandFor("IMMUNOLOGY", "HIV")).toBe("IMMUNOLOGY");
+    // Even to something the map has never heard of - the whole point of the
+    // column is that a new section does not need a developer.
+    expect(bandFor("MOLECULAR", "CBP")).toBe("MOLECULAR");
+  });
+
+  it("treats an empty band as a decision, not as a missing one", () => {
+    // THE CASE THE COLUMN EXISTS FOR. "" must not fall through to the map, or
+    // clearing a band would come straight back as whatever the map said and the
+    // one correction that prompted all this would be unsavable.
+    expect(bandFor("", "CBP")).toBe("");
+    expect(bandFor("", "HIV")).toBe("");
+  });
+
+  it("still answers for a test with no catalogue row at all", () => {
+    // A walk-in raised by name has neither a group nor a code. Null here is
+    // what makes the sheet print its LABORATORY fallback rather than a blank.
+    expect(bandFor(null, null)).toBeNull();
+    expect(bandFor(null, "NOPE")).toBeNull();
+  });
+
+  it("keeps the gravindex unbanded through both paths", () => {
+    // Unset in the catalogue, it falls to the map - which this hospital already
+    // decided prints nothing. Set to "" from the screen, same answer. The band
+    // does not come back either way round.
+    expect(bandFor(null, "GRAVINDEX")).toBe("");
+    expect(bandFor("", "GRAVINDEX")).toBe("");
   });
 });

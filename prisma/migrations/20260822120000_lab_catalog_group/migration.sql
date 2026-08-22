@@ -1,0 +1,27 @@
+-- THE SECTION BAND A LAB REPORT PRINTS, MOVED WHERE THE LAB CAN REACH IT.
+--
+-- The band centred above the results table ("HAEMATOLOGY", "BIOCHEMISTRY") was
+-- a map in the application - DEPARTMENTS in lib/lab-reference, transcribed from
+-- the 52 report forms this lab prints. That was right while it was a record of
+-- what the forms said, and wrong the first time the hospital disagreed with it:
+-- the gravindex is read off urine, printed under the heading the blood-borne
+-- markers print under, and correcting it took a developer and a deploy.
+--
+-- NULLABLE, WITH NO DEFAULT, AND NULL IS NOT "NO BAND". Null means nobody here
+-- has set one, and the report falls back to the transcribed map exactly as it
+-- did yesterday. Every row means that the moment this migration runs, so this
+-- changes no report and needs no backfill - the map stays the default, and the
+-- column is only this hospital having since said otherwise.
+--
+-- THE EMPTY STRING IS THE OPINION "no band at all", which is why the column is
+-- not simply "null means none". Without the two being different there would be
+-- no way to save a blank: clearing a band would come straight back as whatever
+-- the map said, and the one correction that prompted this column would be the
+-- one correction it could not express.
+--
+-- Adding a nullable column with no default is done in place. Postgres does not
+-- rewrite the table and does not hold a lock while the desk is billing, which
+-- matters because there is nowhere else to run this.
+
+-- AlterTable
+ALTER TABLE "LabTestCatalog" ADD COLUMN     "group" TEXT;
