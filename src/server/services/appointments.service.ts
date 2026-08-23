@@ -29,6 +29,7 @@ const announceVisitChange = () =>
 
 export interface DoctorDTO {
   id: string; name: string; specialization: string; department: string; fee: string;
+  registrationNo: string | null;
   qualification: string | null; experienceYears: number | null; age: number | null;
   languages: string | null; photoUrl: string | null; bio: string | null;
 }
@@ -59,6 +60,10 @@ export const DUTY_DOCTOR = {
   department: "Emergency & Casualty",
   /** No degrees to print for a role that isn't a person yet. */
   qualification: null,
+  /** …and no council number either. A registration number belongs to a named
+   *  physician; printing anything here would attribute the prescription to
+   *  somebody who has not been identified. */
+  registrationNo: null,
 } as const;
 
 /** Admin-facing appointment - INCLUDES the referral snapshot. */
@@ -75,15 +80,18 @@ export async function listDoctors(): Promise<DoctorDTO[]> {
     where: { active: true }, orderBy: { name: "asc" },
     select: {
       id: true, name: true, specialization: true, department: true, consultationFee: true,
+      registrationNo: true,
       qualification: true, experienceYears: true, age: true, languages: true, photoUrl: true, bio: true,
     },
   });
   type Row = {
     id: string; name: string; specialization: string; department: string; consultationFee: { toString(): string };
+    registrationNo: string | null;
     qualification: string | null; experienceYears: number | null; age: number | null; languages: string | null; photoUrl: string | null; bio: string | null;
   };
   return (rows as Row[]).map((d) => ({
     id: d.id, name: d.name, specialization: d.specialization, department: d.department, fee: d.consultationFee.toString(),
+    registrationNo: d.registrationNo,
     qualification: d.qualification, experienceYears: d.experienceYears, age: d.age, languages: d.languages, photoUrl: d.photoUrl, bio: d.bio,
   }));
 }
@@ -448,8 +456,11 @@ export async function opdPrintData(appointmentId: string): Promise<{
    *  casualty case. `named` is false in the latter, so the sheet prints a
    *  signature line to fill in rather than "Dr. Duty Medical Officer". */
   /** `qualification` is the degree line the pre-printed stationery prints under
-   *  the doctor's name ("MBBS, M.D Paediatrics") - null for the duty block. */
-  doctor: { name: string; specialization: string; department: string; qualification: string | null; named: boolean };
+   *  the doctor's name ("MBBS, M.D Paediatrics") - null for the duty block.
+   *  `registrationNo` prints directly beneath it: a prescription must carry the
+   *  council number of the physician who wrote it. Null until somebody types it
+   *  on the roster, and null forever for the duty block, which is a role. */
+  doctor: { name: string; specialization: string; department: string; qualification: string | null; registrationNo: string | null; named: boolean };
   patient: { displayId: string; fullName: string; age: number | null; gender: string | null; bloodGroup: string | null; phone: string; address: string | null; city: string | null };
   /** `medicineId` is carried for the READERS of this bundle, not the printed
    *  sheet: reception's prescription form loads a visit back into its fields,
@@ -476,7 +487,7 @@ export async function opdPrintData(appointmentId: string): Promise<{
     select: {
       id: true, opNumber: true, type: true, status: true, visitDate: true, referredByName: true, createdAt: true, patientId: true,
       timeAtBooking: true,
-      doctor: { select: { name: true, specialization: true, department: true, qualification: true } },
+      doctor: { select: { name: true, specialization: true, department: true, qualification: true, registrationNo: true } },
       patient: { select: { displayId: true, fullName: true, age: true, gender: true, bloodGroup: true, phone: true, address: true, city: true } },
     },
   });
@@ -1101,6 +1112,7 @@ export async function createDoctorProfile(
   actor: AuthUser,
   input: {
     name: string; specialization: string; department: string; consultationFee: number;
+    registrationNo?: string;
     qualification?: string; experienceYears?: number; age?: number;
     languages?: string; photoUrl?: string; bio?: string;
   },
@@ -1116,6 +1128,7 @@ export async function createDoctorProfile(
         specialization: input.specialization.trim(),
         department: input.department.trim(),
         consultationFee: input.consultationFee.toFixed(2),
+        registrationNo: input.registrationNo?.trim() || null,
         qualification: input.qualification?.trim() || null,
         experienceYears: input.experienceYears ?? null,
         age: input.age ?? null,
@@ -1151,6 +1164,7 @@ export async function updateDoctorProfile(
   doctorId: string,
   input: {
     name?: string; specialization?: string; department?: string; consultationFee?: number;
+    registrationNo?: string;
     qualification?: string; experienceYears?: number; age?: number;
     languages?: string; photoUrl?: string; bio?: string; active?: boolean;
   },
@@ -1170,6 +1184,10 @@ export async function updateDoctorProfile(
       ...(input.specialization !== undefined ? { specialization: input.specialization.trim() } : {}),
       ...(input.department !== undefined ? { department: input.department.trim() } : {}),
       ...(input.consultationFee !== undefined ? { consultationFee: input.consultationFee.toFixed(2) } : {}),
+      // ONE BOX ADDS AND EDITS. `undefined` means the caller said nothing about
+      // it and the stored value stands; an empty string means somebody cleared
+      // it on purpose, and `str` turns that back into null.
+      ...(input.registrationNo !== undefined ? { registrationNo: str(input.registrationNo) } : {}),
       ...(input.qualification !== undefined ? { qualification: str(input.qualification) } : {}),
       ...(input.experienceYears !== undefined ? { experienceYears: input.experienceYears } : {}),
       ...(input.age !== undefined ? { age: input.age } : {}),

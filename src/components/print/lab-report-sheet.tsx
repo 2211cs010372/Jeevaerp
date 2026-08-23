@@ -92,6 +92,7 @@ export interface Report {
    * doctor who asked for it. Null is a genuinely self-referred sample.
    */
   refDoctorName: string | null;
+  refDoctorRegNo: string | null;
   admission: { ipNumber: string } | null;
   results: ResultRow[];
   abnormal: number;
@@ -332,7 +333,7 @@ export function LabReportPages({ data, onStationery, printedAt, onLayout }: {
    */
   onLayout?: (layout: ReportLayout) => void;
 }) {
-  const { hospital, test, patient, referral, refDoctorName, admission, results, abnormal } = data;
+  const { hospital, test, patient, referral, refDoctorName, refDoctorRegNo, admission, results, abnormal } = data;
   const entered = results.length > 0;
   const department = bandFor(test.group, test.code);
   const specimen = specimenFor(test.code);
@@ -431,6 +432,12 @@ export function LabReportPages({ data, onStationery, printedAt, onLayout }: {
         .filter(Boolean).join(" / "),
     },
     { k: "Ref. Doctor", v: refDoctorName ? withTitle(refDoctorName) : "Self / walk-in" },
+    // Only when there is a doctor AND a number for them. The referrer is often
+    // the hospital itself, and "Reg. No. -" against that reads as a missing
+    // record rather than as a line that does not apply.
+    ...(refDoctorRegNo?.trim()
+      ? [{ k: "Reg. No.", v: refDoctorRegNo.trim(), mono: true }]
+      : []),
     { k: "Patient ID", v: patient?.displayId ?? "", mono: true },
     { k: "Sample Type", v: specimen ?? "-" },
     // Not recorded by this system - see the file note. Printed as a blank field

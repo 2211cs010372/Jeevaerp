@@ -882,6 +882,10 @@ export interface LabReportDTO {
    * when nobody referred the patient, which prints as "Self / walk-in".
    */
   refDoctorName: string | null;
+  /** The referring doctor's council number. The regulations name lab reports
+   *  alongside prescriptions and receipts. Null when the referrer is not a
+   *  doctor on the roster - the hospital itself, or a walk-in. */
+  refDoctorRegNo: string | null;
   /** Set when the test belongs to a stay rather than to a visit. */
   admission: { ipNumber: string } | null;
   results: LabResultDTO[];
@@ -896,7 +900,7 @@ export async function labReportData(labTestId: string): Promise<LabReportDTO> {
       impression: true, reportFileUrl: true,
       catalog: { select: { code: true, group: true } },
       technician: { select: { name: true } },
-      referringDoctor: { select: { name: true } },
+      referringDoctor: { select: { name: true, registrationNo: true } },
       // The non-doctor referrer - the hospital itself, most often. Feeds the
       // Ref. Doctor line below when there is no doctor to name.
       referringName: true,
@@ -909,7 +913,7 @@ export async function labReportData(labTestId: string): Promise<LabReportDTO> {
       appointment: {
         select: {
           opNumber: true, visitDate: true,
-          doctor: { select: { name: true } },
+          doctor: { select: { name: true, registrationNo: true } },
           patient: {
             select: {
               displayId: true, fullName: true, age: true, gender: true,
@@ -974,6 +978,13 @@ export async function labReportData(labTestId: string): Promise<LabReportDTO> {
     refDoctorName: t.appointment
       ? (t.appointment.doctor?.name ?? DUTY_DOCTOR.name)
       : (t.referringDoctor?.name ?? t.referringName ?? null),
+    // Follows refDoctorName step for step, and is null wherever that falls back
+    // to a role or a plain typed name: a number printed beside the wrong person
+    // is worse on a report than no number at all. `referringName` is free text
+    // with nobody behind it, so it never carries one.
+    refDoctorRegNo: t.appointment
+      ? (t.appointment.doctor?.registrationNo ?? null)
+      : (t.referringDoctor?.registrationNo ?? null),
     results,
     abnormal: abnormalCount(results),
   };

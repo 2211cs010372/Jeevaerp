@@ -52,7 +52,7 @@ interface Data {
     displayId: string; fullName: string; age: number | null; gender: string | null;
     phone: string; address: string | null; city: string | null; bloodGroup: string | null; dob: string | null;
   };
-  doctor: { name: string; specialization: string; department: string };
+  doctor: { name: string; specialization: string; department: string; registrationNo: string | null };
   clinical: {
     diagnosis: string | null; advice: string | null; nextVisit: string | null;
     labsAdvised: { name: string; ordered: boolean; declined: boolean }[];
@@ -300,6 +300,9 @@ function DischargeSummaryInner() {
     { k: "Age / Sex", v: ageSex },
     { k: "Ward / Bed", v: bedLabel(a.wardName, a.bedNo) },
     { k: "Doctor", v: d.doctor.name },
+    ...(d.doctor.registrationNo?.trim()
+      ? [{ k: "Reg. No.", v: d.doctor.registrationNo.trim(), mono: true as const }]
+      : []),
     { k: "H. Panel", v: a.payerType === "INSURANCE" ? (a.insurer || "Insurance") : "Self pay / Cash" },
   ];
   const rightFields: { k: string; v: string; mono?: boolean }[] = [
@@ -554,6 +557,13 @@ function DischargeSummaryInner() {
             <div className="text-[8px] uppercase tracking-[0.12em]" style={{ color: "var(--pr-muted)" }}>
               Consultant Doctor
             </div>
+            {/* Under the signature, because that is what the number attests to:
+                the person who signed this is the registered practitioner. */}
+            {d.doctor.registrationNo?.trim() && (
+              <div className="mt-[1px] font-mono text-[8px]" style={{ color: "var(--pr-muted)" }}>
+                Reg. No. {d.doctor.registrationNo.trim()}
+              </div>
+            )}
           </div>
           <div className="w-[52mm] text-center">
             <div className="ds-sign-line h-[9mm]" />

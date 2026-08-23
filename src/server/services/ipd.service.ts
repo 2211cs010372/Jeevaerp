@@ -2103,7 +2103,7 @@ export async function dischargeSummaryData(admissionId: string) {
           address: true, city: true, bloodGroup: true, dob: true,
         },
       },
-      doctor: { select: { name: true, specialization: true, department: true } },
+      doctor: { select: { name: true, specialization: true, department: true, registrationNo: true } },
       prescriptionUploads: {
         orderBy: { createdAt: "asc" },
         select: {
@@ -2334,7 +2334,7 @@ export async function admissionSheet(admissionId: string): Promise<{
      *  and the discharge desk read before they ask anyone for money. */
     payerType: string; insurer: string | null; policyNo: string | null; memberId: string | null;
     patient: { id: string; displayId: string; fullName: string; age: number | null; gender: string | null; phone: string };
-    doctor: { name: string; department: string };
+    doctor: { name: string; department: string; registrationNo: string | null };
   };
   days: number;
   bedTotal: string;
@@ -2437,7 +2437,7 @@ export async function admissionSheet(admissionId: string): Promise<{
       payerType: true, insurer: true, policyNo: true, memberId: true,
       bed: { select: { bedNo: true } },
       patient: { select: { id: true, displayId: true, fullName: true, age: true, gender: true, phone: true } },
-      doctor: { select: { name: true, department: true } },
+      doctor: { select: { name: true, department: true, registrationNo: true } },
       charges: {
         orderBy: { createdAt: "asc" },
         select: {
@@ -2943,7 +2943,13 @@ export async function addAdvance(
 export async function advancePrintData(advanceId: string): Promise<{
   hospital: { legalName: string; addressLine: string; city: string; state: string; stateCode: string; pincode: string; gstin: string | null; phone: string | null } | null;
   advance: { id: string; receiptNo: string | null; amount: string; mode: string; reference: string | null; takenAt: string; receivedBy: string };
-  admission: { ipNumber: string; ward: string; bedNo: string; admittedAt: string; doctorName: string };
+  admission: {
+    ipNumber: string; ward: string; bedNo: string; admittedAt: string;
+    doctorName: string;
+    /** The consultant's council number - this receipt is money taken from a
+     *  patient, and those carry it. Null until it is on the roster. */
+     doctorRegNo: string | null;
+  };
   patient: { displayId: string; fullName: string; phone: string; age: number | null; gender: string | null; address: string | null };
   /** Every advance on this stay, so the slip can show the running deposit. */
   totalAdvance: string;
@@ -2957,7 +2963,7 @@ export async function advancePrintData(advanceId: string): Promise<{
         select: {
           id: true, ipNumber: true, admittedAt: true,
           bed: { select: { bedNo: true, ward: { select: { name: true } } } },
-          doctor: { select: { name: true } },
+          doctor: { select: { name: true, registrationNo: true } },
           patient: { select: { displayId: true, fullName: true, phone: true, age: true, gender: true, address: true } },
         },
       },
@@ -2990,6 +2996,7 @@ export async function advancePrintData(advanceId: string): Promise<{
       bedNo: a.admission.bed.bedNo,
       admittedAt: a.admission.admittedAt.toISOString(),
       doctorName: a.admission.doctor.name,
+      doctorRegNo: a.admission.doctor.registrationNo,
     },
     patient: a.admission.patient,
     totalAdvance: total.toFixed(2),
@@ -3160,6 +3167,9 @@ export interface DetailedBillDTO {
     /** The consultant's letters, as they appear under their name. */
     qualification: string | null;
     specialization: string | null;
+    /** Their council registration number. A money receipt given to a patient
+     *  must carry it - see the IMC Professional Conduct Regulations 2002. */
+    registrationNo: string | null;
   };
   /** "Source Type" on the paper bill - INSURANCE or SELF. */
   sourceType: string;
@@ -3240,7 +3250,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
       // Floor and ward category build the "Room Info" line the bill prints as
       // 2ND FLOOR/PICU3/203 - one string the desk reads back to a family.
       bed: { select: { bedNo: true, ward: { select: { name: true, floor: true, category: true } } } },
-      doctor: { select: { name: true, department: true, specialization: true, qualification: true } },
+      doctor: { select: { name: true, department: true, specialization: true, qualification: true, registrationNo: true } },
       patient: { select: { fullName: true, displayId: true, age: true, gender: true, phone: true } },
       charges: {
         orderBy: { createdAt: "asc" },
@@ -3690,6 +3700,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
       dischargeType: a.status,
       qualification: a.doctor.qualification,
       specialization: a.doctor.specialization,
+      registrationNo: a.doctor.registrationNo,
     },
     sourceType: a.payerType === "INSURANCE" ? "INSURANCE" : "SELF",
     insurer: a.insurer,

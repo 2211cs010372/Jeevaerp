@@ -39,7 +39,7 @@ interface Data {
   hospital: HospitalInfo | null;
   appointment: { id: string; opNumber: string; type: string; status: string; visitDate: string; time: string; referredByName: string | null; visitNumber: number };
   /** `named: false` = a casualty case with no consultant on record yet. */
-  doctor: { name: string; specialization: string; department: string; qualification: string | null; named: boolean };
+  doctor: { name: string; specialization: string; department: string; qualification: string | null; registrationNo: string | null; named: boolean };
   patient: { displayId: string; fullName: string; age: number | null; gender: string | null; bloodGroup: string | null; phone: string; address: string | null; city: string | null };
   rxItems: { medicineName: string; qty: number; dosage: string | null }[];
   vitals: {
@@ -57,7 +57,10 @@ interface Data {
 }
 
 /** A consultant a blank pad can be headed with, from the doctors list. */
-interface DoctorOption { id: string; name: string; specialization: string; qualification: string | null }
+interface DoctorOption {
+  id: string; name: string; specialization: string;
+  qualification: string | null; registrationNo: string | null;
+}
 
 const to12h = (hhmm: string) => {
   const [h, m] = hhmm.split(":").map(Number);

@@ -13,6 +13,12 @@ const base = {
   department: z.string().trim().min(2, "Department is required").max(80),
   /** What every consultation with them is billed at, until somebody changes it. */
   consultationFee: z.coerce.number().min(0, "Fee cannot be negative").max(100000),
+  /**
+   * Council registration number. Free text on purpose - every state council
+   * numbers differently ("TSMC/FMR/12345", "APMC 78901", "MCI-2011-44112"), and
+   * a format check written against one of them rejects all the others.
+   */
+  registrationNo: z.string().trim().max(60).optional().or(z.literal("")),
   qualification: z.string().trim().max(160).optional().or(z.literal("")),
   experienceYears: z.coerce.number().int().min(0).max(70).optional(),
   age: z.coerce.number().int().min(21, "A practising doctor is at least 21").max(100).optional(),

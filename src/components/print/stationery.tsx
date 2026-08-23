@@ -601,7 +601,11 @@ export function SectionHead({ label, trailing }: { label: string; trailing?: Rea
  * it the block sits in normal flow under a generated letterhead instead.
  */
 export function DoctorHead({ doctor, inset = false }: {
-  doctor?: { name: string; specialization: string; qualification?: string | null } | null;
+  doctor?: {
+    name: string; specialization: string; qualification?: string | null;
+    /** Council registration number - printed under the degree line. */
+    registrationNo?: string | null;
+  } | null;
   inset?: boolean;
 }) {
   if (!doctor) return null;
@@ -620,6 +624,22 @@ export function DoctorHead({ doctor, inset = false }: {
       <div className={`mt-[3px] font-semibold ${CAPS_DOC}`} style={{ color: "var(--pr-ink)" }}>
         {credentials}
       </div>
+      {/* UNDER THE DEGREE, AND IN THE METADATA VOICE.
+          Every physician must display the number their council gave them on
+          every prescription they write (IMC Professional Conduct Regulations
+          2002, reaffirmed by the NMC) - so on this sheet it is not decoration,
+          it is the thing that makes the prescription a valid one.
+
+          Set a size down and in mono because it is an identifier, not a
+          credential: it reads as something to be copied exactly rather than as
+          a third qualification. Absent when nobody has typed it yet - a blank
+          "Reg." with nothing after it is worse than no line at all. */}
+      {doctor.registrationNo?.trim() && (
+        <div className="mt-[2px] font-mono text-[11.5px] font-medium tracking-[0.01em]"
+          style={{ color: "var(--pr-muted)" }}>
+          Reg. No. {doctor.registrationNo.trim()}
+        </div>
+      )}
       <div className={`mt-[3px] font-semibold ${CAPS_DOC}`} style={{ color: "var(--pr-ink)" }}>
         {doctor.specialization}
       </div>

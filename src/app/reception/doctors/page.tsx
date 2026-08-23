@@ -23,12 +23,14 @@ import { api, ApiClientError } from "@/lib/api-client";
 
 interface Doctor {
   id: string; name: string; specialization: string; department: string; fee: string;
+  /** Council registration number. Null until somebody types it - see the modal. */
+  registrationNo: string | null;
   qualification: string | null; experienceYears: number | null; age: number | null;
   languages: string | null; photoUrl: string | null; bio: string | null;
 }
 
 const blank = {
-  name: "", specialization: "", department: "", consultationFee: "",
+  name: "", specialization: "", department: "", consultationFee: "", registrationNo: "",
   qualification: "", experienceYears: "", age: "", languages: "", photoUrl: "", bio: "",
 };
 type Form = typeof blank;
@@ -65,6 +67,10 @@ export default function DoctorsPage() {
     setF(d === "new" ? { ...blank } : {
       name: d.name, specialization: d.specialization, department: d.department,
       consultationFee: d.fee,
+      // Null (never typed) and "" (typed then cleared) both open as an empty
+      // box. Whichever it was, the box is the same one, and saving it writes
+      // whatever is in it - so adding and editing are the same gesture.
+      registrationNo: d.registrationNo ?? "",
       qualification: d.qualification ?? "",
       experienceYears: d.experienceYears?.toString() ?? "",
       age: d.age?.toString() ?? "",
@@ -86,6 +92,7 @@ export default function DoctorsPage() {
     const body = {
       name: f.name.trim(), specialization: f.specialization.trim(), department: f.department.trim(),
       consultationFee: Number(f.consultationFee),
+      registrationNo: f.registrationNo.trim(),
       qualification: f.qualification.trim(), languages: f.languages.trim(),
       photoUrl: f.photoUrl.trim(), bio: f.bio.trim(),
       ...(f.experienceYears !== "" ? { experienceYears: Number(f.experienceYears) } : {}),
@@ -110,7 +117,9 @@ export default function DoctorsPage() {
   const shown = (rows ?? []).filter((d) =>
     !s || d.name.toLowerCase().includes(s)
     || d.department.toLowerCase().includes(s)
-    || d.specialization.toLowerCase().includes(s));
+    || d.specialization.toLowerCase().includes(s)
+    // An identifier nobody can search by is an identifier nobody can check.
+    || (d.registrationNo ?? "").toLowerCase().includes(s));
 
   const inp = "w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm text-[var(--p-ink)] outline-none focus:border-[var(--p-teal)]";
   const lbl = "mb-1 block text-[12px] font-semibold uppercase tracking-wide text-[var(--p-muted)]";
@@ -142,7 +151,7 @@ export default function DoctorsPage() {
       <div data-rise className="surface mb-4 flex items-center gap-2 px-3.5 py-2.5">
         <Icon name="search" size={15} />
         <input value={q} onChange={(e) => setQ(e.target.value)}
-          placeholder="Name, department or specialization…"
+          placeholder="Name, department, specialization or reg. no…"
           className="w-full bg-transparent text-sm outline-none" />
         {rows === null && <Spinner size={13} />}
       </div>
@@ -173,6 +182,21 @@ export default function DoctorsPage() {
                   {d.qualification ? ` · ${d.qualification}` : ""}
                   {d.experienceYears != null ? ` · ${d.experienceYears} yrs` : ""}
                   {d.languages ? ` · ${d.languages}` : ""}
+                </div>
+                {/* Set apart from the prose line above: this is an identifier,
+                    not a description, and a missing one is worth seeing at a
+                    glance rather than reading as a shorter sentence. */}
+                <div className="mt-1 text-[11.5px]">
+                  {d.registrationNo ? (
+                    <span className="font-mono text-[var(--p-text)]">
+                      Reg. {d.registrationNo}
+                    </span>
+                  ) : (
+                    <button onClick={() => open(d)}
+                      className="font-medium text-[var(--p-amber)] hover:underline">
+                      + Add registration no.
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-3">
@@ -225,6 +249,22 @@ export default function DoctorsPage() {
                 <div>
                   <label className={lbl}>Qualification</label>
                   <input className={inp} value={f.qualification} onChange={(e) => set("qualification")(e.target.value)} placeholder="MBBS, MD" />
+                </div>
+                {/* ONE BOX, BOTH JOBS. Empty means it has never been recorded
+                    and typing adds it; filled means it is theirs already and
+                    typing corrects it in place. There is no separate "add"
+                    mode to find, because a second control here would be a
+                    second thing to get wrong about the same number. */}
+                <div>
+                  <label className={lbl}>Registration no.</label>
+                  <input className={inp} value={f.registrationNo}
+                    onChange={(e) => set("registrationNo")(e.target.value)}
+                    placeholder="TSMC/FMR/12345" />
+                  <p className="mt-1.5 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+                    {editing !== "new" && editing?.registrationNo
+                      ? "Editing what is on record. Clear the box to remove it."
+                      : "State medical council / NMC number, as printed on their stamp."}
+                  </p>
                 </div>
                 <div>
                   <label className={lbl}>Experience (years)</label>

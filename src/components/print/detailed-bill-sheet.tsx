@@ -86,6 +86,7 @@ interface Data {
     ward: string; bedNo: string; admittedAt: string; dischargedAt: string | null;
     roomInfo: string; dischargeType: string;
     qualification: string | null; specialization: string | null;
+    registrationNo: string | null;
   };
   sourceType: string;
   insurer: string | null;
@@ -370,6 +371,9 @@ export function DetailedBillSheet() {
                     <F k="Consultant Doctor" v={withDr(b.admission.doctor)} strong />
                     <F k="Department" v={b.admission.department} />
                     <F k="Specialization" v={b.admission.qualification || b.admission.specialization || "-"} />
+                    {/* A receipt for money taken from a patient carries the
+                        council number of the doctor it was taken under. */}
+                    <F k="Reg. No." v={b.admission.registrationNo || "-"} />
                   </div>
                 </div>
 

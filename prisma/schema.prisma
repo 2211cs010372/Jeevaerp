@@ -445,6 +445,12 @@ model Doctor {
   consultationFee Decimal @db.Decimal(10, 2)
   active          Boolean @default(true)
 
+  /// The state medical council / NMC registration number, as printed on the
+  /// doctor's own stamp. Nullable: the roster predates this column, and a
+  /// locum's number is often chased up days after they first sit a clinic - a
+  /// required field here would have blocked adding them at all.
+  registrationNo  String?
+
   // ---- Profile (for booking + public directory cards) ----
   qualification   String?
   experienceYears Int?

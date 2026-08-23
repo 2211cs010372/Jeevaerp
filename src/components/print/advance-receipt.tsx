@@ -26,7 +26,10 @@ import { INVOICE_PRINT_CSS, PrintToolbar, BillHead, type HospitalInfo } from "@/
 interface Data {
   hospital: HospitalInfo | null;
   advance: { id: string; receiptNo: string | null; amount: string; mode: string; reference: string | null; takenAt: string; receivedBy: string };
-  admission: { ipNumber: string; ward: string; bedNo: string; admittedAt: string; doctorName: string };
+  admission: {
+    ipNumber: string; ward: string; bedNo: string; admittedAt: string;
+    doctorName: string; doctorRegNo: string | null;
+  };
   patient: { displayId: string; fullName: string; phone: string; age: number | null; gender: string | null; address: string | null };
   totalAdvance: string;
 }
@@ -164,7 +167,9 @@ export function AdvanceReceipt() {
                 <td className="px-1.5 py-[4px] font-medium">
                   Advance received towards inpatient treatment
                   <div className="mt-[1px] text-[8px] font-normal text-[#57655f]">
-                    Under {d.admission.doctorName} · admitted {dateTime(d.admission.admittedAt)}
+                    Under {d.admission.doctorName}
+                    {d.admission.doctorRegNo?.trim() && ` (Reg. No. ${d.admission.doctorRegNo.trim()})`}
+                    {" · "}admitted {dateTime(d.admission.admittedAt)}
                     {d.advance.reference ? ` · ref ${d.advance.reference}` : ""}
                   </div>
                 </td>

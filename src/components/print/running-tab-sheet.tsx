@@ -14,11 +14,16 @@ import { BillHead, PrintToolbar, PRINT_CSS, type HospitalInfo } from "@/componen
  * auditor checking a charge that was later corrected - all of them had to stand
  * at the terminal, and none of them left with anything.
  *
- * THIS IS NOT A BILL, and the sheet says so in three places. No bill number, no
- * tax figures, nothing to sign. A stay in progress has no invoice, and a
- * document that looked like one would be filed by somebody as if it were - then
- * argued about at discharge when the real bill came out different, as it must,
- * because the tab is still running.
+ * THIS IS NOT A BILL. No bill number, no tax figures, nothing to sign. A stay
+ * in progress has no invoice, and a document that looked like one would be
+ * filed by somebody as if it were - then argued about at discharge when the
+ * real bill came out different, as it must, because the tab is still running.
+ *
+ * It used to say so in an amber band across the top as well as in the note
+ * under the totals. The band is gone at the hospital's request: the title reads
+ * RUNNING TAB, the note under the totals still says it in full, and a warning
+ * stripe above the patient's own name was reading as an alarm about the patient
+ * rather than a caveat about the paper.
  *
  * What it IS: a dated, itemised statement of the position at one moment, with
  * the counter bills marked paid or due, so the paper can be checked against the
@@ -27,7 +32,7 @@ import { BillHead, PrintToolbar, PRINT_CSS, type HospitalInfo } from "@/componen
 
 interface Charge {
   id: string; category: string; description: string; qty: number;
-  unitPrice: string; amount: string; addedBy: string; createdAt: string;
+  unitPrice: string; amount: string; createdAt: string;
   fromPharmacy: boolean;
 }
 interface CounterBill {
@@ -43,7 +48,7 @@ interface Data {
     wardName: string; bedNo: string; dailyCharge: string;
     payerType: string; insurer: string | null;
     patient: { displayId: string; fullName: string; age: number | null; gender: string | null; phone: string };
-    doctor: { name: string; department: string };
+    doctor: { name: string; department: string; registrationNo: string | null };
   };
   days: number;
   /** One row per bed occupied. Two rows means they were transferred. */
@@ -134,12 +139,6 @@ export function RunningTabSheet() {
         <div className="mt-1 text-center text-[13px] font-bold tracking-wide">
           RUNNING TAB {running ? "— STAY IN PROGRESS" : "— AT DISCHARGE"}
         </div>
-        {/* Said once, loudly, at the top. The second and third times are the
-            band under the totals and the footer. */}
-        <div className="mt-1 border border-[#8a5a1a] bg-[#fdf8ec] px-2 py-1 text-center text-[9px] font-bold uppercase tracking-wide text-[#8a5a1a]">
-          Not a bill · not a receipt · position as at {dt(printedAt)}
-        </div>
-
         <div className="mt-2 grid grid-cols-2 gap-x-4 border border-[#333] p-1.5">
           <F k="MR Number" v={a.patient.displayId} />
           <F k="Patient Reg.No." v={a.ipNumber} />
@@ -150,6 +149,7 @@ export function RunningTabSheet() {
           <F k="Admit Date" v={dt(a.admittedAt)} />
           <F k="Day of stay" v={`Day ${s.days}`} />
           <F k="Consultant" v={a.doctor.name} />
+          {a.doctor.registrationNo?.trim() && <F k="Reg. No." v={a.doctor.registrationNo.trim()} />}
           <F k="Paying" v={a.payerType === "INSURANCE" ? `Insurance${a.insurer ? ` — ${a.insurer}` : ""}` : "Self-paying"} />
         </div>
 
@@ -194,22 +194,12 @@ export function RunningTabSheet() {
                 <td className="py-[3px] text-right font-mono">₹{money(l.total)}</td>
               </tr>
             ))}
-            {/* NIGHTS NO BED LINE COVERS. A capped bed bills fewer days than
-                the stay ran, and the remainder is raised as its own charge
-                further down. Printed as its own row so the bed block adds up in
-                front of whoever is reading it - a sheet where the day counts
-                silently fall short of the stay is the one nobody queries. */}
-            {s.uncoveredDays > 0 && (
-              <tr>
-                <td className="py-[3px] pr-1" />
-                <td className="py-[3px] pr-1 italic text-[#8a6414]">
-                  {s.uncoveredDays} day{s.uncoveredDays === 1 ? "" : "s"} of this stay billed separately below, not as a bed
-                </td>
-                <td className="py-[3px] pr-1 text-right font-mono">{s.uncoveredDays}</td>
-                <td className="py-[3px] pr-1 text-right font-mono">—</td>
-                <td className="py-[3px] text-right font-mono">—</td>
-              </tr>
-            )}
+            {/* NOTE: `uncoveredDays` is still on the payload and is still
+                real - a capped bed bills fewer days than the stay ran, and the
+                remainder is raised as its own charge further down the same
+                table. It used to print here as an italic row explaining the
+                gap; removed at the hospital's request. The days are all still
+                charged, they are simply not annotated. */}
             {/* The per-day nursing fee is withdrawn, so this row prints only
                 on a stay that was actually billed for it. A family comparing
                 this sheet against their invoice has to find the same lines on
@@ -226,10 +216,11 @@ export function RunningTabSheet() {
             {s.charges.map((c) => (
               <tr key={c.id}>
                 <td className="py-[3px] pr-1 font-mono text-[8.5px]">{dt(c.createdAt)}</td>
-                <td className="py-[3px] pr-1">
-                  {c.description}
-                  <span className="ml-1 text-[8px] uppercase text-[#5a6a66]">· {c.addedBy}</span>
-                </td>
+                {/* Description only. The staff member who entered the charge
+                    is still recorded against it and still shows on the stay
+                    screen; a family reading this sheet has no use for the name,
+                    and it turned every line into two things to read. */}
+                <td className="py-[3px] pr-1">{c.description}</td>
                 <td className="py-[3px] pr-1 text-right font-mono">{c.qty}</td>
                 <td className="py-[3px] pr-1 text-right font-mono">{money(c.unitPrice)}</td>
                 <td className="py-[3px] text-right font-mono">₹{money(c.amount)}</td>

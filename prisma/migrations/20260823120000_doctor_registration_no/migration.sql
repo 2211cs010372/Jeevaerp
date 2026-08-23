@@ -1,0 +1,26 @@
+-- THE NUMBER ON THE DOCTOR'S OWN STAMP.
+--
+-- Every practising doctor carries a state medical council / NMC registration
+-- number, and it is the one identifier on a consultant that is not the
+-- hospital's to invent. The roster held their name, department, fee and
+-- qualification but not this, so anywhere it was needed it was read off a
+-- rubber stamp or asked for a second time.
+--
+-- NULLABLE, AND NULL MEANS "nobody here has typed it yet" - not "they have
+-- none". Every row means that the moment this runs, so nothing needs a
+-- backfill and no screen changes for a doctor whose number is still unknown.
+-- Required would have been worse than useless: a locum's number is routinely
+-- chased up days after they first sit a clinic, and a required column here
+-- would have blocked adding them to the roster at all.
+--
+-- NOT UNIQUE, deliberately, for now. A duplicate IS a data-entry mistake worth
+-- catching, but a unique index turns that mistake into a failed save at a desk
+-- that cannot see whose number it collided with. That wants a named error
+-- message written alongside it, which is its own change.
+--
+-- Adding a nullable column with no default is done in place. Postgres does not
+-- rewrite the table and does not hold a lock while the desk is billing, which
+-- matters because there is nowhere else to run this.
+
+-- AlterTable
+ALTER TABLE "Doctor" ADD COLUMN     "registrationNo" TEXT;
