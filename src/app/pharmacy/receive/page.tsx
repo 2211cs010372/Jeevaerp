@@ -12,6 +12,9 @@ import {
   daysUntil, dmy, dmyFromISO, fld, inr,
 } from "@/components/portal/pharmacy/procurement-ui";
 import { effectiveUnitCost, invoiceVariance, receiptTotal } from "@/lib/pharmacy/procurement-math";
+import {
+  lineProblems, receiptBlocker, type LineProblem, type ReceiveField,
+} from "@/lib/pharmacy/receive-validation";
 import { api, ApiClientError } from "@/lib/api-client";
 
 interface Supplier { id: string; name: string }
@@ -100,6 +103,22 @@ export default function ReceivePage() {
   );
 }
 
+/**
+ * The red word under a box the receipt cannot go without.
+ *
+ * Set under the box rather than collected into a list at the top: on a grid
+ * this wide, a list of faults somewhere else is a second thing to map back onto
+ * twenty rows by eye, which is the work this is meant to remove.
+ */
+function CellError({ p }: { p?: LineProblem }) {
+  if (!p) return null;
+  return (
+    <div className="mt-1 text-[10.5px] font-semibold leading-tight text-[var(--p-rose)]">
+      {p.message}
+    </div>
+  );
+}
+
 function ReceiveInner() {
   const params = useSearchParams();
   const presetPo = params.get("po");
@@ -111,6 +130,15 @@ function ReceiveInner() {
   const [recent, setRecent] = useState<Grn[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  /**
+   * Whether the grid is marking its missing boxes yet.
+   *
+   * Off until somebody presses Post: a delivery is keyed in top to bottom, and
+   * lighting up every empty box on a fresh line turns the whole grid red before
+   * anyone has typed anything. Pressing Post turns it on and it STAYS on, so
+   * the marks clear one at a time as the boxes get filled.
+   */
+  const [showErrors, setShowErrors] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [view, setView] = useState<GrnDetail | null>(null);
@@ -243,6 +271,7 @@ function ReceiveInner() {
           })
         )
       );
+      setShowErrors(false);
       setOpen(true);
     } catch (e) {
       setError(e instanceof ApiClientError ? e.message : "Couldn't load that order.");
@@ -271,7 +300,8 @@ function ReceiveInner() {
 
   function startDirect() {
     setSupplierId(""); setPoId(""); setInvoiceNo(""); setInvoiceDate("");
-    setInvoiceAmount(""); setNotes(""); setRows([newRow()]); setOpen(true);
+    setInvoiceAmount(""); setNotes(""); setRows([newRow()]);
+    setShowErrors(false); setOpen(true);
   }
 
   const setRow = (key: string, patch: Partial<Row>) =>
@@ -302,15 +332,21 @@ function ReceiveInner() {
     return { value, tax, total, units, free, variance: v?.variance ?? null, mismatch: v?.mismatch ?? false };
   }, [rows, invoiceAmount]);
 
-  const valid = rows.filter((r) =>
-    (r.medicineId || (r.createNew && r.name.trim().length > 1)) && r.batchNo.trim() && r.expiryDate &&
-    Number(r.qty) > 0 &&
-    // Whole units only - StockBatch.quantity is an integer, and posting a
-    // fraction is a 400 from the API with nothing on screen explaining why.
-    Number.isInteger(Number(r.qty)) &&
-    Number.isInteger(Number(r.freeQty || 0))
+  /**
+   * What is missing, per line and per BOX - see lib/pharmacy/receive-validation.
+   *
+   * Keyed by row so the grid can ask "what is wrong with this cell" while it
+   * draws it, and the sentence by the Post button is counted off the same list.
+   */
+  const problems = useMemo(
+    () => new Map(rows.map((r) => [r.key, lineProblems(r)])),
+    [rows],
   );
-  const canPost = !!supplierId && valid.length > 0 && valid.length === rows.length;
+  /** The problem on one box, or undefined. Drives the red ring and the label. */
+  const problemOn = (key: string, field: ReceiveField) =>
+    problems.get(key)?.find((p) => p.field === field);
+  const firstBadRow = rows.find((r) => (problems.get(r.key)?.length ?? 0) > 0) ?? null;
+  const canPost = !!supplierId && rows.length > 0 && !firstBadRow;
 
   /**
    * Lines the invoice named but the catalogue doesn't have.
@@ -321,25 +357,8 @@ function ReceiveInner() {
    */
   const unknownRows = rows.filter((r) => !r.medicineId && !r.createNew && r.name.trim().length > 1);
 
-  /** Why Post is greyed out. A disabled button with no reason is a dead end. */
-  const blocker = (() => {
-    if (!rows.length) return "Add at least one line.";
-    if (!supplierId) return "Choose the supplier this delivery came from.";
-    const bad = rows.length - valid.length;
-    if (bad > 0) {
-      const noMed = rows.filter((r) => !r.medicineId && !(r.createNew && r.name.trim().length > 1)).length;
-      const noBatch = rows.filter((r) => r.medicineId && !r.batchNo.trim()).length;
-      const noExp = rows.filter((r) => r.medicineId && !r.expiryDate).length;
-      const frac = rows.filter((r) => !Number.isInteger(Number(r.qty)) || !Number.isInteger(Number(r.freeQty || 0))).length;
-      const parts: string[] = [];
-      if (noMed) parts.push(`${noMed} without a medicine picked`);
-      if (noBatch) parts.push(`${noBatch} without a batch number`);
-      if (noExp) parts.push(`${noExp} without an expiry`);
-      if (frac) parts.push(`${frac} with a fractional quantity`);
-      return `${bad} line${bad === 1 ? "" : "s"} need attention${parts.length ? ` - ${parts.join(", ")}` : ""}.`;
-    }
-    return null;
-  })();
+  /** Why Post will not go. A blocked button with no reason is a dead end. */
+  const blocker = receiptBlocker(supplierId, rows);
 
 
   /**
@@ -426,6 +445,25 @@ function ReceiveInner() {
   }
 
   async function post() {
+    // A disabled button is the thing that leaves a technician with no move: the
+    // receipt will not go, and the screen has not said which box is empty. So
+    // the button always presses - and when it cannot post, it ANSWERS.
+    if (!canPost) {
+      setShowErrors(true);
+      if (!supplierId) {
+        document.getElementById("grn-supplier")?.focus();
+        return;
+      }
+      // Straight to the first line that needs something, because the grid is
+      // twenty rows long and the bad one is rarely the one on screen.
+      if (firstBadRow) {
+        const el = document.getElementById(`grn-row-${firstBadRow.key}`);
+        el?.scrollIntoView({ block: "center", behavior: "smooth" });
+        el?.querySelector<HTMLElement>("input, select")?.focus({ preventScroll: true });
+      }
+      return;
+    }
+    setShowErrors(false);
     setBusy(true); setError(null);
     try {
       const r = await api.post<{ receipt: { grnNumber: string; receivedValue: string; mismatch: boolean; variance: number | null; createdMedicines?: { id: string; name: string }[] } }>(
@@ -474,6 +512,7 @@ function ReceiveInner() {
   return (
     <PortalScroll>
       <style>{PROC_CSS}</style>
+      <style>{GRN_CSS}</style>
 
       <PageHead
         title="Receive goods"
@@ -617,10 +656,14 @@ function ReceiveInner() {
                 )}
               </div>
               {blocker && (
-                <span className="max-w-[320px] text-right text-[11.5px] leading-snug text-[#8a6414]">{blocker}</span>
+                <span className={`max-w-[320px] text-right text-[11.5px] leading-snug ${showErrors ? "font-semibold text-[var(--p-rose)]" : "text-[#8a6414]"}`}>
+                  {blocker}
+                </span>
               )}
               <GhostButton onClick={() => setOpen(false)} disabled={busy}>Cancel</GhostButton>
-              <PrimaryButton onClick={post} disabled={busy || !canPost}>
+              {/* Never disabled for an incomplete receipt - see `post`. Only a
+                  request already in flight stops a second press. */}
+              <PrimaryButton onClick={post} disabled={busy}>
                 {busy ? <><Spinner /> Posting…</> : <><Icon name="check" size={15} /> Post receipt</>}
               </PrimaryButton>
             </>
@@ -664,8 +707,10 @@ function ReceiveInner() {
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <Field label="Supplier" required>
-                <select className={fld} value={supplierId} disabled={!!poId}
+              <Field label="Supplier" required error={showErrors && !supplierId ? "Not selected" : undefined}>
+                <select id="grn-supplier"
+                  className={`${fld} ${showErrors && !supplierId ? "border-[var(--p-rose)]" : ""}`}
+                  value={supplierId} disabled={!!poId}
                   onChange={(e) => setSupplierId(e.target.value)}>
                   <option value="">Select…</option>
                   {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -749,13 +794,25 @@ function ReceiveInner() {
                     const shortDated = expDays !== null && expDays > 0 && expDays < 180;
                     const dead = expDays !== null && expDays <= 0;
                     const over = r.pending !== undefined && q > r.pending;
-                    const fractional = !Number.isInteger(q) || !Number.isInteger(f);
+                    /**
+                     * What to mark on this box, if anything.
+                     *
+                     * An EMPTY box waits for Post (see `showErrors`); a box with
+                     * something unusable in it answers straight away, because
+                     * the pharmacist is looking right at what they just typed.
+                     */
+                    const bad = (field: ReceiveField) => {
+                      const p = problemOn(r.key, field);
+                      return p && (showErrors || !p.empty) ? p : undefined;
+                    };
+                    const rowBad = showErrors && (problems.get(r.key)?.length ?? 0) > 0;
                     // Packs in, units on the shelf - the conversion the whole
                     // pharmacy turns on. See lib/pharmacy/pack.
                     const packSpec = parsePack(r.pack);
                     const shelfUnits = packsToUnits(q + f, packSpec.size);
                     return (
-                      <tr key={r.key}>
+                      <tr key={r.key} id={`grn-row-${r.key}`}
+                        className={rowBad ? "grn-row-bad" : ""}>
                         <td>
                           {r.purchaseOrderItemId ? (
                             <>
@@ -773,11 +830,11 @@ function ReceiveInner() {
                                    pharmacist away to a separate screen mid-
                                    delivery is how a delivery ends up half
                                    entered. */
-                                <input className={fld} value={r.name} autoFocus
+                                <input className={`${fld}${bad("medicine") ? " grn-bad" : ""}`} value={r.name} autoFocus
                                   placeholder="New product name"
                                   onChange={(e) => setRow(r.key, { name: e.target.value, medicineId: "" })} />
                               ) : (
-                                <select className={fld} value={r.medicineId}
+                                <select className={`${fld}${bad("medicine") ? " grn-bad" : ""}`} value={r.medicineId}
                                   onChange={(e) => {
                                     const m = meds.find((x) => x.id === e.target.value);
                                     // GST% comes across with the product, so the running
@@ -795,6 +852,7 @@ function ReceiveInner() {
                                   {meds.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
                                 </select>
                               )}
+                              <CellError p={bad("medicine")} />
                               <button type="button"
                                 onClick={() => setRow(r.key, { createNew: !r.createNew, medicineId: "", name: r.createNew ? "" : r.name })}
                                 className="mt-1 text-[10.5px] font-semibold text-[var(--p-teal)] hover:underline">
@@ -811,16 +869,19 @@ function ReceiveInner() {
                         <td><input className={`${fld} num w-[62px] py-1.5`} value={r.pack}
                           onChange={(e) => setRow(r.key, { pack: e.target.value.toUpperCase() })} placeholder="15T" /></td>
                         <td className="r">
-                          <input className={`${fld} num w-[64px] py-1.5 text-right ${fractional ? "border-[var(--p-amber)]" : ""}`} value={r.qty} inputMode="decimal"
-                            onChange={(e) => setRow(r.key, { qty: e.target.value.replace(/[^\d.]/g, "") })} />
                           {/* Liquids are invoiced in fractions of a pack ("2.5"),
                               but the shelf counts whole units. Surfaced rather
                               than rounded - only the pharmacist knows whether
                               that is 2 bottles or 3. */}
-                          {fractional && <div className="mt-1 text-[10px] font-semibold text-[#8a6414]">whole units only</div>}
+                          <input className={`${fld} num w-[64px] py-1.5 text-right${bad("qty") ? " grn-bad" : ""}`} value={r.qty} inputMode="decimal"
+                            onChange={(e) => setRow(r.key, { qty: e.target.value.replace(/[^\d.]/g, "") })} />
+                          <CellError p={bad("qty")} />
                         </td>
-                        <td className="r"><input className={`${fld} num w-[56px] py-1.5 text-right`} value={r.freeQty} inputMode="decimal"
-                          onChange={(e) => setRow(r.key, { freeQty: e.target.value.replace(/[^\d.]/g, "") })} placeholder="0" /></td>
+                        <td className="r">
+                          <input className={`${fld} num w-[56px] py-1.5 text-right${bad("free") ? " grn-bad" : ""}`} value={r.freeQty} inputMode="decimal"
+                            onChange={(e) => setRow(r.key, { freeQty: e.target.value.replace(/[^\d.]/g, "") })} placeholder="0" />
+                          <CellError p={bad("free")} />
+                        </td>
                         {/* WHAT ACTUALLY REACHES THE SHELF. 3 strips of 15T is
                             45 tablets. Shown live so a wrong pack label is
                             caught here, not at a stock count months later. */}
@@ -833,14 +894,16 @@ function ReceiveInner() {
                         <td><input className={`${fld} num w-[58px] py-1.5`} value={r.oMrp}
                           onChange={(e) => setRow(r.key, { oMrp: e.target.value.toUpperCase() })} placeholder="—" /></td>
                         <td>
-                          <input className={`${fld} num py-1.5`} value={r.batchNo}
+                          <input className={`${fld} num py-1.5${bad("batch") ? " grn-bad" : ""}`} value={r.batchNo}
                             onChange={(e) => setRow(r.key, { batchNo: e.target.value.toUpperCase() })} placeholder="On the strip" />
+                          <CellError p={bad("batch")} />
                         </td>
                         <td className="r"><input className={`${fld} num w-[78px] py-1.5 text-right`} value={r.mrp} inputMode="decimal"
                           onChange={(e) => setRow(r.key, { mrp: e.target.value.replace(/[^\d.]/g, "") })} /></td>
                         <td>
-                          <input type="date" className={`${fld} py-1.5 ${dead ? "border-[var(--p-rose)]" : ""}`} value={r.expiryDate}
+                          <input type="date" className={`${fld} py-1.5 ${dead ? "border-[var(--p-rose)]" : ""}${bad("expiry") ? " grn-bad" : ""}`} value={r.expiryDate}
                             onChange={(e) => setRow(r.key, { expiryDate: e.target.value })} />
+                          <CellError p={bad("expiry")} />
                           {dead && <div className="mt-1 text-[10.5px] font-semibold text-[var(--p-rose)]">Expired - send it back</div>}
                           {shortDated && <div className="mt-1 text-[10.5px] font-semibold text-[#8a6414]">{Math.round(expDays / 30)} mo left</div>}
                         </td>
@@ -1097,3 +1160,12 @@ function ReceiveInner() {
     </PortalScroll>
   );
 }
+
+/* The two marks the receipt grid adds: the box that is wrong, and the line it
+   sits on. The line tint is what makes a fault findable in a twenty-row grid
+   that scrolls sideways - the box's own ring is off-screen half the time. */
+const GRN_CSS = `
+.grn-bad { border-color: var(--p-rose) !important; background: var(--p-rose-soft); }
+.grn-bad:focus { border-color: var(--p-rose) !important; }
+.grn-row-bad > td { background: color-mix(in srgb, var(--p-rose-soft) 55%, transparent); }
+`;
