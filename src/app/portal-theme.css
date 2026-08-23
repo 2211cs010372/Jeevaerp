@@ -96,9 +96,28 @@
         background: radial-gradient(760px 420px at 12% -6%, rgba(11, 92, 255, 0.10), transparent 62%), radial-gradient(620px 380px at 92% 4%, rgba(0, 188, 199, 0.09), transparent 60%);
     }
     
-    .portal>* {
-        position: relative;
-        z-index: 1;
+    /* Lift the page off the aurora: the bloom above is a fixed ::before at
+   z-index 0, so a portal's own content needs a stacking position to sit on top
+   of it.
+
+   IN @layer base ON PURPOSE. This file is unlayered, and unlayered CSS beats
+   EVERY layered rule regardless of specificity - so as a plain rule this one
+   silently overrode Tailwind's `fixed` and `z-*` utilities on every DIRECT
+   child of .portal. The phone nav drawer and its scrim are direct children:
+   they were laid out `position: relative; z-index: 1` instead of as fixed
+   overlays, which parked the entire mobile navigation in a 300px block at the
+   bottom of the document, translated off-screen. Tapping Menu did nothing at
+   all, on every portal.
+
+   Tailwind declares `@layer theme, base, components, utilities`, so sitting in
+   `base` puts this behind the utilities - which is the right way round. A
+   component that asks for `fixed` means it; this rule is only a default for
+   the children that ask for nothing. */
+    @layer base {
+        .portal>* {
+            position: relative;
+            z-index: 1;
+        }
     }
     /* headings - Geist, the same UI face at a heavier weight. Clean software
    look; no serif. (Class name kept for compatibility across the pages.) */

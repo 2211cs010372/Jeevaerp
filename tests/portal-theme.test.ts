@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, it, expect } from "vitest";
 import {
   NAV_VARS, NAV_SKINS, navVars, contrastRatio, isHexColor,
@@ -90,5 +92,51 @@ describe("the boot script's contract with the panel", () => {
 
   it("is scoped to the portal it was generated for", () => {
     expect(themeBootScript("pharmacy")).not.toContain(navStorageKey("reception"));
+  });
+});
+
+/**
+ * THE ONE CSS RULE THAT CAN SILENTLY DELETE THE PHONE NAV.
+ *
+ * portal-theme.css is unlayered, and unlayered CSS beats every LAYERED rule no
+ * matter the specificity - including all of Tailwind's utilities, which v4 puts
+ * in `@layer utilities`. So an unlayered `.portal > *` setting `position` and
+ * `z-index` overrides `fixed` and `z-50` on every DIRECT child of .portal.
+ *
+ * The nav drawer and its scrim are direct children. Unlayered, that rule laid
+ * them out as `position: relative; z-index: 1` - a 300px block at the bottom of
+ * the document, translated off-screen - so on every portal, on every phone,
+ * tapping Menu did nothing at all. Nothing throws, nothing logs; the navigation
+ * is just gone.
+ *
+ * Wrapping it in `@layer base` puts it behind the utilities, which is the right
+ * way round: a component that asks for `fixed` means it. This pins that.
+ */
+describe("the portal stacking rule stays out of the utilities' way", () => {
+  const css = readFileSync(
+    path.resolve(__dirname, "../src/app/portal-theme.css"),
+    "utf8",
+  );
+  /** Brace depth at an index, with comments removed so their braces don't count. */
+  const depthAt = (source: string, index: number) =>
+    source.slice(0, index).split("{").length - source.slice(0, index).split("}").length;
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, "");
+
+  it("still lifts portal content off the aurora", () => {
+    expect(bare).toMatch(/\.portal\s*>\s*\*\s*\{[^}]*z-index:\s*1/);
+  });
+
+  it("declares that lift inside a cascade layer, not at the top level", () => {
+    const i = bare.search(/\.portal\s*>\s*\*/);
+    expect(i, "the .portal > * rule went missing").toBeGreaterThan(-1);
+    // Depth 0 means unlayered, which beats Tailwind's `fixed` and kills the
+    // phone drawer on all six portals.
+    expect(depthAt(bare, i)).toBe(1);
+  });
+
+  it("puts it in `base`, which Tailwind orders before `utilities`", () => {
+    const i = bare.search(/\.portal\s*>\s*\*/);
+    expect(bare.lastIndexOf("@layer", i)).toBeGreaterThan(-1);
+    expect(bare.slice(bare.lastIndexOf("@layer", i), i)).toMatch(/^@layer\s+base\s*\{/);
   });
 });
