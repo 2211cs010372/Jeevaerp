@@ -12,6 +12,8 @@
  * It lives here now; the board, the profile and the slot picker all read it.
  */
 
+import { localDateISO } from "@/lib/date";
+
 /** The hospital's OPD day, in minutes from midnight. The band's full scale. */
 export const BOARD_START = 8 * 60;   // 08:00
 export const BOARD_END = 20 * 60;    // 20:00
@@ -126,4 +128,46 @@ export function daysInWords(days: string): string {
   const m = days.match(/([A-Za-z]{3})\s*[–-]\s*([A-Za-z]{3})/);
   if (!m) return days;
   return `${DAY_NAMES[DAY_IDX[m[1]] ?? 1]} to ${DAY_NAMES[DAY_IDX[m[2]] ?? 6]}`;
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * What date an OPD case sheet PRINTS - and whether that is still the record's.
+ *
+ * Three defaults, in the sheet's own order:
+ *
+ *   a real visit    the visit's own date
+ *   a headed blank  today - somebody is filling that pad at the desk now
+ *   a plain pad     nothing; that line is for the pen
+ *
+ * `override` beats all three, because the entry lag is real: an OP booked this
+ * morning for a consultation that happened yesterday has to print yesterday.
+ * Re-booking the visit to a past date is NOT the way to get that - visitDate is
+ * what every queue, count and day-close reads, so moving it to satisfy one
+ * sheet moves the patient out of today's list and into yesterday's numbers.
+ *
+ * So the override is print-time only, and this returns `record` beside
+ * `printed` precisely so the caller can say out loud when the two differ. A
+ * sheet whose date disagrees with the record is what an audit picks up; it has
+ * to be a decision somebody made, not a leftover from the last print.
+ *
+ * `latest` is how far forward the desk may type: today, or the record's own
+ * date when that is already further out (an appointment booked for next week
+ * still prints its own date). Backwards is unclamped - that is the whole point.
+ */
+export function opdSheetDate(
+  visitDate: string | null,
+  override: string | null,
+  { headed = false, today = localDateISO() }: { headed?: boolean; today?: string } = {},
+): { printed: string; record: string; reDated: boolean; latest: string } {
+  const record = visitDate ?? (headed ? today : "");
+  const printed = override ?? record;
+  return {
+    printed,
+    record,
+    reDated: printed !== record,
+    // ISO dates sort as strings, so this is a plain comparison.
+    latest: record > today ? record : today,
+  };
 }

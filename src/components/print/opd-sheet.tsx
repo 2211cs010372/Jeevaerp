@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { api, ApiClientError } from "@/lib/api-client";
+import { opdSheetDate } from "@/lib/opd";
 import {
   PRINT_CSS, STATIONERY_PRINT_CSS, PrintToolbar, LetterHead, DoctorHead, PreprintedGuide,
   SheetTitle, FieldGrid, VitalsGrid, OpenBlock, RxPad, SheetFoot,
@@ -139,6 +140,24 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
   const [doctors, setDoctors] = useState<DoctorOption[]>([]);
   const [pickedDoctorId, setPickedDoctorId] = useState(isBlank ? params.get("doctor")?.trim() ?? "" : "");
 
+  /**
+   * The date the PAPER carries, when it isn't the record's own. `null` = use the
+   * record's.
+   *
+   * The entry lag is real: an OP booked this morning for a consultation that
+   * actually happened yesterday has to print yesterday. Re-booking the visit to
+   * a past date is not the fix - visitDate is what every queue, count and
+   * day-close reads, so moving it to satisfy one sheet moves the patient out of
+   * today's list and into yesterday's numbers.
+   *
+   * So this is a PRINT-TIME override and nothing else. It writes nothing back;
+   * the appointment keeps the date it was booked under. A sheet whose date
+   * disagrees with the record is exactly what an audit picks up, so the screen
+   * says so in words whenever the two differ - it has to be a decision somebody
+   * made, not a leftover from the last print.
+   */
+  const [printDate, setPrintDate] = useState<string | null>(null);
+
   useEffect(() => {
     if (isBlank) return; // nothing to fetch - the emptiness is the point
     const path = source === "portal"
@@ -217,7 +236,12 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
   const v = data?.vitals ?? null;
   const clin = data?.clinical ?? null;
   const labImpressions = isBlank ? [] : data?.labImpressions ?? [];
-  const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+
+  // THE DATE ON THE SHEET, as a plain YYYY-MM-DD. The rule (and the reason the
+  // desk may override it at all) lives in lib/opd, where it is pinned by tests.
+  const {
+    printed: sheetDateISO, record: recordDateISO, reDated, latest: maxDateISO,
+  } = opdSheetDate(isBlank ? null : a!.visitDate, printDate, { headed: !!headed });
 
   // Who the sheet is headed with. A real visit uses its own consultant (unless
   // nobody was named - a casualty sheet leaves the gap for the pen); a blank pad
@@ -263,7 +287,7 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
     ? [
       { k: "Name", v: headed.fullName },
       { k: "Age", v: ageSex(headed.age, headed.gender) },
-      { k: "Date", v: today, mono: true as const },
+      { k: "Date", v: pretty(sheetDateISO), mono: true as const },
       { k: "Phone", v: headed.phone, mono: true as const },
       { k: "UHID", v: headed.displayId, mono: true as const },
       { k: "OP No", v: "" },
@@ -271,14 +295,15 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
     ]
     : isBlank
       ? [
-        { k: "Name", v: "" }, { k: "Age", v: "" }, { k: "Date", v: "" },
+        { k: "Name", v: "" }, { k: "Age", v: "" },
+        { k: "Date", v: sheetDateISO ? pretty(sheetDateISO) : "", mono: true as const },
         { k: "Phone", v: "" }, { k: "UHID", v: "" }, { k: "OP No", v: "" },
         { k: "Address", v: "", wrap: true as const, span: 3 as const },
       ]
       : [
         { k: "Name", v: p!.fullName },
         { k: "Age", v: ageSex(p!.age, p!.gender) },
-        { k: "Date", v: `${pretty(a!.visitDate)} · ${to12h(a!.time)}`, mono: true as const },
+        { k: "Date", v: `${pretty(sheetDateISO)} · ${to12h(a!.time)}`, mono: true as const },
         { k: "Phone", v: p!.phone, mono: true as const },
         { k: "UHID", v: p!.displayId, mono: true as const },
         { k: "OP No", v: a!.opNumber, mono: true as const },
@@ -294,12 +319,29 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
             : `OPD sheet · ${a!.opNumber} · ${p!.fullName}`
       } />
 
-      {/* Screen-only desk controls: which paper, and (for a pad) whose name. */}
+      {/* Screen-only desk controls: which paper, what date, and (for a pad)
+          whose name. The date is staff-side only - the patient portal prints a
+          copy of a record, and offering to re-date it there is offering the
+          wrong thing to the wrong person. */}
       <div className="mx-auto mb-3 flex w-full max-w-[210mm] flex-wrap items-center gap-x-4 gap-y-2 print:hidden">
         <label className="flex items-center gap-2 text-[12.5px] text-[#3a4744]">
           <input type="checkbox" checked={onStationery} onChange={(e) => setOnStationery(e.target.checked)} />
           Printing on the hospital&apos;s pre-printed paper
         </label>
+        {source === "staff" && (
+          <label className="flex items-center gap-2 text-[12.5px] text-[#3a4744]">
+            Date on the sheet
+            <input type="date" value={sheetDateISO} max={maxDateISO}
+              onChange={(e) => setPrintDate(e.target.value || null)}
+              className="rounded-lg border border-[#c8ccc9] bg-white px-2.5 py-1.5 text-[12.5px]" />
+            {reDated && recordDateISO && (
+              <button type="button" onClick={() => setPrintDate(null)}
+                className="underline underline-offset-2 text-[#5a6a66] hover:text-[#3a4744]">
+                use the booked date
+              </button>
+            )}
+          </label>
+        )}
         {isBlank && doctors.length > 0 && (
           <label className="flex items-center gap-2 text-[12.5px] text-[#3a4744]">
             Doctor
@@ -319,6 +361,15 @@ function OpdSheetInner({ source }: { source: "staff" | "portal" }) {
         <p className="mx-auto mb-3 w-full max-w-[210mm] border-l-2 border-[#d8b878] pl-3 text-[12.5px] leading-snug text-[#8a6414] print:hidden">
           This visit&apos;s notes run about {overflowMm}mm past the printable area - that much will be cut off at the
           bottom of the sheet. Shorten the case history or advice, or hand the rest on a second sheet.
+        </p>
+      )}
+
+      {reDated && recordDateISO && (
+        <p className="mx-auto mb-3 w-full max-w-[210mm] border-l-2 border-[#d8b878] pl-3 text-[12.5px] leading-snug text-[#8a6414] print:hidden">
+          This sheet will print <strong className="font-semibold">{pretty(sheetDateISO)}</strong> instead of {pretty(recordDateISO)}.{" "}
+          {isBlank
+            ? "Nothing is written back."
+            : "The appointment keeps the date it was booked under - nothing here changes the record."}
         </p>
       )}
 

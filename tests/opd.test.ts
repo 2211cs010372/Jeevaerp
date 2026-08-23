@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   BOARD_START, BOARD_END,
   allowedDays, boardPct, clockLabel, dailyHours, daysInWords,
-  hhmm, nextConsultingDate, opdWindow, slotsFor,
+  hhmm, nextConsultingDate, opdSheetDate, opdWindow, slotsFor,
 } from "@/lib/opd";
 
 /**
@@ -162,3 +162,64 @@ describe("hours at the desk", () => {
  * the guarantee that matters (two people can't take the same slot) is the
  * atomic claim in public-booking.service, not arithmetic.
  */
+
+/**
+ * THE DATE THE CASE SHEET PRINTS.
+ *
+ * The desk can re-date a sheet because entry lags the consultation: an OP is
+ * booked this morning for a patient who was actually seen yesterday, and the
+ * paper has to say yesterday. What must NOT happen is that fix reaching
+ * visitDate - that column is today's queue, today's counts and today's
+ * day-close, and moving it to please one printout moves the patient too.
+ *
+ * So: `printed` is what goes on the paper, `record` is what the appointment
+ * still says, and `reDated` is the flag the screen warns on. These are pinned
+ * because the day they quietly agree is the day a backdated sheet prints with
+ * nothing on screen saying so.
+ */
+describe("the date an OPD case sheet prints", () => {
+  const today = "2026-08-23";
+
+  it("prints the visit's own date when nobody overrides it", () => {
+    const d = opdSheetDate("2026-08-23", null, { today });
+    expect(d.printed).toBe("2026-08-23");
+    expect(d.record).toBe("2026-08-23");
+    expect(d.reDated).toBe(false);
+  });
+
+  it("prints yesterday when the desk asks for yesterday", () => {
+    const d = opdSheetDate("2026-08-23", "2026-08-22", { today });
+    expect(d.printed).toBe("2026-08-22");
+    expect(d.reDated).toBe(true);
+  });
+
+  it("leaves the record alone - the override never becomes the visit date", () => {
+    const d = opdSheetDate("2026-08-23", "2026-08-22", { today });
+    expect(d.record).toBe("2026-08-23");
+  });
+
+  it("dates a headed blank pad today, and re-dates it on request", () => {
+    expect(opdSheetDate(null, null, { headed: true, today }).printed).toBe(today);
+    const d = opdSheetDate(null, "2026-08-20", { headed: true, today });
+    expect(d.printed).toBe("2026-08-20");
+    expect(d.reDated).toBe(true);
+  });
+
+  it("leaves a plain pad's date line empty for the pen", () => {
+    const d = opdSheetDate(null, null, { today });
+    expect(d.printed).toBe("");
+    expect(d.reDated).toBe(false);
+  });
+
+  it("still warns nothing when the desk re-types the date it already had", () => {
+    expect(opdSheetDate("2026-08-23", "2026-08-23", { today }).reDated).toBe(false);
+  });
+
+  it("lets the desk type back as far as it likes but no further than today", () => {
+    expect(opdSheetDate("2026-08-23", null, { today }).latest).toBe(today);
+  });
+
+  it("allows a visit booked for next week to print its own future date", () => {
+    expect(opdSheetDate("2026-08-30", null, { today }).latest).toBe("2026-08-30");
+  });
+});
