@@ -5,11 +5,12 @@ import { useParams } from "next/navigation";
 import JsBarcode from "jsbarcode";
 import { api, ApiClientError } from "@/lib/api-client";
 import { amountInWords } from "@/lib/amount-words";
-// The packing arithmetic is the lab report's, and it is not lab-specific: rows,
-// a paper height, and the rule that a row lands on exactly one sheet. A bill
-// that outgrows its half-sheet is the same problem as a panel that outgrows an
-// A4, so it gets the same tested answer rather than a second one.
-import { rowsThatFit, repack, pageSlices } from "@/lib/lab-pagination";
+import { billPageStarts } from "@/lib/bill-pagination";
+// Turning page starts into slices is the same job here as on a lab report - "no
+// item is on two sheets, and none is on no sheet" - and it is already tested
+// there, so the bill borrows it rather than keeping a second copy of an
+// invariant that has to hold in both places.
+import { pageSlices } from "@/lib/lab-pagination";
 // BillHead is deliberately NOT used here any more. It is a full-width centred
 // masthead, and this sheet now sets the hospital beside the patient instead.
 // The advance receipt still uses it, which is why it stays in stationery.
@@ -74,6 +75,37 @@ import { billItemName, billItemBatch } from "@/lib/bill-item-name";
  */
 const HALF_A4_MM = 138.5;
 
+/**
+ * ── AND A LONG PHARMACY BILL TAKES THE WHOLE SHEET ──
+ *
+ * Half an A4 is the right paper for what the counter mostly hands over: a
+ * consultation, a lab bill, four items of medicine. It is the wrong paper for a
+ * discharge, where the pharmacy window prints twenty or thirty lines - each one
+ * a medicine, a batch, a rate and a GST rate - and the bill arrives as a stack
+ * of half-sheets that have to be kept together, cut apart, and read across.
+ *
+ * So past a threshold the bill stops being a half-sheet document and becomes a
+ * full one. NINE ITEMS is where that turns over: eight is comfortably inside
+ * what a half-sheet holds, and by nine the bill is already spilling onto a
+ * second half - at which point it is using a whole A4 anyway, and using it as
+ * two loose halves instead of one page.
+ *
+ * PHARMACY ONLY, and the exclusions are not arbitrary. A lab bill prints TWICE
+ * on one A4 - patient above the cut, hospital below it - and that pairing is the
+ * whole reason the half-sheet exists; giving it a full page would double the
+ * lab's paper to print the same two copies. Consultations are three lines.
+ * Inpatient stays have their own A4 document already (detailed-bill-sheet).
+ * Pharmacy is the counter whose bills actually run long.
+ *
+ * 278mm, not the 279mm the page's content box measures: browsers round page
+ * geometry in device pixels, and a box exactly as tall as the printable area
+ * rounds UP often enough to push a blank sheet out between every page.
+ */
+const FULL_A4_MM = 278;
+
+/** Does this bill want a whole sheet rather than half of one? */
+const wantsFullSheet = (inv: Invoice) => inv.source === "PHARMACY" && inv.items.length > 8;
+
 const BILL_MONO_CSS = `
   .print-stage {
     --pr-ink: #111111;
@@ -95,6 +127,11 @@ const BILL_MONO_CSS = `
     border-radius: 2px;
     color: var(--pr-ink);
   }
+  /* A long pharmacy bill's sheet - see FULL_A4_MM. Only the height changes: the
+     sheet is 190mm wide either way, so nothing about the columns, the type
+     sizes or the wrapping is different on a full page, and the packing measures
+     whichever height is in force straight off min-height. */
+  .bill-copy.full-sheet { min-height: ${FULL_A4_MM}mm; }
   .print-stage .bill-copy { box-shadow: 0 8px 40px rgba(0,0,0,.12); }
   .print-stage .bill-copy + .bill-copy { margin-top: 8mm; }
   /* -label and -title are the same thing under two names, both live in the
@@ -141,6 +178,10 @@ const BILL_MONO_CSS = `
        the cut markers are display:none and nth-child can no longer see it. */
     .bill-copy.lower-half { border-top: 1px dashed #999999; }
     .bill-copy { height: ${HALF_A4_MM}mm; break-inside: avoid; page-break-inside: avoid; }
+    /* One per page, and no cut line: a full sheet has no fold. Two of these
+       cannot share an A4 - 278mm against a 279mm printable box - so
+       break-inside:avoid puts each on a page of its own without a break rule. */
+    .bill-copy.full-sheet { height: ${FULL_A4_MM}mm; border-top: 0; }
     /* No print-color-adjust override any more: nothing on the sheet depends on
        a background being printed, so there is nothing left to force. */
   }
@@ -196,8 +237,16 @@ interface SheetCtx {
   start: number; end: number;
   /** 0-based sheet within this copy, and how many sheets the copy runs to. */
   page: number; pages: number;
+  /** A whole A4 rather than half of one - see FULL_A4_MM. */
+  fullSheet: boolean;
   /** Second half of a physical A4 - the one edge that is a real fold. */
   lowerHalf: boolean;
+  /**
+   * The probe render: the whole bill on one unbroken sheet, carrying BOTH feet
+   * so each can be measured. Laid out and read before the browser paints, so it
+   * never reaches a screen or a tray.
+   */
+  probe?: boolean;
   /** Measured only on the first copy; the others are the same bill. */
   ref?: (el: HTMLDivElement | null) => void;
 }
@@ -316,6 +365,11 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
     return () => { cancelled = true; };
   }, [inv]);
 
+  // Half a sheet, or the whole one - see FULL_A4_MM. Decided from the bill
+  // itself rather than chosen at the counter, so the same bill prints the same
+  // way from the pharmacy, from reception and from the patient's own portal.
+  const fullSheet = wantsFullSheet(inv);
+
   /**
    * ── A BILL LONGER THAN ITS PAPER RUNS ON TO THE NEXT SHEET ──
    *
@@ -330,56 +384,70 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
    * items anybody would later query.
    *
    * `pageStarts[k]` is the index of the first item on sheet k, so `[0]` is
-   * everything on one sheet and `[0, 12]` is items 0-11 then 12 onwards.
+   * everything on one sheet and `[0, 12]` is items 0-11 then 12 onwards. Null
+   * means the bill has not been measured yet - see the probe render below.
    *
    * MEASURED, NOT ESTIMATED. A row's height depends on how the medicine's name
-   * wraps in its column, and a name like "Amoxycillin + Clavulanic Acid 625mg"
-   * takes two lines where a lab test takes one - so a fixed rows-per-page count
-   * is wrong for the exact bills that need this. Each sheet is measured against
-   * the paper it is standing on, sheds what hangs over, and the arithmetic that
-   * decides where the break lands lives in @/lib/lab-pagination, tested there
-   * without a DOM. Breaks only ever move EARLIER, so this settles in one pass
-   * per new sheet instead of two sheets trading a row back and forth.
+   * wraps in its column, and "Amoxycillin + Clavulanic Acid 625mg Tablet" takes
+   * two lines where "CBP" takes one - so a fixed lines-per-sheet count is wrong
+   * for exactly the bills that need this. It is measured ONCE, in a probe render
+   * that lays the whole bill out on a single unbroken sheet and reads the real
+   * height of every row and of both kinds of foot; the arithmetic that turns
+   * those into breaks lives in @/lib/bill-pagination, tested without a DOM.
+   *
+   * THE PROBE IS NEVER SEEN. useLayoutEffect runs before the browser paints, and
+   * the state it sets re-renders synchronously - so the first thing on screen is
+   * the packed bill, not a long one snapping into sheets.
    */
   const sheetsRef = useRef<(HTMLDivElement | null)[]>([]);
-  const [pageStarts, setPageStarts] = useState<number[]>([0]);
+  const [pageStarts, setPageStarts] = useState<number[] | null>(null);
+  const measuring = pageStarts === null;
 
   // A different bill is a different packing. Reset DURING render, not from an
-  // effect - an effect would run after the packing below had already asked for
-  // its first break, and the two updates would cancel.
+  // effect - an effect would run after the packing below had already measured,
+  // and the two updates would cancel.
   const layoutKey = `${inv.id}|${inv.items.length}`;
   const [packed, setPacked] = useState(layoutKey);
-  if (packed !== layoutKey) { setPacked(layoutKey); setPageStarts([0]); }
+  if (packed !== layoutKey) { setPacked(layoutKey); setPageStarts(null); }
 
-  // On layout rather than on paint, so the sheets settle before anything is
-  // shown - and before the desk can hit Print on a half-packed bill.
   useLayoutEffect(() => {
-    const sheets = sheetsRef.current.slice(0, pageStarts.length).filter(Boolean) as HTMLDivElement[];
-    if (sheets.length !== pageStarts.length) return;
+    if (!measuring) return;
+    const sheet = sheetsRef.current[0];
+    if (!sheet) return;
 
-    for (let k = 0; k < sheets.length; k++) {
-      const sheet = sheets[k];
-      // On screen the half-sheet's height is a min-height, so whatever the sheet
-      // stands taller than that is exactly what would be lost off the bottom in
-      // print, where the same measurement is a hard height.
-      const paper = parseFloat(getComputedStyle(sheet).minHeight);
-      if (!Number.isFinite(paper) || paper <= 0) continue;
-      // 1px of slack: browsers round page geometry in device pixels, and chasing
-      // that last rounding error would re-page every bill in the building.
-      const over = sheet.offsetHeight - paper;
-      if (over <= 1) continue;
+    const cs = getComputedStyle(sheet);
+    // On screen the half-sheet's height is a min-height; in print the same
+    // measurement is a hard height. That is the paper being packed against.
+    const paper = parseFloat(cs.minHeight);
+    const gap = parseFloat(cs.rowGap) || 0;
+    const rowEls = Array.from(sheet.querySelectorAll<HTMLElement>("[data-bill-row]"));
+    if (!Number.isFinite(paper) || paper <= 0 || rowEls.length === 0) { setPageStarts([0]); return; }
 
-      const rows = Array.from(sheet.querySelectorAll<HTMLElement>("[data-bill-row]"));
-      // One line that overflows a sheet on its own cannot be helped by moving
-      // it - it would overflow the next sheet identically. Leave it be.
-      if (rows.length <= 1) continue;
+    /**
+     * The chrome above the first item row, read as a DISTANCE rather than by
+     * subtracting the parts from the sheet's height. Subtraction would have been
+     * measuring the wrong thing on a short bill: the sheet is floored at the
+     * paper height and its `mt-auto` opens a gap to push the totals onto the
+     * bottom edge, so the leftover after subtracting rows and feet is that gap
+     * plus the chrome - and a three-line bill would have been told its header
+     * takes half a sheet, and split in two.
+     */
+    const top = sheet.getBoundingClientRect().top;
+    const overhead = (rowEls[0].getBoundingClientRect().top - top) + (parseFloat(cs.paddingBottom) || 0);
+    const footOf = (kind: string) =>
+      Array.from(sheet.querySelectorAll<HTMLElement>(`[data-foot="${kind}"]`))
+        .reduce((s, el) => s + el.offsetHeight + gap, 0);
 
-      const keep = rowsThatFit(rows.map((el) => el.offsetHeight), over);
-      const next = repack(pageStarts, k, keep, inv.items.length);
-      // Identity means the packing has nothing left to give here - fall through
-      // rather than scheduling a render that changes nothing.
-      if (next !== pageStarts) { setPageStarts(next); return; }
-    }
+    setPageStarts(billPageStarts(rowEls.map((el) => el.offsetHeight), {
+      paper,
+      // A couple of pixels held back. Row heights are read off a
+      // border-collapse table, where the rows' own heights and the block they
+      // add up to can disagree by a rounding error, and the direction that
+      // error must not go is "one line more than the paper holds".
+      overhead: overhead + 2,
+      endFoot: footOf("end"),
+      contFoot: footOf("cont"),
+    }));
   });
 
   // THE DATE ON THE PAPER is the corrected one where a desk set one, and the
@@ -473,7 +541,7 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
   const renderCopy = (copy: CopyKind, sheet: SheetCtx) => (
     <div
       ref={sheet.ref}
-      className={`bill-copy flex flex-col gap-[5px]${sheet.lowerHalf ? " lower-half" : ""}`}
+      className={`bill-copy flex flex-col gap-[5px]${sheet.fullSheet ? " full-sheet" : ""}${sheet.lowerHalf ? " lower-half" : ""}`}
     >
       {/* Professional hospital invoice masthead */}
       <div className="flex items-start justify-between gap-5 border-b-[1.2px] pb-[5px]" style={{ borderColor: "var(--pr-ink)" }}>
@@ -613,10 +681,10 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
           pays against is whichever they happen to be holding. Earlier sheets
           get a carried-forward line instead, which says the opposite: this is
           not the end, and here is what the lines above came to. */}
-      {sheet.page === sheet.pages - 1 ? (
+      {sheet.page === sheet.pages - 1 && (
         <>
           {/* Settlement + totals */}
-          <div className="invoice-divider mt-auto pt-[5px]">
+          <div data-foot="end" className="invoice-divider mt-auto pt-[5px]">
             <div className="grid grid-cols-[1fr_190px] gap-5 items-start">
               <div className="min-w-0">
                 <div className="invoice-section-title">Settlement</div>
@@ -669,7 +737,7 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
             </div>
           </div>
 
-          <div className="flex items-end justify-between gap-4 border-t border-[#cfcfcf] pt-[3px]">
+          <div data-foot="end" className="flex items-end justify-between gap-4 border-t border-[#cfcfcf] pt-[3px]">
             <div className="min-w-0 flex-1 text-[5.8px] leading-snug text-[#4a4a4a]">
               {inv.hospital?.invoiceFooterNote ? <span className="whitespace-pre-line">{inv.hospital.invoiceFooterNote}</span> : "This is a computer-generated invoice. Please retain it for your records."}
             </div>
@@ -683,12 +751,19 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
             )}
           </div>
         </>
-      ) : (
-        /* Not the end. The one thing this foot must do is stop the sheet from
-           being mistaken for a complete bill, so it says where the rest is
-           before it says what the total so far is. */
-        <div className="invoice-divider mt-auto flex items-baseline justify-between gap-4 pt-[5px] text-[7.5px] font-bold uppercase tracking-[0.06em]">
-          <span>Continued on page {sheet.page + 2} of {sheet.pages} →</span>
+      )}
+
+      {/* Not the end of the bill. The one thing this foot must do is stop the
+          sheet being mistaken for a complete one, so it says where the rest is
+          before it says what the lines above came to.
+
+          On the probe it is rendered ALONGSIDE the totals rather than instead of
+          them, because the packing needs the height of both feet and only gets
+          one measurement pass to read them in. */}
+      {(sheet.page < sheet.pages - 1 || sheet.probe) && (
+        <div data-foot="cont" aria-hidden={sheet.probe}
+          className="invoice-divider mt-auto flex items-baseline justify-between gap-4 pt-[5px] text-[7.5px] font-bold uppercase tracking-[0.06em]">
+          <span>Continued on page {sheet.page + 2} →</span>
           <span className="font-mono">Carried forward · {money(runningTo(sheet.end))}</span>
         </div>
       )}
@@ -707,16 +782,21 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
    * widths, so they break in the same places; measuring all of them would have
    * several sheets racing to repack one shared list of page starts.
    */
-  const slices = pageSlices(pageStarts, inv.items.length);
-  // Drop refs to sheets that no longer exist, so a bill that shrinks from three
-  // sheets to two doesn't keep measuring a detached third.
+  // Until the packing has measured, the bill is one unbroken sheet - that IS the
+  // probe, and it is what every row's height gets read off.
+  const slices = pageStarts
+    ? pageSlices(pageStarts, inv.items.length)
+    : [{ start: 0, end: inv.items.length }];
+  // Drop refs to sheets that no longer exist, so a bill that packs from one
+  // probe sheet into four doesn't keep a detached probe around.
   sheetsRef.current.length = slices.length;
 
   const body = (
     <div id={embedded ? undefined : "print-sheet"}>
         {copies.map((copy, c) => slices.map(({ start, end }, p) => {
           // Where this sheet lands in the run - which is what says whether it is
-          // the top or the bottom half of a physical A4.
+          // the top or the bottom half of a physical A4. A full sheet is never
+          // either: it has a page to itself and nothing is cut off it.
           const nth = c * slices.length + p;
           return (
             <Fragment key={`${c}-${p}`}>
@@ -724,10 +804,12 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
                   loses its last line - and on a lab bill the two halves are two
                   different documents, so the cut has to be findable without
                   holding the sheet up to the light. */}
-              {nth > 0 && <div className="cut-line my-[2mm]">cut here</div>}
+              {nth > 0 && !fullSheet && <div className="cut-line my-[2mm]">cut here</div>}
               {renderCopy(copy, {
                 start, end, page: p, pages: slices.length,
-                lowerHalf: nth % 2 === 1,
+                fullSheet,
+                lowerHalf: !fullSheet && nth % 2 === 1,
+                probe: measuring,
                 ref: c === 0 ? (el) => { sheetsRef.current[p] = el; } : undefined,
               })}
             </Fragment>
