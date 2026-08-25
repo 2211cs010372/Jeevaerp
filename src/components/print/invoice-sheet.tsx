@@ -1,10 +1,15 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import JsBarcode from "jsbarcode";
 import { api, ApiClientError } from "@/lib/api-client";
 import { amountInWords } from "@/lib/amount-words";
+// The packing arithmetic is the lab report's, and it is not lab-specific: rows,
+// a paper height, and the rule that a row lands on exactly one sheet. A bill
+// that outgrows its half-sheet is the same problem as a panel that outgrows an
+// A4, so it gets the same tested answer rather than a second one.
+import { rowsThatFit, repack, pageSlices } from "@/lib/lab-pagination";
 // BillHead is deliberately NOT used here any more. It is a full-width centred
 // masthead, and this sheet now sets the hospital beside the patient instead.
 // The advance receipt still uses it, which is why it stays in stationery.
@@ -126,7 +131,15 @@ const BILL_MONO_CSS = `
     .print-stage .bill-copy { box-shadow: none !important; }
     .print-stage .bill-copy + .bill-copy { margin-top: 0 !important; }
     .cut-line { display: none !important; }
-    .bill-copy ~ .bill-copy { border-top: 1px dashed #999999; }
+    /* The cut line marks the FOLD, and the fold is only ever between the first
+       and second half-sheet of one physical A4 - never above a half-sheet that
+       starts a fresh page. It used to be a general-sibling rule, which was
+       right while a bill was at most two copies on one sheet and wrong the
+       moment a long bill runs to three or four half-sheets: the third would
+       print a cut line across the top of page two, where there is nothing to
+       cut. The half a sheet sits on is counted in the render, because in print
+       the cut markers are display:none and nth-child can no longer see it. */
+    .bill-copy.lower-half { border-top: 1px dashed #999999; }
     .bill-copy { height: ${HALF_A4_MM}mm; break-inside: avoid; page-break-inside: avoid; }
     /* No print-color-adjust override any more: nothing on the sheet depends on
        a background being printed, so there is nothing left to force. */
@@ -168,6 +181,26 @@ const SOURCE_LABEL: Record<string, string> = {
 interface CopyKind { formal: string; plain: string }
 const COPY_PATIENT: CopyKind = { formal: "Original", plain: "Patient copy" };
 const COPY_OFFICE: CopyKind = { formal: "Duplicate", plain: "Hospital copy" };
+
+/**
+ * ONE HALF-SHEET OF A BILL: which slice of the items it carries, where it sits
+ * in the run, and whether it is the lower half of a physical A4.
+ *
+ * A short bill is one of these and reads exactly as it did before this existed.
+ * A long one is several, and everything that must not be duplicated across them
+ * - the totals, the signature line, the footer note - is gated on `page` being
+ * the last.
+ */
+interface SheetCtx {
+  /** Items on this sheet: `inv.items[start … end)`. */
+  start: number; end: number;
+  /** 0-based sheet within this copy, and how many sheets the copy runs to. */
+  page: number; pages: number;
+  /** Second half of a physical A4 - the one edge that is a real fold. */
+  lowerHalf: boolean;
+  /** Measured only on the first copy; the others are the same bill. */
+  ref?: (el: HTMLDivElement | null) => void;
+}
 
 /**
  * One barcode, drawing into its own element.
@@ -283,6 +316,72 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
     return () => { cancelled = true; };
   }, [inv]);
 
+  /**
+   * ── A BILL LONGER THAN ITS PAPER RUNS ON TO THE NEXT SHEET ──
+   *
+   * The half-sheet is a fixed 138.5mm whatever the bill contains - that is what
+   * makes the fold land in the right place - and a pharmacy bill is the one that
+   * outgrows it. Twenty-odd lines of medicine, each with a batch number, is an
+   * ordinary discharge; the sheet held roughly a dozen. Everything past that did
+   * not wrap, or scroll, or print small: it printed UNDERNEATH the totals block
+   * and off the bottom edge of the half-sheet, and the bill still footed to the
+   * right number. So the sheet the patient was handed showed a Net Payable it
+   * had no lines to justify, and the pharmacy's own copy was missing exactly the
+   * items anybody would later query.
+   *
+   * `pageStarts[k]` is the index of the first item on sheet k, so `[0]` is
+   * everything on one sheet and `[0, 12]` is items 0-11 then 12 onwards.
+   *
+   * MEASURED, NOT ESTIMATED. A row's height depends on how the medicine's name
+   * wraps in its column, and a name like "Amoxycillin + Clavulanic Acid 625mg"
+   * takes two lines where a lab test takes one - so a fixed rows-per-page count
+   * is wrong for the exact bills that need this. Each sheet is measured against
+   * the paper it is standing on, sheds what hangs over, and the arithmetic that
+   * decides where the break lands lives in @/lib/lab-pagination, tested there
+   * without a DOM. Breaks only ever move EARLIER, so this settles in one pass
+   * per new sheet instead of two sheets trading a row back and forth.
+   */
+  const sheetsRef = useRef<(HTMLDivElement | null)[]>([]);
+  const [pageStarts, setPageStarts] = useState<number[]>([0]);
+
+  // A different bill is a different packing. Reset DURING render, not from an
+  // effect - an effect would run after the packing below had already asked for
+  // its first break, and the two updates would cancel.
+  const layoutKey = `${inv.id}|${inv.items.length}`;
+  const [packed, setPacked] = useState(layoutKey);
+  if (packed !== layoutKey) { setPacked(layoutKey); setPageStarts([0]); }
+
+  // On layout rather than on paint, so the sheets settle before anything is
+  // shown - and before the desk can hit Print on a half-packed bill.
+  useLayoutEffect(() => {
+    const sheets = sheetsRef.current.slice(0, pageStarts.length).filter(Boolean) as HTMLDivElement[];
+    if (sheets.length !== pageStarts.length) return;
+
+    for (let k = 0; k < sheets.length; k++) {
+      const sheet = sheets[k];
+      // On screen the half-sheet's height is a min-height, so whatever the sheet
+      // stands taller than that is exactly what would be lost off the bottom in
+      // print, where the same measurement is a hard height.
+      const paper = parseFloat(getComputedStyle(sheet).minHeight);
+      if (!Number.isFinite(paper) || paper <= 0) continue;
+      // 1px of slack: browsers round page geometry in device pixels, and chasing
+      // that last rounding error would re-page every bill in the building.
+      const over = sheet.offsetHeight - paper;
+      if (over <= 1) continue;
+
+      const rows = Array.from(sheet.querySelectorAll<HTMLElement>("[data-bill-row]"));
+      // One line that overflows a sheet on its own cannot be helped by moving
+      // it - it would overflow the next sheet identically. Leave it be.
+      if (rows.length <= 1) continue;
+
+      const keep = rowsThatFit(rows.map((el) => el.offsetHeight), over);
+      const next = repack(pageStarts, k, keep, inv.items.length);
+      // Identity means the packing has nothing left to give here - fall through
+      // rather than scheduling a render that changes nothing.
+      if (next !== pageStarts) { setPageStarts(next); return; }
+    }
+  });
+
   // THE DATE ON THE PAPER is the corrected one where a desk set one, and the
   // real one everywhere else. Every portal prints this one sheet, so a bill
   // re-dated at reception prints the same date from admin, the lab and the
@@ -342,17 +441,40 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
   const copies: CopyKind[] = inv.source === "LAB" ? [COPY_PATIENT, COPY_OFFICE] : [COPY_PATIENT];
 
   /**
+   * What the first `n` items of the bill come to.
+   *
+   * The carried-forward / brought-forward figures on a bill that runs to several
+   * sheets. Summed from the item amounts rather than from the subtotal, because
+   * these are running totals of LINES: the discount and the GST apply to the
+   * bill as a whole and belong only in the totals block on the last sheet.
+   */
+  const runningTo = (n: number) => inv.items.slice(0, n).reduce((s, it) => s + Number(it.amount), 0);
+
+  /**
    * ONE COPY OF THE BILL, filling exactly half an A4.
    *
    * A COLUMN, NOT A STACK. The half-sheet is a fixed 138.5mm tall whatever the
-   * bill contains, so the pieces are laid out as a flex column with the item
-   * table taking the slack: the letterhead sits at the top edge, the totals sit
-   * on the bottom edge, and a three-line lab bill and a fifteen-line stay bill
-   * both come out looking like the same document rather than one of them
-   * trailing off into half a page of white.
+   * bill contains, so the pieces are laid out as a flex column: the letterhead
+   * sits at the top edge, the totals sit on the bottom edge, and a three-line
+   * lab bill and a fifteen-line stay bill both come out looking like the same
+   * document rather than one of them trailing off into half a page of white.
+   *
+   * THE SLACK IS TAKEN BY A MARGIN, NOT BY THE TABLE, and the difference is the
+   * whole reason a long bill used to lose its tail. The item table sat in a
+   * `flex-1 min-h-0` box: `flex-1` bases it at zero and `min-h-0` waives the
+   * automatic minimum, so a table too tall for the sheet did not push the sheet
+   * taller - it hung out of a box that never grew, printing over the totals and
+   * off the paper. Nothing in the layout could tell that anything was wrong,
+   * which is why nothing ever paged it. `mt-auto` on the settlement block pins
+   * the totals to the bottom edge exactly as before, while leaving the sheet
+   * free to stand taller than the paper when it has to - and standing taller is
+   * precisely the signal the packing loop above measures.
    */
-  const renderCopy = (copy: CopyKind, idx: number) => (
-    <div key={idx} className="bill-copy flex flex-col gap-[5px]">
+  const renderCopy = (copy: CopyKind, sheet: SheetCtx) => (
+    <div
+      ref={sheet.ref}
+      className={`bill-copy flex flex-col gap-[5px]${sheet.lowerHalf ? " lower-half" : ""}`}
+    >
       {/* Professional hospital invoice masthead */}
       <div className="flex items-start justify-between gap-5 border-b-[1.2px] pb-[5px]" style={{ borderColor: "var(--pr-ink)" }}>
         <div className="min-w-0 flex-1">
@@ -384,6 +506,16 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
             <span className="invoice-meta-label">Bill No</span><span className="invoice-meta-value font-mono">{inv.receiptNo}</span>
             <span className="invoice-meta-label">Date</span><span className="invoice-meta-value">{created.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}{" "}{created.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true })}</span>
             <span className="invoice-meta-label">Dept</span><span className="invoice-meta-value">{SOURCE_LABEL[inv.source] ?? inv.source}</span>
+            {/* Only on a bill that actually runs to more than one sheet. "Page
+                1 of 1" on the ninety-odd percent that don't is a line that
+                answers a question nobody was asking, on the part of the sheet
+                where the bill number lives. */}
+            {sheet.pages > 1 && (
+              <>
+                <span className="invoice-meta-label">Page</span>
+                <span className="invoice-meta-value font-mono">{sheet.page + 1} of {sheet.pages}</span>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -412,8 +544,19 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
       </div>
 
       {/* Billing particulars */}
-      <div className="min-h-0 flex-1">
-        <div className="invoice-section-title mb-[3px]">Billing Particulars</div>
+      <div>
+        <div className="mb-[3px] flex items-baseline justify-between gap-3">
+          <div className="invoice-section-title">Billing Particulars</div>
+          {/* A continuation sheet says what it follows and what the lines before
+              it came to. Half-sheets get separated - they are cut apart with
+              scissors - and one that turns up on its own should still be
+              readable as part of a bill rather than as a bill missing a total. */}
+          {sheet.page > 0 && (
+            <div className="shrink-0 text-[7px] font-bold uppercase tracking-[0.06em] text-[#3f3f3f]">
+              Brought forward from page {sheet.page} · <span className="font-mono">{money(runningTo(sheet.start))}</span>
+            </div>
+          )}
+        </div>
         <table className="invoice-table w-full text-[8px]">
           <thead>
             <tr className="text-left">
@@ -438,9 +581,17 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
             </tr>
           </thead>
           <tbody>
-            {inv.items.map((it, i) => (
-              <tr key={i} className="align-top">
-                <td className="px-1 py-[3px] text-center font-mono text-[7px] text-[#3f3f3f]">{i + 1}</td>
+            {inv.items.slice(sheet.start, sheet.end).map((it, i) => (
+              /* `data-bill-row` is what the packing loop measures. It marks the
+                 rows that may be MOVED to another sheet - so it goes on the item
+                 rows and on nothing else, or the loop would try to shed a
+                 heading onto page two. */
+              <tr key={sheet.start + i} data-bill-row className="align-top">
+                {/* The serial number counts through the WHOLE bill, not through
+                    the sheet: item 14 is item 14 whichever half-sheet it landed
+                    on, which is how a question about it gets answered at the
+                    counter three weeks later. */}
+                <td className="px-1 py-[3px] text-center font-mono text-[7px] text-[#3f3f3f]">{sheet.start + i + 1}</td>
                 <td className="px-1.5 py-[3px] font-medium">{billItemName(it.description)}</td>
                 {showBatch && <td className="px-1 py-[3px] font-mono text-[7px] text-[#3f3f3f]">{billItemBatch(it.description) ?? "—"}</td>}
                 <td className="px-1 py-[3px] font-mono text-[7px] text-[#3f3f3f]">{it.hsnSac ?? "—"}</td>
@@ -454,88 +605,134 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
         </table>
       </div>
 
-      {/* Settlement + totals */}
-      <div className="invoice-divider pt-[5px]">
-        <div className="grid grid-cols-[1fr_190px] gap-5 items-start">
-          <div className="min-w-0">
-            <div className="invoice-section-title">Settlement</div>
-            <div className="mt-[2px] text-[8px] font-bold leading-snug">{amountInWords(netPayable)}</div>
-            {inv.payer === "INSURANCE" ? (
-              <div className="mt-[3px] text-[7px] leading-snug"><span className="font-bold">Payer:</span> {inv.payerName || "Insurer / TPA"} · Cashless</div>
-            ) : inv.payments.length > 0 ? (
-              <div className="mt-[3px] text-[7px]"><span className="font-bold">Payment mode:</span> {payMode}</div>
-            ) : null}
+      {/* ── THE END OF THE BILL, ON THE SHEET THAT IS THE END OF THE BILL ──
+          The totals, the amount in words, the e-invoice QR, the signature line
+          and the footer note all print ONCE, on the last sheet. A Net Payable
+          repeated at the foot of every half-sheet of a four-sheet bill is four
+          documents each claiming to be the whole bill - and the one somebody
+          pays against is whichever they happen to be holding. Earlier sheets
+          get a carried-forward line instead, which says the opposite: this is
+          not the end, and here is what the lines above came to. */}
+      {sheet.page === sheet.pages - 1 ? (
+        <>
+          {/* Settlement + totals */}
+          <div className="invoice-divider mt-auto pt-[5px]">
+            <div className="grid grid-cols-[1fr_190px] gap-5 items-start">
+              <div className="min-w-0">
+                <div className="invoice-section-title">Settlement</div>
+                <div className="mt-[2px] text-[8px] font-bold leading-snug">{amountInWords(netPayable)}</div>
+                {inv.payer === "INSURANCE" ? (
+                  <div className="mt-[3px] text-[7px] leading-snug"><span className="font-bold">Payer:</span> {inv.payerName || "Insurer / TPA"} · Cashless</div>
+                ) : inv.payments.length > 0 ? (
+                  <div className="mt-[3px] text-[7px]"><span className="font-bold">Payment mode:</span> {payMode}</div>
+                ) : null}
 
-            {inv.eInvoice && (
-              <div className="mt-[4px] flex items-center gap-2 border-t border-[#cfcfcf] pt-[3px]">
-                {qrDataUrl && (
-                  /* eslint-disable-next-line @next/next/no-img-element */
-                  <img src={qrDataUrl} alt="Signed e-invoice QR code" className="h-[36px] w-[36px] shrink-0" />
+                {inv.eInvoice && (
+                  <div className="mt-[4px] flex items-center gap-2 border-t border-[#cfcfcf] pt-[3px]">
+                    {qrDataUrl && (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img src={qrDataUrl} alt="Signed e-invoice QR code" className="h-[36px] w-[36px] shrink-0" />
+                    )}
+                    <div className="min-w-0 font-mono text-[5.8px] leading-tight text-[#333333]">
+                      <div><span className="font-bold">IRN:</span> {inv.eInvoice.irn}</div>
+                      {inv.eInvoice.ackNo && <div><span className="font-bold">Ack No:</span> {inv.eInvoice.ackNo}</div>}
+                      {inv.eInvoice.ackDt && <div><span className="font-bold">Ack Date:</span> {inv.eInvoice.ackDt}</div>}
+                    </div>
+                  </div>
                 )}
-                <div className="min-w-0 font-mono text-[5.8px] leading-tight text-[#333333]">
-                  <div><span className="font-bold">IRN:</span> {inv.eInvoice.irn}</div>
-                  {inv.eInvoice.ackNo && <div><span className="font-bold">Ack No:</span> {inv.eInvoice.ackNo}</div>}
-                  {inv.eInvoice.ackDt && <div><span className="font-bold">Ack Date:</span> {inv.eInvoice.ackDt}</div>}
+              </div>
+
+              <div>
+                <table className="w-full text-[8px]">
+                  <tbody>
+                    <Trow k="Sub-total" v={money(inv.subtotal)} />
+                    {Number(inv.discountAmount) > 0 && <Trow k={`Discount (${discPct}%)`} v={`− ${money(inv.discountAmount)}`} />}
+                    {gstApplies && Number(inv.discountAmount) > 0 && <Trow k="Taxable value" v={money(inv.taxableAmount)} />}
+                    {gstApplies && <Trow k="CGST" v={money(inv.cgstAmount)} />}
+                    {gstApplies && <Trow k="SGST" v={money(inv.sgstAmount)} />}
+                    {isIpd && advance > 0 ? (
+                      <>
+                        <Trow k="Total incl. GST" v={money(total)} />
+                        <Trow k="Less: Advance" v={`− ${money(advance)}`} accent />
+                        <TotalRow k="Net Payable" v={money(netPayable)} />
+                      </>
+                    ) : <TotalRow k="Net Payable" v={money(total)} />}
+                  </tbody>
+                </table>
+                <div className="mt-[3px] flex justify-between text-[6px] text-[#3f3f3f]">
+                  <span>Payment status</span>
+                  <span className="font-bold uppercase" style={{ color: "var(--pr-ink)" }}>
+                    {inv.payer === "INSURANCE" ? "CASHLESS" : Number(inv.balanceDue) > 0 ? "BALANCE DUE" : "PAID"}
+                  </span>
                 </div>
               </div>
-            )}
-          </div>
-
-          <div>
-            <table className="w-full text-[8px]">
-              <tbody>
-                <Trow k="Sub-total" v={money(inv.subtotal)} />
-                {Number(inv.discountAmount) > 0 && <Trow k={`Discount (${discPct}%)`} v={`− ${money(inv.discountAmount)}`} />}
-                {gstApplies && Number(inv.discountAmount) > 0 && <Trow k="Taxable value" v={money(inv.taxableAmount)} />}
-                {gstApplies && <Trow k="CGST" v={money(inv.cgstAmount)} />}
-                {gstApplies && <Trow k="SGST" v={money(inv.sgstAmount)} />}
-                {isIpd && advance > 0 ? (
-                  <>
-                    <Trow k="Total incl. GST" v={money(total)} />
-                    <Trow k="Less: Advance" v={`− ${money(advance)}`} accent />
-                    <TotalRow k="Net Payable" v={money(netPayable)} />
-                  </>
-                ) : <TotalRow k="Net Payable" v={money(total)} />}
-              </tbody>
-            </table>
-            <div className="mt-[3px] flex justify-between text-[6px] text-[#3f3f3f]">
-              <span>Payment status</span>
-              <span className="font-bold uppercase" style={{ color: "var(--pr-ink)" }}>
-                {inv.payer === "INSURANCE" ? "CASHLESS" : Number(inv.balanceDue) > 0 ? "BALANCE DUE" : "PAID"}
-              </span>
             </div>
           </div>
-        </div>
-      </div>
 
-      <div className="flex items-end justify-between gap-4 border-t border-[#cfcfcf] pt-[3px]">
-        <div className="min-w-0 flex-1 text-[5.8px] leading-snug text-[#4a4a4a]">
-          {inv.hospital?.invoiceFooterNote ? <span className="whitespace-pre-line">{inv.hospital.invoiceFooterNote}</span> : "This is a computer-generated invoice. Please retain it for your records."}
-        </div>
-        {copy === COPY_OFFICE ? (
-          <div className="w-[95px] text-center">
-            <div className="border-t border-[#111111]" />
-            <div className="mt-[1px] text-[6px] font-bold uppercase tracking-wide text-[#3f3f3f]">Authorised Signatory</div>
+          <div className="flex items-end justify-between gap-4 border-t border-[#cfcfcf] pt-[3px]">
+            <div className="min-w-0 flex-1 text-[5.8px] leading-snug text-[#4a4a4a]">
+              {inv.hospital?.invoiceFooterNote ? <span className="whitespace-pre-line">{inv.hospital.invoiceFooterNote}</span> : "This is a computer-generated invoice. Please retain it for your records."}
+            </div>
+            {copy === COPY_OFFICE ? (
+              <div className="w-[95px] text-center">
+                <div className="border-t border-[#111111]" />
+                <div className="mt-[1px] text-[6px] font-bold uppercase tracking-wide text-[#3f3f3f]">Authorised Signatory</div>
+              </div>
+            ) : (
+              <div className="text-right text-[5.8px] text-[#555555]">Computer-generated<br />No signature required</div>
+            )}
           </div>
-        ) : (
-          <div className="text-right text-[5.8px] text-[#555555]">Computer-generated<br />No signature required</div>
-        )}
-      </div>
+        </>
+      ) : (
+        /* Not the end. The one thing this foot must do is stop the sheet from
+           being mistaken for a complete bill, so it says where the rest is
+           before it says what the total so far is. */
+        <div className="invoice-divider mt-auto flex items-baseline justify-between gap-4 pt-[5px] text-[7.5px] font-bold uppercase tracking-[0.06em]">
+          <span>Continued on page {sheet.page + 2} of {sheet.pages} →</span>
+          <span className="font-mono">Carried forward · {money(runningTo(sheet.end))}</span>
+        </div>
+      )}
     </div>
   );
 
+  /**
+   * THE RUN: every copy of the bill, each one however many half-sheets it takes.
+   *
+   * Copies are the OUTER loop and sheets the inner, so the patient's copy comes
+   * off the tray as a complete bill before the hospital's starts - pages 1, 2,
+   * 3, then 1, 2, 3 again. Interleaved the other way the desk would be sorting
+   * two half-collated bills by hand at the counter.
+   *
+   * Only the first copy is measured. The others are the same items at the same
+   * widths, so they break in the same places; measuring all of them would have
+   * several sheets racing to repack one shared list of page starts.
+   */
+  const slices = pageSlices(pageStarts, inv.items.length);
+  // Drop refs to sheets that no longer exist, so a bill that shrinks from three
+  // sheets to two doesn't keep measuring a detached third.
+  sheetsRef.current.length = slices.length;
+
   const body = (
     <div id={embedded ? undefined : "print-sheet"}>
-        {copies.map((copy, i) => (
-          <Fragment key={i}>
-            {/* The fold, drawn. "Half of A4" measured by eye is how one copy
-                loses its last line - and on a lab bill the two halves are two
-                different documents, so the cut has to be findable without
-                holding the sheet up to the light. */}
-            {i > 0 && <div className="cut-line my-[2mm]">cut here</div>}
-            {renderCopy(copy, i)}
-          </Fragment>
-        ))}
+        {copies.map((copy, c) => slices.map(({ start, end }, p) => {
+          // Where this sheet lands in the run - which is what says whether it is
+          // the top or the bottom half of a physical A4.
+          const nth = c * slices.length + p;
+          return (
+            <Fragment key={`${c}-${p}`}>
+              {/* The fold, drawn. "Half of A4" measured by eye is how one copy
+                  loses its last line - and on a lab bill the two halves are two
+                  different documents, so the cut has to be findable without
+                  holding the sheet up to the light. */}
+              {nth > 0 && <div className="cut-line my-[2mm]">cut here</div>}
+              {renderCopy(copy, {
+                start, end, page: p, pages: slices.length,
+                lowerHalf: nth % 2 === 1,
+                ref: c === 0 ? (el) => { sheetsRef.current[p] = el; } : undefined,
+              })}
+            </Fragment>
+          );
+        }))}
     </div>
   );
 
@@ -543,8 +740,12 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
   return (
     <div className="print-stage">
       <style dangerouslySetInnerHTML={{ __html: INVOICE_SHEET_CSS }} />
+      {/* The sheet count is on the toolbar because it is the one thing about
+          this bill the desk needs to know BEFORE printing: a four-sheet bill is
+          two sheets of A4 to cut, not one, and finding that out from the tray is
+          how the second half gets left behind. */}
       <PrintToolbar
-        title={`Bill · ${inv.receiptNo} · ${inv.patient.fullName}${copies.length > 1 ? " · 2 copies" : ""}`}
+        title={`Bill · ${inv.receiptNo} · ${inv.patient.fullName}${copies.length > 1 ? " · 2 copies" : ""}${slices.length > 1 ? ` · ${slices.length} sheets` : ""}`}
       />
       {body}
     </div>

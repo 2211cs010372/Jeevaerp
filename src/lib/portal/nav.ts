@@ -248,6 +248,7 @@ export const PORTALS: Record<string, PortalMeta> = {
       { label: "Dashboard", href: "/", icon: "grid" },
       { label: "Prescriptions", href: "/queue", icon: "file" },
       { label: "Dispense", href: "/dispense", icon: "pill" },
+      { label: "Bills", href: "/bills", icon: "receipt" },
       { label: "Stock", href: "/stock", icon: "grid" },
       { label: "Alerts", href: "/alerts", icon: "alert" },
       { label: "Reorder", href: "/reorder", icon: "trend" },
@@ -265,6 +266,13 @@ export const PORTALS: Record<string, PortalMeta> = {
           { label: "Dashboard", href: "/", icon: "grid", },
           { label: "Prescriptions", href: "/queue", icon: "file", },
           { label: "Dispense", href: "/dispense", icon: "pill", },
+          {
+            // EVERY bill this counter raised, not only the unpaid ones. Dues
+            // below answers "who still owes us"; this answers "what did we
+            // charge them", which is the question a patient comes back with -
+            // and which used to be answerable only from reception's screen.
+            label: "Bills", href: "/bills", icon: "receipt",
+          },
           {
             // An inpatient's medicine leaves unpaid by design. Without a number
             // sitting in the sidebar, nobody remembers to go and collect it.
