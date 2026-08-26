@@ -32,7 +32,13 @@ const instrument = Instrument_Sans({
 
 const plexMono = IBM_Plex_Mono({
   subsets: ["latin"],
-  weight: ["400", "500"],
+  /* 600 and 700 are here for the PRINTED BILL, which sets its figures - batch,
+     HSN, quantity, rate, amount - in mono and wants them semibold so they hold
+     up through a half-empty toner cartridge. Without the real weights the
+     browser synthesises one by smearing the 400, and a faux-bolded mono glyph
+     at 8.5px fills its own counters in and prints as a blot. The bill's Amount
+     column has been asking for 700 and getting exactly that smear. */
+  weight: ["400", "500", "600", "700"],
   variable: "--font-plex-mono",
   display: "swap",
 });

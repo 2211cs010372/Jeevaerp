@@ -106,6 +106,17 @@ const FULL_A4_MM = 278;
 /** Does this bill want a whole sheet rather than half of one? */
 const wantsFullSheet = (inv: Invoice) => inv.source === "PHARMACY" && inv.items.length > 8;
 
+/**
+ * The name the pharmacy counter bills under - see the note at `hospitalName`.
+ *
+ * A literal rather than a HospitalConfig column on purpose, for now: it is a
+ * display name on one counter's bill, not a second GST supplier, and adding a
+ * column means a migration against the live database the hospital is billing on
+ * this afternoon. The moment the pharmacy has its own GSTIN it has to become
+ * that column, and this constant is where that change starts.
+ */
+const PHARMACY_TRADING_NAME = "Jeeva Pharmacy";
+
 const BILL_MONO_CSS = `
   .print-stage {
     --pr-ink: #111111;
@@ -521,7 +532,25 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
    */
   const showBatch = inv.items.some((it) => billItemBatch(it.description) !== null);
 
-  const hospitalName = inv.hospital?.legalName ?? "Jeeva Multispeciality Hospital";
+  /**
+   * ── WHOSE NAME IS ON THE BILL ──
+   *
+   * The pharmacy counter's bill goes out under the pharmacy's own name. It is
+   * the name over the window the patient bought the medicine at, the name they
+   * will come back and ask for, and the name on every paper bill that counter
+   * issued before this system existed - a hospital masthead on a strip of
+   * paracetamol reads like a different document than the one they were handed.
+   *
+   * ONLY THE NAME CHANGES. The address, the phone and above all the GSTIN are
+   * still the hospital's, because those are what the bill is a tax document
+   * ON BEHALF OF. If the pharmacy is ever registered as its own entity - its own
+   * GSTIN, its own drug licence - then this stops being a display name and
+   * becomes a second supplier, which is a HospitalConfig field and a validator,
+   * not a line here. Written as a constant, in one place, so that day is a small
+   * change rather than a search.
+   */
+  const hospitalName = (inv.source === "PHARMACY" ? PHARMACY_TRADING_NAME : inv.hospital?.legalName)
+    ?? inv.hospital?.legalName ?? "Jeeva Multispeciality Hospital";
   const hospitalAddr = inv.hospital
     ? `${inv.hospital.addressLine}, ${inv.hospital.city}, ${inv.hospital.state} – ${inv.hospital.pincode}`
     : "# 1-8-81, Sai Nagar, Beside Swimming Pool, Balasamudram, Hanamkonda, Telangana – 506 001";
@@ -728,7 +757,7 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
                     on a pharmacy bill somebody comes back to check, printed
                     faintest. They are ink now, at the same size as the line
                     they belong to. Nothing on this row is set to whisper. */}
-                <td className="px-1 py-[3px] text-center font-mono text-[8.5px]">{sheet.start + i + 1}</td>
+                <td className="px-1 py-[3px] text-center font-mono text-[8.5px] font-semibold">{sheet.start + i + 1}</td>
                 {/* ── THE MEDICINE'S NAME, A STEP ABOVE EVERYTHING BESIDE IT ──
                     11px semibold against the 9.5px the figures are set in. Every
                     other column on this row is a number that gets CHECKED - a
@@ -738,11 +767,11 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
                     thing on the bill anybody looks for by eye rather than by
                     column, so it is the one thing here allowed to be bigger. */}
                 <td className="px-1.5 py-[3px] text-[11px] font-semibold">{billItemName(it.description)}</td>
-                {showBatch && <td className="px-1 py-[3px] font-mono text-[7.5px]">{billItemBatch(it.description) ?? "—"}</td>}
-                <td className="px-1 py-[3px] font-mono text-[8.5px]">{it.hsnSac ?? "—"}</td>
-                <td className="px-1 py-[3px] text-right font-mono">{it.qty}</td>
-                <td className="px-1 py-[3px] text-right font-mono">{money(it.unitPrice)}</td>
-                <td className="px-1 py-[3px] text-right font-mono text-[8.5px]">{Number(it.gstRatePct) ? `${it.gstRatePct}%` : "—"}</td>
+                {showBatch && <td className="px-1 py-[3px] font-mono text-[7.5px] font-semibold">{billItemBatch(it.description) ?? "—"}</td>}
+                <td className="px-1 py-[3px] font-mono text-[8.5px] font-semibold">{it.hsnSac ?? "—"}</td>
+                <td className="px-1 py-[3px] text-right font-mono font-semibold">{it.qty}</td>
+                <td className="px-1 py-[3px] text-right font-mono font-semibold">{money(it.unitPrice)}</td>
+                <td className="px-1 py-[3px] text-right font-mono text-[8.5px] font-semibold">{Number(it.gstRatePct) ? `${it.gstRatePct}%` : "—"}</td>
                 <td className="px-1.5 py-[3px] text-right font-mono font-bold">{money(it.amount)}</td>
               </tr>
             ))}
