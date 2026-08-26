@@ -92,11 +92,26 @@ const MODE_LABEL: Record<string, string> = {
   CASH: "Cash", UPI: "UPI", CARD: "Card", NETBANKING: "Net banking", INSURANCE: "Insurance", OTHER: "Other",
 };
 
+/**
+ * Ink, neutral - the same ink the counter's invoice and the final IP bill use.
+ *
+ * The shared PRINT_CSS sets `--pr-ink` to #17211e, a green-cast near-black left
+ * over from the house teal. On screen it reads as black; through the office
+ * laser printer a colour cast at that value renders a shade lighter than a true
+ * black, which is why this sheet looked faint beside the bills a family is
+ * handed for the same stay. Scoped here rather than changed in PRINT_CSS,
+ * because the prescription pad shares that stylesheet and is a different
+ * document with a different job.
+ */
+const TAB_MONO_CSS = `
+  .print-stage { --pr-ink: #111111; }
+`;
+
 function F({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
   return (
     <div className="flex gap-1.5 py-[1px] text-[9.5px]">
       <span className="w-[86px] shrink-0 font-semibold">{k}</span>
-      <span className={strong ? "font-bold" : ""}>: {v}</span>
+      <span className={strong ? "font-bold" : "font-semibold"}>: {v}</span>
     </div>
   );
 }
@@ -130,7 +145,7 @@ export function RunningTabSheet() {
 
   return (
     <div className="print-stage">
-      <style>{PRINT_CSS}</style>
+      <style>{PRINT_CSS + TAB_MONO_CSS}</style>
       <PrintToolbar title={`Running tab · ${a.ipNumber}`} />
 
       <div id="print-sheet">
@@ -181,17 +196,17 @@ export function RunningTabSheet() {
               days: s.days, total: s.bedTotal, current: true,
             }]).map((l, i) => (
               <tr key={i}>
-                <td className="py-[3px] pr-1 font-mono text-[8.5px]">{i === 0 ? dt(a.admittedAt) : ""}</td>
-                <td className="py-[3px] pr-1">
+                <td className="py-[3px] pr-1 font-mono text-[8.5px] font-medium">{i === 0 ? dt(a.admittedAt) : ""}</td>
+                <td className="py-[3px] pr-1 font-semibold">
                   Bed · {l.wardName} - {l.bedNo}
                   {/* A ward passed through on the day of a transfer bills
                       nothing - see splitStayDays. Saying so is better than a
                       bare 0 that reads as a mistake. */}
                   {l.days === 0 && <span className="ml-1 text-[8px] uppercase text-[#8a6414]">transferred same day, not charged</span>}
                 </td>
-                <td className="py-[3px] pr-1 text-right font-mono">{l.days}</td>
-                <td className="py-[3px] pr-1 text-right font-mono">{money(l.dailyCharge)}</td>
-                <td className="py-[3px] text-right font-mono">₹{money(l.total)}</td>
+                <td className="py-[3px] pr-1 text-right font-mono font-medium">{l.days}</td>
+                <td className="py-[3px] pr-1 text-right font-mono font-medium">{money(l.dailyCharge)}</td>
+                <td className="py-[3px] text-right font-mono font-medium">₹{money(l.total)}</td>
               </tr>
             ))}
             {/* NOTE: `uncoveredDays` is still on the payload and is still
@@ -206,24 +221,24 @@ export function RunningTabSheet() {
                 both. */}
             {s.nursingApplies && (
               <tr>
-                <td className="py-[3px] pr-1 font-mono text-[8.5px]">{dt(a.admittedAt)}</td>
-                <td className="py-[3px] pr-1">Nursing care</td>
-                <td className="py-[3px] pr-1 text-right font-mono">{s.days}</td>
-                <td className="py-[3px] pr-1 text-right font-mono">{money(s.nursePerDay)}</td>
-                <td className="py-[3px] text-right font-mono">₹{money(s.nurseTotal)}</td>
+                <td className="py-[3px] pr-1 font-mono text-[8.5px] font-medium">{dt(a.admittedAt)}</td>
+                <td className="py-[3px] pr-1 font-semibold">Nursing care</td>
+                <td className="py-[3px] pr-1 text-right font-mono font-medium">{s.days}</td>
+                <td className="py-[3px] pr-1 text-right font-mono font-medium">{money(s.nursePerDay)}</td>
+                <td className="py-[3px] text-right font-mono font-medium">₹{money(s.nurseTotal)}</td>
               </tr>
             )}
             {s.charges.map((c) => (
               <tr key={c.id}>
-                <td className="py-[3px] pr-1 font-mono text-[8.5px]">{dt(c.createdAt)}</td>
+                <td className="py-[3px] pr-1 font-mono text-[8.5px] font-medium">{dt(c.createdAt)}</td>
                 {/* Description only. The staff member who entered the charge
                     is still recorded against it and still shows on the stay
                     screen; a family reading this sheet has no use for the name,
                     and it turned every line into two things to read. */}
-                <td className="py-[3px] pr-1">{c.description}</td>
-                <td className="py-[3px] pr-1 text-right font-mono">{c.qty}</td>
-                <td className="py-[3px] pr-1 text-right font-mono">{money(c.unitPrice)}</td>
-                <td className="py-[3px] text-right font-mono">₹{money(c.amount)}</td>
+                <td className="py-[3px] pr-1 font-semibold">{c.description}</td>
+                <td className="py-[3px] pr-1 text-right font-mono font-medium">{c.qty}</td>
+                <td className="py-[3px] pr-1 text-right font-mono font-medium">{money(c.unitPrice)}</td>
+                <td className="py-[3px] text-right font-mono font-medium">₹{money(c.amount)}</td>
               </tr>
             ))}
             <tr>
@@ -252,13 +267,13 @@ export function RunningTabSheet() {
               <tbody>
                 {s.counterBills.map((b) => (
                   <tr key={b.id}>
-                    <td className="py-[3px] pr-1 font-mono text-[8.5px]">{dt(b.createdAt)}</td>
-                    <td className="py-[3px] pr-1 font-mono text-[8.5px]">{b.receiptNo}</td>
-                    <td className="py-[3px] pr-1">{SOURCE[b.source] ?? b.source}</td>
+                    <td className="py-[3px] pr-1 font-mono text-[8.5px] font-medium">{dt(b.createdAt)}</td>
+                    <td className="py-[3px] pr-1 font-mono text-[8.5px] font-medium">{b.receiptNo}</td>
+                    <td className="py-[3px] pr-1 font-semibold">{SOURCE[b.source] ?? b.source}</td>
                     <td className="py-[3px] pr-1 text-[8.5px] font-bold uppercase">
                       {b.payer === "INSURANCE" ? "On the claim" : b.status === "PART" ? "Part paid" : b.status === "PAID" ? "Paid" : "Due"}
                     </td>
-                    <td className="py-[3px] text-right font-mono">₹{money(b.total)}</td>
+                    <td className="py-[3px] text-right font-mono font-medium">₹{money(b.total)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -282,10 +297,10 @@ export function RunningTabSheet() {
               <tbody>
                 {s.advances.map((x) => (
                   <tr key={x.id}>
-                    <td className="py-[3px] pr-1 font-mono text-[8.5px]">{dt(x.takenAt)}</td>
-                    <td className="py-[3px] pr-1 font-mono text-[8.5px]">{x.receiptNo ?? "-"}</td>
-                    <td className="py-[3px] pr-1">{MODE_LABEL[x.mode] ?? x.mode}</td>
-                    <td className="py-[3px] text-right font-mono">₹{money(x.amount)}</td>
+                    <td className="py-[3px] pr-1 font-mono text-[8.5px] font-medium">{dt(x.takenAt)}</td>
+                    <td className="py-[3px] pr-1 font-mono text-[8.5px] font-medium">{x.receiptNo ?? "-"}</td>
+                    <td className="py-[3px] pr-1 font-semibold">{MODE_LABEL[x.mode] ?? x.mode}</td>
+                    <td className="py-[3px] text-right font-mono font-medium">₹{money(x.amount)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -297,16 +312,16 @@ export function RunningTabSheet() {
         <div className="keep-together mt-3 flex justify-end">
           <table className="w-[260px] text-[10px]">
             <tbody>
-              <tr><td className="py-[2px]">Stay charges</td><td className="py-[2px] text-right font-mono">₹{money(s.grandTotal)}</td></tr>
-              <tr><td className="py-[2px]">Advances received</td><td className="py-[2px] text-right font-mono">− ₹{money(s.advanceTotal)}</td></tr>
+              <tr><td className="py-[2px] font-semibold">Stay charges</td><td className="py-[2px] text-right font-mono font-medium">₹{money(s.grandTotal)}</td></tr>
+              <tr><td className="py-[2px] font-semibold">Advances received</td><td className="py-[2px] text-right font-mono font-medium">− ₹{money(s.advanceTotal)}</td></tr>
               <tr className="border-t border-[#333]">
                 <td className="py-[3px] font-bold">Stay balance</td>
                 <td className="py-[3px] text-right font-mono font-bold">₹{money(s.balance)}</td>
               </tr>
               {Number(s.outstandingTotal) > 0 && (
                 <tr>
-                  <td className="py-[2px] text-[#8a5a1a]">Counter bills still due</td>
-                  <td className="py-[2px] text-right font-mono text-[#8a5a1a]">₹{money(s.outstandingTotal)}</td>
+                  <td className="py-[2px] font-semibold text-[#8a5a1a]">Counter bills still due</td>
+                  <td className="py-[2px] text-right font-mono font-medium text-[#8a5a1a]">₹{money(s.outstandingTotal)}</td>
                 </tr>
               )}
             </tbody>

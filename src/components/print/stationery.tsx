@@ -634,15 +634,16 @@ export function DoctorHead({ doctor, inset = false }: {
           credential: it reads as something to be copied exactly rather than as
           a third qualification. Absent when nobody has typed it yet - a blank
           "Reg." with nothing after it is worse than no line at all. */}
+      
+      <div className={`mt-[3px] font-semibold ${CAPS_DOC}`} style={{ color: "var(--pr-ink)" }}>
+        {doctor.specialization}
+      </div>
       {doctor.registrationNo?.trim() && (
-        <div className="mt-[2px] font-mono text-[11.5px] font-medium tracking-[0.01em]"
+        <div className="mt-[2px] font-mono text-[12.5px] font-medium tracking-[0.01em]"
           style={{ color: "var(--pr-muted)" }}>
           Reg. No. {doctor.registrationNo.trim()}
         </div>
       )}
-      <div className={`mt-[3px] font-semibold ${CAPS_DOC}`} style={{ color: "var(--pr-ink)" }}>
-        {doctor.specialization}
-      </div>
     </div>
   );
   if (!inset) return <div className="mt-2">{body}</div>;
