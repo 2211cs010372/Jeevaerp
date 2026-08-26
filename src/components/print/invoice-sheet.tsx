@@ -151,8 +151,11 @@ const BILL_MONO_CSS = `
   /* The patient block was a tint. A tint is a background too - same driver, same
      disappearing act - so it is a ruled box now. */
   .invoice-soft { background: #fff; border: .5px solid var(--pr-hair); }
+  /* 10.5px keeps the heading a step above the 9.5px lines under it. At the old
+     10px against the old 8px body the gap read clearly; against a 9.5px body it
+     would have been half a point, which is not a hierarchy, just a wobble. */
   .invoice-table th {
-    font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
     color: var(--pr-ink); background: #fff;
     border-top: .8px solid var(--pr-ink); border-bottom: .8px solid var(--pr-ink);
   }
@@ -625,7 +628,11 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
             </div>
           )}
         </div>
-        <table className="invoice-table w-full text-[8px]">
+        {/* 9.5px, up from 8. The item lines are what the bill exists to carry
+            and they were the smallest type on it - smaller than the address in
+            the masthead. A bill that costs a sheet more to print is cheaper
+            than one the patient brings back to the counter to have read out. */}
+        <table className="invoice-table w-full text-[9.5px]">
           <thead>
             <tr className="text-left">
               <th className="w-[18px] px-1 py-[4px] text-center">#</th>
@@ -659,13 +666,23 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
                     the sheet: item 14 is item 14 whichever half-sheet it landed
                     on, which is how a question about it gets answered at the
                     counter three weeks later. */}
-                <td className="px-1 py-[3px] text-center font-mono text-[7px] text-[#3f3f3f]">{sheet.start + i + 1}</td>
+                {/* ── EVERY CELL IN INK, NONE OF THEM SMALLER THAN THE REST ──
+                    The serial, batch, HSN and GST cells used to be #3f3f3f at
+                    7px. Both halves of that were wrong on paper. A mid grey is
+                    a screen colour: through a toner cartridge that is
+                    two-thirds empty it renders lighter than the rule under the
+                    row, and at 7px there is not enough of it on the page to
+                    carry the tone at all - so the batch number, the one thing
+                    on a pharmacy bill somebody comes back to check, printed
+                    faintest. They are ink now, at the same size as the line
+                    they belong to. Nothing on this row is set to whisper. */}
+                <td className="px-1 py-[3px] text-center font-mono text-[8.5px]">{sheet.start + i + 1}</td>
                 <td className="px-1.5 py-[3px] font-medium">{billItemName(it.description)}</td>
-                {showBatch && <td className="px-1 py-[3px] font-mono text-[7px] text-[#3f3f3f]">{billItemBatch(it.description) ?? "—"}</td>}
-                <td className="px-1 py-[3px] font-mono text-[7px] text-[#3f3f3f]">{it.hsnSac ?? "—"}</td>
+                {showBatch && <td className="px-1 py-[3px] font-mono text-[8.5px]">{billItemBatch(it.description) ?? "—"}</td>}
+                <td className="px-1 py-[3px] font-mono text-[8.5px]">{it.hsnSac ?? "—"}</td>
                 <td className="px-1 py-[3px] text-right font-mono">{it.qty}</td>
                 <td className="px-1 py-[3px] text-right font-mono">{money(it.unitPrice)}</td>
-                <td className="px-1 py-[3px] text-right font-mono text-[7px] text-[#3f3f3f]">{Number(it.gstRatePct) ? `${it.gstRatePct}%` : "—"}</td>
+                <td className="px-1 py-[3px] text-right font-mono text-[8.5px]">{Number(it.gstRatePct) ? `${it.gstRatePct}%` : "—"}</td>
                 <td className="px-1.5 py-[3px] text-right font-mono font-bold">{money(it.amount)}</td>
               </tr>
             ))}
