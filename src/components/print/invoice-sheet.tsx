@@ -116,6 +116,27 @@ const BILL_MONO_CSS = `
     --pr-line: #9c9c9c; --pr-hair: #cfcfcf; --pr-muted: #3f3f3f;
   }
   #print-sheet table { border-collapse: collapse; }
+  /**
+   * FIXED, SO A COLUMN IS THE SAME WIDTH ON EVERY SHEET OF THE BILL.
+   *
+   * Under the default auto layout a table's columns are sized from the rows it
+   * actually holds, so each sheet of a paginated bill got its own column widths
+   * - the description column wide on the sheet whose medicines happen to have
+   * short names, narrow on the next. Two things came out of that, and the
+   * second is the serious one:
+   *
+   *   * The columns visibly stepped left and right from sheet to sheet, on a
+   *     document that is meant to read as one table continued.
+   *   * The PACKING measured the wrong heights. It measures rows on a probe
+   *     that holds the whole bill, and those rows were then re-laid out on a
+   *     sheet holding ten of them - at different widths, so wrapping
+   *     differently, so taller. A sheet packed to the paper's exact height
+   *     came out ten pixels over it.
+   *
+   * Fixed layout takes the widths from the header cells alone, which are the
+   * same on every sheet. Description carries no width and takes what is left.
+   */
+  .invoice-table { table-layout: fixed; }
   #print-sheet { box-sizing: border-box; }
   #print-sheet { width: 190mm !important; padding: 0 !important; background: transparent !important; box-shadow: none !important; min-height: 0 !important; }
   .bill-copy {
@@ -439,14 +460,23 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
     const overhead = (rowEls[0].getBoundingClientRect().top - top) + (parseFloat(cs.paddingBottom) || 0);
     const footOf = (kind: string) =>
       Array.from(sheet.querySelectorAll<HTMLElement>(`[data-foot="${kind}"]`))
-        .reduce((s, el) => s + el.offsetHeight + gap, 0);
+        .reduce((s, el) => s + el.getBoundingClientRect().height + gap, 0);
 
-    setPageStarts(billPageStarts(rowEls.map((el) => el.offsetHeight), {
+    /**
+     * getBoundingClientRect, NOT offsetHeight, and the difference is a whole
+     * line on a long bill. offsetHeight is rounded to an integer, and an item
+     * row at this type size measures a fraction over 20px - so every row read
+     * through offsetHeight under-reports by up to a pixel, in the same
+     * direction, and thirty of them under-report by thirty. The sheet then gets
+     * packed with a line more than it holds. Fractional heights simply do not
+     * accumulate an error.
+     */
+    setPageStarts(billPageStarts(rowEls.map((el) => el.getBoundingClientRect().height), {
       paper,
-      // A couple of pixels held back. Row heights are read off a
-      // border-collapse table, where the rows' own heights and the block they
-      // add up to can disagree by a rounding error, and the direction that
-      // error must not go is "one line more than the paper holds".
+      // Two pixels held back for the sub-pixel geometry of a border-collapse
+      // table, where the rows' own heights and the block they add up to can
+      // still disagree slightly. The direction that error must not go is "one
+      // line more than the paper holds".
       overhead: overhead + 2,
       endFoot: footOf("end"),
       contFoot: footOf("cont"),
@@ -580,8 +610,15 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
             {/* Only on a bill that actually runs to more than one sheet. "Page
                 1 of 1" on the ninety-odd percent that don't is a line that
                 answers a question nobody was asking, on the part of the sheet
-                where the bill number lives. */}
-            {sheet.pages > 1 && (
+                where the bill number lives.
+
+                ON THE PROBE IT IS ALWAYS DRAWN, and leaving it out was a real
+                bug rather than a tidiness point. The probe is a single sheet, so
+                `pages > 1` was false and its masthead came out one line SHORTER
+                than every sheet it was measuring for. The packing then handed
+                each real sheet that line's worth of rows too many, and a bill
+                packed to the paper's exact height printed ten pixels past it. */}
+            {(sheet.pages > 1 || sheet.probe) && (
               <>
                 <span className="invoice-meta-label">Page</span>
                 <span className="invoice-meta-value font-mono">{sheet.page + 1} of {sheet.pages}</span>
@@ -635,8 +672,23 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
         <table className="invoice-table w-full text-[9.5px]">
           <thead>
             <tr className="text-left">
-              <th className="w-[18px] px-1 py-[4px] text-center">#</th>
-              <th className="px-1.5 py-[4px]">Description</th>
+              {/* ── THE COLUMN WIDTHS ARE THE HEADINGS' WIDTHS ──
+                  Under the old auto table layout a heading too wide for its
+                  column simply pushed the column wider, so these numbers only
+                  ever had to suit the VALUES. Fixed layout took that away:
+                  HSN/SAC wanted 52px in a 37px slot and Qty 24px in 19px, and
+                  a heading with nowhere to go does not wrap - it OVERFLOWS.
+                  HSN/SAC ran eleven pixels into the Qty column and Qty into
+                  Rate, so the labels sat closer to the wrong column than to
+                  their own and the gaps along the band came out uneven. Nothing
+                  about the row's height gave it away, which is why it looked
+                  like spacing rather than a width that was simply too small.
+                  Each width now clears its heading AND its widest value
+                  (a five-figure rupee amount, an eight-digit HSN code) with a
+                  few pixels to spare. Description carries no width and takes
+                  whatever is left, so widening one of these narrows it. */}
+              <th className="w-[18px] px-1 py-[5px] text-center">#</th>
+              <th className="px-1.5 py-[5px]">Description</th>
               {/* GATED TOGETHER WITH ITS CELL BELOW, and they must stay that
                   way. The header was conditional and the body cell was not, so
                   on every bill with no batch on it - a lab bill, an OP consult,
@@ -647,12 +699,12 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
                   off the end of the ruled table into an eighth column that had
                   no heading at all. The bill added up and every figure on it
                   was against the wrong word. */}
-              {showBatch && <th className="w-[58px] px-1 py-[4px]">Batch</th>}
-              <th className="w-[45px] px-1 py-[4px]">HSN/SAC</th>
-              <th className="w-[27px] px-1 py-[4px] text-right">Qty</th>
-              <th className="w-[56px] px-1 py-[4px] text-right">Rate</th>
-              <th className="w-[32px] px-1 py-[4px] text-right">GST</th>
-              <th className="w-[70px] px-1.5 py-[4px] text-right">Amount</th>
+              {showBatch && <th className="w-[58px] px-1 py-[5px]">Batch</th>}
+              <th className="w-[64px] px-1 py-[5px]">HSN/SAC</th>
+              <th className="w-[34px] px-1 py-[5px] text-right">Qty</th>
+              <th className="w-[60px] px-1 py-[5px] text-right">Rate</th>
+              <th className="w-[34px] px-1 py-[5px] text-right">GST</th>
+              <th className="w-[72px] px-1.5 py-[5px] text-right">Amount</th>
             </tr>
           </thead>
           <tbody>
@@ -677,8 +729,16 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
                     faintest. They are ink now, at the same size as the line
                     they belong to. Nothing on this row is set to whisper. */}
                 <td className="px-1 py-[3px] text-center font-mono text-[8.5px]">{sheet.start + i + 1}</td>
-                <td className="px-1.5 py-[3px] font-medium">{billItemName(it.description)}</td>
-                {showBatch && <td className="px-1 py-[3px] font-mono text-[8.5px]">{billItemBatch(it.description) ?? "—"}</td>}
+                {/* ── THE MEDICINE'S NAME, A STEP ABOVE EVERYTHING BESIDE IT ──
+                    11px semibold against the 9.5px the figures are set in. Every
+                    other column on this row is a number that gets CHECKED - a
+                    rate, a quantity, a GST slab - and those are set alike
+                    because they are read alike, straight down the column. The
+                    name is the one thing on the row read ACROSS, and the only
+                    thing on the bill anybody looks for by eye rather than by
+                    column, so it is the one thing here allowed to be bigger. */}
+                <td className="px-1.5 py-[3px] text-[11px] font-semibold">{billItemName(it.description)}</td>
+                {showBatch && <td className="px-1 py-[3px] font-mono text-[7.5px]">{billItemBatch(it.description) ?? "—"}</td>}
                 <td className="px-1 py-[3px] font-mono text-[8.5px]">{it.hsnSac ?? "—"}</td>
                 <td className="px-1 py-[3px] text-right font-mono">{it.qty}</td>
                 <td className="px-1 py-[3px] text-right font-mono">{money(it.unitPrice)}</td>
