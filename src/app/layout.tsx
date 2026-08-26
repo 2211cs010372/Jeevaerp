@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Bricolage_Grotesque, Fraunces, Geist, Geist_Mono, IBM_Plex_Mono, Instrument_Sans } from "next/font/google";
+import { Bricolage_Grotesque, DM_Mono, Fraunces, Geist, Geist_Mono, Instrument_Sans } from "next/font/google";
 import "./globals.css";
 import { SITE_URL } from "@/lib/site";
 
@@ -30,16 +30,16 @@ const instrument = Instrument_Sans({
   display: "swap",
 });
 
-const plexMono = IBM_Plex_Mono({
+const dmMono = DM_Mono({
   subsets: ["latin"],
-  /* 600 and 700 are here for the PRINTED BILL, which sets its figures - batch,
-     HSN, quantity, rate, amount - in mono and wants them semibold so they hold
-     up through a half-empty toner cartridge. Without the real weights the
-     browser synthesises one by smearing the 400, and a faux-bolded mono glyph
-     at 8.5px fills its own counters in and prints as a blot. The bill's Amount
-     column has been asking for 700 and getting exactly that smear. */
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-plex-mono",
+  /* DM Mono ships THREE weights and no more: 300, 400, 500. There is no 600 and
+     no 700 - Google Fonts answers a request for them with a 200 and simply
+     omits them, so nothing fails loudly and the browser quietly synthesises the
+     missing weight by smearing the 500. That matters here because the printed
+     bill sets its figures in mono and asks for 600 (and 700 on the Amount
+     column); see the note in detailed-bill-sheet / invoice-sheet. */
+  weight: ["300", "400", "500"],
+  variable: "--font-dm-mono",
   display: "swap",
 });
 
@@ -107,7 +107,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${bricolage.variable} ${instrument.variable} ${plexMono.variable} ${fraunces.variable} ${geist.variable} ${geistMono.variable}`}
+      className={`${bricolage.variable} ${instrument.variable} ${dmMono.variable} ${fraunces.variable} ${geist.variable} ${geistMono.variable}`}
     >
       <body>{children}</body>
     </html>

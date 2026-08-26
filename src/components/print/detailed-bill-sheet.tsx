@@ -182,7 +182,14 @@ function groupLinesByDate(lines: BillLine[]): [string, BillLine[]][] {
 function BillRow({ l, withDate, indent }: { l: BillLine; withDate?: boolean; indent?: boolean }) {
   return (
     <tr>
-      <td className={`py-[3px] pr-1 ${indent ? "pl-3" : ""}`}>
+      {/* ── THE LINE ITSELF IS SEMIBOLD, SAME AS THE COUNTER'S OWN BILL ──
+          These four cells are what the sheet exists to carry, and they were set
+          at 400 against section headings at 700 and a body size of 9.7px - so
+          the ONE part of the page a family reads line by line, and an assessor
+          checks against a policy, was the lightest thing on it. Semibold is the
+          weight the pharmacy invoice now sets its items in, and the two
+          documents are read side by side for the same stay. */}
+      <td className={`py-[3px] pr-1 font-semibold ${indent ? "pl-3" : ""}`}>
         {withDate && l.date && <span className="font-mono text-[8.5px]">{dt(l.date)} - </span>}
         {l.description}
         {/* NO PER-LINE STATUS MARKERS AT ALL - neither paid/due nor
@@ -205,11 +212,11 @@ function BillRow({ l, withDate, indent }: { l: BillLine; withDate?: boolean; ind
             The stay screen's running tab is where a desk needs any of this line
             by line, and that is where it still is. */}
       </td>
-      <td className="py-[3px] pr-1 text-right font-mono">{l.qty}</td>
+      <td className="py-[3px] pr-1 text-right font-mono font-medium">{l.qty}</td>
       {/* An unpriced draft prints a dash, never 0.00 - a zero in a money column
           reads as "free", which is a different claim from "not priced yet". */}
-      <td className="py-[3px] pr-1 text-right font-mono">{l.draft && !l.priced ? "—" : money(l.rate)}</td>
-      <td className="py-[3px] text-right font-mono">{l.draft && !l.priced ? "—" : `₹${money(l.amount)}`}</td>
+      <td className="py-[3px] pr-1 text-right font-mono font-medium">{l.draft && !l.priced ? "—" : money(l.rate)}</td>
+      <td className="py-[3px] text-right font-mono font-medium">{l.draft && !l.priced ? "—" : `₹${money(l.amount)}`}</td>
     </tr>
   );
 }
@@ -582,13 +589,28 @@ export function DetailedBillSheet() {
   );
 }
 
-/** One "Label : value" row inside the header box. */
+/**
+ * One "Label : value" row inside the header box - the patient block and the
+ * doctor block are both built out of these.
+ *
+ * THE VALUE IS SEMIBOLD, THE LABEL ALREADY WAS. That pairing was the wrong way
+ * round for what a reader does with this box: the labels are furniture, the same
+ * fourteen words on every bill the hospital has ever issued, while the values -
+ * the MR number, the room, the admit date, the consultant's registration number
+ * - are the fields an assessor checks against a policy and a family checks
+ * against their own paperwork. Setting the constant half at 600 and the
+ * variable half at 400 made the page emphasise the part nobody reads.
+ *
+ * `strong` stays a step above at 700, so the three fields that identify the
+ * document at a glance - patient name, bill number, consultant - still lift off
+ * the block rather than flattening into it.
+ */
 function F({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
   return (
     <div className="flex gap-1 py-[1.5px] text-[9.5px] leading-tight">
       <span className="w-[104px] shrink-0 font-semibold">{k}</span>
       <span className="shrink-0">:</span>
-      <span className={strong ? "font-bold" : ""}>{v}</span>
+      <span className={strong ? "font-bold" : "font-semibold"}>{v}</span>
     </div>
   );
 }
@@ -629,7 +651,14 @@ function Th({ children, w, right }: { children?: React.ReactNode; w: string; rig
  * the bill number, and the line table's column headings.
  */
 const CSS = (onStationery: boolean) => `
-  .print-stage { --pr-primary: #0b5f55; --pr-ink: #17211e; --pr-line: #b9c4c0; }
+  /* INK IS NEUTRAL, AND IT IS THE SAME INK THE COUNTER'S BILL USES.
+     #17211e is a green-cast near-black - it was the house teal's darkest step,
+     and on a screen it reads as black. Through the office laser printer it does
+     not: a colour cast at that value renders as a washed grey a shade lighter
+     than a true black, which is why this sheet's lines looked faint beside the
+     pharmacy invoice for the same stay. #111111 is one colour, prints black on
+     every device, and photocopies - which is what an insurer usually receives. */
+  .print-stage { --pr-primary: #0b5f55; --pr-ink: #111111; --pr-line: #b9c4c0; }
   .print-stage { background: #e8e6e1; min-height: 100vh; padding: 24px 12px 64px; }
 
   #print-sheet {

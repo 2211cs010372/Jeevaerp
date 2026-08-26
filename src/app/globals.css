@@ -51,7 +51,7 @@
     --color-muted: #5a6478;
     --font-display: var(--font-bricolage);
     --font-sans: var(--font-instrument);
-    --font-mono: var(--font-plex-mono);
+    --font-mono: var(--font-dm-mono);
 }
 
 @layer base {

@@ -162,7 +162,7 @@ function OpSlip() {
         <rect x="8" y="8" width="248" height="116" rx="7" fill="var(--p-surface)" stroke="var(--p-border-strong)" strokeWidth="1.2" />
         {/* letterhead band */}
         <path d="M8 15a7 7 0 0 1 7-7h234a7 7 0 0 1 7 7v13H8z" fill="var(--p-teal)" opacity="0.10" />
-        <text x="20" y="23" fontSize="8.5" fontFamily="var(--font-plex-mono, monospace)" letterSpacing="1.6" fill="var(--p-teal)">JEEVA · OP SLIP</text>
+        <text x="20" y="23" fontSize="8.5" fontFamily="var(--font-dm-mono, monospace)" letterSpacing="1.6" fill="var(--p-teal)">JEEVA · OP SLIP</text>
         {/* ruled detail lines */}
         <g stroke="var(--p-border)" strokeWidth="1.1" strokeLinecap="round">
           <path d="M20 44h96M20 56h74" />
@@ -171,8 +171,8 @@ function OpSlip() {
         {/* the marked line */}
         <rect x="14" y="66" width="176" height="22" rx="5" fill={SAFFRON} opacity="0.13" />
         <rect x="14.6" y="66.6" width="174.8" height="20.8" rx="4.4" fill="none" stroke={SAFFRON} strokeWidth="1.2" />
-        <text x="22" y="81" fontSize="9" fontFamily="var(--font-plex-mono, monospace)" letterSpacing="1.2" fill="var(--p-muted)">UHID</text>
-        <text x="60" y="81" fontSize="11" fontFamily="var(--font-plex-mono, monospace)" letterSpacing="1.1" fontWeight="700" fill="var(--p-ink)">JMH2026OP00123</text>
+        <text x="22" y="81" fontSize="9" fontFamily="var(--font-dm-mono, monospace)" letterSpacing="1.2" fill="var(--p-muted)">UHID</text>
+        <text x="60" y="81" fontSize="11" fontFamily="var(--font-dm-mono, monospace)" letterSpacing="1.1" fontWeight="700" fill="var(--p-ink)">JMH2026OP00123</text>
         {/* pointer across to the caption */}
         <path d="M192 77h44" fill="none" stroke={SAFFRON} strokeWidth="1.3" strokeDasharray="3 3" />
         <circle cx="238" cy="77" r="2.4" fill={SAFFRON} />

@@ -757,7 +757,7 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
                     on a pharmacy bill somebody comes back to check, printed
                     faintest. They are ink now, at the same size as the line
                     they belong to. Nothing on this row is set to whisper. */}
-                <td className="px-1 py-[3px] text-center font-mono text-[8.5px] font-semibold">{sheet.start + i + 1}</td>
+                <td className="px-1 py-[3px] text-center font-mono text-[8.5px] font-medium">{sheet.start + i + 1}</td>
                 {/* ── THE MEDICINE'S NAME, A STEP ABOVE EVERYTHING BESIDE IT ──
                     11px semibold against the 9.5px the figures are set in. Every
                     other column on this row is a number that gets CHECKED - a
@@ -767,12 +767,12 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
                     thing on the bill anybody looks for by eye rather than by
                     column, so it is the one thing here allowed to be bigger. */}
                 <td className="px-1.5 py-[3px] text-[11px] font-semibold">{billItemName(it.description)}</td>
-                {showBatch && <td className="px-1 py-[3px] font-mono text-[7.5px] font-semibold">{billItemBatch(it.description) ?? "—"}</td>}
-                <td className="px-1 py-[3px] font-mono text-[8.5px] font-semibold">{it.hsnSac ?? "—"}</td>
-                <td className="px-1 py-[3px] text-right font-mono font-semibold">{it.qty}</td>
-                <td className="px-1 py-[3px] text-right font-mono font-semibold">{money(it.unitPrice)}</td>
-                <td className="px-1 py-[3px] text-right font-mono text-[8.5px] font-semibold">{Number(it.gstRatePct) ? `${it.gstRatePct}%` : "—"}</td>
-                <td className="px-1.5 py-[3px] text-right font-mono font-bold">{money(it.amount)}</td>
+                {showBatch && <td className="px-1 py-[3px] font-mono text-[7.5px] font-medium">{billItemBatch(it.description) ?? "—"}</td>}
+                <td className="px-1 py-[3px] font-mono text-[8.5px] font-medium">{it.hsnSac ?? "—"}</td>
+                <td className="px-1 py-[3px] text-right font-mono font-medium">{it.qty}</td>
+                <td className="px-1 py-[3px] text-right font-mono font-medium">{money(it.unitPrice)}</td>
+                <td className="px-1 py-[3px] text-right font-mono text-[8.5px] font-medium">{Number(it.gstRatePct) ? `${it.gstRatePct}%` : "—"}</td>
+                <td className="px-1.5 py-[3px] text-right font-mono font-medium">{money(it.amount)}</td>
               </tr>
             ))}
           </tbody>
