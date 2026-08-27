@@ -6,21 +6,32 @@ import JsBarcode from "jsbarcode";
 import { api, ApiClientError } from "@/lib/api-client";
 import { amountInWords } from "@/lib/amount-words";
 import { bedLabel } from "@/lib/beds";
-import { INVOICE_PRINT_CSS, PrintToolbar, BillHead, type HospitalInfo } from "@/components/print/stationery";
+import { PrintToolbar, type HospitalInfo } from "@/components/print/stationery";
+import {
+  INVOICE_SHEET_CSS, BillLetterhead, InvoiceIdRow, MetaInline, Trow, TotalRow,
+} from "@/components/print/invoice-sheet";
 
 /**
  * The IPD advance slip - what the family walks away holding.
  *
- * It is NOT a bill, and the layout works hard to say so. No GST split, no HSN,
- * no line items, and the words "ADVANCE / DEPOSIT RECEIPT" where the invoice
- * says "Tax Invoice". A deposit is money the hospital HOLDS; it is not a supply
- * and carries no tax. The tax document is the discharge bill, where this exact
- * amount comes back as a credit - stated on the slip in plain language, because
- * a family handed a piece of paper with a big number on it will otherwise read
- * it as their final bill and be shocked at discharge.
+ * THE SAME DOCUMENT AS A LAB OR PHARMACY BILL, in every respect except what it
+ * is allowed to claim. Same letterhead, same meta strip, same patient block,
+ * same ruled particulars table, same totals block on the right, same stylesheet
+ * (INVOICE_SHEET_CSS) - so a family handed a deposit slip at admission and a
+ * pharmacy bill on the ward is in no doubt the two came off the same counter.
+ * Families ask for "a proper bill" for a deposit and they are right to: they
+ * have handed over real money, and a slip that looks unlike every other piece
+ * of paper the hospital issues does not read as a document anybody would accept
+ * back at discharge.
  *
- * Same A5 stationery and text masthead as InvoiceSheet, so the two documents
- * are recognisably from the same counter.
+ * WHAT IT MUST NOT BORROW is the tax wording. A deposit is money the hospital
+ * HOLDS; it is not a supply, so no GST split, no HSN, no tax-invoice heading, no
+ * e-invoice QR. The masthead says "Advance Receipt" where a bill says "Tax
+ * Invoice", and the band lower down says so in as many words - because a family
+ * handed a piece of paper with a big number on it will otherwise read it as
+ * their final bill and be shocked at discharge.
+ *
+ * AND ITS TOTAL IS ITS OWN AMOUNT. See the totals block.
  */
 
 interface Data {
@@ -39,18 +50,6 @@ interface Data {
    *  "held earlier" on an earlier slip. */
   priorAdvance?: string;
 }
-
-/** The invoice's ruled-table look, scoped to this sheet so the two documents
- *  read as coming off the same counter without sharing a stylesheet. */
-const ADV_TABLE_CSS = `
-  #print-sheet .adv-section-title { font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--pr-ink); }
-  #print-sheet .adv-table { border-collapse: collapse; }
-  #print-sheet .adv-table th {
-    border-top: .8px solid var(--pr-ink); border-bottom: .8px solid var(--pr-ink);
-    font-weight: 800; text-transform: uppercase; letter-spacing: .05em; font-size: 8px; color: var(--pr-ink);
-  }
-  #print-sheet .adv-table td { border-bottom: .4px solid var(--pr-line); }
-`;
 
 const money = (v: string | number) => `₹${Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const GENDER: Record<string, string> = { MALE: "M", FEMALE: "F", OTHER: "O" };
@@ -77,7 +76,7 @@ export function AdvanceReceipt() {
     try {
       JsBarcode(barcodeRef.current, d.advance.receiptNo, {
         format: "CODE128", displayValue: false, height: 26, width: 1.1,
-        margin: 0, background: "transparent", lineColor: "#17211e",
+        margin: 0, background: "transparent", lineColor: "#111111",
       });
     } catch { /* non-encodable number - barcode simply omitted */ }
   }, [d]);
@@ -96,161 +95,160 @@ export function AdvanceReceipt() {
     d.priorAdvance ?? (Math.round((Number(d.totalAdvance) - amount) * 100) / 100),
   ));
 
-  const Meta = ({ k, v }: { k: string; v: string }) => (
-    <div className="flex items-baseline gap-1.5">
-      <span className="shrink-0 whitespace-nowrap text-[8px] font-bold uppercase tracking-wide text-[#57655f]">{k}</span>
-      <span className="truncate font-mono text-[10px] font-medium text-[var(--pr-ink)]">{v}</span>
-    </div>
-  );
+  const hospitalName = d.hospital?.legalName ?? "Jeeva Multispeciality Hospital";
+  const hospitalAddr = d.hospital
+    ? `${d.hospital.addressLine}, ${d.hospital.city}, ${d.hospital.state} – ${d.hospital.pincode}`
+    : "# 1-8-81, Sai Nagar, Beside Swimming Pool, Balasamudram, Hanamkonda, Telangana – 506 001";
 
   return (
     <div className="print-stage">
-      <style dangerouslySetInnerHTML={{ __html: INVOICE_PRINT_CSS + ADV_TABLE_CSS }} />
+      <style dangerouslySetInnerHTML={{ __html: INVOICE_SHEET_CSS }} />
       <PrintToolbar title={`Advance · ${d.advance.receiptNo ?? d.admission.ipNumber} · ${d.patient.fullName}`} />
 
       <div id="print-sheet">
-        <BillHead hospital={d.hospital} />
+        {/* THE BILL'S SHEET, not just its blocks. BILL_MONO_CSS strips the page
+            container back to a transparent 190mm column and hands the white
+            ground, the 6mm margins and the half-A4 height to `.bill-copy`.
+            Without this wrapper the slip would print edge-to-edge on nothing,
+            at whatever height its content happened to reach - and a deposit
+            receipt half the depth of the bill beside it in the same file is
+            exactly the mismatch this change exists to remove. */}
+        <div className="bill-copy flex flex-col gap-[5px]">
+          {/* The bill's letterhead, with the one word that changes. "Advance
+              Receipt", never "Tax Invoice" - see the note at the top of the file. */}
+          <BillLetterhead
+            name={hospitalName}
+            address={hospitalAddr}
+            gstin={d.hospital?.gstin ?? null}
+            phone={d.hospital?.phone ?? "9704691308"}
+            logoDataUrl={d.hospital?.logoDataUrl ?? null}
+            title="Advance Receipt"
+            chip="Original · Patient copy"
+          />
 
-        {/* title + barcode - the word ADVANCE does the heavy lifting here */}
-        <div className="keep-together rule mt-1 flex items-start justify-between gap-4 pb-0.5">
-          <div>
-            <p className="text-[9px] font-extrabold uppercase tracking-[0.05em]" style={{ color: "var(--pr-primary)" }}>
-              Advance / Deposit Receipt
-              <span className="ml-1 font-semibold text-[#57655f]">(Original)</span>
-            </p>
-            <p className="mt-0.5 text-[8px] font-semibold uppercase tracking-wide text-[#57655f]">
-              Inpatient admission · not a tax invoice
-            </p>
+          {/* The bill's meta strip: one line, right-aligned, under the letterhead.
+              Pre-receipt rows print an honest blank rather than a made-up number. */}
+          <div className="flex flex-wrap items-baseline justify-end gap-x-4 py-1">
+            <MetaInline k="Receipt No" v={d.advance.receiptNo ?? "Not numbered"} mono />
+            <MetaInline k="IP No" v={d.admission.ipNumber} mono />
+            <MetaInline k="Date" v={dateTime(d.advance.takenAt)} />
           </div>
-          <svg ref={barcodeRef} className="h-[26px] w-[120px]" aria-label={`Barcode ${d.advance.receiptNo ?? ""}`} />
-        </div>
 
-        <div className="keep-together mt-2 grid grid-cols-3 gap-x-6 gap-y-0.5">
-          {/* Pre-receipt rows print an honest blank rather than a made-up number. */}
-          <Meta k="Receipt No" v={d.advance.receiptNo ?? "Not numbered"} />
-          <Meta k="IP No" v={d.admission.ipNumber} />
-          <Meta k="Received" v={dateTime(d.advance.takenAt)} />
-        </div>
-
-        <div className="keep-together mt-2 grid grid-cols-[2fr_2fr] gap-x-6 py-1.5">
-          <div className="space-y-0.5">
-            <Meta k="Patient" v={d.patient.fullName} />
-            <Meta k="UHID" v={d.patient.displayId} />
-            <Meta k="Address" v={d.patient.address || "-"} />
-          </div>
-          <div className="space-y-0.5">
-            <Meta k="Age/Sex" v={ageSex} />
-            <Meta k="Phone" v={d.patient.phone} />
-            <Meta k="Ward / Bed" v={bedLabel(d.admission.ward, d.admission.bedNo)} />
-          </div>
-        </div>
-
-        {/* ── PARTICULARS, laid out as a bill ──────────────────────────────
-            Families ask for "a proper bill" for a deposit, and they are right
-            to: they have handed over real money and a highlighted band with one
-            number on it does not read as a document anybody would accept back.
-            So this takes the invoice's shape - a ruled particulars table and a
-            totals block in the same place on the page.
-
-            What it does NOT take is the invoice's TITLE. A deposit is money the
-            hospital holds, not a supply, so it carries no GST and there is no
-            HSN, no CGST/SGST split and no "Tax Invoice" anywhere on it. Dressing
-            a deposit as a tax invoice would be a false tax document, and the
-            family would be holding two invoices for one treatment. The layout
-            is the bill's; the wording stays honest. */}
-        <div className="keep-together mt-2.5">
-          <div className="adv-section-title mb-[3px]">Particulars</div>
-          <table className="adv-table w-full text-[9px]">
-            <thead>
-              <tr className="text-left">
-                <th className="w-[20px] px-1 py-[4px] text-center">#</th>
-                <th className="px-1.5 py-[4px]">Description</th>
-                <th className="w-[70px] px-1 py-[4px]">Mode</th>
-                <th className="w-[80px] px-1.5 py-[4px] text-right">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="align-top">
-                <td className="px-1 py-[4px] text-center font-mono text-[8px] text-[#3f3f3f]">1</td>
-                <td className="px-1.5 py-[4px] font-medium">
-                  Advance received towards inpatient treatment
-                  <div className="mt-[1px] text-[8px] font-normal text-[#57655f]">
-                    Under {d.admission.doctorName}
-                    {d.admission.doctorRegNo?.trim() && ` (Reg. No. ${d.admission.doctorRegNo.trim()})`}
-                    {" · "}admitted {dateTime(d.admission.admittedAt)}
-                    {d.advance.reference ? ` · ref ${d.advance.reference}` : ""}
-                  </div>
-                </td>
-                <td className="px-1 py-[4px] font-mono text-[8px] text-[#3f3f3f]">
-                  {MODE_LABEL[d.advance.mode] ?? d.advance.mode}
-                </td>
-                <td className="px-1.5 py-[4px] text-right font-mono font-bold">{money(amount)}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        {/* Totals, right-aligned where a bill puts them. */}
-        <div className="keep-together mt-2 grid grid-cols-[1fr_190px] gap-x-6">
-          <div className="self-end">
-            <p className="text-[8px] font-bold uppercase tracking-wide text-[#3c4a45]">Rupees</p>
-            <p className="text-[9.5px] font-semibold text-[var(--pr-ink)]">{amountInWords(amount)}</p>
-            <div className="mt-1.5 space-y-0.5">
-              <Meta k="Received by" v={d.advance.receivedBy} />
+          {/* Patient / visit information - the bill's block, with the ward added.
+              A deposit is held against a bed, and the bed is what the family and
+              the discharge counter both look for first. */}
+          <div className="invoice-soft rounded-[2px] px-[5px] py-[4px]">
+            <div className="invoice-section-label mb-[3px]">Patient &amp; Admission Details</div>
+            <div className="grid grid-cols-2 gap-x-6">
+              <div className="grid grid-cols-[72px_6px_1fr] items-baseline">
+                <InvoiceIdRow k="Patient Name" v={d.patient.fullName} />
+                <InvoiceIdRow k="Age / Sex" v={ageSex} />
+                <InvoiceIdRow k="UHID" v={d.patient.displayId} mono />
+              </div>
+              <div className="grid grid-cols-[72px_6px_1fr] items-baseline">
+                <InvoiceIdRow k="Mobile" v={d.patient.phone} mono />
+                <InvoiceIdRow k="Ward / Bed" v={bedLabel(d.admission.ward, d.admission.bedNo)} />
+                <InvoiceIdRow k="Address" v={d.patient.address || "-"} />
+              </div>
             </div>
           </div>
-          {/* THIS RECEIPT TOTALS ITS OWN AMOUNT, the way a bill does.
-              It used to total the whole stay's deposits, so a family that paid
-              ₹8,000 and later ₹20,000 held two slips both headlining ₹28,000 -
-              neither of which matched the money handed over for it. The running
-              figure is real and worth printing, but it is a note further down,
-              not this document's value. */}
-          <table className="w-full text-[9px]">
-            <tbody>
-              <tr>
-                <td className="py-[2px] text-[#3c4a45]">Advance received</td>
-                <td className="py-[2px] text-right font-mono">{money(amount)}</td>
-              </tr>
-              <tr className="border-t-2" style={{ borderColor: "var(--pr-primary)" }}>
-                <td className="pt-[3px] text-[9.5px] font-extrabold uppercase tracking-wide" style={{ color: "var(--pr-primary)" }}>
-                  Total
-                </td>
-                <td className="pt-[3px] text-right font-mono text-[12px] font-extrabold" style={{ color: "var(--pr-primary)" }}>
-                  {money(amount)}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
 
-        {/* The sentence that stops this slip being mistaken for the final bill. */}
-        <div className="keep-together mt-3 rounded-sm border px-2.5 py-2 text-[9px] leading-relaxed" style={{ borderColor: "var(--pr-line)" }}>
-          <p className="font-bold uppercase tracking-wide text-[#3c4a45]">This is not a bill</p>
-          <p className="mt-0.5 text-[#3c4a45]">
-            The amount above is a deposit held against this admission. It is deducted in full from the final
-            bill raised at discharge. If the treatment costs less than the advance, the difference is refunded -
-            it is not retained by the hospital. Please produce this receipt at the billing counter on discharge.
-          </p>
-          {/* Only when an earlier deposit exists. Prose, below the totals and
-              outside them, so it can inform the discharge counter without ever
-              being read as what was paid for THIS slip. */}
-          {priorHeld > 0 && (
-            <p className="mt-1 text-[#3c4a45]">
-              <b>Earlier deposits on this admission:</b> {money(priorHeld)}. Including this receipt,{" "}
-              {money(d.totalAdvance)} is held against {d.admission.ipNumber}. Each deposit has its own
-              receipt - please bring all of them.
+          {/* ── PARTICULARS, in the bill's ruled table ────────────────────────
+              One line, because a deposit is one thing. The columns a bill uses for
+              HSN and GST are absent rather than blank: an empty tax column on a
+              document that carries no tax invites the reading it exists to
+              prevent. */}
+          <div className="mt-[5px]">
+            <div className="invoice-section-title mb-[3px]">Advance Particulars</div>
+            <table className="invoice-table w-full text-[9.5px]">
+              <thead>
+                <tr className="text-left">
+                  <th className="w-[34px] px-1 py-[5px] text-center">S.No</th>
+                  <th className="px-1.5 py-[5px]">Description</th>
+                  <th className="w-[74px] px-1 py-[5px]">Mode</th>
+                  <th className="w-[88px] px-1.5 py-[5px] text-right">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="align-top">
+                  <td className="px-1 py-[5px] text-center font-mono text-[9px]">1</td>
+                  <td className="px-1.5 py-[5px] text-[11px] font-medium">
+                    Advance received towards inpatient treatment
+                    <div className="mt-[1px] text-[8px] font-normal text-[#3f3f3f]">
+                      Under {d.admission.doctorName}
+                      {d.admission.doctorRegNo?.trim() && ` (Reg. No. ${d.admission.doctorRegNo.trim()})`}
+                      {" · "}admitted {dateTime(d.admission.admittedAt)}
+                      {d.advance.reference ? ` · ref ${d.advance.reference}` : ""}
+                    </div>
+                  </td>
+                  <td className="px-1 py-[5px] text-[10px]">{MODE_LABEL[d.advance.mode] ?? d.advance.mode}</td>
+                  <td className="px-1.5 py-[5px] text-right font-mono text-[10px] font-bold">{money(amount)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Totals, where the bill puts them.
+
+              THIS RECEIPT TOTALS ITS OWN AMOUNT. It used to total the whole stay's
+              deposits, so a family that paid ₹8,000 and later ₹20,000 held two
+              slips both headlining ₹28,000 - and on the same page the amount in
+              words said something different. The running figure is real and worth
+              printing, but it is a note below, not this document's value. */}
+          <div className="mt-[6px] grid grid-cols-[1fr_200px] gap-x-6">
+            <div className="self-end">
+              <div className="invoice-section-label mb-[2px]">Amount in words</div>
+              <p className="text-[9.5px] font-semibold" style={{ color: "var(--pr-ink)" }}>{amountInWords(amount)}</p>
+              <div className="mt-[5px] flex flex-wrap items-baseline gap-x-4">
+                <MetaInline k="Received by" v={d.advance.receivedBy} />
+              </div>
+            </div>
+            <div>
+              <table className="w-full text-[9px]">
+                <tbody>
+                  <Trow k="Advance received" v={money(amount)} />
+                  <TotalRow k="Total" v={money(amount)} />
+                </tbody>
+              </table>
+              <div className="mt-[3px] flex justify-between text-[6px] text-[#3f3f3f]">
+                <span>Payment status</span>
+                <span className="font-bold uppercase" style={{ color: "var(--pr-ink)" }}>RECEIVED</span>
+              </div>
+            </div>
+          </div>
+
+          {/* The band that stops this slip being mistaken for the final bill. */}
+          <div className="invoice-soft mt-[6px] rounded-[2px] px-[5px] py-[4px] text-[7.5px] leading-relaxed">
+            <div className="invoice-section-label mb-[2px]">This is not a bill</div>
+            <p className="text-[#3f3f3f]">
+              The amount above is a deposit held against this admission. It is deducted in full from the final
+              bill raised at discharge. If the treatment costs less than the advance, the difference is refunded -
+              it is not retained by the hospital. Please produce this receipt at the billing counter on discharge.
             </p>
-          )}
-        </div>
+            {/* Only when an earlier deposit exists. Prose, outside the totals, so
+                it can inform the discharge counter without ever being read as what
+                was paid for THIS slip. */}
+            {priorHeld > 0 && (
+              <p className="mt-[3px] text-[#3f3f3f]">
+                <b>Earlier deposits on this admission:</b> {money(priorHeld)}. Including this receipt,{" "}
+                {money(d.totalAdvance)} is held against {d.admission.ipNumber}. Each deposit has its own
+                receipt - please bring all of them.
+              </p>
+            )}
+          </div>
 
-        <div className="keep-together mt-6 flex items-end justify-between">
-          <p className="text-[8px] text-[#6b7772]">
-            Computer-generated receipt for {d.admission.ipNumber}. Valid without signature.
-          </p>
-          <div className="text-center">
-            <div className="mx-auto w-[150px] border-b" style={{ borderColor: "var(--pr-ink)" }} />
-            <div className="mt-1 text-[9px] font-semibold">Cashier / Front desk</div>
-            <div className="text-[8px] text-[#57655f]">{d.hospital?.legalName ?? "Jeeva Multispeciality Hospital"}</div>
+          {/* The bill's foot, plus the barcode this document is looked up by. */}
+          <div className="mt-[6px] flex items-end justify-between gap-4 border-t border-[#cfcfcf] pt-[3px]">
+            <div className="min-w-0 flex-1">
+              <p className="text-[5.8px] leading-snug text-[#4a4a4a]">
+                Computer-generated receipt for {d.admission.ipNumber}. Please retain it for your records.
+              </p>
+              <svg ref={barcodeRef} className="mt-[3px] h-[26px] w-[120px]" aria-label={`Barcode ${d.advance.receiptNo ?? ""}`} />
+            </div>
+            <div className="w-[95px] text-center">
+              <div className="border-t border-[#111111]" />
+              <div className="mt-[1px] text-[6px] font-bold uppercase tracking-wide text-[#3f3f3f]">Cashier / Front desk</div>
+            </div>
           </div>
         </div>
       </div>

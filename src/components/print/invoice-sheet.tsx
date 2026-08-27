@@ -11,9 +11,10 @@ import { billPageStarts } from "@/lib/bill-pagination";
 // there, so the bill borrows it rather than keeping a second copy of an
 // invariant that has to hold in both places.
 import { pageSlices } from "@/lib/lab-pagination";
-// BillHead is deliberately NOT used here any more. It is a full-width centred
-// masthead, and this sheet now sets the hospital beside the patient instead.
-// The advance receipt still uses it, which is why it stays in stationery.
+// BillHead is deliberately NOT used here. It is a full-width centred masthead,
+// and this sheet sets the hospital beside the patient instead - a layout the IPD
+// advance slip now shares, via BillLetterhead below. BillHead stays in
+// stationery for the day-close, running-tab and detailed-bill sheets.
 import { INVOICE_PRINT_CSS, PrintToolbar, type HospitalInfo } from "@/components/print/stationery";
 import { billItemName, billItemBatch } from "@/lib/bill-item-name";
 
@@ -366,7 +367,7 @@ const GENDER: Record<string, string> = { MALE: "M", FEMALE: "F", OTHER: "O" };
  * right down the block as the labels change length; in the value's cell it would
  * move with the wrapping. Its own track is what makes the colons line up.
  */
-function InvoiceIdRow({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
+export function InvoiceIdRow({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   return (
     <>
       <span className="invoice-id-label">{k}</span>
@@ -385,12 +386,62 @@ function InvoiceIdRow({ k, v, mono }: { k: string; v: string; mono?: boolean }) 
  * masthead. `whitespace-nowrap` on both halves is what keeps that a promise: a
  * receipt number that wraps is a receipt number back on two lines.
  */
-function MetaInline({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
+export function MetaInline({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   return (
     <span className="flex shrink-0 items-baseline gap-1.5 whitespace-nowrap">
       <span className="invoice-meta-label">{k}</span>
       <span className={`invoice-meta-value ${mono ? "font-mono" : ""}`}>{v}</span>
     </span>
+  );
+}
+
+/**
+ * THE BAND EVERY DOCUMENT FROM THIS HOSPITAL OPENS WITH.
+ *
+ * Shared by the bill and the IPD advance slip, because a family handed both
+ * should be in no doubt they came off the same counter - and because a
+ * letterhead maintained in two files is a letterhead that disagrees with itself
+ * the first time an address changes.
+ *
+ * `title` and `chip` are the only things that differ. A bill says "Tax Invoice"
+ * or "Bill of Supply"; a deposit slip says neither, and must not - it is not a
+ * supply. What it says instead is its caller's business, not this component's.
+ */
+export function BillLetterhead({
+  name, address, gstin, phone, logoDataUrl, title, chip,
+}: {
+  name: string; address: string; gstin: string | null; phone: string;
+  logoDataUrl: string | null; title: string; chip: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 border-b-[1.2px] pb-[4px]" style={{ borderColor: "var(--pr-ink)" }}>
+      <div className="flex min-w-0 flex-1 items-center gap-[10px]">
+        {/* Not next/image: a data URI has nothing for the optimiser to fetch,
+            and a sheet on its way to a tray wants the bytes in the document
+            rather than a second request to wait on. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={logoDataUrl || HOSPITAL_MARK} alt={name}
+          className="h-[44px] w-[44px] shrink-0 object-contain" />
+        <div className="min-w-0">
+          <div className="text-[15px] font-extrabold uppercase leading-none tracking-tight" style={{ color: "var(--pr-ink)" }}>
+            {name}
+          </div>
+          <div className="mt-[3px] text-[7px] font-medium leading-snug text-[#3f3f3f]">{address}</div>
+          <div className="mt-[1px] flex flex-wrap gap-x-3 text-[7px] font-semibold text-[#3f3f3f]">
+            {gstin && <span>GSTIN: <span className="font-mono">{gstin}</span></span>}
+            <span>Phone: <span className="font-mono">{phone}</span></span>
+          </div>
+        </div>
+      </div>
+      <div className="shrink-0 text-right">
+        <div className="text-[12px] font-extrabold uppercase tracking-[0.09em]" style={{ color: "var(--pr-ink)" }}>
+          {title}
+        </div>
+        <div className="mt-[3px] inline-block border px-2 py-[1px] text-[6px] font-bold uppercase tracking-[0.08em] invoice-status">
+          {chip}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -689,34 +740,15 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
           wrapped onto two lines inside a 118px column and Dept and Page stacked
           underneath them. Everything that is not the letterhead moves to the
           meta strip below, on one line - see there. */}
-      <div className="flex items-center justify-between gap-4 border-b-[1.2px] pb-[4px]" style={{ borderColor: "var(--pr-ink)" }}>
-        <div className="flex min-w-0 flex-1 items-center gap-[10px]">
-          {/* Not next/image: a data URI has nothing for the optimiser to fetch,
-              and a sheet on its way to a tray wants the bytes in the document
-              rather than a second request to wait on. */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={inv.hospital?.logoDataUrl || HOSPITAL_MARK} alt={hospitalName}
-            className="h-[44px] w-[44px] shrink-0 object-contain" />
-          <div className="min-w-0">
-            <div className="text-[15px] font-extrabold uppercase leading-none tracking-tight" style={{ color: "var(--pr-ink)" }}>
-              {hospitalName}
-            </div>
-            <div className="mt-[3px] text-[7px] font-medium leading-snug text-[#3f3f3f]">{hospitalAddr}</div>
-            <div className="mt-[1px] flex flex-wrap gap-x-3 text-[7px] font-semibold text-[#3f3f3f]">
-              {inv.hospital?.gstin && <span>GSTIN: <span className="font-mono">{inv.hospital.gstin}</span></span>}
-              <span>Phone: <span className="font-mono">{hospitalPhone}</span></span>
-            </div>
-          </div>
-        </div>
-        <div className="shrink-0 text-right">
-          <div className="text-[12px] font-extrabold uppercase tracking-[0.09em]" style={{ color: "var(--pr-ink)" }}>
-            {gstApplies ? "Tax Invoice" : "Bill of Supply"}
-          </div>
-          <div className="mt-[3px] inline-block border px-2 py-[1px] text-[6px] font-bold uppercase tracking-[0.08em] invoice-status">
-            {copy.formal} · {copy.plain}
-          </div>
-        </div>
-      </div>
+      <BillLetterhead
+        name={hospitalName}
+        address={hospitalAddr}
+        gstin={inv.hospital?.gstin ?? null}
+        phone={hospitalPhone}
+        logoDataUrl={inv.hospital?.logoDataUrl ?? null}
+        title={gstApplies ? "Tax Invoice" : "Bill of Supply"}
+        chip={`${copy.formal} · ${copy.plain}`}
+      />
 
       {/* ── WHICH BILL, AND WHEN - ON ONE LINE, UNDER THE LETTERHEAD ──
 
@@ -1064,7 +1096,7 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
   );
 }
 
-function Trow({ k, v, accent }: { k: string; v: string; accent?: boolean }) {
+export function Trow({ k, v, accent }: { k: string; v: string; accent?: boolean }) {
   return (
     <tr>
       <td className={`py-0.5 text-[9.5px] ${accent ? "font-semibold text-[var(--pr-ink)]" : "text-[#3a3a3a]"}`}>{k}</td>
@@ -1088,7 +1120,7 @@ function Trow({ k, v, accent }: { k: string; v: string; accent?: boolean }) {
  * two centuries, it needs no driver setting to survive, and it photocopies -
  * which is what a patient's insurer usually receives.
  */
-function TotalRow({ k, v }: { k: string; v: string }) {
+export function TotalRow({ k, v }: { k: string; v: string }) {
   return (
     <tr className="total-band">
       <td className="py-[5px] pl-1.5 text-[9px] font-extrabold uppercase tracking-wide">{k}</td>

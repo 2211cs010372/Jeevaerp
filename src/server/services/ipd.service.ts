@@ -2945,7 +2945,9 @@ export async function addAdvance(
  * many words, to stop a family treating it as their final bill.
  */
 export async function advancePrintData(advanceId: string): Promise<{
-  hospital: { legalName: string; addressLine: string; city: string; state: string; stateCode: string; pincode: string; gstin: string | null; phone: string | null } | null;
+  /** `findFirst()` returns the whole row, so the declared shape says so - the
+   *  slip's letterhead is the bill's, and that draws the uploaded logo. */
+  hospital: { legalName: string; addressLine: string; city: string; state: string; stateCode: string; pincode: string; gstin: string | null; phone: string | null; logoDataUrl: string | null } | null;
   advance: { id: string; receiptNo: string | null; amount: string; mode: string; reference: string | null; takenAt: string; receivedBy: string };
   admission: {
     ipNumber: string; ward: string; bedNo: string; admittedAt: string;
