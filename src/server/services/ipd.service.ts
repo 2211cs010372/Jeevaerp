@@ -4,7 +4,7 @@ import { nextId } from "@/lib/ids";
 import { logAudit } from "./audit.service";
 import { splitInvoice } from "@/lib/insurance-split";
 import { createInvoice, updateInvoice, recordPayment, getInvoice, syncStayCoverage, type PaymentModeT } from "./billing.service";
-import { advancePaymentRef, applyAdvances } from "@/server/billing/advances";
+import { advancePaymentRef, applyAdvances, heldAsOf } from "@/server/billing/advances";
 import { notifyAdmitted, notifyDischarged, notifyAdvanceReceived } from "./notify.service";
 // One rounding definition across the whole system - money must not be
 // rounded two different ways in two different files. `resolveChargeDate` is the
@@ -2955,8 +2955,15 @@ export async function advancePrintData(advanceId: string): Promise<{
      doctorRegNo: string | null;
   };
   patient: { displayId: string; fullName: string; phone: string; age: number | null; gender: string | null; address: string | null };
-  /** Every advance on this stay, so the slip can show the running deposit. */
+  /**
+   * What was held against this stay AS OF THIS RECEIPT - this deposit plus the
+   * ones before it. NOT this receipt's value, and never printed as its total:
+   * each slip totals its own amount, the way a bill does. Shown only as a note,
+   * for the family and for the discharge counter.
+   */
   totalAdvance: string;
+  /** `totalAdvance` less this receipt: what was already held when it was written. */
+  priorAdvance: string;
 }> {
   const a = await prisma.admissionAdvance.findUnique({
     where: { id: advanceId },
@@ -2975,11 +2982,17 @@ export async function advancePrintData(advanceId: string): Promise<{
   });
   if (!a) throw new ApiError(404, "That advance receipt doesn't exist");
 
+  // AS OF THIS RECEIPT, not as of now. Reprinting a slip must hand back the same
+  // piece of paper it did the day it was issued - see heldAsOf.
   const siblings = await prisma.admissionAdvance.findMany({
     where: { admissionId: a.admission.id },
-    select: { amount: true },
+    select: { id: true, amount: true, createdAt: true },
   });
-  const total = siblings.reduce((s: number, x: { amount: { toString(): string } }) => s + Number(x.amount.toString()), 0);
+  const held = heldAsOf(
+    (siblings as { id: string; amount: { toString(): string }; createdAt: Date }[])
+      .map((x) => ({ id: x.id, amount: Number(x.amount.toString()), takenAt: x.createdAt.getTime() })),
+    a.id,
+  );
 
   const hospital = await prisma.hospitalConfig.findFirst();
 
@@ -3003,7 +3016,8 @@ export async function advancePrintData(advanceId: string): Promise<{
       doctorRegNo: a.admission.doctor.registrationNo,
     },
     patient: a.admission.patient,
-    totalAdvance: total.toFixed(2),
+    totalAdvance: held.total.toFixed(2),
+    priorAdvance: held.prior.toFixed(2),
   };
 }
 

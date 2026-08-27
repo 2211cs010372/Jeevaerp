@@ -116,6 +116,46 @@ export interface AdvanceApplication {
  * @param deposits  oldest first
  * @param outstanding  what the bill still wants, in rupees
  */
+export interface DepositSnapshot {
+  id: string;
+  amount: number;
+  /** Epoch millis. Ties are broken by id so the order is total and stable. */
+  takenAt: number;
+}
+
+/**
+ * WHAT THE HOSPITAL HELD AT THE MOMENT ONE RECEIPT WAS WRITTEN.
+ *
+ * A receipt is a record of a transaction at a point in time, so reprinting it a
+ * week later must produce the same piece of paper. That failed: the slip summed
+ * EVERY deposit on the stay, whenever taken, so a family that paid ₹8,000 and
+ * later ₹20,000 held two slips both headlining ₹28,000 - and the ₹8,000 slip
+ * described the ₹20,000 as "held earlier", which it was not.
+ *
+ * Ordered by when the money was taken, and stopped at this receipt. Deposits
+ * made afterwards belong to their own slips and to no earlier one.
+ *
+ * `total` is `prior` plus this receipt. Both are returned rather than derived by
+ * the caller, because the subtraction that derived one from the other is exactly
+ * where the original bug lived.
+ *
+ * An unknown id yields zeroes rather than the whole stay: a receipt that cannot
+ * be located must not silently print somebody else's running total.
+ */
+export function heldAsOf(
+  deposits: DepositSnapshot[],
+  receiptId: string,
+): { prior: number; total: number } {
+  const ordered = [...deposits].sort(
+    (a, b) => a.takenAt - b.takenAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
+  const at = ordered.findIndex((d) => d.id === receiptId);
+  if (at < 0) return { prior: 0, total: 0 };
+
+  const prior = ordered.slice(0, at).reduce((s, d) => r2(s + d.amount), 0);
+  return { prior: r2(prior), total: r2(prior + ordered[at].amount) };
+}
+
 export function applyAdvances(
   deposits: AdvanceDeposit[],
   outstanding: number,

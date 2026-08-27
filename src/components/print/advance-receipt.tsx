@@ -31,7 +31,13 @@ interface Data {
     doctorName: string; doctorRegNo: string | null;
   };
   patient: { displayId: string; fullName: string; phone: string; age: number | null; gender: string | null; address: string | null };
+  /** Held against the stay AS OF THIS RECEIPT. A note on this slip, never its
+   *  total - see the totals block below. */
   totalAdvance: string;
+  /** `totalAdvance` less this receipt. Sent by the server rather than derived
+   *  here: deriving it by subtraction is what made a LATER deposit print as
+   *  "held earlier" on an earlier slip. */
+  priorAdvance?: string;
 }
 
 /** The invoice's ruled-table look, scoped to this sheet so the two documents
@@ -84,9 +90,11 @@ export function AdvanceReceipt() {
     d.patient.gender ? GENDER[d.patient.gender] ?? d.patient.gender : null,
   ].filter(Boolean).join(" / ") || "-";
   const amount = Number(d.advance.amount);
-  // An earlier deposit exists on this stay - show the running total so the
-  // family can see the whole of what the hospital holds, not just today's slip.
-  const priorHeld = Math.max(0, Math.round((Number(d.totalAdvance) - amount) * 100) / 100);
+  // What was already held when this slip was written. Falls back to the old
+  // subtraction only for a payload from before the server sent it.
+  const priorHeld = Math.max(0, Number(
+    d.priorAdvance ?? (Math.round((Number(d.totalAdvance) - amount) * 100) / 100),
+  ));
 
   const Meta = ({ k, v }: { k: string; v: string }) => (
     <div className="flex items-baseline gap-1.5">
@@ -191,24 +199,24 @@ export function AdvanceReceipt() {
               <Meta k="Received by" v={d.advance.receivedBy} />
             </div>
           </div>
+          {/* THIS RECEIPT TOTALS ITS OWN AMOUNT, the way a bill does.
+              It used to total the whole stay's deposits, so a family that paid
+              ₹8,000 and later ₹20,000 held two slips both headlining ₹28,000 -
+              neither of which matched the money handed over for it. The running
+              figure is real and worth printing, but it is a note further down,
+              not this document's value. */}
           <table className="w-full text-[9px]">
             <tbody>
               <tr>
-                <td className="py-[2px] text-[#3c4a45]">This receipt</td>
+                <td className="py-[2px] text-[#3c4a45]">Advance received</td>
                 <td className="py-[2px] text-right font-mono">{money(amount)}</td>
               </tr>
-              {priorHeld > 0 && (
-                <tr>
-                  <td className="py-[2px] text-[#3c4a45]">Advance held earlier</td>
-                  <td className="py-[2px] text-right font-mono">{money(priorHeld)}</td>
-                </tr>
-              )}
               <tr className="border-t-2" style={{ borderColor: "var(--pr-primary)" }}>
                 <td className="pt-[3px] text-[9.5px] font-extrabold uppercase tracking-wide" style={{ color: "var(--pr-primary)" }}>
-                  Total advance held
+                  Total
                 </td>
                 <td className="pt-[3px] text-right font-mono text-[12px] font-extrabold" style={{ color: "var(--pr-primary)" }}>
-                  {money(d.totalAdvance)}
+                  {money(amount)}
                 </td>
               </tr>
             </tbody>
@@ -223,6 +231,16 @@ export function AdvanceReceipt() {
             bill raised at discharge. If the treatment costs less than the advance, the difference is refunded -
             it is not retained by the hospital. Please produce this receipt at the billing counter on discharge.
           </p>
+          {/* Only when an earlier deposit exists. Prose, below the totals and
+              outside them, so it can inform the discharge counter without ever
+              being read as what was paid for THIS slip. */}
+          {priorHeld > 0 && (
+            <p className="mt-1 text-[#3c4a45]">
+              <b>Earlier deposits on this admission:</b> {money(priorHeld)}. Including this receipt,{" "}
+              {money(d.totalAdvance)} is held against {d.admission.ipNumber}. Each deposit has its own
+              receipt - please bring all of them.
+            </p>
+          )}
         </div>
 
         <div className="keep-together mt-6 flex items-end justify-between">
