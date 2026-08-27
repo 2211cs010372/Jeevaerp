@@ -34,7 +34,7 @@ import {
  * AND ITS TOTAL IS ITS OWN AMOUNT. See the totals block.
  */
 
-interface Data {
+export interface Data {
   hospital: HospitalInfo | null;
   advance: { id: string; receiptNo: string | null; amount: string; mode: string; reference: string | null; takenAt: string; receivedBy: string };
   admission: {
@@ -59,11 +59,18 @@ const MODE_LABEL: Record<string, string> = {
 const dateTime = (iso: string) =>
   new Date(iso).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true });
 
+/**
+ * FETCH ONE DEPOSIT SLIP AND PRINT IT. The wrapper /print/advance/[id] uses.
+ *
+ * Split from the document itself for the reason InvoiceSheet is split from
+ * InvoiceDoc: a component that fetches cannot be rendered anywhere else, and the
+ * document is worth rendering without a database behind it - in a preview, in a
+ * test, or one day in a run of several slips for one stay.
+ */
 export function AdvanceReceipt() {
   const { advanceId } = useParams<{ advanceId: string }>();
   const [d, setD] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const barcodeRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {
     api.get<Data>(`/ipd/advances/${advanceId}/print`)
@@ -71,8 +78,18 @@ export function AdvanceReceipt() {
       .catch((e) => setError(e instanceof ApiClientError ? e.message : "Couldn't load the receipt."));
   }, [advanceId]);
 
+  if (error) return <div className="p-10 text-center text-[14px] text-[#8a3b2e]">{error}</div>;
+  if (!d) return <div className="p-10 text-center text-[14px] text-[#5a6a66]">Preparing the receipt…</div>;
+
+  return <AdvanceReceiptDoc d={d} />;
+}
+
+/** The slip itself, given an already-loaded deposit. */
+export function AdvanceReceiptDoc({ d }: { d: Data }) {
+  const barcodeRef = useRef<SVGSVGElement>(null);
+
   useEffect(() => {
-    if (!d?.advance.receiptNo || !barcodeRef.current) return;
+    if (!d.advance.receiptNo || !barcodeRef.current) return;
     try {
       JsBarcode(barcodeRef.current, d.advance.receiptNo, {
         format: "CODE128", displayValue: false, height: 26, width: 1.1,
@@ -80,9 +97,6 @@ export function AdvanceReceipt() {
       });
     } catch { /* non-encodable number - barcode simply omitted */ }
   }, [d]);
-
-  if (error) return <div className="p-10 text-center text-[14px] text-[#8a3b2e]">{error}</div>;
-  if (!d) return <div className="p-10 text-center text-[14px] text-[#5a6a66]">Preparing the receipt…</div>;
 
   const ageSex = [
     d.patient.age != null ? `${d.patient.age}y` : null,
