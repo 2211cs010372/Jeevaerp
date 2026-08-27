@@ -243,6 +243,46 @@ function DayCloseSheetInner() {
           </table>
         )}
 
+        {/* IPD deposits - counter money with no bill behind it yet. Named one by
+            one for the same reason refunds are: a family holding two slips has
+            to be able to find both, and "one merged line" is the argument at the
+            counter nobody can settle. Already inside the collections above. */}
+        {(d.advances?.length ?? 0) > 0 && (
+          <>
+            <p className="mt-4 text-[9px] font-bold uppercase tracking-wide" style={{ color: "var(--pr-primary)" }}>
+              IPD advances taken
+            </p>
+            <p className="mt-0.5 text-[8.5px] text-[#57655f]">
+              Counted in the collections above. Money held against a stay, adjusted on the discharge bill - not earned yet.
+            </p>
+            <table className="mt-1 w-full border-collapse text-[10px]">
+              <thead>
+                <tr>
+                  <Th w="16%">Receipt</Th><Th w="24%">Patient</Th><Th w="16%">IP No.</Th>
+                  <Th right w="16%">Amount</Th><Th w="12%">Mode</Th><Th w="16%">By</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.advances!.map((a, i) => (
+                  <tr key={i}>
+                    <td className="rule py-[4px] pr-2 font-mono text-[9px]">{a.receiptNo}</td>
+                    <td className="rule py-[4px] pr-2">{a.patient}</td>
+                    <td className="rule py-[4px] pr-2 font-mono text-[9px]">{a.ipNumber}</td>
+                    <td className="rule py-[4px] pr-2 text-right font-mono">{money(a.amount)}</td>
+                    <td className="rule py-[4px] pr-2">{a.mode}</td>
+                    <td className="rule py-[4px] text-[9px]">{a.by} <span className="text-[#8b9691]">{timeOf(a.at)}</span></td>
+                  </tr>
+                ))}
+                <tr>
+                  <td className="py-[5px] pr-2 font-medium uppercase tracking-wide" colSpan={3}>Total held</td>
+                  <td className="py-[5px] pr-2 text-right font-mono font-bold">{money(d.advanceTotal ?? 0)}</td>
+                  <td className="py-[5px]" colSpan={2}></td>
+                </tr>
+              </tbody>
+            </table>
+          </>
+        )}
+
         {/* refunds - money that LEFT the hospital gets named, never summarised */}
         {d.refunds.length > 0 && (
           <>

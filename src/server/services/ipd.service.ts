@@ -3,7 +3,8 @@ import { ApiError } from "@/lib/api";
 import { nextId } from "@/lib/ids";
 import { logAudit } from "./audit.service";
 import { splitInvoice } from "@/lib/insurance-split";
-import { createInvoice, updateInvoice, recordPayment, getInvoice, advancePaymentRef, syncStayCoverage, type PaymentModeT } from "./billing.service";
+import { createInvoice, updateInvoice, recordPayment, getInvoice, syncStayCoverage, type PaymentModeT } from "./billing.service";
+import { advancePaymentRef, applyAdvances } from "@/server/billing/advances";
 import { notifyAdmitted, notifyDischarged, notifyAdvanceReceived } from "./notify.service";
 // One rounding definition across the whole system - money must not be
 // rounded two different ways in two different files. `resolveChargeDate` is the
@@ -1198,7 +1199,7 @@ export async function dischargePatient(
   // amount due against money the hospital was already holding. The excess stays
   // in AdmissionAdvance and surfaces as refundable on the discharge sheet.
   //
-  // ONE PAYMENT PER TENDER MODE, NOT ONE LUMP.
+  // ONE PAYMENT PER DEPOSIT SLIP, NOT ONE LUMP.
   //
   // A family deposits more than once - 3,000 in cash at admission, 5,000 by UPI
   // two days later - and this used to collapse the lot into a single payment
@@ -1206,37 +1207,40 @@ export async function dischargePatient(
   // against a drawer that had only ever seen 3,000, and the day close could not
   // be made to balance by anyone who did not already know why.
   //
-  // settleDues states the rule this has to keep: tender modes are preserved
-  // exactly, because the drawer has to reconcile and a mode invented here
-  // breaks it. So the deposits are grouped by how they were actually paid and
-  // applied oldest first - if the advance overshoots the bill, the money left
+  // Grouping by tender mode fixed the mode, and left the other half wrong: the
+  // family holds two numbered receipts and the bill showed one merged line they
+  // could tie back to neither. So each deposit is now applied as its own
+  // payment, stamped with its own slip number - which preserves the mode by
+  // construction, since a deposit only ever had one.
+  //
+  // Applied oldest first: if the advance overshoots the bill, the money left
   // refundable is the most recent, which is the deposit the family remembers
   // making and the one they will ask about.
   const advances = await prisma.admissionAdvance.findMany({
     where: { admissionId: adm.id },
     orderBy: { createdAt: "asc" },
-    select: { amount: true, mode: true },
+    select: { amount: true, mode: true, receiptNo: true },
   });
-  if (advances.length > 0) {
-    const byMode = new Map<PaymentModeT, number>();
-    for (const a of advances as { amount: { toString(): string }; mode: PaymentModeT }[]) {
-      byMode.set(a.mode, round2((byMode.get(a.mode) ?? 0) + Number(a.amount.toString())));
-    }
-    // Only up to what is still owed: recordPayment rejects a tender beyond the
-    // balance, and one rejection would throw the whole discharge, leaving the
-    // bill showing full value against money the hospital already holds.
-    let left = Number(invoice.balanceDue);
-    for (const [mode, amount] of byMode) {
-      if (left <= 0) break;
-      const toApply = round2(Math.min(amount, left));
-      if (toApply <= 0) continue;
-      await recordPayment(
-        actor,
-        { invoiceId: invoice.id, mode, amount: toApply, reference: advancePaymentRef(adm.ipNumber) },
-        ctx
-      );
-      left = round2(left - toApply);
-    }
+  //
+  // The apportionment itself is pure and lives in @/server/billing/advances, so
+  // the rule can be tested without standing up Postgres. This loop only walks
+  // its answer and writes the rows.
+  const toRecord = applyAdvances(
+    (advances as { amount: { toString(): string }; mode: PaymentModeT; receiptNo: string | null }[])
+      .map((a) => ({ amount: Number(a.amount.toString()), mode: a.mode, receiptNo: a.receiptNo })),
+    Number(invoice.balanceDue),
+  );
+  for (const a of toRecord) {
+    await recordPayment(
+      actor,
+      {
+        invoiceId: invoice.id,
+        mode: a.mode as PaymentModeT,
+        amount: a.amount,
+        reference: advancePaymentRef(adm.ipNumber, a.receiptNo),
+      },
+      ctx
+    );
   }
 
   // whole-stay length, for the receipt header (individual legs are on the bill)

@@ -23,6 +23,21 @@ const sample: DayCloseExport = {
   bills: 15,
   refundCount: 1,
   byCounter: [{ name: "Ravi (Reception)", count: 15, amount: 20800.5 }],
+  // Two deposits on one stay - the case that used to arrive at the accountant
+  // as a single merged figure, tying back to neither slip in the family's bag.
+  advances: [
+    {
+      receiptNo: "JMH2026ADV0012", patient: "Lakshmi Devi", ipNumber: "JMH2026IP0007",
+      amount: 3000, mode: "CASH", by: "Ravi (Reception)",
+      at: "2026-07-26T09:15:00.000Z",
+    },
+    {
+      receiptNo: "JMH2026ADV0019", patient: "Lakshmi Devi", ipNumber: "JMH2026IP0007",
+      amount: 5000, mode: "UPI", by: "Ravi (Reception)",
+      at: "2026-07-26T14:40:00.000Z",
+    },
+  ],
+  advanceTotal: 8000,
   refunds: [{
     receiptNo: "JMH20260312", patient: "Ramesh Kumar", amount: 500,
     mode: "CASH", reason: "Test cancelled", by: "Ravi (Reception)",
@@ -42,7 +57,9 @@ describe("the day-close workbook", () => {
 
   it("carries one sheet per section of the page", async () => {
     const wb = await buildDayCloseWorkbook(sample);
-    expect(wb.SheetNames).toEqual(["Summary", "Payment types", "By counter", "Refunds", "Outstanding", "Insurance"]);
+    expect(wb.SheetNames).toEqual([
+      "Summary", "Payment types", "By counter", "IPD advances", "Refunds", "Outstanding", "Insurance",
+    ]);
   });
 
   it("leads with cash in hand - the one figure anyone acts on", async () => {
@@ -82,6 +99,63 @@ describe("the day-close workbook", () => {
     const total = rows.find((r) => r.Mode === "TOTAL");
     expect(total?.Collected).toBe(20800.5);
     expect(total?.Net).toBe(20300.5);
+  });
+
+  // ── IPD ADVANCES ── counter money the hospital is only HOLDING.
+  //
+  // Two things have to be true at once and they pull against each other: the
+  // deposit is inside the day's collections (it is in the drawer), and the
+  // accountant can still see which part of the day's money is not earned yet.
+  it("gives every deposit its own row, never one merged figure", async () => {
+    const wb = await buildDayCloseWorkbook(sample);
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets["IPD advances"]);
+    // Two deposits plus the TOTAL line.
+    expect(rows).toHaveLength(3);
+    expect(rows[0].Receipt).toBe("JMH2026ADV0012");
+    expect(rows[1].Receipt).toBe("JMH2026ADV0019");
+    expect(rows[0].Amount).toBe(3000);
+    expect(rows[1].Amount).toBe(5000);
+  });
+
+  it("keeps each deposit in the mode it was actually paid in", async () => {
+    // A UPI deposit reported as cash is the drawer bug this whole change exists
+    // to close - it must not come back through the export.
+    const wb = await buildDayCloseWorkbook(sample);
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets["IPD advances"]);
+    expect(rows[0].Mode).toBe("CASH");
+    expect(rows[1].Mode).toBe("UPI");
+  });
+
+  it("writes deposit amounts as summable numbers", async () => {
+    const wb = await buildDayCloseWorkbook(sample);
+    const c = cell(wb.Sheets["IPD advances"], "D2");
+    expect(c?.t).toBe("n");
+    expect(c?.v).toBe(3000);
+    expect(c?.z).toContain("₹");
+  });
+
+  it("names the deposit total on the summary without adding it twice", async () => {
+    // The deposits are already inside "Total collected". The summary says so in
+    // words rather than listing a second figure an accountant would sum in.
+    const wb = await buildDayCloseWorkbook(sample);
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets["Summary"], { header: 1 });
+    const line = rows.find((r) => typeof r[0] === "string" && r[0].includes("IPD advances (money held"));
+    expect(line?.[1]).toBe(8000);
+  });
+
+  it("still writes IPD advances on a day that took none", async () => {
+    const quiet: DayCloseExport = { ...sample, advances: [], advanceTotal: 0 };
+    const wb = await buildDayCloseWorkbook(quiet);
+    expect(wb.SheetNames).toContain("IPD advances");
+  });
+
+  it("survives a payload from before deposits were exported", async () => {
+    // The field is optional so an older caller cannot crash the download.
+    const legacy = { ...sample };
+    delete (legacy as Partial<DayCloseExport>).advances;
+    delete (legacy as Partial<DayCloseExport>).advanceTotal;
+    const wb = await buildDayCloseWorkbook(legacy);
+    expect(wb.SheetNames).toContain("IPD advances");
   });
 
   it("still writes Refunds and Outstanding when a day has none", async () => {

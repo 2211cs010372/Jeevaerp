@@ -21,6 +21,11 @@ export interface DayCloseExport {
   bills: number;
   refundCount: number;
   byCounter: { name: string; count: number; amount: number }[];
+  /** IPD deposits taken today - already inside `modes` and `cashInHand`, listed
+   *  separately so the accountant can see which of the day's cash is money the
+   *  hospital is holding rather than money it has earned. */
+  advances?: { receiptNo: string; patient: string; ipNumber: string; amount: number; mode: string; by: string; at: string }[];
+  advanceTotal?: number;
   refunds: { receiptNo: string; patient: string; amount: number; mode: string; reason: string; by: string; at: string }[];
   outstanding: { receiptNo: string; patient: string; total: number; paid: number; due: number }[];
   /** Billed to insurers. Its own sheet, deliberately never summed into the
@@ -91,6 +96,11 @@ export async function buildDayCloseWorkbook(d: DayCloseExport) {
     ["Bills raised (settled at a counter)", d.bills],
     ["Refunds given", d.refundCount],
     [],
+    // Inside "Total collected" above, not additional to it - so it sits under
+    // its own label rather than in the run of figures an accountant sums.
+    ["  of which IPD advances (money held, not earned)", d.advanceTotal ?? 0],
+    ["IPD advances taken", (d.advances ?? []).length],
+    [],
     // Below the blank row and below "Net collected" on purpose. It is a fact
     // about the day, not a component of the money above it, and this workbook is
     // read by someone who will SUM a column without checking what is in it.
@@ -112,6 +122,17 @@ export async function buildDayCloseWorkbook(d: DayCloseExport) {
     ["Received by", "Transactions", "Amount"],
     ...d.byCounter.map((c) => [c.name, c.count, c.amount] as Cell[]),
   ], { widths: [30, 14, 16], moneyCols: [2] });
+
+  // ── IPD advances ─────────────────────────────────────────────────────────
+  // One row per deposit slip. Always written, empty or not, for the same reason
+  // as Refunds below. The amounts are already counted in "Payment types" - this
+  // sheet says which of the day's money the hospital is only HOLDING, which is
+  // the distinction an accountant needs and the collections sheet cannot make.
+  addSheet("IPD advances", [
+    ["Receipt", "Patient", "IP No.", "Amount", "Mode", "Received by", "Time"],
+    ...(d.advances ?? []).map((a) => [a.receiptNo, a.patient, a.ipNumber, a.amount, a.mode, a.by, timeOf(a.at)] as Cell[]),
+    ["TOTAL", null, null, d.advanceTotal ?? 0, null, null, null],
+  ], { widths: [18, 26, 18, 14, 12, 22, 12], moneyCols: [3] });
 
   // ── Refunds ──────────────────────────────────────────────────────────────
   // Always written, even when empty: a missing sheet reads as "not exported",

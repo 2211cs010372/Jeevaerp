@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { r2 } from "@/server/billing/calc";
+import { isAdvanceAdjustment } from "@/server/billing/advances";
+import { foldDrawer, cashInHandOf } from "@/server/billing/drawer";
 import { localDateISO } from "@/lib/date";
 
 /**
@@ -17,6 +19,24 @@ import { localDateISO } from "@/lib/date";
  * that physically left the drawer, and it must reduce the expected count on the
  * same day it happened, in the same mode it was given back in. UPI refunds do not
  * come out of the cash box; cash refunds do.
+ *
+ * AND AN IPD DEPOSIT IS COUNTED ON THE DAY IT WAS TAKEN.
+ *
+ * A deposit is money handed across a counter like any other, but it has no bill
+ * behind it yet, so it lives in AdmissionAdvance rather than in Payment. This
+ * report used to read only Payment - which meant the shift that took ₹3,000 in
+ * cash closed its day showing nothing, and was over by exactly that much.
+ *
+ * The other half of the same defect: at discharge those deposits ARE written as
+ * payments, against a bill raised that day. So a week later a discharge clerk's
+ * day close showed ₹8,000 of cash collected that no drawer had seen on that
+ * shift, and the deposit-taker's shortfall and the discharge clerk's surplus
+ * were two unexplained numbers days apart that nobody could connect.
+ *
+ * So: deposits are counted here, on their own day, against the person who took
+ * them - and the discharge-day payments that adjust them are skipped, because
+ * that money has already been counted once. `isAdvanceAdjustment` is the single
+ * predicate both halves go through.
  */
 
 export interface ModeTotal {
@@ -86,6 +106,19 @@ export interface DayClose {
   refundCount: number;
   /** Per-counter (receptionist) tally - how many payments each took and how much. */
   byCounter: { name: string; count: number; amount: number }[];
+  /**
+   * IPD DEPOSITS TAKEN AT THIS TILL TODAY - one line each, never merged.
+   *
+   * Counted in `modes`, `totals`, `cashInHand` and `byCounter` like any other
+   * tender, because that is exactly what they are: money a person handed over a
+   * counter on this shift. Listed individually as well, for the same reason
+   * refunds are - a family holding two slips must be able to find both.
+   */
+  advances: {
+    receiptNo: string; patient: string; ipNumber: string;
+    amount: number; mode: string; by: string; at: string;
+  }[];
+  advanceTotal: number;
   /** Refunds are listed individually - money leaving a hospital gets named. */
   refunds: {
     receiptNo: string; patient: string; amount: number;
@@ -158,11 +191,11 @@ export async function dayClose(opts?: { dateISO?: string; till?: Till }): Promis
   // pharmacy. Bills counted here are the ones this till wrote.
   const invoiceWhere = roles ? { createdBy: { role: { in: roles as never } } } : {};
 
-  const [payments, refunds, invoices, hospital] = await Promise.all([
+  const [allPayments, refunds, invoices, advanceRows, hospital] = await Promise.all([
     prisma.payment.findMany({
       where: { createdAt: { gte: from, lte: to }, ...paymentWhere },
       select: {
-        mode: true, amount: true, invoiceId: true,
+        mode: true, amount: true, invoiceId: true, reference: true,
         receivedBy: { select: { name: true } },
         invoice: { select: { source: true } },
       },
@@ -186,34 +219,70 @@ export async function dayClose(opts?: { dateISO?: string; till?: Till }): Promis
         refunds: { select: { amount: true } },
       },
     }),
+    // Scoped by WHO took the deposit, same as payments - a deposit belongs to
+    // the drawer of the person who accepted it, not to the ward it was for.
+    prisma.admissionAdvance.findMany({
+      where: { createdAt: { gte: from, lte: to }, ...paymentWhere },
+      orderBy: { createdAt: "asc" },
+      select: {
+        receiptNo: true, mode: true, amount: true, createdAt: true,
+        receivedBy: { select: { name: true } },
+        admission: {
+          select: { ipNumber: true, patient: { select: { fullName: true } } },
+        },
+      },
+    }),
     prisma.hospitalConfig.findFirst(),
   ]);
 
   type P = {
-    mode: string; amount: { toString(): string };
+    mode: string; amount: { toString(): string }; reference: string | null;
     receivedBy: { name: string } | null;
     invoice: { source: string } | null;
   };
+  type A = {
+    receiptNo: string | null; mode: string; amount: { toString(): string }; createdAt: Date;
+    receivedBy: { name: string } | null;
+    admission: { ipNumber: string; patient: { fullName: string } | null } | null;
+  };
+
+  /**
+   * A discharge writes the stay's deposits back as payments against the final
+   * bill. That money crossed a counter days ago and was counted then, so it is
+   * dropped here - otherwise the discharge clerk's shift shows takings that
+   * never entered their drawer, and the hospital total double-counts every
+   * deposit it ever took. See billing/advances.ts.
+   */
+  const payments = (allPayments as P[]).filter((p) => !isAdvanceAdjustment(p.reference));
+
+  /** Deposits taken on this shift: real counter money, with no bill behind it yet. */
+  const advances = (advanceRows as A[]).map((a) => ({
+    receiptNo: a.receiptNo ?? "—",
+    patient: a.admission?.patient?.fullName ?? "-",
+    ipNumber: a.admission?.ipNumber ?? "-",
+    amount: Number(a.amount.toString()),
+    mode: a.mode,
+    by: a.receivedBy?.name ?? "—",
+    at: a.createdAt.toISOString(),
+  }));
+  const advanceTotal = r2(advances.reduce((s, a) => r2(s + a.amount), 0));
+
   type R = {
     mode: string; amount: { toString(): string }; reason: string; createdAt: Date;
     refundedBy: { name: string } | null;
     invoice: { receiptNo: string; source: string; patient: { fullName: string } | null } | null;
   };
 
-  const modes: ModeTotal[] = MODES.map((m) => {
-    const collected = r2((payments as P[])
-      .filter((p) => p.mode === m)
-      .reduce((s, p) => r2(s + Number(p.amount.toString())), 0));
-    const refunded = r2((refunds as R[])
-      .filter((x) => x.mode === m)
-      .reduce((s, x) => r2(s + Number(x.amount.toString())), 0));
-    return {
-      mode: m,
-      collected,
-      refunded,
-      net: r2(collected - refunded),
-      count: (payments as P[]).filter((p) => p.mode === m).length,
-    };
+  // Deposits sit alongside payments, not in a block of their own: the drawer
+  // does not know which rupees were a deposit, and "what should be in this
+  // drawer" is the question this number answers. The arithmetic is pure and
+  // lives in @/server/billing/drawer so it can be checked without a database.
+  const modes: ModeTotal[] = foldDrawer(MODES, {
+    payments: (allPayments as P[]).map((p) => ({
+      mode: p.mode, amount: Number(p.amount.toString()), reference: p.reference,
+    })),
+    advances: advances.map((a) => ({ mode: a.mode, amount: a.amount })),
+    refunds: (refunds as R[]).map((x) => ({ mode: x.mode, amount: Number(x.amount.toString()) })),
   });
 
   // What this till's money was FOR. Every source that moved, plus nothing that
@@ -231,18 +300,30 @@ export async function dayClose(opts?: { dateISO?: string; till?: Till }): Promis
   for (const p of (payments as P[]).filter((x) => isCounterMode(x.mode))) {
     bumpSource(p.invoice?.source ?? "OTHER", Number(p.amount.toString()), 0, 1);
   }
+  // Deposits get their own source rather than being filed under IPD. They are
+  // not billing for a stay - no supply has happened yet - and a desk asking
+  // "where did today's money come from" needs to see money held apart from
+  // money earned.
+  for (const a of advances.filter((x) => isCounterMode(x.mode))) {
+    bumpSource("ADVANCE", a.amount, 0, 1);
+  }
   for (const x of refunds as R[]) bumpSource(x.invoice?.source ?? "OTHER", 0, Number(x.amount.toString()), 0);
   const bySource = [...sourceMap.values()].sort((a, b) => b.net - a.net);
 
   // per-counter (receptionist) tally - counter money only, or a staff member who
   // recorded an insurer's NEFT appears to have taken ₹1.6L on their shift.
   const counterMap = new Map<string, { name: string; count: number; amount: number }>();
-  for (const p of (payments as P[]).filter((x) => isCounterMode(x.mode))) {
-    const name = p.receivedBy?.name ?? "\u2014";
+  const bumpCounter = (name: string, amount: number) => {
     const cur = counterMap.get(name) ?? { name, count: 0, amount: 0 };
-    cur.count += 1; cur.amount = r2(cur.amount + Number(p.amount.toString()));
+    cur.count += 1; cur.amount = r2(cur.amount + amount);
     counterMap.set(name, cur);
+  };
+  for (const p of (payments as P[]).filter((x) => isCounterMode(x.mode))) {
+    bumpCounter(p.receivedBy?.name ?? "\u2014", Number(p.amount.toString()));
   }
+  // The person who took the deposit is the person whose drawer holds it, and
+  // whose shift has to account for it at handover.
+  for (const a of advances.filter((x) => isCounterMode(x.mode))) bumpCounter(a.by, a.amount);
   const byCounter = [...counterMap.values()].sort((a, b) => b.amount - a.amount);
 
   const collected = r2(modes.reduce((s, m) => r2(s + m.collected), 0));
@@ -271,10 +352,12 @@ export async function dayClose(opts?: { dateISO?: string; till?: Till }): Promis
     bySource,
     totals: { collected, refunded, net: r2(collected - refunded) },
     // The drawer only ever sees cash. A ₹5,000 UPI refund does not empty it.
-    cashInHand: modes.find((m) => m.mode === "CASH")?.net ?? 0,
+    cashInHand: cashInHandOf(modes),
     bills: selfPayBills.length,
     refundCount: refunds.length,
     byCounter,
+    advances,
+    advanceTotal,
     refunds: (refunds as R[]).map((x) => ({
       receiptNo: x.invoice?.receiptNo ?? "-",
       patient: x.invoice?.patient?.fullName ?? "-",
@@ -370,11 +453,11 @@ export async function dayCloseByTill(dateISO?: string): Promise<{
 }> {
   const { from, to } = dayWindow(dateISO);
 
-  const [payments, refunds, invoices] = await Promise.all([
+  const [allPayments, refunds, invoices, advanceRows] = await Promise.all([
     prisma.payment.findMany({
       where: { createdAt: { gte: from, lte: to } },
       select: {
-        mode: true, amount: true,
+        mode: true, amount: true, reference: true,
         receivedBy: { select: { name: true, role: true } },
         invoice: { select: { source: true } },
       },
@@ -390,6 +473,13 @@ export async function dayCloseByTill(dateISO?: string): Promise<{
     prisma.invoice.findMany({
       where: { createdAt: { gte: from, lte: to } },
       select: { payer: true, totalAmount: true, createdBy: { select: { role: true } } },
+    }),
+    // Deposits taken today, whichever drawer took them. Same reason as dayClose:
+    // this roll-up has to add up to the per-till sheets, and it cannot do that
+    // while one of them counts deposits and the other does not.
+    prisma.admissionAdvance.findMany({
+      where: { createdAt: { gte: from, lte: to } },
+      select: { mode: true, amount: true, receivedBy: { select: { name: true, role: true } } },
     }),
   ]);
 
@@ -415,10 +505,19 @@ export async function dayCloseByTill(dateISO?: string): Promise<{
   }
 
   type P = {
-    mode: string; amount: { toString(): string };
+    mode: string; amount: { toString(): string }; reference: string | null;
     receivedBy: { name: string; role: string } | null;
     invoice: { source: string } | null;
   };
+  type A = {
+    mode: string; amount: { toString(): string };
+    receivedBy: { name: string; role: string } | null;
+  };
+
+  // Discharge-day adjustments of a deposit are dropped, exactly as in dayClose -
+  // that money was counted on the shift that took it. See billing/advances.ts.
+  const payments = (allPayments as P[]).filter((p) => !isAdvanceAdjustment(p.reference));
+
   // Insurer settlements are stripped before ANY of this. A till summary is a
   // drawer, and a bank transfer belongs to no drawer - see MODES.
   const counterPayments = (payments as P[]).filter((p) => isCounterMode(p.mode));
@@ -426,26 +525,39 @@ export async function dayCloseByTill(dateISO?: string): Promise<{
     (payments as P[]).filter((p) => !isCounterMode(p.mode))
       .reduce((s, p) => r2(s + Number(p.amount.toString())), 0)
   );
-  for (const p of counterPayments) {
-    const key = tillOf(p.receivedBy?.role);
+
+  /** One drawer's worth of money, whether it arrived against a bill or as a deposit. */
+  const takeIn = (
+    role: string | null | undefined, name: string | null | undefined,
+    mode: string, amt: number, source: string,
+  ) => {
+    const key = tillOf(role);
     const row = acc.get(key)!;
-    const amt = Number(p.amount.toString());
     row.collected = r2(row.collected + amt);
     row.payments += 1;
-    if (p.mode === "CASH") row.cash = r2(row.cash + amt);
+    if (mode === "CASH") row.cash = r2(row.cash + amt);
     else row.digital = r2(row.digital + amt);
 
-    const name = p.receivedBy?.name ?? "—";
+    const who = name ?? "—";
     const s = staffAcc.get(key)!;
-    const cur = s.get(name) ?? { name, count: 0, amount: 0 };
+    const cur = s.get(who) ?? { name: who, count: 0, amount: 0 };
     cur.count += 1; cur.amount = r2(cur.amount + amt);
-    s.set(name, cur);
+    s.set(who, cur);
 
-    const src = p.invoice?.source ?? "OTHER";
     const sm = sourceAcc.get(key)!;
-    const sc = sm.get(src) ?? { source: src, collected: 0, refunded: 0, net: 0, count: 0 };
+    const sc = sm.get(source) ?? { source, collected: 0, refunded: 0, net: 0, count: 0 };
     sc.collected = r2(sc.collected + amt); sc.count += 1; sc.net = r2(sc.collected - sc.refunded);
-    sm.set(src, sc);
+    sm.set(source, sc);
+  };
+
+  for (const p of counterPayments) {
+    takeIn(
+      p.receivedBy?.role, p.receivedBy?.name, p.mode,
+      Number(p.amount.toString()), p.invoice?.source ?? "OTHER",
+    );
+  }
+  for (const a of (advanceRows as A[]).filter((x) => isCounterMode(x.mode))) {
+    takeIn(a.receivedBy?.role, a.receivedBy?.name, a.mode, Number(a.amount.toString()), "ADVANCE");
   }
 
   type R = {

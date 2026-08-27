@@ -38,6 +38,13 @@ export interface Close {
   bills: number;
   refundCount: number;
   byCounter: { name: string; count: number; amount: number }[];
+  /** IPD deposits taken at this till today. Already inside the totals above -
+   *  listed so the desk can see which of the day's cash is money being HELD. */
+  advances?: {
+    receiptNo: string; patient: string; ipNumber: string;
+    amount: number; mode: string; by: string; at: string;
+  }[];
+  advanceTotal?: number;
   refunds: { receiptNo: string; patient: string; amount: number; mode: string; reason: string; by: string; at: string }[];
   outstanding: { receiptNo: string; patient: string; total: number; paid: number; due: number }[];
   /** Billed to an insurer today. Listed, never added to any total on this page. */
@@ -54,6 +61,9 @@ const today = () => new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD, local
 const SOURCE_LABEL: Record<string, string> = {
   CONSULTATION: "Consultation", PHARMACY: "Pharmacy", LAB: "Laboratory",
   IPD: "Inpatient stay", OTHER: "Other",
+  // Deposits are their own source, never filed under IPD: no supply has
+  // happened yet, so this is money held rather than money earned.
+  ADVANCE: "IPD advance",
 };
 
 export function DayCloseStatement({
@@ -277,6 +287,41 @@ export function DayCloseStatement({
                       <span className="w-[110px] text-right font-mono text-[14px] font-bold text-[var(--p-ink)]">₹{money(c.amount)}</span>
                     </div>
                   ))}
+                </div>
+              </section>
+            )}
+
+            {/* ── IPD deposits, named ──
+                In the drawer, and in every total above - a deposit is money a
+                person handed over this counter. Named one by one because a
+                family that paid twice holds two slips, and a single merged
+                figure is the argument at the desk nobody can settle. */}
+            {(data.advances ?? []).length > 0 && (
+              <section data-rise className="surface overflow-hidden">
+                <div className="border-b border-[var(--p-border)] px-5 py-3.5">
+                  <h2 className="text-[14px] font-semibold text-[var(--p-ink)]">Advances taken today</h2>
+                  <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">
+                    Counted in the drawer above. This is money held against a stay - it comes off the discharge bill,
+                    and it has not been earned yet.
+                  </p>
+                </div>
+                <div className="divide-y divide-[var(--p-border)]">
+                  {(data.advances ?? []).map((a, i) => (
+                    <div key={i} className="flex flex-wrap items-center gap-3 px-5 py-3">
+                      <div className="min-w-[170px] flex-1">
+                        <div className="font-mono text-[13px] font-semibold text-[var(--p-ink)]">{a.receiptNo}</div>
+                        <div className="text-[12px] text-[var(--p-muted)]">{a.patient}</div>
+                      </div>
+                      <div className="min-w-[120px] flex-1 font-mono text-[12px] text-[var(--p-text)]">{a.ipNumber}</div>
+                      <span className="rounded bg-[var(--p-bg)] px-2 py-1 text-[11px] font-semibold text-[var(--p-muted)]">{a.mode}</span>
+                      <span className="w-[90px] text-right font-mono text-[14px] font-bold text-[var(--p-cyan-deep)]">₹{money(a.amount)}</span>
+                      <span className="w-[110px] text-right text-[11px] text-[var(--p-muted)]">{a.by}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between border-t border-[var(--p-border)] bg-[var(--p-bg)] px-5 py-2.5">
+                  <span className="text-[12px] font-semibold text-[var(--p-muted)]">Held against stays</span>
+                  <span className="font-mono text-[14px] font-bold text-[var(--p-cyan-deep)]">₹{money(data.advanceTotal ?? 0)}</span>
                 </div>
               </section>
             )}

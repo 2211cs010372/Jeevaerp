@@ -17,6 +17,10 @@ interface Close {
   bills: number;
   refundCount: number;
   byCounter: { name: string; count: number; amount: number }[];
+  /** IPD deposits taken today. Inside the totals above - carried through to the
+   *  workbook so the accountant can see which of the day's cash is money held. */
+  advances?: { receiptNo: string; patient: string; ipNumber: string; amount: number; mode: string; by: string; at: string }[];
+  advanceTotal?: number;
   refunds: { receiptNo: string; patient: string; amount: number; mode: string; reason: string; by: string; at: string }[];
   outstanding: { receiptNo: string; patient: string; total: number; paid: number; due: number }[];
   /** Billed to insurers today. Reported here, absent from every total above. */
@@ -50,6 +54,9 @@ const todayISO = () => new Date().toLocaleDateString("en-CA");
 const SOURCE_LABEL: Record<string, string> = {
   CONSULTATION: "Consultation", PHARMACY: "Pharmacy", LAB: "Laboratory",
   IPD: "Inpatient stay", OTHER: "Other",
+  // Deposits are their own source, never filed under IPD: no supply has
+  // happened yet, so this is money held rather than money earned.
+  ADVANCE: "IPD advance",
 };
 
 /** Each counter gets its own colour so the eye can follow one across the page. */

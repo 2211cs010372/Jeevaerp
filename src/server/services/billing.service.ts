@@ -7,6 +7,7 @@ import { notifyBillGenerated } from "./notify.service";
 import { publishLive } from "@/server/realtime/publish";
 import { splitInvoice, allocateCoverage } from "@/lib/insurance-split";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
+import { isAdvanceAdjustment, advanceReceiptNoFromRef } from "@/server/billing/advances";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, PaymentMode } from "@prisma/client";
 
@@ -23,14 +24,15 @@ export type PaymentModeT = "CASH" | "UPI" | "CARD" | "NETBANKING" | "OTHER";
 export type PayerTypeT = "SELF_PAY" | "INSURANCE";
 
 /**
- * The IPD discharge applies the admission deposit as a payment against the final
- * bill. It stamps that payment with this reference so the printed invoice can
- * tell the deposit apart from money taken at the counter and show it as an
- * explicit deduction. One prefix, written and matched in one place, so the two
- * halves can never drift.
+ * The IPD discharge applies each admission deposit as a payment against the
+ * final bill, stamped with a reference that names the deposit slip. Re-exported
+ * here so the many call sites that already import it from this service keep
+ * working; the rule itself lives in a Prisma-free module so the day close can
+ * import it too, and so it can be tested without a database.
  */
-export const ADVANCE_REF_PREFIX = "Advance taken at admission";
-export const advancePaymentRef = (ipNumber: string) => `${ADVANCE_REF_PREFIX} (${ipNumber})`;
+export {
+  ADVANCE_REF_PREFIX, advancePaymentRef, isAdvanceAdjustment, advanceReceiptNoFromRef,
+} from "@/server/billing/advances";
 
 /** One tender against a bill. A split (part cash, part UPI) is just several. */
 export interface PaymentInput { mode: PaymentModeT; amount: number; reference?: string }
@@ -79,6 +81,17 @@ export interface InvoiceDTO {
    *  the printed bill show "less advance → balance to be paid" explicitly rather
    *  than folding the deposit invisibly into one "Paid" figure. 0 for non-IPD. */
   advanceAdjusted: string;
+  /**
+   * The same money as `advanceAdjusted`, but ONE ROW PER DEPOSIT SLIP.
+   *
+   * A family that paid twice holds two receipts, and a bill showing a single
+   * "Less: Advance ₹8,000" cannot be tied back to either of them - which is the
+   * conversation at the counter that nobody can settle. So each deposit prints
+   * its own line, with the number on the slip in their hand.
+   *
+   * `receiptNo` is null only for advances taken before the slips were numbered.
+   */
+  advanceLines: { receiptNo: string | null; mode: string; amount: string; at: string }[];
   balanceDue: string;
   payments: { mode: string; amount: string; reference: string | null; createdAt: string }[];
   hospital: {
@@ -422,9 +435,20 @@ export async function getInvoice(invoiceId: string): Promise<InvoiceDTO> {
   // How much of what's been paid is the admission deposit carried over from the
   // ward, vs. money taken at this counter. Matched on the reference the discharge
   // stamps - see advancePaymentRef.
-  const advanceAdjusted = inv.payments
-    .filter((p: { reference: string | null }) => p.reference?.startsWith(ADVANCE_REF_PREFIX))
-    .reduce((s: number, p: { amount: { toString(): string } }) => r2(s + Number(p.amount.toString())), 0);
+  //
+  // Kept as rows, not just a total: the discharge writes one payment per deposit
+  // slip, so the bill can name each one instead of printing a lump the family
+  // cannot reconcile against the receipts they are holding.
+  type PayRow = { mode: string; amount: { toString(): string }; reference: string | null; createdAt: Date };
+  const advancePayments = (inv.payments as PayRow[]).filter((p) => isAdvanceAdjustment(p.reference));
+  const advanceAdjusted = advancePayments
+    .reduce((s: number, p) => r2(s + Number(p.amount.toString())), 0);
+  const advanceLines = advancePayments.map((p) => ({
+    receiptNo: advanceReceiptNoFromRef(p.reference),
+    mode: p.mode,
+    amount: p.amount.toString(),
+    at: p.createdAt.toISOString(),
+  }));
 
   return {
     id: inv.id,
@@ -448,6 +472,7 @@ export async function getInvoice(invoiceId: string): Promise<InvoiceDTO> {
     totalAmount: inv.totalAmount.toString(),
     amountPaid: s2(paid),
     advanceAdjusted: s2(advanceAdjusted),
+    advanceLines,
     balanceDue: s2(Math.max(0, r2(total - paid))),
     payments: inv.payments.map((p: { mode: string; amount: { toString(): string }; reference: string | null; createdAt: Date }) => ({
       mode: p.mode, amount: p.amount.toString(), reference: p.reference, createdAt: p.createdAt.toISOString(),

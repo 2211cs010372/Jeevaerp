@@ -273,6 +273,9 @@ export interface Invoice {
   subtotal: string; discountAmount: string; taxableAmount: string;
   cgstAmount: string; sgstAmount: string; totalAmount: string;
   amountPaid: string; advanceAdjusted: string; balanceDue: string;
+  /** One row per deposit slip, so a family holding two receipts can find both
+   *  on the bill. Absent on older payloads - the merged line is the fallback. */
+  advanceLines?: { receiptNo: string | null; mode: string; amount: string; at: string }[];
   /** SELF_PAY or INSURANCE, with the insurer's name when it is the latter. */
   payer?: string; payerName?: string | null;
   payments: { mode: string; amount: string; reference: string | null; createdAt: string }[];
@@ -572,6 +575,7 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
   const total = Number(inv.totalAmount);            // taxable + CGST + SGST
   const isIpd = inv.source === "IPD";
   const advance = isIpd ? Number(inv.advanceAdjusted) : 0;
+  const advanceRows = isIpd ? (inv.advanceLines ?? []) : [];
   const netPayable = Math.max(0, Math.round((total - advance) * 100) / 100);
 
   const Meta = ({ k, v, right, strong }: { k: string; v: string; right?: boolean; strong?: boolean }) => (
@@ -931,7 +935,23 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
                     {isIpd && advance > 0 ? (
                       <>
                         <Trow k="Total incl. GST" v={money(total)} />
-                        <Trow k="Less: Advance" v={`− ${money(advance)}`} accent />
+                        {/* A stay can take several deposits, and the family holds
+                            a numbered slip for each. One merged "Less: Advance"
+                            ties back to none of them, so each slip gets its own
+                            line; the merged line remains for a single deposit,
+                            and for older bills whose payload predates this. */}
+                        {advanceRows.length > 1 ? (
+                          advanceRows.map((a, i) => (
+                            <Trow
+                              key={i}
+                              k={`Less: Advance ${a.receiptNo ?? ""}`.trim()}
+                              v={`− ${money(a.amount)}`}
+                              accent
+                            />
+                          ))
+                        ) : (
+                          <Trow k="Less: Advance" v={`− ${money(advance)}`} accent />
+                        )}
                         <TotalRow k="Net Payable" v={money(netPayable)} />
                       </>
                     ) : <TotalRow k="Net Payable" v={money(total)} />}
