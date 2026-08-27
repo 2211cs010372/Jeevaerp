@@ -306,7 +306,6 @@ const QUICK_LINKS: { href: string; label: string }[] = [
   { href: "/bills", label: "Bills" },
   { href: "/wards", label: "Wards & beds" },
   { href: "/hr", label: "Staff & doctors" },
-  { href: "/audit", label: "Audit log" },
 ];
 
 /**

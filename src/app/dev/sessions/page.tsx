@@ -6,6 +6,16 @@ import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 
+/**
+ * Who signed in, from where, and for how long.
+ *
+ * Lives in the DEVELOPER portal, next to the audit log and the crash list: the
+ * address a sign-in came from is the first thing you want when a desk reports
+ * something it did not do, and the last thing a proprietor needs on the way to
+ * the day's takings. The endpoint stays /api/v1/admin/sessions and stays
+ * ADMIN-gated; SUPERUSER clears it the way it clears every role gate.
+ */
+
 interface Session {
   id: string; name: string; role: string; method: string;
   ipAddress: string | null; loginAt: string; logoutAt: string | null; durationMin: number | null;

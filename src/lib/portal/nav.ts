@@ -110,9 +110,9 @@ export const PORTALS: Record<string, PortalMeta> = {
       // for the forty the import left at ₹0.
       { label: "Lab test prices", href: "/prices", icon: "rupee" },
       { label: "Wards & beds", href: "/wards", icon: "bed" },
-      { label: "Login activity", href: "/sessions", icon: "clock" },
-      { label: "Audit log", href: "/audit", icon: "activity" },
-      { label: "Errors", href: "/errors", icon: "alert" },
+      // Login activity, the audit log and the crash list used to sit here. They
+      // are not the proprietor's screens - they are the maintainer's, and they
+      // read the same three tables from the developer portal now. See PORTALS.dev.
       { label: "Hospital settings", href: "/settings", icon: "building" },
 
     ],
@@ -209,6 +209,31 @@ export const PORTALS: Record<string, PortalMeta> = {
           },
         ],
       },
+    ],
+  },
+  /**
+   * THE DEVELOPER'S PORTAL.
+   *
+   * Not a desk. Every other portal here is a job somebody does in the building;
+   * this one is the person who maintains the software, and its nav is the
+   * launcher plus the three screens that answer "what has this system been
+   * doing" - who signed in and from which address, what was recorded against a
+   * record, and what has been crashing.
+   *
+   * Those three lived in the admin console until now, which put a proprietor
+   * one click from a stack trace and a developer's evidence behind somebody
+   * else's password. Same tables, same ADMIN-gated endpoints - moved to the
+   * portal whose job they actually are.
+   */
+  dev: {
+    key: "dev",
+    brand: "Jeeva",
+    roleLabel: "Developer",
+    nav: [
+      { label: "Launcher", href: "/", icon: "grid", hint: "Every portal in the hospital, one click away" },
+      { label: "Login activity", href: "/sessions", icon: "clock", hint: "Who signed in, from which address, for how long" },
+      { label: "Audit log", href: "/audit", icon: "activity", hint: "Every recorded action, filterable by record or day" },
+      { label: "Errors", href: "/errors", icon: "alert", hint: "Server crashes, grouped by cause" },
     ],
   },
   doctor: {

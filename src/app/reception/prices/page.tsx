@@ -15,7 +15,7 @@
  * What makes that safe enough to live with is the audit trail, not the UI:
  * bulkUpdateCatalogPrices writes a CATALOG_PRICES_UPDATED row carrying who
  * changed which test, from what, to what. If a rate ever moves to suit a bill,
- * that row is how it is found - see /admin/audit.
+ * that row is how it is found - see the developer portal's audit log.
  */
 
 import { LabPriceGrid } from "@/components/portal/labs/price-grid";

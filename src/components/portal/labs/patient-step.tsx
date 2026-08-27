@@ -33,16 +33,23 @@ import { Req, Spinner } from "@/components/portal/ui/form-atoms";
 import { api } from "@/lib/api-client";
 import { InpatientPicker } from "@/components/portal/reception/inpatient-picker";
 import { formatPhone, isIndianMobile, toBare10 } from "@/lib/phone";
+import { AGE_MAX, ageInRange, agePayload, formatAge, type AgeUnit } from "@/lib/age";
+import { AgeUnitSwitch } from "@/components/portal/ui/age-unit-switch";
 
 export interface LabPatient {
   id: string; displayId: string; fullName: string; phone: string;
   age: number | null; gender?: string | null;
+  /** Set for the infants registered by unit - see lib/age. Ages itself, `age` doesn't. */
+  dob?: string | null;
 }
 
 /** A walk-in as typed, before they have a record. Strings throughout - it's a form. */
 export interface PatientDraft {
   firstName: string; lastName: string; phone: string;
-  age: string; gender: "" | "MALE" | "FEMALE" | "OTHER";
+  /** The NUMBER only. What it counts is `ageUnit` - "11" is days, months or years. */
+  age: string;
+  ageUnit: AgeUnit;
+  gender: "" | "MALE" | "FEMALE" | "OTHER";
 }
 
 /** Where an inpatient currently is, carried so the screen can say so. */
@@ -57,21 +64,39 @@ export type PatientChoice =
   | { kind: "existing"; patient: LabPatient; admission?: AdmissionContext }
   | { kind: "new"; draft: PatientDraft };
 
-export const EMPTY_DRAFT: PatientDraft = { firstName: "", lastName: "", phone: "", age: "", gender: "" };
+export const EMPTY_DRAFT: PatientDraft = { firstName: "", lastName: "", phone: "", age: "", ageUnit: "Y", gender: "" };
 
 export const draftName = (d: PatientDraft) =>
   [d.firstName, d.lastName].map((s) => s.trim()).filter(Boolean).join(" ");
 
-/** Name and a reachable mobile. Everything else on a patient record can wait. */
-export const draftValid = (d: PatientDraft) => d.firstName.trim().length > 0 && isIndianMobile(d.phone);
+/**
+ * Age is OPTIONAL, but an age that is out of range for its unit is not the same
+ * as a blank one: it would write a date of birth in the future or in 1900. A
+ * typed age has to make sense before the form will hand the draft over.
+ */
+export const ageValid = (d: PatientDraft) =>
+  !d.age.trim() || ageInRange(Number(d.age), d.ageUnit);
 
-/** The draft in the shape `POST /labs/walk-in` wants. */
+/** Name and a reachable mobile. Everything else on a patient record can wait. */
+export const draftValid = (d: PatientDraft) =>
+  d.firstName.trim().length > 0 && isIndianMobile(d.phone) && ageValid(d);
+
+/**
+ * The draft in the shape `POST /labs/walk-in` wants.
+ *
+ * The unit does not travel - `agePayload` resolves it here into the two things
+ * the patient record actually holds: completed years, and (for an infant, whose
+ * years are 0) the date of birth those months or days imply.
+ */
 export function draftPayload(d: PatientDraft) {
+  const typedAge = d.age.trim() ? Number(d.age) : null;
+  const age = typedAge != null && ageInRange(typedAge, d.ageUnit) ? agePayload(typedAge, d.ageUnit) : null;
   return {
     firstName: d.firstName.trim(),
     lastName: d.lastName.trim() || undefined,
     phone: toBare10(d.phone),
-    age: d.age.trim() ? Number(d.age) : undefined,
+    age: age?.age,
+    dob: age?.dob,
     gender: d.gender || undefined,
   };
 }
@@ -84,7 +109,15 @@ const inits = (n: string) => n.split(" ").map((x) => x[0]).filter(Boolean).slice
 
 const fld =
   "w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm text-[var(--p-ink)] outline-none focus:border-[var(--p-teal)]";
-const lbl = "mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--p-muted)]";
+const lblText = "text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--p-muted)]";
+const lbl = `mb-1.5 block ${lblText}`;
+/** The label ROW, pinned to the height of a bare label so every control in the
+ *  grid below starts on the same line - one of them carries the unit switch. */
+const lblRow = "mb-1.5 flex h-[17px] items-center gap-2";
+
+/** A plausible value for each unit, so the placeholder reads as an example. */
+const AGE_PLACEHOLDER: Record<AgeUnit, string> = { Y: "34", M: "5", D: "11" };
+const AGE_UNIT_WORD: Record<AgeUnit, string> = { Y: "years", M: "months", D: "days" };
 
 export function PatientStep({
   value,
@@ -187,7 +220,7 @@ export function PatientStep({
                 <div className="text-[14px] font-semibold text-[var(--p-ink)]">{chosen.fullName}</div>
                 <div className="text-[11px] text-[var(--p-muted)]">
                   <span className="tabular">{chosen.displayId}</span> · {formatPhone(chosen.phone)}
-                  {chosen.age != null && ` · ${chosen.age}y`}
+                  {formatAge(chosen) && ` · ${formatAge(chosen)}`}
                 </div>
                 {/* Said here, at the moment of choosing, because it changes what
                     happens with the money: nothing is collected at the window
@@ -247,7 +280,7 @@ export function PatientStep({
                 kind: "existing",
                 patient: {
                   id: ip.patient.id, displayId: ip.patient.displayId, fullName: ip.patient.fullName,
-                  phone: ip.patient.phone, age: ip.patient.age, gender: ip.patient.gender,
+                  phone: ip.patient.phone, age: ip.patient.age, dob: ip.patient.dob, gender: ip.patient.gender,
                 },
                 admission: { admissionId: ip.id, ipNumber: ip.ipNumber, ward: ip.ward, bedNo: ip.bedNo },
               })
@@ -322,17 +355,42 @@ export function PatientStep({
                   </p>
                 )}
               </div>
+              {/* TWO EQUAL COLUMNS. `grid-cols-2` is minmax(0,1fr) twice, and
+                  the minmax is the point: a bare `1.5fr` track still respects
+                  the Sex select's min-content width, so the select took the row
+                  and squeezed the age box down to 26 real pixels. Nothing here
+                  is a hard-coded pixel width for the same reason. */}
               <div className="grid grid-cols-2 gap-3">
+                {/* AGE, IN WHATEVER UNIT THE ANSWER CAME IN.
+                    A lab that registers newborns cannot ask everyone for a
+                    number of years: "0" is the same answer for a nine-day-old
+                    and a nine-month-old, and the reference range for bilirubin
+                    or haemoglobin is not.
+
+                    The unit is a THREE-WAY SWITCH ON THE LABEL LINE, not a
+                    second box beside the number. Two boxes do not fit across
+                    half of half a form at any ratio - that is what kept
+                    overflowing into Sex. Up on the label it costs the number
+                    box nothing, reads as one question rather than two, and is
+                    one tap at a counter instead of open-scroll-pick. */}
                 <div>
-                  <label className={lbl}>Age</label>
+                  <div className={`${lblRow} justify-between`}>
+                    <label className={lblText} htmlFor="walkin-age">Age</label>
+                    <AgeUnitSwitch value={draft.ageUnit} onChange={(u) => edit({ ageUnit: u })} />
+                  </div>
                   <input
-                    value={draft.age} inputMode="numeric" maxLength={3}
+                    id="walkin-age" value={draft.age} inputMode="numeric" maxLength={5}
                     onChange={(e) => edit({ age: e.target.value.replace(/\D/g, "") })}
-                    className={`${fld} font-mono`} placeholder="34"
+                    className={`${fld} font-mono`} placeholder={AGE_PLACEHOLDER[draft.ageUnit]}
                   />
+                  {!ageValid(draft) && (
+                    <p className="mt-1.5 flex items-center gap-1 text-[12px] text-[var(--p-rose)]">
+                      <Icon name="alert" size={11} /> Up to {AGE_MAX[draft.ageUnit]} {AGE_UNIT_WORD[draft.ageUnit]}.
+                    </p>
+                  )}
                 </div>
                 <div>
-                  <label className={lbl}>Sex</label>
+                  <div className={lblRow}><label className={lblText}>Sex</label></div>
                   <select value={draft.gender} onChange={(e) => edit({ gender: e.target.value as PatientDraft["gender"] })} className={fld}>
                     <option value="">-</option>
                     <option value="FEMALE">Female</option>
@@ -366,7 +424,8 @@ export function PatientStep({
 
             <p className="mt-4 text-[11px] leading-relaxed text-[var(--p-muted)]">
               A Jeeva ID is issued when the tests are ordered. Age and sex are optional here but they change
-              how several analytes are read, so fill them in when the patient can tell you.
+              how several analytes are read, so fill them in when the patient can tell you. For a baby, switch
+              the unit to months or days - the report carries what you type, not a rounded-down “0 years”.
             </p>
           </>
         )}

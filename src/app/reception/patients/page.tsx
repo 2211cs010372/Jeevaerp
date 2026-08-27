@@ -6,9 +6,12 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { formatAge } from "@/lib/age";
 
 interface PatientRow {
   id: string; displayId: string; fullName: string; age: number | null;
+  /** Set where the desk gave a real date, or an age in months or days. See lib/age. */
+  dob: string | null;
   bloodGroup: string | null; phone: string; city: string | null; createdAt: string;
 }
 const inits = (n: string) => n.split(" ").map((x) => x[0]).slice(0, 2).join("");
@@ -250,7 +253,7 @@ export default function PatientsPage() {
                     <div className="text-[14px] font-medium text-[var(--p-ink)]">{p.fullName}</div>
                     <div className="text-[13px] text-[var(--p-muted)]">
                       <span className="tabular">{p.displayId}</span> · {p.phone}
-                      {p.age != null && ` · ${p.age}y`}{p.bloodGroup && ` · ${p.bloodGroup}`}{p.city && ` · ${p.city}`}
+                      {formatAge(p) && ` · ${formatAge(p)}`}{p.bloodGroup && ` · ${p.bloodGroup}`}{p.city && ` · ${p.city}`}
                     </div>
                   </div>
                 </div>

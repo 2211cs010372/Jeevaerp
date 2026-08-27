@@ -71,6 +71,9 @@ interface Discharged {
   id: string; ipNumber: string; dischargedAt: string; days: number; ward: string; bedNo: string;
   /** How the stay ended. Optional so an older cached response still renders. */
   outcome?: string;
+  /** SELF_PAY once the stay is the family's - including one an insurer refused
+   *  and that was converted. Optional for the same cached-response reason. */
+  payerType?: string;
   patient: { id: string; displayId: string; fullName: string };
   doctor: { name: string; department: string };
   invoice: { id: string; receiptNo: string; totalAmount: string; status: string } | null;
@@ -325,6 +328,21 @@ export default function InpatientsPage() {
                     className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
                     <Icon name="receipt" size={14} /> Detailed bill
                   </a>
+                  {/* ── THE SAME STAY, PRICED FOR A FAMILY THAT IS PAYING IT ──
+                      The sheet beside this one is the claim bill: one gross
+                      figure with the discount off the bottom. That is the right
+                      document for a TPA and the wrong one for the discount
+                      conversation at the counter, where the hospital's own
+                      services are negotiable and the medicines and the tests
+                      are not. Self-paying stays only - including one an insurer
+                      refused, which is SELF_PAY by the time it lands here. */}
+                  {r.payerType === "SELF_PAY" && (
+                    <a href={`/print/services-bill/${r.id}`} target="_blank" rel="noopener noreferrer"
+                      title="Services discounted, pharmacy and lab at cost, everything already paid deducted"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
+                      <Icon name="receipt" size={14} /> Services bill
+                    </a>
+                  )}
                   <a href={`/print/discharge/${r.id}`} target="_blank" rel="noopener noreferrer"
                     title="The running bill for this stay - bed, nursing, pharmacy and charges"
                     className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
@@ -397,6 +415,17 @@ export default function InpatientsPage() {
                     className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
                     <Icon name="receipt" size={14} /> Detailed bill
                   </a>
+                  {/* The self-pay reading of the same stay - see the note on the
+                      inpatient rows above. Most wanted right here: the family is
+                      gone, they ring asking what the discount actually came to,
+                      and the desk needs the sheet that says so. */}
+                  {d.payerType === "SELF_PAY" && (
+                    <a href={`/print/services-bill/${d.id}`} target="_blank" rel="noopener noreferrer"
+                      title="Services discounted, pharmacy and lab at cost, everything already paid deducted"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
+                      <Icon name="receipt" size={14} /> Services bill
+                    </a>
+                  )}
                   {/* BACK INTO THE STAY AFTER IT IS CLOSED.
                       This heading has always promised "open the record after the
                       patient has left the ward" and there was no way to do it -
@@ -476,6 +505,15 @@ export default function InpatientsPage() {
                     className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
                     <Icon name="receipt" size={15} /> Detailed bill
                   </a>
+                  {/* The moment the discount is handed over. A family paying
+                      cash is standing here having just agreed a number, and this
+                      is the sheet that shows them what it came off. */}
+                  {dischargeOf.payerType === "SELF_PAY" && (
+                    <a href={`/print/services-bill/${dischargeOf.id}`} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
+                      <Icon name="receipt" size={15} /> Services bill
+                    </a>
+                  )}
                   <a href={`/print/discharge/${dischargeOf.id}`} target="_blank" rel="noopener noreferrer"
                     className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
                     <Icon name="file" size={15} /> Discharge summary

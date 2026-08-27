@@ -30,7 +30,7 @@ import { formatPhone } from "@/lib/phone";
 interface Test { id: string; testName: string; status: string; price: string | null; billed: boolean }
 
 interface WalkInResult {
-  patient: { id: string; displayId: string; fullName: string; phone: string; age: number | null; gender: string | null; isNew: boolean };
+  patient: { id: string; displayId: string; fullName: string; phone: string; age: number | null; dob: string | null; gender: string | null; isNew: boolean };
   tests: { id: string; testName: string }[];
   invoice: LabInvoice | null;
   chargedToRoom: boolean;

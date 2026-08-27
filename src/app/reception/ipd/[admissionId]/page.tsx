@@ -537,6 +537,26 @@ export default function AdmissionSheetPage() {
                 className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[12px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">
                 <Icon name="receipt" size={13} /> Print all bills
               </a>
+              {/* ── THE SELF-PAY BILL, IN THE IP BILL'S OWN FORMAT ──
+                  The detailed bill is unchanged and still the claim sheet: one
+                  gross figure, the discount off the bottom, a number for a TPA.
+                  This is the same stay split the way the counter argues it -
+                  the hospital's own services discounted, the pharmacy and the
+                  lab at cost, and every rupee already paid at those windows
+                  taken off what is asked for now.
+
+                  SELF-PAYING STAYS ONLY, and that includes one an insurer
+                  refused: the conversion flips payerType, so by the time the
+                  family is being asked for cash this is exactly what the stay
+                  is. On a live cashless stay the sheet would ask a family for
+                  money the insurer is carrying, and the service refuses it. */}
+              {a.payerType === "SELF_PAY" && (
+                <a href={`/print/services-bill/${a.id}`} target="_blank" rel="noopener noreferrer"
+                  title="The self-pay bill — services discounted, pharmacy and lab at cost, everything already paid deducted"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
+                  <Icon name="receipt" size={13} /> Services bill
+                </a>
+              )}
             </div>
           </div>
 

@@ -27,7 +27,7 @@ export interface Inpatient {
   reason: string | null;
   runningCharge: string;
   doctor: { name: string; department: string };
-  patient: { id: string; displayId: string; fullName: string; age: number | null; gender: string | null; phone: string };
+  patient: { id: string; displayId: string; fullName: string; age: number | null; dob: string | null; gender: string | null; phone: string };
 }
 
 /** Little occupied-bed mark - same glyph language as the bed board. */
