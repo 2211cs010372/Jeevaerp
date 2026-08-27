@@ -28,13 +28,15 @@ import {
   ArrowRight01Icon, Activity01Icon, Clock01Icon, Alert02Icon, File01Icon,
   PrinterIcon, Shield01Icon, TruckIcon, Package01Icon, InboxIcon,
   ArrowTurnBackwardIcon, Cancel01Icon, Settings01Icon, PaintBoardIcon,
+  ArrowUpRight01Icon,
 } from "@hugeicons/core-free-icons";
 
 export type IconName =
   | "grid" | "users" | "calendar" | "stethoscope" | "building" | "pill"
   | "flask" | "receipt" | "rupee" | "trend" | "bed" | "search" | "plus"
   | "check" | "logout" | "chevron" | "activity" | "clock" | "alert" | "file" | "printer" | "shield"
-  | "truck" | "box" | "inbox" | "undo" | "x" | "settings" | "palette";
+  | "truck" | "box" | "inbox" | "undo" | "x" | "settings" | "palette"
+  | "external";
 
 /** Meaning -> drawing. The only place the vendor's names appear. */
 const glyphs: Record<IconName, typeof DashboardSquare01Icon> = {
@@ -72,6 +74,8 @@ const glyphs: Record<IconName, typeof DashboardSquare01Icon> = {
   settings: Settings01Icon,
   /* the swatch - appearance */
   palette: PaintBoardIcon,
+  /* leaves this page - a link that opens somewhere else */
+  external: ArrowUpRight01Icon,
 };
 
 export function Icon({ name, size = 18, className = "" }: { name: IconName; size?: number; className?: string }) {

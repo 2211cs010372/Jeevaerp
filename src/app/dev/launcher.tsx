@@ -60,6 +60,21 @@ const FACE: Record<Exclude<PortalSubdomain, "dev">, { icon: IconName; blurb: str
 /** How many deep links fit on a card before it stops being scannable. */
 const CHIP_LIMIT = 6;
 
+/**
+ * Every door on this page opens in its own tab.
+ *
+ * The launcher is a place you come back to. Following a link in-place means
+ * that after reading a bill in reception you are one Back press from here and
+ * six from where you started, and in subdomain mode Back also re-runs a portal's
+ * auth redirect - so the way home is not reliably behind you at all. Six portals
+ * open side by side is what somebody debugging across desks actually wants.
+ *
+ * `noopener` and not `noreferrer`: these are our own portals, and in path mode
+ * the login gate reads the referer to work out which portal a sign-in was
+ * attempted at (see portalFromRequest). Keep the header.
+ */
+const NEW_TAB = { target: "_blank", rel: "noopener" } as const;
+
 export function Launcher({
   portals, host, routing, sessionSpansPortals, loginHref,
 }: {
@@ -101,6 +116,7 @@ export function Launcher({
             <p className="mt-2.5 max-w-xl text-[14px] leading-relaxed text-[var(--p-muted)]">
               Every portal in the hospital, one click away — and the screens inside them,
               so you land on the one you meant rather than on somebody&apos;s dashboard.
+              Each opens in its own tab, so this page stays where you left it.
             </p>
           </div>
 
@@ -191,6 +207,7 @@ function PortalCard({ portal, viewerRole }: { portal: PortalLink; viewerRole?: s
     <article data-rise className="surface surface-hover flex flex-col px-6 py-5">
       <a
         href={canEnter ? href("/") : undefined}
+        {...NEW_TAB}
         aria-disabled={!canEnter}
         className={`group flex items-start gap-4 ${canEnter ? "" : "pointer-events-none opacity-55"}`}
       >
@@ -200,7 +217,9 @@ function PortalCard({ portal, viewerRole }: { portal: PortalLink; viewerRole?: s
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h2 className="text-[16px] font-semibold text-[var(--p-ink)]">{PORTAL_LABEL[key]}</h2>
-            <Icon name="chevron" size={14} className="text-[var(--p-muted)] transition-transform group-hover:translate-x-0.5 group-hover:text-[var(--p-blue)]" />
+            {/* An arrow leaving the corner, not a chevron sliding right: these
+                links open a tab rather than move this one. */}
+            <Icon name="external" size={13} className="text-[var(--p-muted)] transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-[var(--p-blue)]" />
           </div>
           <p className="mt-1 text-[13.5px] leading-relaxed text-[var(--p-muted)]">{face.blurb}</p>
         </div>
@@ -225,7 +244,8 @@ function PortalCard({ portal, viewerRole }: { portal: PortalLink; viewerRole?: s
               <a
                 key={n.href}
                 href={href(n.href)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 text-[12.5px] font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]"
+                {...NEW_TAB}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-2.5 py-1.5 text-[12.5px] font-medium text-[var(--p-text)] transition-colors hover:border-[var(--p-blue)] hover:bg-[var(--p-blue-soft)] hover:text-[var(--p-blue)]"
               >
                 <Icon name={n.icon} size={13} />
                 {n.label}
@@ -234,6 +254,7 @@ function PortalCard({ portal, viewerRole }: { portal: PortalLink; viewerRole?: s
             {overflow > 0 && (
               <a
                 href={href("/")}
+                {...NEW_TAB}
                 className="inline-flex items-center rounded-lg px-2.5 py-1.5 text-[12.5px] font-semibold text-[var(--p-blue)] hover:underline"
               >
                 +{overflow} more

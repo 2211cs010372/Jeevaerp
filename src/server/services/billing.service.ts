@@ -761,6 +761,29 @@ export async function cancelInvoice(
 }
 
 /** Recent invoices for the billing list (filterable by source). */
+/** The working queue a bill screen gets when it has not asked for anything wider. */
+export const BILLS_PAGE = 100;
+/** The most any one request may pull, whatever the URL says. */
+export const BILLS_PAGE_MAX = 500;
+
+/**
+ * HOW MANY BILLS A LIST REQUEST MAY HAVE.
+ *
+ * A hundred is the working queue and is what nearly every load of these screens
+ * wants. The tab labelled "All bills" asks for more, and asks for it in the
+ * query string - so this is the point where a query string stops being trusted.
+ * Anything unreadable falls back to the working queue rather than to zero: a
+ * junk `?limit=` should give the desk its usual screen, not an empty one.
+ *
+ * Clamped hard at 500. Without a ceiling, `?limit=99999999` is one typed URL
+ * between a curious desk and reading the whole invoice table into memory.
+ */
+export function billsLimit(raw: string | null | undefined): number {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < 1) return BILLS_PAGE;
+  return Math.min(n, BILLS_PAGE_MAX);
+}
+
 export async function listInvoices(source?: InvoiceSourceT, limit = 50, onDate?: string): Promise<{
   id: string; receiptNo: string; source: string; status: string; totalAmount: string;
   amountPaid: string; refunded: string; refundable: string;

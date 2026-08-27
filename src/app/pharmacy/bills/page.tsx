@@ -107,6 +107,27 @@ export default function PharmacyBillsPage() {
   /** The day the counter asked for. Empty until they pick one - see the DATE tab. */
   const [onDate, setOnDate] = useState("");
 
+  /**
+   * ── THE SHIFT'S OWN FIGURES, WHICH ARE NOT THE LIST'S FIGURES ──
+   *
+   * The strip at the top of this screen says "Collected today" and "Still owed
+   * today", and it is drawn whatever tab the desk is on. It used to read those
+   * off `invs` - the list below it - and that is only the same thing while the
+   * list is the working queue.
+   *
+   * The moment the day filter narrows `invs` to some Tuesday last month, none
+   * of those bills is today's, so the strip totalled nothing: a desk that
+   * looked up an old receipt watched the shift's takings drop to ₹0 across 0
+   * bills. Nothing on the page said the number had changed meaning; it simply
+   * read zero, which on a till summary is a heart-stopping thing to read.
+   *
+   * So the un-dated fetch is kept here, separately, and the strip is computed
+   * off THAT. The screen always loads un-dated first - `onDate` starts empty -
+   * so this is populated before any day can be picked, and a dated fetch leaves
+   * it alone rather than overwriting it with somebody else's Tuesday.
+   */
+  const [queue, setQueue] = useState<Inv[]>([]);
+
   // ── COLLECT against one bill ──
   const [pay, setPay] = useState<Inv | null>(null);
   const [payAmt, setPayAmt] = useState("");
@@ -145,14 +166,27 @@ export default function PharmacyBillsPage() {
    * picking a day has to re-fetch, and that only happens if `load` changes when
    * the day does.
    */
+  /**
+   * How wide a window to ask the server for - a boolean rather than `tab`, so
+   * moving between Today, Balance due and With insurer (all of which filter the
+   * list already in hand) does not re-query. Only "All bills" needs more.
+   */
+  const wide = tab === "ALL";
+
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
       const [r, d] = await Promise.all([
-        api.get<{ invoices: Inv[] }>(onDate ? `/pharmacy/billing?date=${onDate}` : "/pharmacy/billing"),
+        api.get<{ invoices: Inv[] }>(
+          onDate ? `/pharmacy/billing?date=${onDate}`
+            // "All bills" asks for the wide window; every other tab filters the
+            // working queue this already holds. See `wide` above.
+            : wide ? "/pharmacy/billing?limit=500"
+            : "/pharmacy/billing"),
         api.get<{ ipdByPatient: IpdDue[] }>("/pharmacy/dues"),
       ]);
       setInvs(r.invoices);
+      if (!onDate) setQueue(r.invoices);
       setIpdDues(d.ipdByPatient);
       setErr(null);
     } catch (e) {
@@ -160,7 +194,7 @@ export default function PharmacyBillsPage() {
     } finally {
       if (!quiet) setLoading(false);
     }
-  }, [onDate]);
+  }, [onDate, wide]);
   useEffect(() => { load(); }, [load]);
 
   /**
@@ -207,16 +241,29 @@ export default function PharmacyBillsPage() {
 
   /** What the counter hands over at end of shift. Today's live money only. */
   const till = useMemo(() => {
-    const today = invs.filter((i) => isToday(i.createdAt) && i.status !== "CANCELLED");
+    const today = queue.filter((i) => isToday(i.createdAt) && i.status !== "CANCELLED");
     return {
       collected: today.reduce((s, i) => s + Number(i.amountPaid), 0),
       // Same rule as the DUE tab: what is owed AT THIS COUNTER. A cashless bill
       // raised today is not part of what the shift has to collect.
       outstanding: today.filter(isCollectable).reduce((s, i) => s + due(i), 0),
       bills: today.length,
+      /**
+       * How many bills in the working queue still carry a balance.
+       *
+       * The sub-line under "Still owed today", and it counts the QUEUE rather
+       * than today alone - which is what it has always meant: the figure is the
+       * shift's, the count is everything the desk still has to chase. It used
+       * to read `counts.DUE`, which is a tab badge and therefore describes
+       * whatever list is on screen - so once the day filter started working,
+       * this line began describing some Tuesday last month underneath a figure
+       * describing today. Two numbers on one card, counting two different days,
+       * with nothing to say so.
+       */
+      dueBills: queue.filter((i) => isCollectable(i) && due(i) > 0).length,
       withInsurer: today.filter((i) => i.payer === "INSURANCE").reduce((s, i) => s + due(i), 0),
     };
-  }, [invs]);
+  }, [queue]);
 
   const counts = useMemo(() => ({
     TODAY: invs.filter((i) => isToday(i.createdAt)).length,
@@ -320,8 +367,8 @@ export default function PharmacyBillsPage() {
         {
           label: "Still owed today", value: `₹${money(till.outstanding)}`,
           tone: till.outstanding > 0 ? "warn" : undefined,
-          sub: counts.DUE > 0
-            ? `${counts.DUE} bill${counts.DUE === 1 ? "" : "s"} with a balance`
+          sub: till.dueBills > 0
+            ? `${till.dueBills} bill${till.dueBills === 1 ? "" : "s"} with a balance`
             : "everything settled",
         },
         {

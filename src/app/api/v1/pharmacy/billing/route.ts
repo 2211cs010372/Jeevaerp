@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { handler } from "@/lib/api";
 import { requireRole } from "@/lib/auth/guard";
-import { listInvoices } from "@/server/services/billing.service";
+import { billsLimit, BILLS_PAGE_MAX, listInvoices } from "@/server/services/billing.service";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +20,10 @@ export const GET = handler(async (req) => {
   // filter has to be a QUERY, not a pass over an already-truncated list, or any
   // day further back than that hundred comes back empty.
   const date = req.nextUrl.searchParams.get("date") ?? undefined;
-  const invoices = await listInvoices("PHARMACY", date ? 500 : 100, date);
+  // `limit` is what the "All bills" tab asks for - see the note on the same
+  // parameter in the reception route. Clamped, so an edited URL cannot ask this
+  // counter to read the whole invoice table into memory.
+  const limit = billsLimit(req.nextUrl.searchParams.get("limit"));
+  const invoices = await listInvoices("PHARMACY", date ? BILLS_PAGE_MAX : limit, date);
   return NextResponse.json({ invoices });
 });

@@ -123,6 +123,27 @@ export default function BillingPage() {
   }
   /** The day the desk asked for. Empty until they pick one - see the DATE tab. */
   const [onDate, setOnDate] = useState("");
+
+  /**
+   * ── THE SHIFT'S OWN FIGURES, WHICH ARE NOT THE LIST'S FIGURES ──
+   *
+   * The strip at the top of this screen says "Collected today" and "Still owed
+   * today", and it is drawn whatever tab the desk is on. It used to read those
+   * off `invs` - the list below it - and that is only the same thing while the
+   * list is the working queue.
+   *
+   * The moment the day filter narrows `invs` to some Tuesday last month, none
+   * of those bills is today's, so the strip totalled nothing: a desk that
+   * looked up an old receipt watched the shift's takings drop to ₹0 across 0
+   * bills. Nothing on the page said the number had changed meaning; it simply
+   * read zero, which on a till summary is a heart-stopping thing to read.
+   *
+   * So the un-dated fetch is kept here, separately, and the strip is computed
+   * off THAT. The screen always loads un-dated first - `onDate` starts empty -
+   * so this is populated before any day can be picked, and a dated fetch leaves
+   * it alone rather than overwriting it with somebody else's Tuesday.
+   */
+  const [queue, setQueue] = useState<Inv[]>([]);
   const [busy, setBusy] = useState(false);
 
   /** Inpatient dues, already grouped per patient by the service. */
@@ -148,6 +169,17 @@ export default function BillingPage() {
     finally { setBusy(false); }
   }
 
+  /**
+   * How wide a window to ask the server for.
+   *
+   * A BOOLEAN, NOT `tab`, and that is the point of it. Every other tab filters
+   * the list this already holds, so making the fetch depend on `tab` would
+   * re-query - and blank the screen - each time the desk moved between Today,
+   * Balance due and With insurer. Only crossing into or out of "All bills"
+   * changes what has to be fetched, and only that flips this.
+   */
+  const wide = tab === "ALL";
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -155,15 +187,39 @@ export default function BillingPage() {
         // The day filter is a QUERY, not a pass over what we already have: the
         // list is capped at the most recent hundred bills, so any day further
         // back than that came back empty when filtered client-side.
-        api.get<{ invoices: Inv[] }>(onDate ? `/reception/billing?date=${onDate}` : "/reception/billing"),
+        api.get<{ invoices: Inv[] }>(
+          onDate ? `/reception/billing?date=${onDate}`
+            : wide ? "/reception/billing?limit=500"
+            : "/reception/billing"),
         api.get<{ ipdByPatient: IpdDue[] }>("/reception/dues"),
       ]);
       setInvs(r.invoices);
+      if (!onDate) setQueue(r.invoices);
       setIpdDues(d.ipdByPatient);
     }
     catch (e) { setErr(e instanceof ApiClientError ? e.message : "Couldn't load bills."); }
     finally { setLoading(false); }
-  }, []);
+    /**
+     * ── `onDate` AND `wide` ARE REAL DEPENDENCIES, NOT DECORATION ──
+     *
+     * This list was `[]`, and an empty dependency list on a callback that reads
+     * `onDate` is a stale closure: `load` kept the value `onDate` had on the
+     * first render - the empty string - for the life of the screen, and since
+     * the effect below re-runs only when `load` CHANGES, picking a day fetched
+     * nothing at all.
+     *
+     * It failed silently and it failed in the worst direction. The day tab
+     * leaves the filtering to the server ("the server has already narrowed to
+     * the chosen day, so there is nothing left to filter"), so with no re-fetch
+     * the desk picked a date and got handed the ordinary hundred-bill working
+     * queue under a heading that said the day they had chosen - a list that
+     * looked entirely plausible and did not contain the bill they were looking
+     * for. The same bug is why "All bills" never widened.
+     *
+     * The pharmacy counter's copy of this screen already carries the note; this
+     * one was left behind when that was fixed.
+     */
+  }, [onDate, wide]);
   useEffect(() => { load(); }, [load]);
 
   // Every till in the hospital raises bills against this list - the pharmacy
@@ -202,16 +258,29 @@ export default function BillingPage() {
 
   /** What the desk hands over at end of shift. Counts only today's live money. */
   const till = useMemo(() => {
-    const today = invs.filter((i) => isToday(i.createdAt) && i.status !== "CANCELLED");
+    const today = queue.filter((i) => isToday(i.createdAt) && i.status !== "CANCELLED");
     return {
       collected: today.reduce((s, i) => s + Number(i.amountPaid), 0),
       // Same rule as the DUE tab: what is owed AT THIS DESK. A cashless bill
       // raised today is not part of what the shift has to collect.
       outstanding: today.filter(isCollectable).reduce((s, i) => s + due(i), 0),
       bills: today.length,
+      /**
+       * How many bills in the working queue still carry a balance.
+       *
+       * The sub-line under "Still owed today", and it counts the QUEUE rather
+       * than today alone - which is what it has always meant: the figure is the
+       * shift's, the count is everything the desk still has to chase. It used
+       * to read `counts.DUE`, which is a tab badge and therefore describes
+       * whatever list is on screen - so once the day filter started working,
+       * this line began describing some Tuesday last month underneath a figure
+       * describing today. Two numbers on one card, counting two different days,
+       * with nothing to say so.
+       */
+      dueBills: queue.filter((i) => isCollectable(i) && due(i) > 0).length,
       withInsurer: today.filter((i) => i.payer === "INSURANCE").reduce((s, i) => s + due(i), 0),
     };
-  }, [invs]);
+  }, [queue]);
 
   const counts = useMemo(() => ({
     TODAY: invs.filter((i) => isToday(i.createdAt)).length,
@@ -352,7 +421,7 @@ export default function BillingPage() {
             ₹{money(String(till.outstanding))}
           </div>
           <div className="mt-0.5 text-[13px] text-[var(--p-muted)]">
-            {counts.DUE > 0 ? `${counts.DUE} bill${counts.DUE === 1 ? "" : "s"} with a balance` : "everything settled"}
+            {till.dueBills > 0 ? `${till.dueBills} bill${till.dueBills === 1 ? "" : "s"} with a balance` : "everything settled"}
             {till.withInsurer > 0 && (
               <> · <span className="text-[var(--p-blue-deep)]">₹{money(String(till.withInsurer))} with insurers</span></>
             )}
