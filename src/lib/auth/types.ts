@@ -7,6 +7,7 @@ export const ROLES = [
   "PHARMACIST",
   "INSURANCE_DESK",
   "ADMIN",
+  "SUPERUSER",
 ] as const;
 
 export type Role = (typeof ROLES)[number];

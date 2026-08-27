@@ -25,7 +25,44 @@ export interface HospitalInfo {
   invoiceFooterNote?: string | null;
 }
 
+/**
+ * ── THE RUPEE SIGN, AT THE SIZE OF THE DIGITS BESIDE IT ──
+ *
+ * Every figure on every sheet the desk prints is set in DM Mono, and DM MONO
+ * HAS NO ₹. Nothing announced that. The browser quietly served the glyph out of
+ * the next font in the stack - `DM Mono Fallback`, the local face next/font
+ * generates to hold the layout steady while the real one loads - and that face
+ * is a size-adjusted Arial. Measured against DM Mono's own digits at the same
+ * font-size: the rupee came out 34% TALLER and 25% WIDER. So every price on
+ * every bill printed as a big ₹ followed by small numbers, which is the one
+ * thing on a bill nobody should have to look twice at, and it got worse the
+ * smaller the type: on the invoice's 10px item rows the sign out-measured the
+ * amount it belonged to.
+ *
+ * GEIST MONO IS THE FIX, and it is already in the bundle - the staff portals
+ * set their data in it. It carries ₹, and it carries it at exactly DM Mono's
+ * advance width and exactly DM Mono's cap height (measured: 24px and 29px
+ * against DM Mono's 24px and 29px at 40px/500). A monospace grid stays a grid
+ * and the sign sits at the same height as the numbers, with nothing to tune.
+ *
+ * THE ORDER IS THE WHOLE TRICK. Font fallback is per-glyph: the digits find
+ * themselves in DM Mono and stop there, and only the characters DM Mono does
+ * not have travel on to Geist Mono. Which is also why this cannot be written as
+ * `var(--font-dm-mono), var(--font-geist-mono)` - that variable already ENDS in
+ * `DM Mono Fallback`, so the rupee would be caught by the oversized face before
+ * it ever reached Geist Mono, and the rule would look right and change nothing.
+ * The fallback face stays in the stack, behind Geist Mono, where it still does
+ * its real job of standing in while the webfonts load.
+ */
+const PRINT_MONO_CSS = `
+  .print-stage .font-mono {
+    font-family: "DM Mono", var(--font-geist-mono, ui-monospace), "DM Mono Fallback",
+                 ui-monospace, "SFMono-Regular", monospace;
+  }
+`;
+
 export const PRINT_CSS = `
+  ${PRINT_MONO_CSS}
   .print-stage { --pr-primary: #0b5f55; --pr-accent: #c77d33; --pr-ink: #17211e; --pr-line: #b9c4c0;
     --pr-muted: #7d8b86; --pr-hair: #dfe6e3; }
   .print-stage { background: #e8e6e1; min-height: 100vh; padding: 24px 12px 64px; }
@@ -66,6 +103,7 @@ export const PRINT_CSS = `
  * whole sheet down into the doctor's writing space.
  */
 export const STATIONERY_PRINT_CSS = `
+  ${PRINT_MONO_CSS}
   .print-stage { --pr-primary: #0b5f55; --pr-accent: #c77d33; --pr-ink: #17211e; --pr-line: #b9c4c0;
     --pr-muted: #7d8b86; --pr-hair: #dfe6e3; }
   .print-stage { background: #e8e6e1; min-height: 100vh; padding: 24px 12px 64px; }
@@ -117,6 +155,7 @@ export function multiSheetPrintCss(onStationery: boolean): string {
   // measurements off the stationery scan.
   const pad = onStationery ? "40mm 13mm 46mm" : "10mm 11mm";
   return `
+  ${PRINT_MONO_CSS}
   .print-stage { --pr-primary: #0b5f55; --pr-accent: #c77d33; --pr-ink: #17211e; --pr-line: #b9c4c0;
     --pr-muted: #7d8b86; --pr-hair: #dfe6e3; }
   .print-stage { background: #e8e6e1; min-height: 100vh; padding: 24px 12px 64px; }
@@ -163,6 +202,7 @@ export function multiSheetPrintCss(onStationery: boolean): string {
  * the top of the page with no offset.
  */
 export const INVOICE_PRINT_CSS = `
+  ${PRINT_MONO_CSS}
   .print-stage { --pr-primary: #0b5f55; --pr-accent: #c77d33; --pr-ink: #17211e; --pr-line: #b9c4c0; }
   .print-stage { background: #e8e6e1; min-height: 100vh; padding: 24px 12px 64px; }
   

@@ -26,11 +26,27 @@ interface Inpatient {
   admissionId: string; ipNumber: string; wardName: string; bedNo: string; days: number; admittedAt: string;
   patient: { displayId: string; fullName: string; age: number | null; gender: string | null };
 }
+interface RosterDoctor { id: string; name: string; department: string }
 interface Today {
-  doctor: { name: string; department: string };
+  /** Null only for an ADMIN who has not chosen whose day to read yet. */
+  doctor: RosterDoctor | null;
   stats: { booked: number; checkedIn: number; completed: number; total: number };
   queue: Q[]; labResults: LabResult[]; inpatients: Inpatient[];
+  /** Set when the viewer is an ADMIN: they read this day, they do not work it. */
+  readOnly?: true;
+  /** The doctors an ADMIN may switch between. Absent for a doctor. */
+  roster?: RosterDoctor[];
 }
+
+/**
+ * Which doctor an admin is reading, kept for the tab's lifetime.
+ *
+ * Session storage rather than state alone because this screen reloads itself on
+ * every live event from the ward - and an admin who is dropped back on the
+ * roster each time a receptionist checks somebody in would never finish reading
+ * one list. Per-tab rather than per-browser, so two tabs can hold two doctors.
+ */
+const VIEW_AS_KEY = "jeeva.doctor.view-as";
 
 const LABEL: Record<string, string> = { BOOKED: "Booked", CHECKED_IN: "Checked-in", COMPLETED: "Completed" };
 const today = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" });
@@ -54,12 +70,43 @@ export default function DoctorToday() {
       return next;
     });
 
+  /**
+   * `undefined` means "not restored from session storage yet", which is not the
+   * same as `null` ("no doctor chosen"). Keeping them apart is what stops the
+   * first paint firing a roster fetch that a second, correct fetch immediately
+   * replaces - and stops an admin seeing the picker flash before their doctor
+   * loads. A real doctor is unaffected: the server ignores the parameter for
+   * anyone who is not an ADMIN.
+   */
+  const [viewAs, setViewAs] = useState<string | null | undefined>(undefined);
+
+  useEffect(() => {
+    let saved: string | null = null;
+    try { saved = sessionStorage.getItem(VIEW_AS_KEY); } catch { /* private mode */ }
+    setViewAs(saved);
+  }, []);
+
   const load = useCallback(async () => {
-    try { setD(await api.get<Today>("/doctor/today")); }
+    if (viewAs === undefined) return;
+    try {
+      const qs = viewAs ? `?doctorId=${encodeURIComponent(viewAs)}` : "";
+      setD(await api.get<Today>(`/doctor/today${qs}`));
+    }
     catch (e) { setError(e instanceof ApiClientError ? e.message : "Couldn't load today's list."); }
     finally { setLoading(false); }
-  }, []);
+  }, [viewAs]);
   useEffect(() => { load(); }, [load]);
+
+  /** An admin choosing whose day to read, or going back to the roster. */
+  const pick = useCallback((id: string | null) => {
+    try {
+      if (id) sessionStorage.setItem(VIEW_AS_KEY, id);
+      else sessionStorage.removeItem(VIEW_AS_KEY);
+    } catch { /* private mode - the pick just won't survive a refresh */ }
+    setError(null);
+    setLoading(true);
+    setViewAs(id);
+  }, []);
 
   // The consulting room now hears the hospital. Reception checking a patient in
   // puts them on this queue before they finish walking down the corridor, and a
@@ -77,6 +124,13 @@ export default function DoctorToday() {
 
   if (loading) return <div className="flex items-center justify-center gap-2 py-20 text-[13px] text-[var(--p-muted)]"><Spinner /> Loading…</div>;
 
+  // An admin who has not chosen whose day to read. The roster IS the screen -
+  // there is no clinic list to show yet, and a half-empty dashboard above a
+  // picker would only invite the question of whose zeros those are.
+  if (d?.readOnly && !d.doctor) {
+    return <DoctorPicker roster={d.roster ?? []} onPick={pick} error={error} />;
+  }
+
   // Whoever the doctor should call next: someone already waiting beats someone
   // who hasn't walked in yet.
   const nextUp = d?.queue.find((q) => q.status === "CHECKED_IN") ?? d?.queue.find((q) => q.status === "BOOKED") ?? null;
@@ -87,8 +141,30 @@ export default function DoctorToday() {
       {/* ---- hero ---- */}
       <div data-rise className="surface dotgrid mb-6 rounded-[28px] px-7 py-7 sm:px-9">
         <p className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--p-cyan-deep)]">Consulting room · {today}</p>
-        <h1 className="mt-2 font-serif-p text-[clamp(24px,3vw,32px)] font-semibold text-[var(--p-ink)]">{d?.doctor.name ?? "Today"}</h1>
-        <p className="mt-1 text-[13px] text-[var(--p-muted)]">{d?.doctor.department} · your clinic list for today</p>
+        <h1 className="mt-2 font-serif-p text-[clamp(24px,3vw,32px)] font-semibold text-[var(--p-ink)]">{d?.doctor?.name ?? "Today"}</h1>
+        <p className="mt-1 text-[13px] text-[var(--p-muted)]">
+          {d?.doctor?.department}
+          {d?.readOnly ? " · reading this doctor's clinic list" : " · your clinic list for today"}
+        </p>
+
+        {/* An admin reading somebody else's day says so, in the one place they
+            cannot miss it - directly under the name they might otherwise take
+            for their own. The way back to the roster lives here too. */}
+        {d?.readOnly && (
+          <div className="mt-4 flex flex-wrap items-center gap-2.5 rounded-xl border border-[var(--p-amber)]/25 bg-[var(--p-amber-soft)] px-4 py-2.5">
+            <Icon name="shield" size={15} className="text-[var(--p-amber)]" />
+            <span className="text-[12.5px] font-medium text-[var(--p-amber)]">
+              Read-only — only {d.doctor?.name} can mark a consultation seen.
+            </span>
+            <button
+              type="button"
+              onClick={() => pick(null)}
+              className="ml-auto rounded-lg border border-[var(--p-amber)]/35 px-3 py-1.5 text-[12px] font-semibold text-[var(--p-amber)] transition-colors hover:bg-[var(--p-amber)]/10"
+            >
+              Switch doctor
+            </button>
+          </div>
+        )}
 
         <div className="mt-5 flex flex-wrap gap-2">
           <span className="rounded-full bg-black/[0.06] px-3.5 py-1.5 font-mono text-[11.5px] text-[var(--p-ink)]">{d?.stats.checkedIn ?? 0} waiting</span>
@@ -161,7 +237,7 @@ export default function DoctorToday() {
                       className="rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">
                       Chart
                     </Link>
-                    {q.status !== "COMPLETED" && (
+                    {!d.readOnly && q.status !== "COMPLETED" && (
                       <button onClick={() => complete(q.appointmentId)} disabled={busy === q.appointmentId}
                         className="btn-primary inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-60">
                         {busy === q.appointmentId ? <Spinner size={12} /> : <Icon name="check" size={13} />} Seen
@@ -303,6 +379,61 @@ export default function DoctorToday() {
           )}
         </section>
       </div>
+    </PortalScroll>
+  );
+}
+
+/**
+ * The roster, shown to an ADMIN who has not chosen whose day to read.
+ *
+ * A doctor never sees this: their login is attached to a Doctor row, so the
+ * server has already answered the question this screen asks.
+ */
+function DoctorPicker({ roster, onPick, error }: {
+  roster: RosterDoctor[];
+  onPick: (id: string) => void;
+  error: string | null;
+}) {
+  return (
+    <PortalScroll>
+      <div data-rise className="surface dotgrid mb-6 rounded-[28px] px-7 py-7 sm:px-9">
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--p-cyan-deep)]">Consulting room · {today}</p>
+        <h1 className="mt-2 font-serif-p text-[clamp(24px,3vw,32px)] font-semibold text-[var(--p-ink)]">Whose day?</h1>
+        <p className="mt-1 max-w-xl text-[13px] leading-relaxed text-[var(--p-muted)]">
+          Your account is an administrator, not a consultant, so this portal has no clinic
+          list of its own. Pick a doctor to read theirs — the queue, the results that have
+          come back, and their patients in a bed. You cannot mark anybody seen.
+        </p>
+      </div>
+
+      {error && <div data-rise className="mb-4 rounded-lg border border-[var(--p-rose)]/25 bg-[var(--p-rose-soft)] px-4 py-3 text-[13px] text-[var(--p-rose)]">{error}</div>}
+
+      {roster.length === 0 ? (
+        <div data-rise className="surface dotgrid flex flex-col items-center py-16 text-center">
+          <span className="flex h-12 w-12 items-center justify-center rounded-full border border-[var(--p-border)] bg-white text-[var(--p-muted)]"><Icon name="users" size={20} /></span>
+          <p className="mt-3 text-[13px] text-[var(--p-muted)]">No active doctors on the roster.</p>
+        </div>
+      ) : (
+        <div data-rise className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {roster.map((doc) => (
+            <button
+              key={doc.id}
+              type="button"
+              onClick={() => onPick(doc.id)}
+              className="surface surface-hover flex items-center gap-3 px-5 py-4 text-left transition-colors hover:border-[var(--p-blue)]"
+            >
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--p-cyan-soft)] font-serif-p text-[12px] font-semibold text-[var(--p-cyan-deep)]">
+                {inits(doc.name)}
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate text-[14px] font-semibold text-[var(--p-ink)]">{doc.name}</span>
+                <span className="block truncate text-[12px] text-[var(--p-muted)]">{doc.department}</span>
+              </span>
+              <Icon name="chevron" size={15} className="ml-auto shrink-0 text-[var(--p-muted)]" />
+            </button>
+          ))}
+        </div>
+      )}
     </PortalScroll>
   );
 }

@@ -117,6 +117,16 @@ const wantsFullSheet = (inv: Invoice) => inv.source === "PHARMACY" && inv.items.
  */
 const PHARMACY_TRADING_NAME = "Jeeva Pharmacy";
 
+/**
+ * The shipped mark, for a hospital that has never uploaded one under Settings.
+ *
+ * The same artwork that is printed into the letterhead image every OPD case
+ * sheet carries, so a bill with no configured logo is not a bill with a
+ * placeholder on it - it is the right logo, served out of the repo instead of
+ * out of the database.
+ */
+const HOSPITAL_MARK = "/images/JEEVA%20LOGO%20ICON.png";
+
 const BILL_MONO_CSS = `
   .print-stage {
     --pr-ink: #111111;
@@ -168,7 +178,15 @@ const BILL_MONO_CSS = `
   .print-stage .bill-copy + .bill-copy { margin-top: 8mm; }
   /* -label and -title are the same thing under two names, both live in the
      markup; aliasing beats leaving half the patient block unstyled. */
-  .invoice-section-title, .invoice-section-label { font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--pr-ink); }
+  /* SET AS WRITTEN, NOT SHOUTED. These two headings label the blocks; they are
+     not read, they are glanced past on the way to the block underneath. Tracked
+     uppercase at 10px made them the loudest type on a sheet whose actual
+     content - the patient's name, the medicine, the amount - is what has to
+     carry. Sentence case at 8.5px puts them back where a label belongs, and the
+     1.5px it gives up goes to the item table, which is where a pharmacy bill
+     runs out of paper. The tracking comes down with the caps: .12em is what
+     holds uppercase apart, and on mixed case it just loosens the word. */
+  .invoice-section-title, .invoice-section-label { font-size: 8.5px; font-weight: 800; letter-spacing: .02em; text-transform: none; color: var(--pr-ink); }
   .invoice-meta-label, .invoice-meta-title { font-size: 8px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--pr-muted); }
   .invoice-meta-value { font-size: 10px; font-weight: 650; color: var(--pr-ink); }
   /* THE PATIENT BLOCK IS SET THE WAY THE LAB REPORT SETS ITS IDENTITY BLOCK:
@@ -183,15 +201,38 @@ const BILL_MONO_CSS = `
   /* The patient block was a tint. A tint is a background too - same driver, same
      disappearing act - so it is a ruled box now. */
   .invoice-soft { background: #fff; border: .5px solid var(--pr-hair); }
-  /* 10.5px keeps the heading a step above the 9.5px lines under it. At the old
-     10px against the old 8px body the gap read clearly; against a 9.5px body it
-     would have been half a point, which is not a hierarchy, just a wobble. */
+  /* 10.5px, tracked and in caps, against a body of 11px names and 10px figures.
+     The heading is not bigger than what it heads and does not need to be - caps
+     and letter-spacing are what separate a label from a line of data, and they
+     do it at any size. */
   .invoice-table th {
     font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
     color: var(--pr-ink); background: #fff;
     border-top: .8px solid var(--pr-ink); border-bottom: .8px solid var(--pr-ink);
   }
-  .invoice-table td { border-bottom: .4px solid var(--pr-hair); }
+  /**
+   * ── 1.28, AND IT IS WHAT MAKES EIGHT ITEMS FIT ──
+   *
+   * The rows inherited the sheet's 1.45 line-height, which is a setting for
+   * PROSE - it opens paragraphs up so the eye can find the next line across a
+   * long measure. A bill row is not prose. It is one short name and five
+   * figures, read across once, and the leading above and below each of them was
+   * buying nothing but paper: 2.4px a row, and a half-sheet's worth over eight
+   * of them.
+   *
+   * Eight items is the number that matters, because eight is where the bill is
+   * meant to turn over to a full sheet (see wantsFullSheet). It was not fitting
+   * - a straightforward eight-line pharmacy bill packed to seven rows and sent
+   * the eighth to a second half-sheet, so the counter cut and stapled two
+   * halves to hand over a bill the design says is a one-sheet bill. Tightening
+   * the leading is what closes that gap, and it closes it without taking a
+   * point off anything anybody reads.
+   *
+   * A name too long for its column still wraps, and still wraps to a row this
+   * measures - the packing reads real heights, so a bill of long names simply
+   * paginates earlier, which is correct.
+   */
+  .invoice-table td { border-bottom: .4px solid var(--pr-hair); line-height: 1.28; }
   /* The grand total, ruled the way a ledger rules one: a line above, a double
      line below. Reads as the last word on the page without a drop of fill. */
   .total-band td { background: #fff; color: var(--pr-ink); border-top: 1px solid var(--pr-ink); border-bottom: 3px double var(--pr-ink); }
@@ -329,6 +370,24 @@ function InvoiceIdRow({ k, v, mono }: { k: string; v: string; mono?: boolean }) 
       <span className="invoice-id-label">:</span>
       <span className={`invoice-id-value ${mono ? "font-mono tracking-tight" : ""}`}>{v || "-"}</span>
     </>
+  );
+}
+
+/**
+ * One "LABEL value" pair on the strip under the letterhead.
+ *
+ * Laid out inline rather than as a label/value grid on purpose: these read
+ * ACROSS - Bill No, then Date - where the patient block below reads DOWN, and a
+ * grid is what turned four of these into four stacked rows and a third of the
+ * masthead. `whitespace-nowrap` on both halves is what keeps that a promise: a
+ * receipt number that wraps is a receipt number back on two lines.
+ */
+function MetaInline({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
+  return (
+    <span className="flex shrink-0 items-baseline gap-1.5 whitespace-nowrap">
+      <span className="invoice-meta-label">{k}</span>
+      <span className={`invoice-meta-value ${mono ? "font-mono" : ""}`}>{v}</span>
+    </span>
   );
 }
 
@@ -605,56 +664,84 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
       ref={sheet.ref}
       className={`bill-copy flex flex-col gap-[5px]${sheet.fullSheet ? " full-sheet" : ""}${sheet.lowerHalf ? " lower-half" : ""}`}
     >
-      {/* Professional hospital invoice masthead */}
-      <div className="flex items-start justify-between gap-5 border-b-[1.2px] pb-[5px]" style={{ borderColor: "var(--pr-ink)" }}>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            {inv.hospital?.logoDataUrl && (
-              /* eslint-disable-next-line @next/next/no-img-element */
-              <img src={inv.hospital.logoDataUrl} alt="Hospital logo" className="h-[28px] w-[28px] shrink-0 object-contain" />
-            )}
-            <div>
-              <div className="text-[14px] font-extrabold uppercase leading-none tracking-tight" style={{ color: "var(--pr-ink)" }}>
-                {hospitalName}
-              </div>
-              <div className="mt-[2px] text-[6.5px] font-medium leading-snug text-[#3f3f3f]">{hospitalAddr}</div>
-              <div className="mt-[1px] flex flex-wrap gap-x-3 text-[6.5px] font-semibold text-[#3f3f3f]">
-                {inv.hospital?.gstin && <span>GSTIN: <span className="font-mono">{inv.hospital.gstin}</span></span>}
-                <span>Phone: <span className="font-mono">{hospitalPhone}</span></span>
-              </div>
+      {/* ── THE LETTERHEAD: MARK LEFT, NAME CENTRE, DOCUMENT TITLE RIGHT ──
+
+          The same three-part band the hospital's own printed letterhead uses -
+          the one at the head of every OPD case sheet - at the size the shared
+          stationery sets that mark: 44px. The bill used to carry a 28px logo
+          wedged against the name inside the left column, which reads as an icon
+          beside a heading rather than as a letterhead, and is the first thing
+          somebody handed the sheet judges it by.
+
+          THE MARK IS ALWAYS DRAWN. It used to be gated on an admin having
+          uploaded one under Settings, so a hospital that never did got a bill
+          with a hole where its identity goes. The shipped mark is the same
+          artwork as the printed letterhead's, so the fallback is not a
+          placeholder - it is the right logo, out of the repo instead of the
+          database.
+
+          THE MASTHEAD IS ALSO WHERE THE PAPER WAS GOING. This band measured
+          130px of a 523px half-sheet, because the bill number and the date each
+          wrapped onto two lines inside a 118px column and Dept and Page stacked
+          underneath them. Everything that is not the letterhead moves to the
+          meta strip below, on one line - see there. */}
+      <div className="flex items-center justify-between gap-4 border-b-[1.2px] pb-[4px]" style={{ borderColor: "var(--pr-ink)" }}>
+        <div className="flex min-w-0 flex-1 items-center gap-[10px]">
+          {/* Not next/image: a data URI has nothing for the optimiser to fetch,
+              and a sheet on its way to a tray wants the bytes in the document
+              rather than a second request to wait on. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={inv.hospital?.logoDataUrl || HOSPITAL_MARK} alt={hospitalName}
+            className="h-[44px] w-[44px] shrink-0 object-contain" />
+          <div className="min-w-0">
+            <div className="text-[15px] font-extrabold uppercase leading-none tracking-tight" style={{ color: "var(--pr-ink)" }}>
+              {hospitalName}
+            </div>
+            <div className="mt-[3px] text-[7px] font-medium leading-snug text-[#3f3f3f]">{hospitalAddr}</div>
+            <div className="mt-[1px] flex flex-wrap gap-x-3 text-[7px] font-semibold text-[#3f3f3f]">
+              {inv.hospital?.gstin && <span>GSTIN: <span className="font-mono">{inv.hospital.gstin}</span></span>}
+              <span>Phone: <span className="font-mono">{hospitalPhone}</span></span>
             </div>
           </div>
         </div>
-        <div className="w-[118px] shrink-0 text-right">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.08em]" style={{ color: "var(--pr-ink)" }}>
+        <div className="shrink-0 text-right">
+          <div className="text-[12px] font-extrabold uppercase tracking-[0.09em]" style={{ color: "var(--pr-ink)" }}>
             {gstApplies ? "Tax Invoice" : "Bill of Supply"}
           </div>
-          <div className="mt-[2px] inline-block border px-2 py-[2px] text-[6px] font-bold uppercase tracking-[0.08em] invoice-status">
+          <div className="mt-[3px] inline-block border px-2 py-[1px] text-[6px] font-bold uppercase tracking-[0.08em] invoice-status">
             {copy.formal} · {copy.plain}
           </div>
-          <div className="mt-[3px] grid grid-cols-[38px_1fr] gap-x-2 gap-y-[1px] text-right">
-            <span className="invoice-meta-label">Bill No</span><span className="invoice-meta-value font-mono">{inv.receiptNo}</span>
-            <span className="invoice-meta-label">Date</span><span className="invoice-meta-value">{created.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}{" "}{created.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true })}</span>
-            <span className="invoice-meta-label">Dept</span><span className="invoice-meta-value">{SOURCE_LABEL[inv.source] ?? inv.source}</span>
-            {/* Only on a bill that actually runs to more than one sheet. "Page
-                1 of 1" on the ninety-odd percent that don't is a line that
-                answers a question nobody was asking, on the part of the sheet
-                where the bill number lives.
-
-                ON THE PROBE IT IS ALWAYS DRAWN, and leaving it out was a real
-                bug rather than a tidiness point. The probe is a single sheet, so
-                `pages > 1` was false and its masthead came out one line SHORTER
-                than every sheet it was measuring for. The packing then handed
-                each real sheet that line's worth of rows too many, and a bill
-                packed to the paper's exact height printed ten pixels past it. */}
-            {(sheet.pages > 1 || sheet.probe) && (
-              <>
-                <span className="invoice-meta-label">Page</span>
-                <span className="invoice-meta-value font-mono">{sheet.page + 1} of {sheet.pages}</span>
-              </>
-            )}
-          </div>
         </div>
+      </div>
+
+      {/* ── WHICH BILL, AND WHEN - ON ONE LINE, UNDER THE LETTERHEAD ──
+
+          A letterhead says who issued the paper; it should not also be carrying
+          a four-row table of reference numbers. These sit on a strip of their
+          own beneath it, right-aligned, one line - which is both where a reader
+          looks for them and about a fifth of the height the stacked grid took.
+
+          NO DEPT ON A PHARMACY BILL. "Dept: Pharmacy" under a masthead that
+          already reads JEEVA PHARMACY says the same word twice. Every other
+          counter's bill goes out under the hospital's name, where the
+          department is the thing that line adds. */}
+      <div className="flex flex-wrap items-baseline justify-end gap-x-4 py-1">
+        <MetaInline k="Bill No" v={inv.receiptNo} mono />
+        {inv.source !== "PHARMACY" && <MetaInline k="Dept" v={SOURCE_LABEL[inv.source] ?? inv.source} />}
+        <MetaInline k="Date" v={`${created.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}, ${created.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true })}`} />
+        {/* Only on a bill that actually runs to more than one sheet. "Page
+            1 of 1" on the ninety-odd percent that don't is a line that answers
+            a question nobody was asking, beside the bill number.
+
+            ON THE PROBE IT IS ALWAYS DRAWN, and leaving it out was a real bug
+            rather than a tidiness point. The probe is a single sheet, so
+            `pages > 1` was false and its masthead came out one line SHORTER
+            than every sheet it was measuring for. The packing then handed each
+            real sheet that line's worth of rows too many, and a bill packed to
+            the paper's exact height printed ten pixels past it. */}
+        {(sheet.pages > 1 || sheet.probe) && (
+          <MetaInline k="Page" v={`${sheet.page + 1} of ${sheet.pages}`} mono />
+        )}
       </div>
 
       {/* Patient / visit information */}
@@ -694,10 +781,14 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
             </div>
           )}
         </div>
-        {/* 9.5px, up from 8. The item lines are what the bill exists to carry
-            and they were the smallest type on it - smaller than the address in
-            the masthead. A bill that costs a sheet more to print is cheaper
-            than one the patient brings back to the counter to have read out. */}
+        {/* 9.5px is only the table's floor now - the name sets at 11px and every
+            figure beside it at 10px, both declared on the cells. It is left
+            here as the inherited size for anything added to a row later, and as
+            the reminder that started this: the item lines are what the bill
+            exists to carry, and they were once the smallest type on it, smaller
+            than the address in the masthead. A bill that costs a sheet more to
+            print is cheaper than one the patient brings back to the counter to
+            have read out. */}
         <table className="invoice-table w-full text-[9.5px]">
           <thead>
             <tr className="text-left">
@@ -716,7 +807,13 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
                   (a five-figure rupee amount, an eight-digit HSN code) with a
                   few pixels to spare. Description carries no width and takes
                   whatever is left, so widening one of these narrows it. */}
-              <th className="w-[18px] px-1 py-[5px] text-center">#</th>
+              {/* "S.No", not "#". The hash is a programmer's abbreviation; the
+                  column it heads is read at a counter, quoted down a phone and
+                  written on a returns slip, and "S.No" is what every paper bill
+                  this one replaced called it. The width goes from 18px to 34px
+                  because a fixed-layout heading with nowhere to go does not
+                  wrap - it overflows into the column beside it. */}
+              <th className="w-[34px] px-1 py-[5px] text-center">S.No</th>
               <th className="px-1.5 py-[5px]">Description</th>
               {/* GATED TOGETHER WITH ITS CELL BELOW, and they must stay that
                   way. The header was conditional and the body cell was not, so
@@ -729,11 +826,11 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
                   no heading at all. The bill added up and every figure on it
                   was against the wrong word. */}
               {showBatch && <th className="w-[58px] px-1 py-[5px]">Batch</th>}
-              <th className="w-[64px] px-1 py-[5px]">HSN/SAC</th>
-              <th className="w-[34px] px-1 py-[5px] text-right">Qty</th>
-              <th className="w-[60px] px-1 py-[5px] text-right">Rate</th>
-              <th className="w-[34px] px-1 py-[5px] text-right">GST</th>
-              <th className="w-[72px] px-1.5 py-[5px] text-right">Amount</th>
+              <th className="w-[64px] font-semibold px-1 py-[5px]">HSN/SAC</th>
+              <th className="w-[34px] font-semibold px-1 py-[5px] text-right">Qty</th>
+              <th className="w-[60px] font-semibold px-1 py-[5px] text-right">Rate</th>
+              <th className="w-[34px] font-semibold px-1 py-[5px] text-right">GST</th>
+              <th className="w-[72px] font-semibold px-1.5 py-[5px] text-right">Amount</th>
             </tr>
           </thead>
           <tbody>
@@ -747,19 +844,16 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
                     the sheet: item 14 is item 14 whichever half-sheet it landed
                     on, which is how a question about it gets answered at the
                     counter three weeks later. */}
-                {/* ── EVERY CELL IN INK, NONE OF THEM SMALLER THAN THE REST ──
-                    The serial, batch, HSN and GST cells used to be #3f3f3f at
-                    7px. Both halves of that were wrong on paper. A mid grey is
-                    a screen colour: through a toner cartridge that is
-                    two-thirds empty it renders lighter than the rule under the
-                    row, and at 7px there is not enough of it on the page to
-                    carry the tone at all - so the batch number, the one thing
-                    on a pharmacy bill somebody comes back to check, printed
-                    faintest. They are ink now, at the same size as the line
-                    they belong to. Nothing on this row is set to whisper. */}
-                <td className="px-1 py-[3px] text-center font-mono text-[8.5px] font-medium">{sheet.start + i + 1}</td>
+                {/* ── EVERY CELL IN INK ──
+                    The serial, batch, HSN and GST cells used to be #3f3f3f. A
+                    mid grey is a screen colour: through a toner cartridge that
+                    is two-thirds empty it renders lighter than the rule under
+                    the row - so the batch number, the one thing on a pharmacy
+                    bill somebody comes back to check, printed faintest of all.
+                    They are ink now. Nothing on this row is set to whisper. */}
+                <td className="px-1 py-[3px] text-center font-mono text-[10px] font-medium">{sheet.start + i + 1}</td>
                 {/* ── THE MEDICINE'S NAME, A STEP ABOVE EVERYTHING BESIDE IT ──
-                    11px semibold against the 9.5px the figures are set in. Every
+                    11px semibold against the 10px the figures are set in. Every
                     other column on this row is a number that gets CHECKED - a
                     rate, a quantity, a GST slab - and those are set alike
                     because they are read alike, straight down the column. The
@@ -767,12 +861,22 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
                     thing on the bill anybody looks for by eye rather than by
                     column, so it is the one thing here allowed to be bigger. */}
                 <td className="px-1.5 py-[3px] text-[11px] font-semibold">{billItemName(it.description)}</td>
-                {showBatch && <td className="px-1 py-[3px] font-mono text-[7.5px] font-medium">{billItemBatch(it.description) ?? "—"}</td>}
-                <td className="px-1 py-[3px] font-mono text-[8.5px] font-medium">{it.hsnSac ?? "—"}</td>
-                <td className="px-1 py-[3px] text-right font-mono font-medium">{it.qty}</td>
-                <td className="px-1 py-[3px] text-right font-mono font-medium">{money(it.unitPrice)}</td>
-                <td className="px-1 py-[3px] text-right font-mono text-[8.5px] font-medium">{Number(it.gstRatePct) ? `${it.gstRatePct}%` : "—"}</td>
-                <td className="px-1.5 py-[3px] text-right font-mono font-medium">{money(it.amount)}</td>
+                {/* ── ONE SIZE FOR EVERY FIGURE ON THE ROW: 10px ──
+                    The name is 11px and these are one step under it, which is
+                    the whole hierarchy this row needs - a name to find the line
+                    by, and figures to check it against. They used to be three
+                    sizes: batch at 7.5, HSN and GST at 8.5, qty/rate/amount at
+                    the table's 9.5. Nothing decided those; they accumulated. So
+                    the batch number - the one thing on a pharmacy bill a
+                    patient comes back to the counter holding - printed smallest
+                    of all, at a size a 60-year-old reads by taking the sheet to
+                    a window. */}
+                {showBatch && <td className="px-1 py-[3px] font-mono text-[10px] font-medium">{billItemBatch(it.description) ?? "—"}</td>}
+                <td className="px-1 py-[3px] font-mono text-[10px] font-medium">{it.hsnSac ?? "—"}</td>
+                <td className="px-1 py-[3px] text-right font-mono text-[10px] font-medium">{it.qty}</td>
+                <td className="px-1 py-[3px] text-right font-mono text-[10px] font-medium">{money(it.unitPrice)}</td>
+                <td className="px-1 py-[3px] text-right font-mono text-[10px] font-medium">{Number(it.gstRatePct) ? `${it.gstRatePct}%` : "—"}</td>
+                <td className="px-1.5 py-[3px] text-right font-mono text-[10px] font-medium">{money(it.amount)}</td>
               </tr>
             ))}
           </tbody>

@@ -68,7 +68,7 @@ export async function adminOverview(): Promise<{
     prisma.labTest.count({ where: { createdAt: { gte: today, lt: tomorrow } } }),
     prisma.patient.count({ where: { deletedAt: null, mergedIntoId: null } }),
     prisma.doctor.count({ where: { active: true } }),
-    prisma.user.count({ where: { isActive: true, role: { not: "PATIENT" } } }),
+    prisma.user.count({ where: { isActive: true, role: { notIn: ["PATIENT", "SUPERUSER"] } } }), // headcount of people the hospital employs - not the developers
     prisma.invoice.count(),
     prisma.invoice.findMany({ where: { status: { not: "CANCELLED" } }, select: { source: true, totalAmount: true, createdAt: true } }),
     prisma.appointment.findMany({ where: { visitDate: { gte: fortnightAgo, lt: tomorrow }, status: { not: "CANCELLED" } }, select: { visitDate: true } }),
@@ -259,9 +259,20 @@ function toStaffDTO(u: StaffRow): StaffDTO {
   };
 }
 
+/**
+ * Everyone the hospital employs, for the HR roster.
+ *
+ * SUPERUSER is excluded alongside PATIENT. The developers are not staff - no
+ * shift, no department, no salary line - and listing them would drop two
+ * accounts that HR cannot edit, deactivate or delete into the middle of a
+ * screen whose every row is editable, deactivatable and deletable.
+ *
+ * Invisible in HR is not the same as untraceable: the audit log and the
+ * sessions view still name them, which is the whole reason the role exists.
+ */
 export async function listStaff(): Promise<StaffDTO[]> {
   const rows = await prisma.user.findMany({
-    where: { role: { not: "PATIENT" } },
+    where: { role: { notIn: ["PATIENT", "SUPERUSER"] } },
     orderBy: [{ isActive: "desc" }, { role: "asc" }, { name: "asc" }],
     select: STAFF_SELECT,
   });

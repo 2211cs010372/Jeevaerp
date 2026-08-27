@@ -17,6 +17,10 @@ export const ROLE_SUBDOMAIN: Record<Role, string | null> = {
   LAB_TECH: "labs",
   PHARMACIST: "pharmacy",
   INSURANCE_DESK: "insurance",
+  // The developers land on their own launcher, not on the admin console. It is
+  // the one portal whose entire content is doors into the others, which is what
+  // somebody debugging the building wants in front of them first.
+  SUPERUSER: "dev",
   PATIENT: null,
 };
 
@@ -28,6 +32,7 @@ export const ROLE_HOME_PATH: Record<Role, string> = {
   LAB_TECH: "/",
   PHARMACIST: "/",
   INSURANCE_DESK: "/",
+  SUPERUSER: "/",
   PATIENT: "/portal/profile",
 };
 
@@ -40,18 +45,30 @@ export type PortalSubdomain = (typeof PORTAL_SUBDOMAINS)[number];
 /**
  * Which roles are permitted on a given portal.
  *
- * ADMIN is on every list and every other role appears on exactly one: the
- * proprietor oversees the whole hospital from any desk, while a receptionist,
- * doctor, technician or pharmacist only ever belongs in their own portal. That
- * asymmetry is the whole access model - keep it here and nowhere else.
+ * ADMIN and SUPERUSER are on every list and every other role appears on exactly
+ * one: the proprietor oversees the whole hospital from any desk, the developer
+ * has to be able to reproduce whatever a desk is complaining about, and a
+ * receptionist, doctor, technician or pharmacist only ever belongs in their own
+ * portal. That asymmetry is the whole access model - keep it here, nowhere else.
+ *
+ * The two all-access roles are not interchangeable. ADMIN runs the hospital and
+ * appears wherever staff appear; SUPERUSER maintains the software and appears
+ * nowhere in the admin console (see listStaff in admin.service.ts). Same doors,
+ * different person - which is the point, because until now the audit log could
+ * not tell a developer's data fix from a proprietor's decision.
  */
 export const SUBDOMAIN_ALLOWED_ROLES: Record<PortalSubdomain, Role[]> = {
-  admin: ["ADMIN"],
-  reception: ["RECEPTIONIST", "ADMIN"], // admin can oversee the front desk
-  doctor: ["DOCTOR", "ADMIN"],
-  labs: ["LAB_TECH", "ADMIN"],
-  pharmacy: ["PHARMACIST", "ADMIN"],
-  insurance: ["INSURANCE_DESK", "ADMIN"],
+  admin: ["ADMIN", "SUPERUSER"],
+  reception: ["RECEPTIONIST", "ADMIN", "SUPERUSER"], // admin can oversee the front desk
+  doctor: ["DOCTOR", "ADMIN", "SUPERUSER"],
+  labs: ["LAB_TECH", "ADMIN", "SUPERUSER"],
+  pharmacy: ["PHARMACIST", "ADMIN", "SUPERUSER"],
+  insurance: ["INSURANCE_DESK", "ADMIN", "SUPERUSER"],
+  // The developer's launcher, and now SUPERUSER's home. ADMIN stays on the list
+  // rather than being quietly locked out of a portal it could already reach:
+  // narrowing the proprietor's access is a decision of its own, not a side
+  // effect of giving the developers a role.
+  dev: ["SUPERUSER", "ADMIN"],
 };
 
 export function isPortalSubdomain(sub: string): sub is PortalSubdomain {
@@ -71,6 +88,7 @@ export const PORTAL_LABEL: Record<PortalSubdomain, string> = {
   labs: "Labs",
   pharmacy: "Pharmacy",
   insurance: "Insurance",
+  dev: "Developer",
 };
 
 /**
@@ -135,4 +153,38 @@ export function destinationFor(
 
   const portSuffix = port ? `:${port}` : "";
   return `${protocol}://${sub}.${rootDomain}${portSuffix}${path}`;
+}
+
+/**
+ * Where a sign-in should LAND, given the portal it was attempted at.
+ *
+ * `destinationFor` above answers a different question - "where does this role
+ * belong" - which is right for a session check and wrong for a login. ADMIN is
+ * allowed on every portal, so an admin who opened `dev.jeeva.com/login` and
+ * typed their password was carried off to the admin console: the one portal
+ * they did not ask for. Landing them where they signed in is the honest answer,
+ * and it is the only way a portal that is not any role's HOME can be reached at
+ * all.
+ *
+ * This cannot widen access. A role that is not permitted on the portal never
+ * reaches this function - `assertPortalLogin` has already refused the login -
+ * and the check is repeated here rather than assumed. No portal context (a
+ * direct API call with no host or referer) falls back to the role's own portal,
+ * exactly as before.
+ */
+export function destinationForLogin(
+  role: Role,
+  portal: PortalSubdomain | null,
+  opts: { rootDomain?: string; protocol?: string; port?: string } = {},
+): string {
+  // No context, their own portal anyway, or not allowed here → the old answer.
+  // The middle case matters: only `destinationFor` knows ROLE_HOME_PATH, which
+  // is how a PATIENT lands on /portal/profile rather than a bare "/".
+  if (!portal || portal === ROLE_SUBDOMAIN[role] || !roleAllowedOnPortal(role, portal)) {
+    return destinationFor(role, opts);
+  }
+
+  const { rootDomain, protocol = "https", port } = opts;
+  if (!rootDomain) return `/${portal}`;
+  return `${protocol}://${portal}.${rootDomain}${port ? `:${port}` : ""}/`;
 }

@@ -46,6 +46,13 @@ describe("creating a non-doctor account", () => {
     }
   });
 
+  it("cannot mint a SUPERUSER", () => {
+    // The developers' role is seeded by hand and is deliberately not on this
+    // enum: an admin with the HR screen open must not be able to create an
+    // account that outranks them and that their own staff list will not show.
+    expect(createStaffSchema.safeParse({ ...staff, username: "admin.dev", role: "SUPERUSER" }).success).toBe(false);
+  });
+
   it("insists the username is role.name", () => {
     // A bare handle gives no clue which portal the login opens, and the admin
     // page builds the prefix from the selected role for exactly that reason.

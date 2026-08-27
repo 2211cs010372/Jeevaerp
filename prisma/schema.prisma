@@ -38,6 +38,13 @@ enum Role {
   /// to let them submit a pre-auth.
   INSURANCE_DESK
   ADMIN
+  /// The people who maintain this system. Clears every gate ADMIN clears - see
+  /// requireRole in src/lib/auth/guard.ts - but is NOT an administrator, and is
+  /// deliberately absent from the admin console: not in the staff list, not in
+  /// the headcount, not in the roles HR can assign. A developer repairing data
+  /// at 2am should appear in the audit log as themselves, not as one more Admin
+  /// on the payroll that nobody hired.
+  SUPERUSER
 }
 
 enum Gender {

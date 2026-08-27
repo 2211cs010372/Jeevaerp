@@ -4,7 +4,7 @@ import { staffOtpVerifySchema } from "@/server/validators/auth";
 import { verifyStaffOtp, recordStaffLogin } from "@/server/services/auth.service";
 import { auditContext } from "@/server/services/audit.service";
 import { setSessionCookies } from "@/lib/auth/session";
-import { destinationFor } from "@/lib/auth/portals";
+import { destinationForLogin } from "@/lib/auth/portals";
 import { assertPortalLogin } from "@/lib/auth/guard";
 import { resolveOrigin } from "@/lib/auth/origin";
 
@@ -17,9 +17,9 @@ export const POST = handler(async (req) => {
   // sibling /otp/request step stays ungated on purpose: it is enumeration-safe
   // by design, and naming the caller's portal there would answer "does this
   // username exist, and what is it?" for anyone who typed a guess.
-  assertPortalLogin(req, user.role);
+  const portal = assertPortalLogin(req, user.role);
   await recordStaffLogin(user.id, "OTP", auditContext(req));
-  const redirectTo = destinationFor(user.role, resolveOrigin(req));
+  const redirectTo = destinationForLogin(user.role, portal, resolveOrigin(req));
   const res = NextResponse.json({ user, redirectTo });
   setSessionCookies(res, tokens);
   return res;

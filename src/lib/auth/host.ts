@@ -23,7 +23,11 @@
  * which breaks the post-login redirect and scopes the session cookie to the
  * wrong host. Nothing fails loudly; the desk just cannot stay signed in.
  */
-export const PORTAL_SUBDOMAINS = ["admin", "reception", "doctor", "labs", "pharmacy", "insurance"] as const;
+/// `dev` is the developer's launcher - ADMIN-only, and a portal in its own
+/// right rather than a page inside admin, so that whoever is maintaining the
+/// system has a desk that is not somebody's job. It carries no hospital data of
+/// its own; see src/app/dev.
+export const PORTAL_SUBDOMAINS = ["admin", "reception", "doctor", "labs", "pharmacy", "insurance", "dev"] as const;
 
 export interface HostRouting {
   /** true → admin.host routing; false → /admin path routing. */

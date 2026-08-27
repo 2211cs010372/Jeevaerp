@@ -22,6 +22,7 @@
     "prebuild": "node scripts/doctor.mjs",
     "postinstall": "prisma generate",
     "seed:admins": "tsx prisma/seed-admins.ts",
+    "seed:dev": "tsx prisma/seed-dev.ts",
     "seed:labs": "tsx prisma/seed-lab-catalog.ts",
     "purge": "tsx scripts/purge-clinical-data.ts",
     "storage:setup": "tsx scripts/setup-storage.ts",

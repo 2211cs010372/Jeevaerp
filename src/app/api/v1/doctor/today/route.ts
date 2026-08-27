@@ -5,12 +5,19 @@ import { doctorToday, completeConsultation } from "@/server/services/doctor.serv
 import { z } from "zod";
 export const dynamic = "force-dynamic";
 
+/**
+ * Today's clinic list. ADMIN reads it too - the portal access model already
+ * lets an admin into the consulting room, and until now this route was the
+ * thing that stopped them once they got there. They pass `?doctorId=` to say
+ * whose day; without it the service answers with the roster to choose from.
+ */
 export const GET = handler(async (req) => {
-  const actor = await requireRole(req, "DOCTOR");
-  return NextResponse.json(await doctorToday(actor));
+  const actor = await requireRole(req, "DOCTOR", "ADMIN");
+  const doctorId = req.nextUrl.searchParams.get("doctorId") ?? undefined;
+  return NextResponse.json(await doctorToday(actor, doctorId));
 });
 
-/** Mark a consultation done. */
+/** Mark a consultation done. DOCTOR only - see completeConsultation. */
 export const POST = handler(async (req) => {
   const actor = await requireRole(req, "DOCTOR");
   const { appointmentId } = await parseBody(req, z.object({ appointmentId: z.string().trim().min(1) }));

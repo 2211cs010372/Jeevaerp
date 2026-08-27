@@ -25,14 +25,52 @@ function to12h(hhmm: string): string {
   return `${h12}:${m ?? "00"} ${suffix}`;
 }
 
+interface Doc { id: string; name: string; department: string }
+
 /** Resolve the Doctor row for a signed-in doctor user. */
-async function doctorForUser(actor: AuthUser): Promise<{ id: string; name: string; department: string }> {
+async function ownDoctor(actor: AuthUser): Promise<Doc> {
   const doc = await prisma.doctor.findUnique({
     where: { userId: actor.id },
     select: { id: true, name: true, department: true },
   });
   if (!doc) throw new ApiError(403, "This account isn't linked to a doctor profile");
   return doc;
+}
+
+/**
+ * WHOSE day this portal is showing.
+ *
+ * A doctor sees their own, resolved from the Doctor row their login is attached
+ * to. An ADMIN has no such row - admins are not consultants - and used to be
+ * refused outright, which made the consulting room the one portal the access
+ * model let them into and the app then locked them out of. They now choose a
+ * doctor and READ that doctor's day; `null` means they have not chosen yet, and
+ * the caller answers with the roster instead of a queue.
+ *
+ * Choosing is not a privilege escalation: an admin can already see every one of
+ * these appointments, results and admissions in the admin console. What stays
+ * out of reach is the WRITE - completeConsultation resolves the actor's own
+ * doctor profile and so can only ever be the doctor themselves.
+ */
+async function doctorInView(actor: AuthUser, viewAsDoctorId?: string): Promise<Doc | null> {
+  if (actor.role !== "ADMIN") return ownDoctor(actor);
+  if (!viewAsDoctorId) return null;
+
+  const doc = await prisma.doctor.findUnique({
+    where: { id: viewAsDoctorId },
+    select: { id: true, name: true, department: true },
+  });
+  if (!doc) throw new ApiError(404, "No doctor with that id");
+  return doc;
+}
+
+/** The picker's options. Deliberately three columns, not the full DoctorDTO. */
+async function roster(): Promise<Doc[]> {
+  return prisma.doctor.findMany({
+    where: { active: true },
+    orderBy: { name: "asc" },
+    select: { id: true, name: true, department: true },
+  });
 }
 
 export interface DoctorQueueItem {
@@ -65,14 +103,31 @@ export interface DoctorInpatient {
 /** Today's clinic list for this doctor - the queue they work through, plus the
  *  two things a doctor otherwise has to go hunting for: results that have come
  *  back, and their own patients currently admitted upstairs. */
-export async function doctorToday(actor: AuthUser): Promise<{
-  doctor: { name: string; department: string };
+export async function doctorToday(actor: AuthUser, viewAsDoctorId?: string): Promise<{
+  doctor: { id: string; name: string; department: string } | null;
   stats: { booked: number; checkedIn: number; completed: number; total: number };
   queue: DoctorQueueItem[];
   labResults: DoctorLabResult[];
   inpatients: DoctorInpatient[];
+  /** Read-only viewer (an ADMIN). Absent for the doctor whose day this is. */
+  readOnly?: true;
+  /** The doctors an ADMIN may switch between. Absent for a doctor. */
+  roster?: { id: string; name: string; department: string }[];
 }> {
-  const doc = await doctorForUser(actor);
+  const doc = await doctorInView(actor, viewAsDoctorId);
+  const viewing = actor.role === "ADMIN" ? { readOnly: true as const, roster: await roster() } : {};
+
+  // An admin who has not picked a doctor yet. Empty rather than an error: the
+  // screen has a roster to render and nothing has gone wrong.
+  if (!doc) {
+    return {
+      doctor: null,
+      stats: { booked: 0, checkedIn: 0, completed: 0, total: 0 },
+      queue: [], labResults: [], inpatients: [],
+      ...viewing,
+    };
+  }
+
   const today = new Date(); today.setHours(0, 0, 0, 0);
 
   const appts = await prisma.appointment.findMany({
@@ -169,7 +224,8 @@ export async function doctorToday(actor: AuthUser): Promise<{
   }));
 
   return {
-    doctor: { name: doc.name, department: doc.department },
+    ...viewing,
+    doctor: { id: doc.id, name: doc.name, department: doc.department },
     stats: {
       booked: queue.filter((q) => q.status === "BOOKED").length,
       checkedIn: queue.filter((q) => q.status === "CHECKED_IN").length,
@@ -184,7 +240,11 @@ export async function doctorToday(actor: AuthUser): Promise<{
 
 /** Mark a consultation finished - the one write a doctor makes here. */
 export async function completeConsultation(actor: AuthUser, appointmentId: string): Promise<void> {
-  const doc = await doctorForUser(actor);
+  // `ownDoctor`, never `doctorInView`. Closing a consultation is a clinical
+  // assertion that the doctor saw the patient, so it can only be made by the
+  // account the Doctor row belongs to - an admin reading the same queue has no
+  // profile here and is refused, which is the intended answer.
+  const doc = await ownDoctor(actor);
   const appt = await prisma.appointment.findUnique({
     where: { id: appointmentId },
     select: { id: true, doctorId: true, status: true },
@@ -211,7 +271,10 @@ export async function completeConsultation(actor: AuthUser, appointmentId: strin
  * scans of the handwritten prescriptions from previous visits.
  */
 export async function doctorPatientChart(actor: AuthUser, displayId: string) {
-  await doctorForUser(actor); // any doctor may read a patient chart
+  // Any doctor may read any patient's chart; an ADMIN may too, and has no
+  // Doctor row to check. The route's requireRole has already refused everyone
+  // else, so this is the profile check, not the permission check.
+  if (actor.role !== "ADMIN") await ownDoctor(actor);
 
   const patient = await prisma.patient.findUnique({
     where: { displayId },
