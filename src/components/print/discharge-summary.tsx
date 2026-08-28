@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { api, ApiClientError } from "@/lib/api-client";
 import {
@@ -8,6 +8,7 @@ import {
 } from "@/components/print/stationery";
 import { isClosed, OUTCOME_LABEL, type AdmissionStatusValue } from "@/lib/admission-outcome";
 import { bedLabel } from "@/lib/beds";
+import { PAPER, fitScale, pageHeightPx } from "@/lib/print/fit-page";
 
 /**
  * THE DISCHARGE SUMMARY, SET LIKE THE LAB REPORT.
@@ -39,7 +40,7 @@ import { bedLabel } from "@/lib/beds";
  * clip the end of a sentence off a medico-legal document.
  */
 
-interface Data {
+export interface Data {
   hospital: (HospitalInfo & { email: string | null }) | null;
   generatedAt: string;
   admission: {
@@ -115,8 +116,12 @@ const DS_CSS = (onStationery: boolean) => `
   .print-stage { --pr-primary: #101a18; --pr-accent: #8a5a14; --pr-ink: #0d1513;
     --pr-line: #6f7c78; --pr-muted: #4a5754; --pr-bg: #f2f5f4; --pr-band: #edf1ef; }
   .print-stage { background: #e8e6e1; min-height: 100vh; padding: 24px 12px 64px; }
+  /* The padding here is the SAME box as the @page margin below, deliberately:
+     the fit-to-page measurement reads this document's height on screen and
+     applies it to the printed page, and a screen column even 2mm wider wraps
+     the prose differently and measures a height that never prints. */
   #print-sheet { width: 210mm; margin: 0 auto; background: #fff; color: var(--pr-ink);
-    box-shadow: 0 8px 40px rgba(0,0,0,.18); padding: ${onStationery ? "40mm 13mm 46mm" : "10mm 11mm 12mm"};
+    box-shadow: 0 8px 40px rgba(0,0,0,.18); padding: ${onStationery ? PAPER.stationery.margin : PAPER.plain.margin};
     font-family: var(--font-sans, "Instrument Sans"), "Noto Sans Telugu", "Nirmala UI", Arial, sans-serif;
     font-size: 11.5px; line-height: 1.45; }
 
@@ -130,7 +135,10 @@ const DS_CSS = (onStationery: boolean) => `
      size that one column to its widest line of content instead of stretching
      it to fill the table - which is exactly what makes a paragraph render at
      roughly half the page even though nothing in it says to. */
-  .ds-doc { width: 100%; table-layout: fixed; border-collapse: collapse; }
+  /* zoom, not transform: scale(). A transform paints smaller but lays out at
+     full size, so the page would still break exactly where it did - which is
+     the whole thing being fixed. zoom re-lays-out, so the break moves. */
+  .ds-doc { width: 100%; table-layout: fixed; border-collapse: collapse; zoom: var(--ds-fit, 1); }
   .ds-doc > thead { display: table-header-group; }
   .ds-doc > tbody { display: table-row-group; }
   .ds-doc > thead > tr > th { width: 100%; box-sizing: border-box; text-align: left; font-weight: 400; padding: 0; }
@@ -206,7 +214,7 @@ const DS_CSS = (onStationery: boolean) => `
     /* The reserved bands ARE the page margin on pre-printed paper, so the
        repeated header lands under the printed logo on every sheet, not just
        the first. */
-    @page { size: A4 portrait; margin: ${onStationery ? "40mm 13mm 46mm" : "13mm 12mm 14mm"}; }
+    @page { size: A4 portrait; margin: ${onStationery ? PAPER.stationery.margin : PAPER.plain.margin}; }
     /* Print the fills and the ink, not a lightened approximation - browsers
        drop background color and darken-to-toner unless told otherwise. */
     #print-sheet, #print-sheet * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -265,6 +273,34 @@ function DischargeSummaryInner() {
   if (error) return <div className="p-10 text-center text-[14px] text-[#8a3b2e]">{error}</div>;
   if (!d) return <div className="p-10 text-center text-[14px] text-[#5a6a66]">Preparing the discharge summary…</div>;
 
+  return (
+    <DischargeSummaryDoc
+      d={d}
+      onStationery={onStationery}
+      setOnStationery={setOnStationery}
+      pickedDischarge={pickedDischarge}
+      setPickedDischarge={setPickedDischarge}
+    />
+  );
+}
+
+/**
+ * The summary itself, given an already-loaded stay.
+ *
+ * Split from the fetching wrapper the way InvoiceDoc is split from
+ * InvoiceSheet: the document has to be renderable without a database behind it
+ * to be measured, previewed or tested - and the whole of the fit-to-one-page
+ * work below is measurement.
+ */
+export function DischargeSummaryDoc({
+  d, onStationery, setOnStationery, pickedDischarge, setPickedDischarge,
+}: {
+  d: Data;
+  onStationery: boolean;
+  setOnStationery: (v: boolean) => void;
+  pickedDischarge: string;
+  setPickedDischarge: (v: string) => void;
+}) {
   const p = d.patient;
   const a = d.admission;
   const closed = isClosed(a.status);
@@ -324,6 +360,49 @@ function DischargeSummaryInner() {
     { k: "Follow-up Date", v: d.summary?.followUpDate ? date(d.summary.followUpDate) : "-" },
     { k: "Address", v: [p.address, p.city].filter(Boolean).join(", ") || "-" },
   ];
+
+  /**
+   * MEASURE, THEN SQUEEZE - see fitScale.
+   *
+   * Read on screen and applied to paper, which only holds because the sheet's
+   * padding and the @page margin are now the same box (see PAPER): the column
+   * measured here is the column that prints, so the prose wraps the same way
+   * and the height is the real one.
+   *
+   * The measured box is already zoomed by whatever fit is in force, so it is
+   * divided back out to recover the natural height. `fitRef` carries that
+   * without putting `fit` in the dependency list, which would re-measure on
+   * every change of the thing being measured and never settle.
+   */
+  const docRef = useRef<HTMLTableElement>(null);
+  const headRef = useRef<HTMLTableSectionElement>(null);
+  const [fit, setFit] = useState(1);
+  const fitRef = useRef(1);
+  fitRef.current = fit;
+
+  useEffect(() => {
+    const doc = docRef.current;
+    const head = headRef.current;
+    if (!doc || !head) return;
+
+    const measure = () => {
+      const applied = fitRef.current || 1;
+      const contentPx = doc.getBoundingClientRect().height / applied;
+      const headerPx = head.getBoundingClientRect().height / applied;
+      const next = fitScale(contentPx, headerPx, pageHeightPx(onStationery));
+      // Compared loosely: a sub-percent difference is measurement noise, and
+      // writing it back would start the loop this guard exists to stop.
+      if (Math.abs(next - fitRef.current) > 0.005) setFit(next);
+    };
+
+    // After fonts land. A summary measured against a fallback face is measured
+    // against the wrong line count, and this document is mostly prose.
+    measure();
+    const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
+    fonts?.ready?.then(measure).catch(() => {});
+    const t = window.setTimeout(measure, 250);
+    return () => window.clearTimeout(t);
+  }, [d, onStationery, pickedDischarge]);
 
   const examShown = EXAM.filter(([k]) => say(k));
 
@@ -405,8 +484,16 @@ function DischargeSummaryInner() {
             hospital but not the patient. If that ever bites, the answer is a
             slim one-line strip back in the thead (name · IP no), not the whole
             block. */}
-        <table className="ds-doc">
-          <thead>
+        <table
+          className="ds-doc"
+          ref={docRef}
+          // The fit is a CSS variable rather than a zoom written straight onto
+          // the element, so the stylesheet stays the one place that decides
+          // what the number does - and a document that has not been measured
+          // yet falls back to 1 rather than to nothing.
+          style={{ ["--ds-fit" as string]: String(fit) } as React.CSSProperties}
+        >
+          <thead ref={headRef}>
             <tr>
               <th>
                 {/* On pre-printed paper the hospital header is already on the
