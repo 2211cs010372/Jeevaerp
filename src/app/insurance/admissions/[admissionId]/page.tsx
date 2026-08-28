@@ -732,6 +732,21 @@ export default function AdmissionSheetPage() {
             className="inline-flex items-center gap-2 rounded-md border border-[var(--p-border)] px-4 py-1.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
             <Icon name="receipt" size={15} /> Detailed bill
           </a>
+          {/* ── ONCE THE INSURER IS OUT OF IT ──
+              A refusal recorded here converts the stay to SELF_PAY, and the very
+              next question is what the family now owes. That is a different
+              document from the one above: the hospital's own services are
+              discountable and the pharmacy and the lab are not, and everything
+              already paid at those counters comes off. Offered here so the desk
+              that just closed the claim does not have to walk to reception for
+              the sheet that answers the call they are about to make. */}
+          {a.payerType === "SELF_PAY" && (
+            <a href={`/print/services-bill/${a.id}`} target="_blank" rel="noopener noreferrer"
+              title="The self-pay bill - services discounted, pharmacy and lab at cost, everything already paid deducted"
+              className="inline-flex items-center gap-2 rounded-md border border-[var(--p-border)] px-4 py-1.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
+              <Icon name="receipt" size={15} /> Services bill
+            </a>
+          )}
           <Link href="/stays" className="inline-flex items-center gap-2 rounded-md border border-[var(--p-border)] px-4 py-1.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
             Insurance stays
           </Link>

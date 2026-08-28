@@ -4,7 +4,7 @@ import { nextId } from "@/lib/ids";
 import { logAudit } from "./audit.service";
 import { splitInvoice } from "@/lib/insurance-split";
 import { createInvoice, updateInvoice, recordPayment, getInvoice, syncStayCoverage, type PaymentModeT } from "./billing.service";
-import { advancePaymentRef, applyAdvances, heldAsOf } from "@/server/billing/advances";
+import { ADVANCE_REF_PREFIX, advancePaymentRef, applyAdvances, heldAsOf } from "@/server/billing/advances";
 import { notifyAdmitted, notifyDischarged, notifyAdvanceReceived } from "./notify.service";
 // One rounding definition across the whole system - money must not be
 // rounded two different ways in two different files. `resolveChargeDate` is the
@@ -17,7 +17,9 @@ import { mergeAdvice } from "@/lib/advised-lab";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, PaymentMode, ChargeCategory } from "@prisma/client";
 import { bedLabel } from "@/lib/beds";
+import { dateOnlyISO } from "@/lib/date";
 import { perUnitPrice } from "@/lib/pharmacy/pack";
+import { ipServicesBill, bucketOfSection, isDiscountable, type IpBillBucket } from "@/lib/ip-services-bill";
 import {
   CLOSED_STATUS_LIST, isClosed, OUTCOME_LABEL,
   type AdmissionStatusValue, type DischargeOutcome,
@@ -568,7 +570,7 @@ export async function currentInpatients(): Promise<{
   reason: string | null; attendantName: string | null; attendantPhone: string | null;
   payerType: string; insurer: string | null; policyNo: string | null;
   doctor: { name: string; department: string };
-  patient: { id: string; displayId: string; fullName: string; age: number | null; gender: string | null; phone: string };
+  patient: { id: string; displayId: string; fullName: string; age: number | null; dob: string | null; gender: string | null; phone: string };
 }[]> {
   const rows = await prisma.admission.findMany({
     where: { status: "ADMITTED" },
@@ -581,7 +583,7 @@ export async function currentInpatients(): Promise<{
       bed: { select: { bedNo: true } },
       charges: { select: { qty: true, unitPrice: true } },
       doctor: { select: { name: true, department: true } },
-      patient: { select: { id: true, displayId: true, fullName: true, age: true, gender: true, phone: true } },
+      patient: { select: { id: true, displayId: true, fullName: true, age: true, dob: true, gender: true, phone: true } },
     },
   });
 
@@ -594,7 +596,7 @@ export async function currentInpatients(): Promise<{
     bed: { bedNo: string };
     charges: { qty: number; unitPrice: { toString(): string } }[];
     doctor: { name: string; department: string };
-    patient: { id: string; displayId: string; fullName: string; age: number | null; gender: string | null; phone: string };
+    patient: { id: string; displayId: string; fullName: string; age: number | null; dob: Date | null; gender: string | null; phone: string };
   }) => {
     const days = stayDays(r.admittedAt, now);
     const daily = Number(r.dailyChargeAtAdmit.toString());
@@ -611,7 +613,10 @@ export async function currentInpatients(): Promise<{
       runningCharge: (bedCharge + extrasCharge).toFixed(2),
       reason: r.reason, attendantName: r.attendantName, attendantPhone: r.attendantPhone,
       payerType: r.payerType, insurer: r.insurer, policyNo: r.policyNo,
-      doctor: r.doctor, patient: r.patient,
+      doctor: r.doctor,
+      // `dob` is a `@db.Date` - its calendar day is the UTC part. Carried so
+      // an admitted infant reads as "11d" rather than as a rounded-down 0.
+      patient: { ...r.patient, dob: r.patient.dob ? dateOnlyISO(r.patient.dob) : null },
     };
   });
 }
@@ -626,6 +631,10 @@ export async function currentInpatients(): Promise<{
 export async function recentDischarges(limit = 25): Promise<{
   id: string; ipNumber: string; admittedAt: string; dischargedAt: string; days: number;
   ward: string; bedNo: string; outcome: string;
+  /** Who settled this stay. A stay an insurer refused has already been flipped
+   *  to SELF_PAY by revertBillsToSelfPay, so this is what decides whether the
+   *  self-pay services bill may be offered on the row. */
+  payerType: string;
   patient: { id: string; displayId: string; fullName: string };
   doctor: { name: string; department: string };
   invoice: { id: string; receiptNo: string; totalAmount: string; status: string } | null;
@@ -636,7 +645,7 @@ export async function recentDischarges(limit = 25): Promise<{
     take: limit,
     select: {
       id: true, ipNumber: true, admittedAt: true, dischargedAt: true, wardNameAtAdmit: true,
-      status: true,
+      status: true, payerType: true,
       bed: { select: { bedNo: true } },
       patient: { select: { id: true, displayId: true, fullName: true } },
       doctor: { select: { name: true, department: true } },
@@ -645,7 +654,7 @@ export async function recentDischarges(limit = 25): Promise<{
   });
   type Row = {
     id: string; ipNumber: string; admittedAt: Date; dischargedAt: Date | null; wardNameAtAdmit: string;
-    status: string;
+    status: string; payerType: string;
     bed: { bedNo: string } | null;
     patient: { id: string; displayId: string; fullName: string };
     doctor: { name: string; department: string };
@@ -662,6 +671,7 @@ export async function recentDischarges(limit = 25): Promise<{
       // Carried through so the desk can see at a glance that a row in this list
       // was a death or an abscond rather than an ordinary discharge.
       outcome: r.status,
+      payerType: r.payerType,
       patient: r.patient, doctor: r.doctor,
       invoice: inv ? { id: inv.id, receiptNo: inv.receiptNo, totalAmount: inv.totalAmount.toString(), status: inv.status } : null,
     };
@@ -3741,6 +3751,282 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
     sourceBills: [...sourceBills].sort((x, y) => x.date.localeCompare(y.date)),
   };
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   THE IP SERVICES BILL - the same stay, read the way a self-paying family reads it
+   ════════════════════════════════════════════════════════════════════════════
+
+   The IP bill above is unchanged and stays exactly what it is: one gross figure,
+   the discount off the bottom, and a number for a TPA to assess. This is a
+   SECOND document in the same format, for the one conversation that sheet
+   cannot hold - the discount conversation at the discharge counter.
+
+   What it does differently, and why:
+
+     THE DISCOUNT LANDS ON THE HOSPITAL'S OWN SERVICES ONLY. The bed, the ward's
+     charges, the consultant's visits - those are the hospital's price to set.
+     Medicines are sold at the MRP printed on the strip and tests carry the lab's
+     rate, so a discount on those gives away somebody else's margin. On one
+     undivided total the family reads the discount as covering all of it and the
+     argument starts at the pharmacy line. Here the blocks are separated and the
+     paper answers it: discounted, at cost, at cost.
+
+     WHAT IS ALREADY PAID IS TAKEN OFF, BLOCK BY BLOCK. A family pays the
+     pharmacy window during the stay and the lab counter on the way to the
+     scan. Every one of those receipts is credited to the block it was paid
+     against, the lines carry PAID, and only the difference is asked for. The IP
+     bill answers paid-vs-due once in its totals; this one has to answer it per
+     counter, because that is how the money was actually handed over.
+
+     THE DEPOSIT COMES OFF LAST, after every counter payment - the order the
+     money moved in.
+
+   WHO IT IS FOR, and this is a gate rather than a preference: a SELF-PAYING
+   stay, or one the insurer refused and that has been moved onto the family.
+   Printing a discounted "pay this now" sheet for a cashless stay asks a family
+   for money an insurer is carrying, and the desk that prints it will collect it.
+   So the service refuses rather than trusting the screen not to link it.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/** Why this stay may be billed on this sheet - or why it may not. */
+export type SelfPayBasis = "SELF_PAY" | "INSURANCE_REFUSED" | "NONE";
+
+export interface IpServicesGroupDTO extends BillGroupDTO {
+  /** Which of the three blocks this section is added into. */
+  bucket: IpBillBucket;
+  /** True on the hospital's own services - the only ones a discount touches. */
+  discountable: boolean;
+  /**
+   * NO PER-SECTION PAID FIGURE, deliberately.
+   *
+   * Money arrives against a COUNTER BILL, not against a printed heading, and a
+   * block can be spelt over two sections - the ward's investigation lines and
+   * the lab's own both land in LAB. Splitting one payment across them would need
+   * an attribution nothing records, and a figure per heading that does not add
+   * up to the block is worse than no figure at all. Paid-vs-due is answered per
+   * BLOCK, in the summary grid, and per LINE by `paidStatus`.
+   */
+}
+
+/** One block of the printed money table. Strings, like every other figure here. */
+export interface IpBillBlockDTO {
+  gross: string; discount: string; net: string; paid: string; due: string; settled: boolean;
+}
+
+export interface IpServicesMoneyDTO {
+  services: IpBillBlockDTO;
+  lab: IpBillBlockDTO;
+  pharmacy: IpBillBlockDTO;
+  gross: string;
+  discount: string;
+  /** Agreed but with no services left to come off - printed as a caveat, never
+   *  quietly spread onto the medicines. See lib/ip-services-bill. */
+  discountUnapplied: string;
+  gst: string;
+  netBill: string;
+  paidTotal: string;
+  dueBeforeAdvance: string;
+  advance: string;
+  advanceApplied: string;
+  netPayable: string;
+  refundDue: string;
+}
+
+export interface IpServicesBillDTO extends Omit<DetailedBillDTO, "groups"> {
+  groups: IpServicesGroupDTO[];
+  /** False means the sheet must not be printed - see the note above. */
+  eligible: boolean;
+  basis: SelfPayBasis;
+  /** One sentence the sheet prints, or refuses with. */
+  eligibilityNote: string;
+  money: IpServicesMoneyDTO;
+}
+
+/** Which block a counter's invoice was raised at. Mirrors the section mapping. */
+const BUCKET_OF_SOURCE: Record<string, IpBillBucket> = {
+  PHARMACY: "PHARMACY", LAB: "LAB", CONSULTATION: "SERVICES", OTHER: "SERVICES",
+};
+
+export async function ipServicesBillData(admissionId: string): Promise<IpServicesBillDTO> {
+  // The lines, the header and the counter bills are IDENTICAL to the IP bill's -
+  // this is the same stay, and two functions assembling it two ways is how a
+  // family ends up holding two sheets that disagree. Only the money block below
+  // and the eligibility gate are this document's own.
+  const base = await detailedBillData(admissionId);
+
+  const [stay, claims] = await Promise.all([
+    prisma.admission.findUnique({
+      where: { id: admissionId },
+      select: {
+        payerType: true,
+        advances: { select: { receiptNo: true, amount: true, mode: true, createdAt: true } },
+        invoices: {
+          where: { status: { not: "CANCELLED" } },
+          select: {
+            source: true, payer: true, receiptNo: true,
+            payments: { select: { amount: true, mode: true, reference: true, createdAt: true } },
+            refunds: { select: { amount: true } },
+          },
+        },
+      },
+    }),
+    prisma.insuranceClaim.findMany({
+      where: { admissionId },
+      select: { status: true },
+    }),
+  ]);
+  if (!stay) throw new ApiError(404, "Admission not found");
+
+  const num = (d: { toString(): string } | null | undefined) => (d == null ? 0 : Number(d.toString()));
+  const m2 = (n: number) => round2(n).toFixed(2);
+
+  // ── WHO THIS SHEET MAY BE PRINTED FOR ──
+  //
+  // A converted stay needs no second test: revertBillsToSelfPay flips payerType
+  // to SELF_PAY when the insurer refuses the whole admission, so "the insurer
+  // said no and it came back to the family" IS a self-paying stay by the time
+  // anyone opens this. The second branch is the PARTIAL revert - some bills
+  // moved onto the family while the stay itself stays pointed at the insurer -
+  // which leaves payerType alone and would otherwise be refused here.
+  // REJECTED ONLY, not PARTIALLY_APPROVED. A flat refusal makes the whole stay
+  // the family's, which is what this sheet prices. A part-approval does the
+  // opposite: the insurer is still carrying most of it and only the shortfall is
+  // the family's - print this and the counter asks them for the insurer's share
+  // too. That case has its own path (the co-pay on the discharge screen) and its
+  // own document, which is the IP bill.
+  //
+  // And a SELF_PAY bill on its own proves nothing: a non-covered item is billed
+  // to the family on a perfectly live cashless stay every day of the week. It is
+  // the refusal AND the moved bill together that mean the family is now paying.
+  const rejected = claims.some((c) => c.status === "REJECTED");
+  const movedBills = stay.invoices.some((i) => i.payer === "SELF_PAY");
+  const basis: SelfPayBasis =
+    stay.payerType === "SELF_PAY" ? "SELF_PAY"
+    : rejected && movedBills ? "INSURANCE_REFUSED"
+    : "NONE";
+
+  const eligibilityNote =
+    basis === "SELF_PAY"
+      ? rejected
+        ? `${base.insurer ?? "The insurer"} refused this stay - it is being paid by the family.`
+        : "Self-paying stay."
+      : basis === "INSURANCE_REFUSED"
+        ? `${base.insurer ?? "The insurer"} refused bills on this stay and they have been moved onto the family.`
+        : `This stay is cashless with ${base.insurer ?? "an insurer"}. Print the IP bill instead - a discounted "pay now" sheet would ask the family for money the insurer is carrying.`;
+
+  // ── WHAT HAS ALREADY BEEN COLLECTED, PER BLOCK ──
+  //
+  // The counters' own bills carry their paid figure already (sourceBills), and
+  // each one belongs to exactly the block its counter raised it at.
+  const paid: Record<IpBillBucket, number> = { SERVICES: 0, LAB: 0, PHARMACY: 0 };
+  for (const b of base.sourceBills) {
+    const bucket = BUCKET_OF_SOURCE[b.source] ?? "SERVICES";
+    paid[bucket] = round2(paid[bucket] + Number(b.paid));
+  }
+
+  // AND MONEY TAKEN AGAINST THE STAY'S OWN INVOICE, which the IP bill does not
+  // credit at all - it subtracts the deposit and the counters and stops there,
+  // so a family who paid the balance in cash at discharge is still shown one.
+  // On a sheet whose whole job is "what do we owe now", that is the number.
+  //
+  // NET OF REFUNDS, and NEVER the deposit: the discharge applies the admission
+  // advance as a payment on this same invoice (see advancePaymentRef), and
+  // `advance` below already accounts for it. Counting it here too would take the
+  // family's deposit off the bill twice.
+  for (const inv of stay.invoices) {
+    if (inv.source !== "IPD") continue;
+    const taken = inv.payments
+      .filter((p) => !p.reference?.startsWith(ADVANCE_REF_PREFIX))
+      .reduce((s, p) => round2(s + num(p.amount)), 0);
+    const refunded = inv.refunds.reduce((s, x) => round2(s + num(x.amount)), 0);
+    paid.SERVICES = round2(paid.SERVICES + Math.max(0, round2(taken - refunded)));
+  }
+
+  const groups: IpServicesGroupDTO[] = base.groups.map((g) => {
+    const bucket = bucketOfSection(g.title);
+    return { ...g, bucket, discountable: isDiscountable(bucket) };
+  });
+
+  // ── PAYMENT DETAILS, WITH THE DEPOSIT LISTED ONCE ──
+  //
+  // The discharge applies the admission deposit as a payment ON THE STAY'S OWN
+  // INVOICE (see advancePaymentRef), so a list built from the advances plus every
+  // invoice payment carries it twice. The IP bill lives with that; this sheet
+  // cannot. Its whole claim is "here is everything you have already paid, and
+  // here is the difference" - a family adding up this column and landing above
+  // the deductions in the totals block has been handed a bill that argues with
+  // itself.
+  //
+  // The stamped reference is what identifies the carried-over deposit, the same
+  // marker getInvoice matches on. The AdmissionAdvance row is the one that stays:
+  // it carries the deposit's OWN receipt number, which is the slip in the
+  // family's hand.
+  const payments: BillPaymentDTO[] = [
+    ...stay.advances.map((x) => ({
+      invoiceNo: x.receiptNo ?? "ADVANCE",
+      date: x.createdAt.toISOString(),
+      mode: String(x.mode),
+      amount: m2(num(x.amount)),
+      at: x.createdAt.getTime(),
+    })),
+    ...stay.invoices.flatMap((i) =>
+      i.payments
+        .filter((p) => !p.reference?.startsWith(ADVANCE_REF_PREFIX))
+        .map((p) => ({
+          invoiceNo: i.receiptNo,
+          date: p.createdAt.toISOString(),
+          mode: String(p.mode),
+          amount: m2(num(p.amount)),
+          at: p.createdAt.getTime(),
+        }))
+    ),
+  ]
+    .sort((x, y) => x.at - y.at)
+    .map(({ at: _at, ...row }) => row);
+
+  const money = ipServicesBill({
+    sections: base.groups.map((g) => ({ title: g.title, total: g.total })),
+    discount: base.discount,
+    gst: base.gst,
+    advance: base.advance,
+    paid: { services: paid.SERVICES, lab: paid.LAB, pharmacy: paid.PHARMACY },
+  });
+
+  const blk = (b: typeof money.services): IpBillBlockDTO => ({
+    gross: m2(b.gross), discount: m2(b.discount), net: m2(b.net),
+    paid: m2(b.paid), due: m2(b.due), settled: b.settled,
+  });
+
+  return {
+    ...base,
+    groups,
+    payments,
+    eligible: basis !== "NONE",
+    basis,
+    eligibilityNote,
+    money: {
+      services: blk(money.services),
+      lab: blk(money.lab),
+      pharmacy: blk(money.pharmacy),
+      gross: m2(money.gross),
+      discount: m2(money.discount),
+      discountUnapplied: m2(money.discountUnapplied),
+      gst: m2(money.gst),
+      netBill: m2(money.netBill),
+      paidTotal: m2(money.paidTotal),
+      dueBeforeAdvance: m2(money.dueBeforeAdvance),
+      advance: m2(money.advance),
+      advanceApplied: m2(money.advanceApplied),
+      netPayable: m2(money.netPayable),
+      refundDue: m2(money.refundDue),
+    },
+    // The top-level figures are RESTATED from this sheet's own arithmetic, so
+    // anything reading the DTO generically (and the words at the foot of the
+    // page) quotes the number this document is actually asking for.
+    netPayable: m2(money.netPayable),
+  };
+}
+
 
 
 /**

@@ -8,6 +8,8 @@ import { CommandBar } from "@/components/portal/shell/command-bar";
 import { SettingsPanel, type Me } from "@/components/portal/shell/settings-panel";
 import { themeBootScript } from "@/lib/portal/theme";
 import type { NavItem } from "@/lib/portal/nav";
+import { portalUrl } from "@/lib/auth/portal-url";
+import { isPortalSubdomain } from "@/lib/auth/portals";
 import { PORTALS } from "@/lib/portal/nav";
 import { api } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
@@ -147,7 +149,11 @@ export function PortalShell({
 
   async function logout() {
     try { await api.post("/auth/logout"); } catch { /* ignore */ }
-    window.location.assign("/login");
+    // THIS portal's sign-in, not the host's. On a portal subdomain the two are
+    // the same URL, which is why a bare "/login" looked right for so long; on a
+    // single-host deployment it is nobody's page, and signing out landed on a
+    // 404 with the session already gone.
+    window.location.assign(isPortalSubdomain(meta.key) ? portalUrl(meta.key, "/login") : "/login");
   }
 
   const initials = displayName.split(" ").map((n) => n[0]).slice(0, 2).join("");

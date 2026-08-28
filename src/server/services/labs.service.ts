@@ -9,7 +9,7 @@ import { registerPatient } from "./reception.service";
 import { notifyLabReportReady } from "./notify.service";
 import { collectionByMode, type ModeTotal } from "./reports.service";
 import { publishLive } from "@/server/realtime/publish";
-import { parseLocalDate } from "@/lib/date";
+import { dateOnlyISO, parseLocalDate } from "@/lib/date";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import { linkAdvisedLabs } from "./prescriptions.service";
 import { isInHouseReferrer } from "@/lib/labs/referrer";
@@ -871,7 +871,7 @@ export interface LabReportDTO {
     reportFileUrl: string | null;
   };
   patient: {
-    displayId: string; fullName: string; age: number | null; gender: string | null;
+    displayId: string; fullName: string; age: number | null; dob: string | null; gender: string | null;
     bloodGroup: string | null; phone: string; address: string | null; city: string | null;
   } | null;
   /** The visit that asked for it - a walk-in has none. */
@@ -892,6 +892,20 @@ export interface LabReportDTO {
   abnormal: number;
 }
 
+/**
+ * The identity block's patient, with the date column turned into the string the
+ * DTO promises. Written once because the row reaches here two ways - carried by
+ * a walk-in test, or through the visit that asked for it.
+ */
+function reportPatient(
+  p: {
+    displayId: string; fullName: string; age: number | null; dob: Date | null; gender: string | null;
+    bloodGroup: string | null; phone: string; address: string | null; city: string | null;
+  } | null
+): LabReportDTO["patient"] {
+  return p ? { ...p, dob: p.dob ? dateOnlyISO(p.dob) : null } : null;
+}
+
 export async function labReportData(labTestId: string): Promise<LabReportDTO> {
   const t = await prisma.labTest.findUnique({
     where: { id: labTestId },
@@ -906,7 +920,7 @@ export async function labReportData(labTestId: string): Promise<LabReportDTO> {
       referringName: true,
       patient: {
         select: {
-          displayId: true, fullName: true, age: true, gender: true,
+          displayId: true, fullName: true, age: true, dob: true, gender: true,
           bloodGroup: true, phone: true, address: true, city: true,
         },
       },
@@ -916,7 +930,7 @@ export async function labReportData(labTestId: string): Promise<LabReportDTO> {
           doctor: { select: { name: true, registrationNo: true } },
           patient: {
             select: {
-              displayId: true, fullName: true, age: true, gender: true,
+              displayId: true, fullName: true, age: true, dob: true, gender: true,
               bloodGroup: true, phone: true, address: true, city: true,
             },
           },
@@ -959,7 +973,9 @@ export async function labReportData(labTestId: string): Promise<LabReportDTO> {
     },
     // Walk-in tests carry the patient directly; a test ordered off a chit
     // reaches them through the visit. Same fallback as the queue rows.
-    patient: t.patient ?? t.appointment?.patient ?? null,
+    // `dob` is a `@db.Date`, so the calendar day is its UTC part - and the
+    // report prints it as an age, not as a date. See lib/age and lib/date.
+    patient: reportPatient(t.patient ?? t.appointment?.patient ?? null),
     referral: t.appointment
       ? {
           opNumber: t.appointment.opNumber,
@@ -1191,6 +1207,8 @@ export async function billLabTests(
 export interface WalkInPatientDTO {
   id: string; displayId: string; fullName: string; phone: string;
   age: number | null; gender: string | null;
+  /** "YYYY-MM-DD" for the infants registered in months or days. See lib/age. */
+  dob: string | null;
   /** True when this record was created by THIS call - the UI says so on the receipt. */
   isNew: boolean;
 }
@@ -1226,7 +1244,7 @@ export async function walkInOrder(
     patientId?: string;
     newPatient?: {
       firstName: string; lastName?: string; phone: string;
-      age?: number; gender?: "MALE" | "FEMALE" | "OTHER";
+      age?: number; dob?: string; gender?: "MALE" | "FEMALE" | "OTHER";
     };
     catalogIds: string[];
     labTestIds: string[];
@@ -1249,6 +1267,8 @@ export async function walkInOrder(
         lastName: input.newPatient.lastName,
         phone: input.newPatient.phone,
         age: input.newPatient.age,
+        // Set only when the counter typed months or days - see lib/age.
+        dob: input.newPatient.dob,
         gender: input.newPatient.gender,
         isVip: false,
       },
@@ -1256,17 +1276,18 @@ export async function walkInOrder(
     );
     patient = {
       id: created.id, displayId: created.displayId, fullName: created.fullName,
-      phone: created.phone, age: created.age, gender: created.gender, isNew: true,
+      phone: created.phone, age: created.age, dob: created.dob, gender: created.gender, isNew: true,
     };
   } else {
     const found = await prisma.patient.findUnique({
       where: { id: input.patientId ?? "" },
-      select: { id: true, displayId: true, fullName: true, phone: true, age: true, gender: true, mergedIntoId: true, deletedAt: true },
+      select: { id: true, displayId: true, fullName: true, phone: true, age: true, dob: true, gender: true, mergedIntoId: true, deletedAt: true },
     });
     if (!found || found.mergedIntoId || found.deletedAt) throw new ApiError(404, "Patient not found");
     patient = {
       id: found.id, displayId: found.displayId, fullName: found.fullName,
-      phone: found.phone, age: found.age, gender: found.gender, isNew: false,
+      phone: found.phone, age: found.age, dob: found.dob ? dateOnlyISO(found.dob) : null,
+      gender: found.gender, isNew: false,
     };
   }
 
@@ -1350,7 +1371,7 @@ export async function labStats(): Promise<{
 
 /** A patient's lab history + last visit - what the lab needs at the counter. */
 export async function patientLabHistory(displayId: string): Promise<{
-  patient: { id: string; displayId: string; fullName: string; phone: string; age: number | null; gender: string | null; bloodGroup: string | null };
+  patient: { id: string; displayId: string; fullName: string; phone: string; age: number | null; dob: string | null; gender: string | null; bloodGroup: string | null };
   lastVisit: { opNumber: string; visitDate: string; doctorName: string; department: string; status: string } | null;
   tests: LabTestDTO[];
   invoices: { receiptNo: string; totalAmount: string; status: string; createdAt: string }[];
@@ -1358,7 +1379,7 @@ export async function patientLabHistory(displayId: string): Promise<{
   const patient = await prisma.patient.findUnique({
     where: { displayId },
     select: {
-      id: true, displayId: true, fullName: true, phone: true, age: true,
+      id: true, displayId: true, fullName: true, phone: true, age: true, dob: true,
       gender: true, bloodGroup: true, mergedIntoId: true, deletedAt: true,
     },
   });
@@ -1388,7 +1409,8 @@ export async function patientLabHistory(displayId: string): Promise<{
   return {
     patient: {
       id: patient.id, displayId: patient.displayId, fullName: patient.fullName, phone: patient.phone,
-      age: patient.age, gender: patient.gender, bloodGroup: patient.bloodGroup,
+      age: patient.age, dob: patient.dob ? dateOnlyISO(patient.dob) : null,
+      gender: patient.gender, bloodGroup: patient.bloodGroup,
     },
     lastVisit: lastAppt
       ? {

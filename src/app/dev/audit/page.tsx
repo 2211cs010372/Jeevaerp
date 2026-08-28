@@ -19,6 +19,11 @@ import { api } from "@/lib/api-client";
  *
  * Filters live in the URL-shaped state below and are sent as query params, so a
  * result set is reproducible rather than a thing one person saw once.
+ *
+ * Lives in the DEVELOPER portal. The endpoint it reads is still
+ * /api/v1/admin/audit and still ADMIN-gated - the API namespace names the role
+ * that may call it, not the portal the screen happens to sit in, and SUPERUSER
+ * clears every role gate (see requireRole).
  */
 
 interface Log {

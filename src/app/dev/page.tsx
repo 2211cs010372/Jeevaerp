@@ -57,7 +57,6 @@ export default async function DevHome() {
        * bounced to a sign-in screen six times.
        */
       sessionSpansPortals={!subdomainMode || Boolean(env().COOKIE_DOMAIN)}
-      loginHref={subdomainMode ? "/login" : "/dev/login"}
     />
   );
 }

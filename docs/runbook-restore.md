@@ -105,7 +105,7 @@ from last night and you would throw away today's work along with the mistake.
    into a database you are about to rewind.
 2. Supabase dashboard, Database, Point-in-Time Recovery, pick a timestamp a few
    minutes before the mistake.
-3. Restore, then verify: open `/admin/errors` and the day-close screen for
+3. Restore, then verify: open `/dev/errors` and the day-close screen for
    yesterday and confirm the totals match what was printed.
 4. Tell the desk what window of work was lost so they can re-enter it.
 

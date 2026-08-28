@@ -5,9 +5,16 @@ import { useSearchParams } from "next/navigation";
 import { Card, PrimaryButton } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
 import { Field, Spinner, SuccessCheck } from "@/components/portal/ui/form-atoms";
+import { AgeUnitSwitch } from "@/components/portal/ui/age-unit-switch";
 import { api, ApiClientError } from "@/lib/api-client";
+import { AGE_MAX, ageFromDob, ageInRange, ageYears, dobFromAge, type AgeUnit } from "@/lib/age";
+import { localDateISO } from "@/lib/date";
 
 const BLOODS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
+
+/** A plausible value for each unit, so the placeholder reads as an example. */
+const AGE_PLACEHOLDER: Record<AgeUnit, string> = { Y: "29", M: "5", D: "11" };
+const AGE_UNIT_WORD: Record<AgeUnit, string> = { Y: "years", M: "months", D: "days" };
 
 interface Registered { id: string; displayId: string; fullName: string; firstName: string; age: number | null; gender: string | null; bloodGroup: string | null; }
 interface EmergencyAppt { id: string; opNumber: string; time: string }
@@ -33,7 +40,7 @@ function EmergencyFromUrl({ onSet }: { onSet: () => void }) {
 }
 
 const empty = {
-  firstName: "", middleName: "", lastName: "", dob: "", age: "", gender: "FEMALE",
+  firstName: "", middleName: "", lastName: "", dob: "", age: "", ageUnit: "Y" as AgeUnit, gender: "FEMALE",
   blood: "", maritalStatus: "", phone: "", altPhone: "", email: "",
   address: "", city: "", state: "", country: "India", postalCode: "",
   occupation: "", nationality: "", preferredLanguage: "",
@@ -63,34 +70,64 @@ export default function RegisterPage() {
     if (typeof k === "string" && k in errors) setErrors((p) => ({ ...p, [k]: undefined }));
   };
 
-  // Age and DOB stay in sync: type an age -> DOB becomes 1 Jan of that birth
-  // year; pick a DOB -> age is computed from it.
+  // AGE AND DOB STAY IN SYNC, IN WHICHEVER UNIT THE ANSWER CAME IN.
+  //
+  // Age used to be a number of years and nothing else, which is not an answer
+  // for the babies this desk registers: a nine-day-old and a nine-month-old
+  // both came out as 0, and 0 put 1 January of this year in the DOB field. The
+  // unit beside the number fixes both ends - what gets stored is a date of
+  // birth that is right to the day for an infant, instead of a January guess.
+  //
+  // YEARS KEEP THE OLD RULE (1 Jan of the birth year). Somebody who says "34"
+  // has not told us their birthday, and pretending they were born today would
+  // be a more confident lie than the one the field already tells; the desk can
+  // still type the real date over it. Months and days DO pin the exact day,
+  // because for an infant the day is the whole of the answer.
+  const dobForAge = (n: string, unit: AgeUnit, fallback: string) => {
+    if (n === "" || !ageInRange(Number(n), unit)) return fallback;
+    return unit === "Y" ? `${new Date().getFullYear() - Number(n)}-01-01` : dobFromAge(Number(n), unit);
+  };
+
   function onAgeChange(v: string) {
-    const age = v.replace(/\D/g, "").slice(0, 3);
-    setF((p) => ({ ...p, age, dob: age !== "" ? `${new Date().getFullYear() - Number(age)}-01-01` : p.dob }));
+    const age = v.replace(/\D/g, "").slice(0, 5);
+    setF((p) => ({ ...p, age, dob: dobForAge(age, p.ageUnit, p.dob) }));
     if ("age" in errors) setErrors((p) => ({ ...p, age: undefined }));
   }
+  function onAgeUnitChange(unit: AgeUnit) {
+    setF((p) => ({ ...p, ageUnit: unit, dob: dobForAge(p.age, unit, p.dob) }));
+    if ("age" in errors) setErrors((p) => ({ ...p, age: undefined }));
+  }
+  /**
+   * The other direction. A date of birth eleven days ago now reads back as
+   * "11 Days" rather than as "0" - same rule the rest of the system prints by
+   * (lib/age): days under a month, months under two years, years after.
+   */
   function onDobChange(v: string) {
     setF((p) => {
       const next = { ...p, dob: v };
-      if (v) {
-        const d = new Date(v);
-        if (!Number.isNaN(d.getTime())) {
-          const t = new Date();
-          let a = t.getFullYear() - d.getFullYear();
-          if (t.getMonth() < d.getMonth() || (t.getMonth() === d.getMonth() && t.getDate() < d.getDate())) a--;
-          next.age = a >= 0 ? String(a) : "";
+      // A date in the future blanks the age rather than reading as "0 days" -
+      // the same thing the years-only version did, and the only honest answer
+      // to a birthday that hasn't happened.
+      if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+        if (v > localDateISO()) next.age = "";
+        else {
+          const said = ageFromDob(v);
+          next.age = String(said.value);
+          next.ageUnit = said.unit;
         }
       }
       return next;
     });
+    if ("age" in errors) setErrors((p) => ({ ...p, age: undefined }));
   }
 
   function validate(): boolean {
     const e: Errs = {};
     if (f.firstName.trim().length < 1) e.firstName = "First name is required";
     if (!/^\d{10}$/.test(f.phone)) e.phone = "Must be a 10-digit mobile number";
-    if (f.age && (Number(f.age) < 0 || Number(f.age) > 120)) e.age = "Enter a valid age";
+    if (f.age && !ageInRange(Number(f.age), f.ageUnit)) {
+      e.age = `Enter an age up to ${AGE_MAX[f.ageUnit]} ${AGE_UNIT_WORD[f.ageUnit]}`;
+    }
     if (f.email && !/^[^@]+@[^@]+\.[^@]+$/.test(f.email)) e.email = "Invalid email";
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -106,7 +143,10 @@ export default function RegisterPage() {
     try {
       const { patient } = await api.post<{ patient: Registered }>("/reception/patients", {
         firstName: f.firstName.trim(), middleName: f.middleName || undefined, lastName: f.lastName || undefined,
-        dob: f.dob || undefined, age: f.age ? Number(f.age) : undefined,
+        // The unit does not travel: `age` is completed years, and the exact
+        // day - the part months and days would otherwise lose - rides in `dob`.
+        dob: f.dob || undefined,
+        age: f.age ? ageYears(Number(f.age), f.ageUnit) : undefined,
         // Empty means "not recorded" - the enum has no member for it, so the
         // field is left off the payload entirely rather than sent blank.
         gender: f.gender, bloodGroup: f.blood || undefined, maritalStatus: f.maritalStatus || undefined,
@@ -277,7 +317,11 @@ export default function RegisterPage() {
         <Sec>Demographics</Sec>
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="Date of birth"><input type="date" className={cls(false)} value={f.dob} onChange={(e) => onDobChange(e.target.value)} /></Field>
-          <Field label="Age" error={errors.age}><input className={cls(errors.age)} value={f.age} onChange={(e) => onAgeChange(e.target.value)} inputMode="numeric" placeholder="29" /></Field>
+          {/* The unit rides on the label line - the cell is one box wide.
+              See AgeUnitSwitch for what went wrong when it was two. */}
+          <Field label="Age" error={errors.age} aside={<AgeUnitSwitch value={f.ageUnit} onChange={onAgeUnitChange} />}>
+            <input className={cls(errors.age)} value={f.age} onChange={(e) => onAgeChange(e.target.value)} inputMode="numeric" maxLength={5} placeholder={AGE_PLACEHOLDER[f.ageUnit]} />
+          </Field>
           <Field label="Gender"><select className={cls(false)} value={f.gender} onChange={(e) => set("gender")(e.target.value)}><option value="FEMALE">Female</option><option value="MALE">Male</option><option value="OTHER">Other</option></select></Field>
           {/* Blank first, and blank by default. A blood group nobody stated is
               not O+ - and a wrong one on the record is read as fact by whoever

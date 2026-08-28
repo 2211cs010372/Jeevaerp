@@ -110,6 +110,12 @@ export const quickPatientSchema = z.object({
     .refine(isIndianMobile, "Enter a valid 10-digit mobile number")
     .transform(toE164),
   age: z.coerce.number().int().min(0).max(120).optional(),
+  /**
+   * Only ever sent for a baby, and derived on the form from the months or days
+   * that were typed - `age` rounds both of those to 0, and 0 is the answer that
+   * gets a newborn's bilirubin read against an adult's range. See lib/age.
+   */
+  dob: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date").optional().or(z.literal("")),
   gender: z.enum(["MALE", "FEMALE", "OTHER"]).optional(),
 });
 

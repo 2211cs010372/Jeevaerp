@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon, type IconName } from "@/components/portal/ui/icons";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { PORTALS } from "@/lib/portal/nav";
@@ -22,6 +22,11 @@ import { api } from "@/lib/api-client";
  * developer opening this at 2am wants to get INTO a portal, and a page that
  * fetches six portals' worth of statistics to decide what to show is a page
  * that is down whenever any of them is.
+ *
+ * Who you are and the way out live in the portal shell around this page now,
+ * alongside the sidebar that reaches the developer's OWN screens - login
+ * activity, the audit log, the crash list. This page is doors out; those are
+ * the three questions you ask before deciding which door to take.
  */
 
 export interface PortalLink {
@@ -54,7 +59,7 @@ const FACE: Record<Exclude<PortalSubdomain, "dev">, { icon: IconName; blurb: str
   labs: { icon: "flask", blurb: "Test queue, results, the catalogue and the bench's billing." },
   pharmacy: { icon: "pill", blurb: "Dispensing, stock, purchase orders and dues to collect." },
   insurance: { icon: "shield", blurb: "Pre-auths, claims, and what the insurers still owe." },
-  admin: { icon: "building", blurb: "Accounts, HR, audit log, wards and hospital settings." },
+  admin: { icon: "building", blurb: "Accounts, HR, wards, prices and hospital settings." },
 };
 
 /** How many deep links fit on a card before it stops being scannable. */
@@ -76,34 +81,26 @@ const CHIP_LIMIT = 6;
 const NEW_TAB = { target: "_blank", rel: "noopener" } as const;
 
 export function Launcher({
-  portals, host, routing, sessionSpansPortals, loginHref,
+  portals, host, routing, sessionSpansPortals,
 }: {
   portals: PortalLink[];
   host: string;
   routing: "subdomain" | "path";
   sessionSpansPortals: boolean;
-  loginHref: string;
 }) {
+  /** Read for the role, which decides which cards below are honest doors. */
   const [me, setMe] = useState<Me | null>(null);
-  const [signingOut, setSigningOut] = useState(false);
-
   useEffect(() => { api.get<Me>("/auth/me").then(setMe).catch(() => {}); }, []);
-
-  const signOut = useCallback(async () => {
-    setSigningOut(true);
-    try { await api.post("/auth/logout"); } catch { /* the cookie is cleared either way */ }
-    window.location.assign(loginHref);
-  }, [loginHref]);
 
   const byKey = new Map(portals.map((p) => [p.key, p]));
   const ordered = ORDER.map((k) => byKey.get(k)).filter((p): p is PortalLink => Boolean(p));
 
   return (
     <PortalScroll>
-      <div className="mx-auto max-w-6xl px-5 py-8 sm:px-8 sm:py-12">
+      <div className="mx-auto max-w-6xl">
 
-        {/* ── Who you are, and the way out ──────────────────────────────── */}
-        <header data-rise className="surface dotgrid mb-4 flex flex-wrap items-start justify-between gap-4 px-6 py-6">
+        {/* ── What this page is ─────────────────────────────────────────── */}
+        <header data-rise className="surface dotgrid mb-4 px-6 py-6">
           <div>
             <div className="flex items-center gap-2.5">
               <span className="grid h-9 w-9 place-items-center rounded-xl bg-[var(--p-blue)] text-white shadow-[0_4px_12px_-4px_var(--p-blue-glow)]">
@@ -118,26 +115,6 @@ export function Launcher({
               so you land on the one you meant rather than on somebody&apos;s dashboard.
               Each opens in its own tab, so this page stays where you left it.
             </p>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className="text-right">
-              <div className="text-[13px] font-semibold text-[var(--p-ink)]">
-                {me?.name ?? "…"}
-              </div>
-              <div className="font-mono text-[11px] uppercase tracking-wide text-[var(--p-muted)]">
-                {me?.role ?? ""}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={signOut}
-              disabled={signingOut}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-semibold text-[var(--p-text)] transition-colors hover:border-[var(--p-rose)] hover:text-[var(--p-rose)] disabled:opacity-50"
-            >
-              <Icon name="logout" size={15} />
-              {signingOut ? "Signing out…" : "Sign out"}
-            </button>
           </div>
         </header>
 

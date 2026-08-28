@@ -39,18 +39,29 @@ export function Req() {
 
 /** Labelled input with a leading icon and optional error/hint line. */
 export function Field({
-  label, icon, error, children, span, required,
+  label, icon, error, children, span, required, aside,
 }: {
   label: string; icon?: IconName; error?: string; children: React.ReactNode; span?: boolean;
   /** The form will not submit without this. Draws the asterisk - see Req. */
   required?: boolean;
+  /**
+   * A small control parked at the right-hand end of the LABEL line - a unit
+   * switch, a toggle. It goes up here rather than beside the input because a
+   * grid cell is only ever wide enough for one box: see AgeUnitSwitch, which
+   * is what this exists for. Outside the <label> deliberately, so clicking it
+   * does not also count as a click on the field.
+   */
+  aside?: React.ReactNode;
 }) {
   return (
     <div className={span ? "sm:col-span-2" : ""}>
-      <label className="mb-2 flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-[0.05em] text-[var(--p-muted)]">
-        {icon && <span className="text-[var(--p-teal)]"><Icon name={icon} size={13} /></span>}
-        <span>{label}{required && <Req />}</span>
-      </label>
+      <div className="mb-2 flex min-h-[18px] items-center gap-1.5">
+        <label className="flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-[0.05em] text-[var(--p-muted)]">
+          {icon && <span className="text-[var(--p-teal)]"><Icon name={icon} size={13} /></span>}
+          <span>{label}{required && <Req />}</span>
+        </label>
+        {aside && <div className="ml-auto">{aside}</div>}
+      </div>
       {children}
       {error && (
         <p className="mt-1.5 flex items-center gap-1 text-[12px] text-[var(--p-rose)]">

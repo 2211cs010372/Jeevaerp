@@ -16,6 +16,10 @@ import { api } from "@/lib/api-client";
  * It is a viewer, not an alerting system: somebody still has to open it. The push
  * notification is a deliberate follow-up (see TODOS.md) because "SMS on every
  * 500" turns one bad deploy into a few hundred rupees of texts at 2am.
+ *
+ * Lives in the DEVELOPER portal - a stack trace is the maintainer's evidence,
+ * not the proprietor's reading. The endpoint stays /api/v1/admin/errors and
+ * stays ADMIN-gated; SUPERUSER clears it the way it clears every role gate.
  */
 
 interface ErrorRow {

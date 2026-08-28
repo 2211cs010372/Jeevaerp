@@ -26,10 +26,11 @@ import { ReferrerSelect, useDoctorRoster } from "@/components/portal/labs/referr
 import { BillAside, type Settlement } from "@/components/portal/labs/bill-aside";
 import { InvoiceView, type LabInvoice } from "@/components/portal/labs/invoice-view";
 import { api, ApiClientError } from "@/lib/api-client";
+import { formatAge } from "@/lib/age";
 import { formatPhone } from "@/lib/phone";
 
 interface WalkInResult {
-  patient: { id: string; displayId: string; fullName: string; phone: string; age: number | null; gender: string | null; isNew: boolean };
+  patient: { id: string; displayId: string; fullName: string; phone: string; age: number | null; dob: string | null; gender: string | null; isNew: boolean };
   tests: { id: string; testName: string }[];
   invoice: LabInvoice | null;
   chargedToRoom: boolean;
@@ -228,9 +229,10 @@ function PatientBanner({ result }: { result: WalkInResult }) {
         <p className="text-[14px] font-semibold text-[var(--p-ink)]">{p.fullName}</p>
         <p className="text-[12px] text-[var(--p-muted)]">
           <span className="tabular font-semibold text-[var(--p-teal-deep)]">{p.displayId}</span> · {formatPhone(p.phone)}
-          {p.age != null && ` · ${p.age}y`}
+          {formatAge(p) && ` · ${formatAge(p)}`}
         </p>
       </div>
+      
       {p.isNew && (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-[var(--p-teal-deep)]">
           <Icon name="check" size={12} /> Newly registered - give them this ID

@@ -7,9 +7,10 @@ import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { AbnormalPill, LabResultTable, type LabResultRow } from "@/components/portal/ui/lab-results";
 import { api, ApiClientError } from "@/lib/api-client";
+import { formatAge } from "@/lib/age";
 
 interface Bundle {
-  patient: { id: string; displayId: string; fullName: string; phone: string; age: number | null; gender: string | null; bloodGroup: string | null };
+  patient: { id: string; displayId: string; fullName: string; phone: string; age: number | null; dob: string | null; gender: string | null; bloodGroup: string | null };
   lastVisit: { opNumber: string; visitDate: string; doctorName: string; department: string; status: string } | null;
   tests: { id: string; testName: string; status: string; price: string | null; reportFileUrl: string | null; createdAt: string; billed: boolean; results?: LabResultRow[]; abnormal?: number }[];
   invoices: { receiptNo: string; totalAmount: string; status: string; createdAt: string }[];
@@ -53,7 +54,7 @@ export default function LabPatientsPage() {
                 <Cell k="Name" v={data.patient.fullName} />
                 <Cell k="Jeeva ID" v={data.patient.displayId} mono />
                 <Cell k="Phone" v={data.patient.phone} mono />
-                <Cell k="Age / Sex" v={`${data.patient.age ?? "-"} / ${data.patient.gender?.[0] ?? "-"}`} />
+                <Cell k="Age / Sex" v={`${formatAge(data.patient) ?? "-"} / ${data.patient.gender?.[0] ?? "-"}`} />
                 <Cell k="Blood group" v={data.patient.bloodGroup ?? "-"} />
                 <Cell k="Tests done" v={String(data.tests.length)} />
               </div>

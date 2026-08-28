@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { api, ApiClientError } from "@/lib/api-client";
 import { specimenFor, bandFor, methodFor } from "@/lib/lab-reference";
 import { rowsThatFit, repack, pageSlices } from "@/lib/lab-pagination";
+import { formatAge } from "@/lib/age";
 import {
   multiSheetPrintCss, PrintToolbar, LetterHead, PreprintedGuide,
   type HospitalInfo,
@@ -81,7 +82,7 @@ export interface Report {
     technicianName: string | null; reportFileUrl: string | null;
   };
   patient: {
-    displayId: string; fullName: string; age: number | null; gender: string | null;
+    displayId: string; fullName: string; age: number | null; dob: string | null; gender: string | null;
     bloodGroup: string | null; phone: string; address: string | null; city: string | null;
   } | null;
   referral: { opNumber: string; doctorName: string; visitDate: string } | null;
@@ -428,7 +429,10 @@ export function LabReportPages({ data, onStationery, printedAt, onLayout }: {
     { k: "Patient Name", v: patient ? `${title(patient.gender)}${patient.fullName.toUpperCase()}` : "" },
     {
       k: "Age / Gender",
-      v: [patient?.age != null ? `${patient.age} years` : null, sentenceCase(patient?.gender)]
+      // "11 days" / "5 months" / "34 years" - the unit the counter was told,
+      // not a number of years that rounds every infant to 0. Several ranges on
+      // this very sheet are read differently across that gap. See lib/age.
+      v: [formatAge(patient, { long: true }), sentenceCase(patient?.gender)]
         .filter(Boolean).join(" / "),
     },
     { k: "Ref. Doctor", v: refDoctorName ? withTitle(refDoctorName) : "Self / walk-in" },
