@@ -3763,23 +3763,31 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
 
    What it does differently, and why:
 
-     THE DISCOUNT LANDS ON THE HOSPITAL'S OWN SERVICES ONLY. The bed, the ward's
-     charges, the consultant's visits - those are the hospital's price to set.
-     Medicines are sold at the MRP printed on the strip and tests carry the lab's
-     rate, so a discount on those gives away somebody else's margin. On one
-     undivided total the family reads the discount as covering all of it and the
-     argument starts at the pharmacy line. Here the blocks are separated and the
-     paper answers it: discounted, at cost, at cost.
+     IT BILLS THE HOSPITAL'S OWN SERVICES AND NOTHING ELSE. The bed, the ward's
+     charges, the consultant's visits - those are the hospital's price to set,
+     and the only charges a discount may touch. Medicines are sold at the MRP
+     printed on the strip and tests carry the lab's rate, so a discount on those
+     gives away somebody else's margin.
 
-     WHAT IS ALREADY PAID IS TAKEN OFF, BLOCK BY BLOCK. A family pays the
-     pharmacy window during the stay and the lab counter on the way to the
-     scan. Every one of those receipts is credited to the block it was paid
-     against, the lines carry PAID, and only the difference is asked for. The IP
-     bill answers paid-vs-due once in its totals; this one has to answer it per
-     counter, because that is how the money was actually handed over.
+     THE PHARMACY AND THE LAB ARE NOT REPRINTED HERE. Both counters raise their
+     own invoice and hand it over at the window during the stay. Folding every
+     strip and every test back onto this sheet gave the family a second copy of
+     a bill they were already holding, ran a long stay onto extra pages, and
+     started the argument at the medicine line that the split was meant to end.
+     Their lines, their block totals and their counter invoices are all left
+     off, and what is asked for at the foot of the page is the services figure
+     alone.
 
-     THE DEPOSIT COMES OFF LAST, after every counter payment - the order the
-     money moved in.
+     WHAT IS ALREADY PAID AGAINST THE STAY IS TAKEN OFF, and the deposit comes
+     off after it. The IP bill subtracts the deposit and the counters and stops
+     there; this sheet has to answer "what do we owe now" on the services block,
+     so money taken against the stay's own invoice is credited too.
+
+     A LEFT-OVER DEPOSIT IS NOT DECLARED REFUNDABLE WHILE THE COUNTERS ARE OWED.
+     The pharmacy and the lab are off this page but not out of the stay, and
+     their dues were absorbing the deposit before any refund line was reached.
+     `counterDue` below keeps that true, so the refund printed here is the same
+     figure it was when all three blocks were on the paper.
 
    WHO IT IS FOR, and this is a gate rather than a preference: a SELF-PAYING
    stay, or one the insurer refused and that has been moved onto the family.
@@ -3815,8 +3823,13 @@ export interface IpBillBlockDTO {
 
 export interface IpServicesMoneyDTO {
   services: IpBillBlockDTO;
-  lab: IpBillBlockDTO;
-  pharmacy: IpBillBlockDTO;
+  /**
+   * NO LAB OR PHARMACY BLOCK, and that is the shape of the document rather than
+   * an omission. This sheet bills the hospital's own services; the medicines and
+   * the tests are billed at their own counters on their own invoices, and
+   * reprinting them here handed a family a second copy of a bill already in
+   * their hand. See the note above `ipServicesBillData`.
+   */
   gross: string;
   discount: string;
   /** Agreed but with no services left to come off - printed as a caveat, never
@@ -3829,6 +3842,13 @@ export interface IpServicesMoneyDTO {
   advance: string;
   advanceApplied: string;
   netPayable: string;
+  /**
+   * The deposit left over ONCE THE COUNTERS THIS SHEET DOES NOT PRINT ARE
+   * SATISFIED. The pharmacy and the lab are off the page but not out of the
+   * stay, and their dues were absorbing the deposit long before any refund line
+   * appeared. Held back rather than declared: a refund printed over an unpaid
+   * pharmacy bill is money out of the drawer.
+   */
   refundDue: string;
 }
 
@@ -3942,10 +3962,28 @@ export async function ipServicesBillData(admissionId: string): Promise<IpService
     paid.SERVICES = round2(paid.SERVICES + Math.max(0, round2(taken - refunded)));
   }
 
-  const groups: IpServicesGroupDTO[] = base.groups.map((g) => {
-    const bucket = bucketOfSection(g.title);
-    return { ...g, bucket, discountable: isDiscountable(bucket) };
-  });
+  // ── SERVICES ONLY, FROM HERE DOWN ──
+  //
+  // The lines, the counter invoices, the payment list and the money are all
+  // filtered to the hospital's own block. `bucketOfSection` still does the
+  // deciding, on the words rather than against an exact list of titles, so a
+  // heading reworded upstairs ("PHARMACY CHARGES" -> "MEDICINES") cannot quietly
+  // reappear on a sheet that does not bill it.
+  const isServices = (bucket: IpBillBucket) => bucket === "SERVICES";
+
+  const groups: IpServicesGroupDTO[] = base.groups
+    .map((g) => {
+      const bucket = bucketOfSection(g.title);
+      return { ...g, bucket, discountable: isDiscountable(bucket) };
+    })
+    .filter((g) => isServices(g.bucket));
+
+  // The counters' own invoices, minus the two counters this sheet does not bill.
+  // A pharmacy receipt number under "bills included in this statement" says the
+  // pharmacy IS included in it, which after the filter above it is not.
+  const sourceBills = base.sourceBills.filter((b) =>
+    isServices(BUCKET_OF_SOURCE[b.source] ?? "SERVICES")
+  );
 
   // ── PAYMENT DETAILS, WITH THE DEPOSIT LISTED ONCE ──
   //
@@ -3969,28 +4007,55 @@ export async function ipServicesBillData(admissionId: string): Promise<IpService
       amount: m2(num(x.amount)),
       at: x.createdAt.getTime(),
     })),
-    ...stay.invoices.flatMap((i) =>
-      i.payments
-        .filter((p) => !p.reference?.startsWith(ADVANCE_REF_PREFIX))
-        .map((p) => ({
-          invoiceNo: i.receiptNo,
-          date: p.createdAt.toISOString(),
-          mode: String(p.mode),
-          amount: m2(num(p.amount)),
-          at: p.createdAt.getTime(),
-        }))
-    ),
+    // AND ONLY THE COUNTERS THIS SHEET BILLS. Money handed over at the pharmacy
+    // window and the lab counter leaves with their lines: listed here it would
+    // be a payment column adding up to more than the bill above it, which is
+    // the one discrepancy on a bill nobody accepts an explanation for.
+    ...stay.invoices
+      .filter((i) => isServices(BUCKET_OF_SOURCE[String(i.source)] ?? "SERVICES"))
+      .flatMap((i) =>
+        i.payments
+          .filter((p) => !p.reference?.startsWith(ADVANCE_REF_PREFIX))
+          .map((p) => ({
+            invoiceNo: i.receiptNo,
+            date: p.createdAt.toISOString(),
+            mode: String(p.mode),
+            amount: m2(num(p.amount)),
+            at: p.createdAt.getTime(),
+          }))
+      ),
   ]
     .sort((x, y) => x.at - y.at)
     .map(({ at: _at, ...row }) => row);
 
+  // ── THE MONEY, WORKED OUT TWICE, ON PURPOSE ──
+  //
+  // `money` is what this sheet prints: the services block alone, with the
+  // discount, the GST and the deposit against it.
+  //
+  // `whole` is the same stay with all three blocks, and it is computed for ONE
+  // FIGURE that is never printed - what the pharmacy and the lab are still
+  // owed. That is subtracted from the refund below. Those dues were eating into
+  // the deposit before this sheet ever showed a refund line and they still are;
+  // drop them and the desk hands back a deposit the pharmacy is owed out of.
   const money = ipServicesBill({
+    sections: groups.map((g) => ({ title: g.title, total: g.total })),
+    discount: base.discount,
+    gst: base.gst,
+    advance: base.advance,
+    paid: { services: paid.SERVICES },
+  });
+
+  const whole = ipServicesBill({
     sections: base.groups.map((g) => ({ title: g.title, total: g.total })),
     discount: base.discount,
     gst: base.gst,
     advance: base.advance,
     paid: { services: paid.SERVICES, lab: paid.LAB, pharmacy: paid.PHARMACY },
   });
+  const counterDue = round2(whole.lab.due + whole.pharmacy.due);
+  // Identical, in every case, to the refund the three-block sheet printed.
+  const refundDue = round2(Math.max(0, money.refundDue - counterDue));
 
   const blk = (b: typeof money.services): IpBillBlockDTO => ({
     gross: m2(b.gross), discount: m2(b.discount), net: m2(b.net),
@@ -4000,14 +4065,13 @@ export async function ipServicesBillData(admissionId: string): Promise<IpService
   return {
     ...base,
     groups,
+    sourceBills,
     payments,
     eligible: basis !== "NONE",
     basis,
     eligibilityNote,
     money: {
       services: blk(money.services),
-      lab: blk(money.lab),
-      pharmacy: blk(money.pharmacy),
       gross: m2(money.gross),
       discount: m2(money.discount),
       discountUnapplied: m2(money.discountUnapplied),
@@ -4018,7 +4082,7 @@ export async function ipServicesBillData(admissionId: string): Promise<IpService
       advance: m2(money.advance),
       advanceApplied: m2(money.advanceApplied),
       netPayable: m2(money.netPayable),
-      refundDue: m2(money.refundDue),
+      refundDue: m2(refundDue),
     },
     // The top-level figures are RESTATED from this sheet's own arithmetic, so
     // anything reading the DTO generically (and the words at the foot of the

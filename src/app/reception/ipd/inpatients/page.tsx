@@ -338,7 +338,7 @@ export default function InpatientsPage() {
                       refused, which is SELF_PAY by the time it lands here. */}
                   {r.payerType === "SELF_PAY" && (
                     <a href={`/print/services-bill/${r.id}`} target="_blank" rel="noopener noreferrer"
-                      title="Services discounted, pharmacy and lab at cost, everything already paid deducted"
+                      title="Hospital services only, discounted - the pharmacy and the lab bill at their own counters"
                       className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
                       <Icon name="receipt" size={14} /> Services bill
                     </a>
@@ -421,7 +421,7 @@ export default function InpatientsPage() {
                       and the desk needs the sheet that says so. */}
                   {d.payerType === "SELF_PAY" && (
                     <a href={`/print/services-bill/${d.id}`} target="_blank" rel="noopener noreferrer"
-                      title="Services discounted, pharmacy and lab at cost, everything already paid deducted"
+                      title="Hospital services only, discounted - the pharmacy and the lab bill at their own counters"
                       className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
                       <Icon name="receipt" size={14} /> Services bill
                     </a>
@@ -459,8 +459,8 @@ export default function InpatientsPage() {
       {/* ---------- DISCHARGE MODAL ---------- */}
       {dischargeOf && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="surface w-full max-w-md overflow-hidden bg-white">
-            <div className="flex items-center justify-between border-b border-[var(--p-border)] px-6 py-4">
+          <div className="surface flex h-[75vh] w-full flex-col overflow-hidden bg-white sm:w-[80vw]">
+            <div className="flex shrink-0 items-center justify-between border-b border-[var(--p-border)] px-6 py-4">
               <div>
                 <h3 className="text-[15px] font-semibold text-[var(--p-ink)]">Discharge {dischargeOf.patient.fullName}</h3>
                 <p className="text-[13px] text-[var(--p-muted)]"><span className="font-mono">{dischargeOf.ipNumber}</span> · {bedLabel(dischargeOf.ward, dischargeOf.bedNo)}</p>
@@ -469,7 +469,7 @@ export default function InpatientsPage() {
             </div>
 
             {done ? (
-              <div className="flex flex-col items-center px-6 py-12 text-center">
+              <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-12 text-center">
                 <span className="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--p-cyan-soft)] text-[var(--p-cyan-deep)]"><Icon name="check" size={26} /></span>
                 <h3 className="mt-4 font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">
                   {isInsurance ? "Discharged · with the insurer" : "Discharged"}
@@ -535,252 +535,260 @@ export default function InpatientsPage() {
               </div>
             ) : (
               <>
-                <div className="space-y-4 p-6">
-                  <div className="rounded-xl border border-[var(--p-border)] bg-[var(--p-bg)] p-4 text-[14px]">
-                    {sheetLoading || !sheet ? (
-                      <div className="flex items-center justify-center gap-2 py-4 text-[13px] text-[var(--p-muted)]"><Spinner size={14} /> Totting up the full bill…</div>
-                    ) : (
-                      <>
-                        {/* The days the BED bills, not the days the stay ran -
-                            they differ on a capped bed, and an estimate whose
-                            qty does not make its own amount is the one the
-                            family queries at the window. */}
-                        <Line k={`Bed · ${sheet.days - sheet.uncoveredDays} day${sheet.days - sheet.uncoveredDays === 1 ? "" : "s"}`} v={sheet.bedTotal} />
-                        {sheet.uncoveredDays > 0 && (
-                          <Line k={`+ ${sheet.uncoveredDays} day${sheet.uncoveredDays === 1 ? "" : "s"} billed as charges, not bed`} v={"—"} />
-                        )}
-                        {/* Only on a stay old enough to have been billed for
-                            nursing. The fee is withdrawn; an estimate that
-                            listed it would quote money nobody will be asked for. */}
-                        {sheet.nursingApplies && (
-                          <Line k={`Nursing · ${sheet.days}d × ₹${money(sheet.nursePerDay)}`} v={sheet.nurseTotal} />
-                        )}
-                        {Number(sheet.chargesTotal) > 0 && <Line k={`Charges & pharmacy (${sheet.charges.length})`} v={sheet.chargesTotal} />}
-                        <div className="mt-2 flex justify-between border-t border-[var(--p-border)] pt-2">
-                          <span className="font-semibold text-[var(--p-ink)]">Grand total</span>
-                          <span className="font-mono text-[15px] font-semibold text-[var(--p-ink)] tabular">₹{money(sheet.grandTotal)}</span>
-                        </div>
-                        {disc > 0 && <Line k="Discount" v={disc.toFixed(2)} neg tone="muted" />}
-                        {/* On a cashless stay the advance is shown inside the
-                            patient-payable block instead, where it belongs -
-                            it comes off the FAMILY's share, not off the bill.
-                            Showing it in both places invited the reader to
-                            subtract it twice. */}
-                        {advance > 0 && !isInsurance && <Line k="Advance already paid" v={sheet.advanceTotal} neg tone="cyan" />}
-                        {/* ── CASHLESS ── the family is not being asked for this
-                            bill, and the desk has to see that before it opens
-                            its mouth. */}
-                        {isInsurance && (
-                          <div className="mt-3 rounded-lg border border-[var(--p-blue)]/35 bg-[var(--p-blue-soft)] px-3 py-2.5">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-[12px] font-bold uppercase tracking-wide text-[var(--p-blue-deep)]">
-                                Cashless · {dischargeOf?.insurer}
-                              </span>
-                              {approval.claimNo && (
-                                <span className="shrink-0 font-mono text-[11px] text-[var(--p-blue-deep)]">{approval.claimNo}</span>
+                {/* ══ THE BILL AND THE SETTLEMENT, SIDE BY SIDE ══
+                    At this width the desk reads the estimate and takes the
+                    money without scrolling between the two halves of one
+                    decision. Narrow screens keep the old single column. */}
+                <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto p-6 lg:grid-cols-2 lg:items-start lg:gap-6">
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-[var(--p-border)] bg-[var(--p-bg)] p-4 text-[14px]">
+                      {sheetLoading || !sheet ? (
+                        <div className="flex items-center justify-center gap-2 py-4 text-[13px] text-[var(--p-muted)]"><Spinner size={14} /> Totting up the full bill…</div>
+                      ) : (
+                        <>
+                          {/* The days the BED bills, not the days the stay ran -
+                              they differ on a capped bed, and an estimate whose
+                              qty does not make its own amount is the one the
+                              family queries at the window. */}
+                          <Line k={`Bed · ${sheet.days - sheet.uncoveredDays} day${sheet.days - sheet.uncoveredDays === 1 ? "" : "s"}`} v={sheet.bedTotal} />
+                          {sheet.uncoveredDays > 0 && (
+                            <Line k={`+ ${sheet.uncoveredDays} day${sheet.uncoveredDays === 1 ? "" : "s"} billed as charges, not bed`} v={"—"} />
+                          )}
+                          {/* Only on a stay old enough to have been billed for
+                              nursing. The fee is withdrawn; an estimate that
+                              listed it would quote money nobody will be asked for. */}
+                          {sheet.nursingApplies && (
+                            <Line k={`Nursing · ${sheet.days}d × ₹${money(sheet.nursePerDay)}`} v={sheet.nurseTotal} />
+                          )}
+                          {Number(sheet.chargesTotal) > 0 && <Line k={`Charges & pharmacy (${sheet.charges.length})`} v={sheet.chargesTotal} />}
+                          <div className="mt-2 flex justify-between border-t border-[var(--p-border)] pt-2">
+                            <span className="font-semibold text-[var(--p-ink)]">Grand total</span>
+                            <span className="font-mono text-[15px] font-semibold text-[var(--p-ink)] tabular">₹{money(sheet.grandTotal)}</span>
+                          </div>
+                          {disc > 0 && <Line k="Discount" v={disc.toFixed(2)} neg tone="muted" />}
+                          {/* On a cashless stay the advance is shown inside the
+                              patient-payable block instead, where it belongs -
+                              it comes off the FAMILY's share, not off the bill.
+                              Showing it in both places invited the reader to
+                              subtract it twice. */}
+                          {advance > 0 && !isInsurance && <Line k="Advance already paid" v={sheet.advanceTotal} neg tone="cyan" />}
+                          {/* ── CASHLESS ── the family is not being asked for this
+                              bill, and the desk has to see that before it opens
+                              its mouth. */}
+                          {isInsurance && (
+                            <div className="mt-3 rounded-lg border border-[var(--p-blue)]/35 bg-[var(--p-blue-soft)] px-3 py-2.5">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-[12px] font-bold uppercase tracking-wide text-[var(--p-blue-deep)]">
+                                  Cashless · {dischargeOf?.insurer}
+                                </span>
+                                {approval.claimNo && (
+                                  <span className="shrink-0 font-mono text-[11px] text-[var(--p-blue-deep)]">{approval.claimNo}</span>
+                                )}
+                              </div>
+
+                              {/* THE CLAIM, IN THE THREE LINES THAT MATTER.
+                                  Everything on the claim, what the insurer agreed
+                                  to, and the difference - which is the family's.
+                                  Shown as a subtraction because that is the sum
+                                  the desk was doing in its head. */}
+                              {!stayClaims ? (
+                                <div className="mt-2 flex items-center gap-2 text-[12.5px] text-[var(--p-blue-deep)]">
+                                  <Spinner size={13} /> Checking the approval…
+                                </div>
+                              ) : approval.pending ? (
+                                <p className="mt-1.5 text-[12.5px] leading-relaxed text-[#8a6414]">
+                                  <b>No approval on file.</b>{" "}
+                                  {approval.claimNo
+                                    ? "The claim is still with the insurer - they have not agreed an amount."
+                                    : "No claim has been raised for this stay."}{" "}
+                                  Nothing is settled either way, so take a deposit if the hospital wants
+                                  cover, and raise or chase the claim on the <b>Insurance</b> desk.
+                                </p>
+                              ) : approval.rejected ? (
+                                <p className="mt-1.5 text-[12.5px] leading-relaxed text-[var(--p-rose)]">
+                                  <b>Refused by {dischargeOf?.insurer}.</b> The whole stay is the
+                                  patient&apos;s to pay - ₹{money(stayTotal.toFixed(2))}.
+                                </p>
+                              ) : (
+                                <div className="mt-2 space-y-1 text-[13px]">
+                                  <div className="flex justify-between">
+                                    <span className="text-[var(--p-blue-deep)]">Everything on the claim</span>
+                                    <span className="font-mono text-[var(--p-blue-deep)] tabular">₹{money(stayTotal.toFixed(2))}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-[var(--p-blue-deep)]">
+                                      Insurance approved
+                                      {insApproved < stayTotal && <span className="ml-1 text-[11px] font-semibold uppercase">part</span>}
+                                    </span>
+                                    <span className="font-mono font-semibold text-[var(--p-blue-deep)] tabular">−₹{money(insApproved.toFixed(2))}</span>
+                                  </div>
+                                </div>
                               )}
-                            </div>
 
-                            {/* THE CLAIM, IN THE THREE LINES THAT MATTER.
-                                Everything on the claim, what the insurer agreed
-                                to, and the difference - which is the family's.
-                                Shown as a subtraction because that is the sum
-                                the desk was doing in its head. */}
-                            {!stayClaims ? (
-                              <div className="mt-2 flex items-center gap-2 text-[12.5px] text-[var(--p-blue-deep)]">
-                                <Spinner size={13} /> Checking the approval…
-                              </div>
-                            ) : approval.pending ? (
-                              <p className="mt-1.5 text-[12.5px] leading-relaxed text-[#8a6414]">
-                                <b>No approval on file.</b>{" "}
-                                {approval.claimNo
-                                  ? "The claim is still with the insurer - they have not agreed an amount."
-                                  : "No claim has been raised for this stay."}{" "}
-                                Nothing is settled either way, so take a deposit if the hospital wants
-                                cover, and raise or chase the claim on the <b>Insurance</b> desk.
-                              </p>
-                            ) : approval.rejected ? (
-                              <p className="mt-1.5 text-[12.5px] leading-relaxed text-[var(--p-rose)]">
-                                <b>Refused by {dischargeOf?.insurer}.</b> The whole stay is the
-                                patient&apos;s to pay - ₹{money(stayTotal.toFixed(2))}.
-                              </p>
-                            ) : (
-                              <div className="mt-2 space-y-1 text-[13px]">
-                                <div className="flex justify-between">
-                                  <span className="text-[var(--p-blue-deep)]">Everything on the claim</span>
-                                  <span className="font-mono text-[var(--p-blue-deep)] tabular">₹{money(stayTotal.toFixed(2))}</span>
+                              {/* ── PATIENT PAYABLE ── the one figure nobody may be
+                                  confused about. Its own block, in the largest type
+                                  in this panel, kept apart from every insurance
+                                  number around it. */}
+                              {approval.decided && (
+                                <div className="mt-2.5 rounded-lg bg-white px-3 py-2.5">
+                                  <div className="flex items-baseline justify-between">
+                                    <span className="text-[11.5px] font-bold uppercase tracking-wide text-[var(--p-ink)]">
+                                      Patient payable
+                                    </span>
+                                    <span className="font-mono text-[19px] font-bold text-[var(--p-ink)] tabular">
+                                      ₹{money(patientPayable.toFixed(2))}
+                                    </span>
+                                  </div>
+                                  {advance > 0 && (
+                                    <div className="mt-1 flex justify-between text-[12.5px]">
+                                      <span className="text-[var(--p-muted)]">Advance already paid</span>
+                                      <span className="font-mono font-semibold text-[var(--p-cyan-deep)] tabular">−₹{money(sheet.advanceTotal)}</span>
+                                    </div>
+                                  )}
                                 </div>
-                                <div className="flex justify-between">
-                                  <span className="text-[var(--p-blue-deep)]">
-                                    Insurance approved
-                                    {insApproved < stayTotal && <span className="ml-1 text-[11px] font-semibold uppercase">part</span>}
-                                  </span>
-                                  <span className="font-mono font-semibold text-[var(--p-blue-deep)] tabular">−₹{money(insApproved.toFixed(2))}</span>
-                                </div>
-                              </div>
-                            )}
+                              )}
 
-                            {/* ── PATIENT PAYABLE ── the one figure nobody may be
-                                confused about. Its own block, in the largest type
-                                in this panel, kept apart from every insurance
-                                number around it. */}
-                            {approval.decided && (
-                              <div className="mt-2.5 rounded-lg bg-white px-3 py-2.5">
-                                <div className="flex items-baseline justify-between">
-                                  <span className="text-[11.5px] font-bold uppercase tracking-wide text-[var(--p-ink)]">
-                                    Patient payable
-                                  </span>
-                                  <span className="font-mono text-[19px] font-bold text-[var(--p-ink)] tabular">
-                                    ₹{money(patientPayable.toFixed(2))}
-                                  </span>
+                              {/* The share is STATED here and COLLECTED at Billing.
+                                  There is no input: at discharge on a cashless
+                                  stay the insurer has usually not decided yet, and
+                                  a box asking for money against an undecided claim
+                                  is how a family gets charged for cover they were
+                                  promised. */}
+                              {approval.decided && patientDue > 0.01 && (
+                                <p className="mt-2 text-[12px] leading-relaxed text-[#8a6414]">
+                                  <b>₹{money(patientDue.toFixed(2))} is the patient&apos;s to pay.</b> It appears on
+                                  Billing under their name after this discharge - collect it there.
+                                </p>
+                              )}
+
+                              <div className="mt-2 space-y-1 border-t border-[var(--p-blue)]/25 pt-2 text-[13px]">
+                                <div className="flex justify-between">
+                                  <span className="font-semibold text-[var(--p-blue-deep)]">Goes to {dischargeOf?.insurer}</span>
+                                  <span className="font-mono font-bold text-[var(--p-blue-deep)] tabular">₹{money(toInsurer.toFixed(2))}</span>
                                 </div>
-                                {advance > 0 && (
-                                  <div className="mt-1 flex justify-between text-[12.5px]">
-                                    <span className="text-[var(--p-muted)]">Advance already paid</span>
-                                    <span className="font-mono font-semibold text-[var(--p-cyan-deep)] tabular">−₹{money(sheet.advanceTotal)}</span>
+                                {/* Insurance money is stated apart from patient money,
+                                    always. A settled claim is cash in the bank; an
+                                    approved one is only a promise, and the two must
+                                    never read as the same thing. */}
+                                {insReceivable > 0.01 && (
+                                  <div className="flex justify-between text-[12px]">
+                                    <span className="text-[var(--p-blue-deep)]">Still to come from the insurer</span>
+                                    <span className="font-mono font-semibold text-[var(--p-blue-deep)] tabular">₹{money(insReceivable.toFixed(2))}</span>
                                   </div>
                                 )}
                               </div>
-                            )}
-
-                            {/* The share is STATED here and COLLECTED at Billing.
-                                There is no input: at discharge on a cashless
-                                stay the insurer has usually not decided yet, and
-                                a box asking for money against an undecided claim
-                                is how a family gets charged for cover they were
-                                promised. */}
-                            {approval.decided && patientDue > 0.01 && (
-                              <p className="mt-2 text-[12px] leading-relaxed text-[#8a6414]">
-                                <b>₹{money(patientDue.toFixed(2))} is the patient&apos;s to pay.</b> It appears on
-                                Billing under their name after this discharge - collect it there.
-                              </p>
-                            )}
-
-                            <div className="mt-2 space-y-1 border-t border-[var(--p-blue)]/25 pt-2 text-[13px]">
-                              <div className="flex justify-between">
-                                <span className="font-semibold text-[var(--p-blue-deep)]">Goes to {dischargeOf?.insurer}</span>
-                                <span className="font-mono font-bold text-[var(--p-blue-deep)] tabular">₹{money(toInsurer.toFixed(2))}</span>
-                              </div>
-                              {/* Insurance money is stated apart from patient money,
-                                  always. A settled claim is cash in the bank; an
-                                  approved one is only a promise, and the two must
-                                  never read as the same thing. */}
-                              {insReceivable > 0.01 && (
-                                <div className="flex justify-between text-[12px]">
-                                  <span className="text-[var(--p-blue-deep)]">Still to come from the insurer</span>
-                                  <span className="font-mono font-semibold text-[var(--p-blue-deep)] tabular">₹{money(insReceivable.toFixed(2))}</span>
-                                </div>
-                              )}
                             </div>
+                          )}
+
+                          <div className="mt-2 flex justify-between border-t border-[var(--p-border)] pt-2">
+                            <span className="font-semibold text-[var(--p-ink)]">
+                              {refundDue > 0 ? "Refund due" : isInsurance ? "To collect from patient" : "To collect now"}
+                            </span>
+                            <span className="font-mono text-[16px] font-bold text-[var(--p-blue)] tabular">₹{(refundDue > 0 ? refundDue : est).toFixed(2)}</span>
                           </div>
-                        )}
-
-                        <div className="mt-2 flex justify-between border-t border-[var(--p-border)] pt-2">
-                          <span className="font-semibold text-[var(--p-ink)]">
-                            {refundDue > 0 ? "Refund due" : isInsurance ? "To collect from patient" : "To collect now"}
-                          </span>
-                          <span className="font-mono text-[16px] font-bold text-[var(--p-blue)] tabular">₹{(refundDue > 0 ? refundDue : est).toFixed(2)}</span>
-                        </div>
-                        {refundDue > 0 && (
-                          <p className="mt-2 text-[12px] text-[#8a6414]">
-                            The advance exceeds {isInsurance ? "the patient's share of this bill" : "the bill"} -
-                            ₹{refundDue.toFixed(2)} must be refunded, not kept.
-                          </p>
-                        )}
-                        <p className="mt-2 text-[12px] leading-relaxed text-[var(--p-muted)]">
-                          This invoice covers the STAY - bed, nursing and procedures. Pharmacy and
-                          lab are billed separately and are listed below if anything is unpaid.
-                        </p>
-
-                        {/* THE THREE BILLS ARE SEPARATE. This total is the stay
-                            only, so the pharmacy and lab money has to be shown
-                            here or the desk would collect the bed and let the
-                            family walk out owing the rest. */}
-                        {sheet.outstandingBills?.length > 0 && (
-                          <div className="mt-3 rounded-lg border border-[var(--p-amber)]/40 bg-[var(--p-amber-soft)] px-3 py-2.5">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[12px] font-bold uppercase tracking-wide text-[#8a6414]">Still to collect separately</span>
-                              <span className="font-mono text-[14px] font-bold text-[#8a6414]">₹{money(sheet.outstandingTotal)}</span>
-                            </div>
-                            <div className="mt-1.5 space-y-1">
-                              {sheet.outstandingBills.map((b) => (
-                                <div key={b.id} className="flex items-center justify-between gap-2 text-[12px] text-[#8a6414]">
-                                  <span className="truncate">{SRC_LABEL[b.source] ?? b.source} · <span className="font-mono">{b.receiptNo}</span></span>
-                                  <span className="flex shrink-0 items-center gap-2">
-                                    <span className="font-mono font-semibold">₹{money(b.due)}</span>
-                                    <a href={`/print/invoice/${b.id}`} target="_blank" rel="noopener noreferrer"
-                                      className="font-semibold text-[var(--p-teal)] hover:underline">Bill</a>
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                            <p className="mt-1.5 text-[11px] leading-relaxed text-[#8a6414]">
-                              Settle these on <b>Billing</b> - all of a patient&apos;s bills go in one
-                              payment there, and the lab window takes no money. Discharge is refused
-                              while they are outstanding.
+                          {refundDue > 0 && (
+                            <p className="mt-2 text-[12px] text-[#8a6414]">
+                              The advance exceeds {isInsurance ? "the patient's share of this bill" : "the bill"} -
+                              ₹{refundDue.toFixed(2)} must be refunded, not kept.
                             </p>
-                          </div>
+                          )}
+                          <p className="mt-2 text-[12px] leading-relaxed text-[var(--p-muted)]">
+                            This invoice covers the STAY - bed, nursing and procedures. Pharmacy and
+                            lab are billed separately and are listed below if anything is unpaid.
+                          </p>
+
+                          {/* THE THREE BILLS ARE SEPARATE. This total is the stay
+                              only, so the pharmacy and lab money has to be shown
+                              here or the desk would collect the bed and let the
+                              family walk out owing the rest. */}
+                          {sheet.outstandingBills?.length > 0 && (
+                            <div className="mt-3 rounded-lg border border-[var(--p-amber)]/40 bg-[var(--p-amber-soft)] px-3 py-2.5">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[12px] font-bold uppercase tracking-wide text-[#8a6414]">Still to collect separately</span>
+                                <span className="font-mono text-[14px] font-bold text-[#8a6414]">₹{money(sheet.outstandingTotal)}</span>
+                              </div>
+                              <div className="mt-1.5 space-y-1">
+                                {sheet.outstandingBills.map((b) => (
+                                  <div key={b.id} className="flex items-center justify-between gap-2 text-[12px] text-[#8a6414]">
+                                    <span className="truncate">{SRC_LABEL[b.source] ?? b.source} · <span className="font-mono">{b.receiptNo}</span></span>
+                                    <span className="flex shrink-0 items-center gap-2">
+                                      <span className="font-mono font-semibold">₹{money(b.due)}</span>
+                                      <a href={`/print/invoice/${b.id}`} target="_blank" rel="noopener noreferrer"
+                                        className="font-semibold text-[var(--p-teal)] hover:underline">Bill</a>
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                              <p className="mt-1.5 text-[11px] leading-relaxed text-[#8a6414]">
+                                Settle these on <b>Billing</b> - all of a patient&apos;s bills go in one
+                                payment there, and the lab window takes no money. Discharge is refused
+                                while they are outstanding.
+                              </p>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    {/* ══ TWO DISCHARGES, NOT ONE ══
+                        A self-paying family settles at this desk, so the desk
+                        needs a discount box and a payment box. A cashless stay
+                        settles nowhere near this desk - the bill goes to the
+                        insurer, they decide an amount, and only then does anyone
+                        know what the family owes.
+                        Showing the same two controls for both was asking the
+                        receptionist to discount and collect on a bill whose value
+                        to the hospital had not been agreed yet. */}
+                    {isInsurance ? (
+                      <div className="rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] px-4 py-3">
+                        <p className="text-[12.5px] leading-relaxed text-[var(--p-muted)]">
+                          <b className="text-[var(--p-ink)]">No discount and no payment here.</b>{" "}
+                          A cashless bill is not this desk&apos;s to reduce - a discount would come
+                          straight off the hospital&apos;s claim, not off the family. This stay is
+                          forwarded to <b>{dischargeOf?.insurer ?? "the insurer"}</b> to be claimed.
+                        </p>
+                        <p className="mt-1.5 text-[12.5px] leading-relaxed text-[var(--p-muted)]">
+                          Whatever they refuse becomes the patient&apos;s share and appears on{" "}
+                          <b>Billing</b> under this patient&apos;s name, ready to collect.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        <DiscountInput subtotal={grand} accent="blue" onChange={(d) => setDisc(d.amount)} />
+
+                        <label className="flex items-center gap-2 text-[14px] text-[var(--p-text)]">
+                          <input type="checkbox" checked={payNow} onChange={(e) => setPayNow(e.target.checked)} className="h-4 w-4 accent-[var(--p-blue)]" /> Collect payment now
+                        </label>
+                        {payNow && est > 0 && (
+                          <PaymentSection total={est} accent="blue" onChange={(r) => { setPayments(r.payments); setPayValid(r.valid); }} />
                         )}
                       </>
                     )}
+
+                    {/* HOW THE STAY ENDED.
+                        A select, not five buttons: an ordinary discharge is the
+                        overwhelming majority and must stay a single click, while the
+                        other four have to be reachable without anyone having to lie
+                        to the software. The bill is raised either way - the bed was
+                        occupied and the medicines were given whatever the ending. */}
+                    <Field label="How the stay ended">
+                      <select className={fld} value={outcome} onChange={(e) => setOutcome(e.target.value as DischargeOutcome)}>
+                        {DISCHARGE_OUTCOMES.map((o) => (
+                          <option key={o} value={o}>{OUTCOME_LABEL[o]}</option>
+                        ))}
+                      </select>
+                      <p className="mt-1 text-[12px] text-[var(--p-muted)]">{OUTCOME_HELP[outcome]}</p>
+                    </Field>
+
+                    <Field label="Discharge notes"><textarea className={`${fld} min-h-[56px] resize-y`} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Condition on discharge, advice…" /></Field>
                   </div>
-
-                  {/* ══ TWO DISCHARGES, NOT ONE ══
-                      A self-paying family settles at this desk, so the desk
-                      needs a discount box and a payment box. A cashless stay
-                      settles nowhere near this desk - the bill goes to the
-                      insurer, they decide an amount, and only then does anyone
-                      know what the family owes.
-                      Showing the same two controls for both was asking the
-                      receptionist to discount and collect on a bill whose value
-                      to the hospital had not been agreed yet. */}
-                  {isInsurance ? (
-                    <div className="rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] px-4 py-3">
-                      <p className="text-[12.5px] leading-relaxed text-[var(--p-muted)]">
-                        <b className="text-[var(--p-ink)]">No discount and no payment here.</b>{" "}
-                        A cashless bill is not this desk&apos;s to reduce - a discount would come
-                        straight off the hospital&apos;s claim, not off the family. This stay is
-                        forwarded to <b>{dischargeOf?.insurer ?? "the insurer"}</b> to be claimed.
-                      </p>
-                      <p className="mt-1.5 text-[12.5px] leading-relaxed text-[var(--p-muted)]">
-                        Whatever they refuse becomes the patient&apos;s share and appears on{" "}
-                        <b>Billing</b> under this patient&apos;s name, ready to collect.
-                      </p>
-                    </div>
-                  ) : (
-                    <>
-                      <DiscountInput subtotal={grand} accent="blue" onChange={(d) => setDisc(d.amount)} />
-
-                      <label className="flex items-center gap-2 text-[14px] text-[var(--p-text)]">
-                        <input type="checkbox" checked={payNow} onChange={(e) => setPayNow(e.target.checked)} className="h-4 w-4 accent-[var(--p-blue)]" /> Collect payment now
-                      </label>
-                      {payNow && est > 0 && (
-                        <PaymentSection total={est} accent="blue" onChange={(r) => { setPayments(r.payments); setPayValid(r.valid); }} />
-                      )}
-                    </>
-                  )}
-
-                  {/* HOW THE STAY ENDED.
-                      A select, not five buttons: an ordinary discharge is the
-                      overwhelming majority and must stay a single click, while the
-                      other four have to be reachable without anyone having to lie
-                      to the software. The bill is raised either way - the bed was
-                      occupied and the medicines were given whatever the ending. */}
-                  <Field label="How the stay ended">
-                    <select className={fld} value={outcome} onChange={(e) => setOutcome(e.target.value as DischargeOutcome)}>
-                      {DISCHARGE_OUTCOMES.map((o) => (
-                        <option key={o} value={o}>{OUTCOME_LABEL[o]}</option>
-                      ))}
-                    </select>
-                    <p className="mt-1 text-[12px] text-[var(--p-muted)]">{OUTCOME_HELP[outcome]}</p>
-                  </Field>
-
-                  <Field label="Discharge notes"><textarea className={`${fld} min-h-[56px] resize-y`} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Condition on discharge, advice…" /></Field>
                 </div>
 
-                {error && <div className="border-t border-[var(--p-border)] bg-[var(--p-rose-soft)] px-6 py-2.5 text-[13px] text-[var(--p-rose)]">{error}</div>}
+                {error && <div className="shrink-0 border-t border-[var(--p-border)] bg-[var(--p-rose-soft)] px-6 py-2.5 text-[13px] text-[var(--p-rose)]">{error}</div>}
 
-                <div className="flex justify-end gap-3 border-t border-[var(--p-border)] p-5">
+                <div className="flex shrink-0 justify-end gap-3 border-t border-[var(--p-border)] p-5">
                   <button onClick={closeModal} className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm text-[var(--p-text)]">Cancel</button>
                   {/* The override is a separate, plainly-worded button rather
                       than a checkbox on the main one - discharging someone who

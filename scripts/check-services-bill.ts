@@ -33,9 +33,12 @@ async function main() {
     if (marked) console.log(`      ${marked} of them carry a paid marker`);
   }
 
+  // ONE HEAD, because the sheet bills one: the pharmacy and the lab are on their
+  // own counter invoices and are not printed here or added into what is asked
+  // for. See the note above ipServicesBillData.
   const x = b.money;
   console.log("\n  head            gross        discount        paid         due");
-  for (const [k, v] of [["services", x.services], ["lab", x.lab], ["pharmacy", x.pharmacy]] as const) {
+  for (const [k, v] of [["services", x.services]] as const) {
     console.log(`  ${k.padEnd(10)} ${m(v.gross).padStart(12)} ${m(v.discount).padStart(12)} ${m(v.paid).padStart(12)} ${m(v.due).padStart(12)}${v.settled && Number(v.paid) > 0 ? "  PAID" : ""}`);
   }
   console.log(`\n  gross            ${m(x.gross)}`);

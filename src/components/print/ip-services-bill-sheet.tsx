@@ -19,21 +19,22 @@ import { BillHead, PrintToolbar, type HospitalInfo } from "@/components/print/st
  *
  * What is different, and why every difference is here:
  *
- *   THREE BLOCKS, NOT ONE TOTAL. The hospital's own services are discountable;
- *   the pharmacy and the lab are not. On one undivided total the family reads
- *   the discount as covering everything and the argument starts at the medicine
- *   line. Split, the paper answers it before it is asked.
+ *   THE HOSPITAL'S OWN SERVICES, AND NOTHING ELSE. The bed, the ward and the
+ *   consultant are the only charges a discount may touch, and they are the only
+ *   ones printed. The pharmacy and the lab bill at their own windows on their
+ *   own invoices; reprinted here they handed the family a second copy of a bill
+ *   already in their hand and ran a long stay onto extra pages. Off the paper,
+ *   and off the figure asked for at the foot of it.
  *
  *   PAID SAYS PAID, ON THE LINE. The IP bill deliberately carries no per-line
  *   status - it is a claim sheet, and paid-vs-due is a money question its totals
  *   answer once. This sheet is the opposite document: it is asking a family for
- *   a number TODAY, and the medicines they already paid for at the window during
- *   the stay have to be visibly credited rather than silently netted off. A
- *   family that paid ₹4,000 at the pharmacy looks for those items first.
+ *   a number TODAY, so a service already settled says so where the family's
+ *   finger is, instead of being silently netted off the bottom of the page.
  *
- *   THE MONEY TABLE IS A GRID, not a stack. Amount, discount, paid and due
- *   across three blocks is twelve figures; as a column of labelled rows it runs
- *   to a third of a page and nothing lines up under anything.
+ *   THE MONEY TABLE IS STILL A GRID, not a stack. Amount, discount, paid and
+ *   due read across under their own headings, and the Total rules off under
+ *   them; as a column of labelled rows nothing lines up under anything.
  *
  * WHO IT IS FOR is decided by the server and refused there - a self-paying stay,
  * or one an insurer refused that has been moved onto the family. A discounted
@@ -88,7 +89,8 @@ interface Data {
   basis: "SELF_PAY" | "INSURANCE_REFUSED" | "NONE";
   eligibilityNote: string;
   money: {
-    services: Block; lab: Block; pharmacy: Block;
+    /** The only block on this sheet - see the note at the top. */
+    services: Block;
     gross: string; discount: string; discountUnapplied: string; gst: string;
     netBill: string; paidTotal: string; dueBeforeAdvance: string;
     advance: string; advanceApplied: string; netPayable: string; refundDue: string;
@@ -129,9 +131,9 @@ const MODE_LABEL: Record<string, string> = {
   CASH: "Cash", UPI: "UPI", CARD: "Card", NETBANKING: "Net banking",
   INSURANCE: "Insurance", OTHER: "Other",
 };
-/** What each block is called on the money table, and in the section headings. */
+/** What the one block this sheet bills is called on the money table. */
 const BLOCK_LABEL: Record<string, string> = {
-  SERVICES: "Hospital services", LAB: "Laboratory", PHARMACY: "Pharmacy",
+  SERVICES: "Hospital services",
 };
 
 /** Lines bucketed under their own date, oldest first - a Map keeps insertion
@@ -340,15 +342,17 @@ export function IpServicesBillSheet() {
                     {b.groups.map((g) => (
                       <Fragment key={g.title}>
                         {/* THE HEADING CARRIES THE SUBTOTAL AND THE RULE.
-                            "Discount applies" / "At cost - not discountable" sits
-                            on the section rather than in a footnote, because the
-                            question is asked ABOUT A SECTION and asked while the
-                            family's finger is on it. */}
+                            Every section here is the hospital's own and therefore
+                            discountable - the pharmacy and the lab are not on
+                            this sheet at all - and the marker sits on the section
+                            rather than in a footnote, because the question is
+                            asked ABOUT A SECTION and asked while the family's
+                            finger is on it. */}
                         <tr className="border-t border-[#333]">
                           <td colSpan={2} className="pb-[3px] pt-2 text-[9.5px] font-bold uppercase">
                             {g.title}
                             <span className="ml-1.5 text-[8px] font-semibold uppercase tracking-wide text-[#4a5a55]">
-                              {g.discountable ? "· discount applies" : "· at cost, not discountable"}
+                              · discount applies
                             </span>
                           </td>
                           <td colSpan={2} className="pb-[3px] pt-2 text-right font-mono text-[9.5px] font-bold">₹{money(g.total)}</td>
@@ -388,10 +392,12 @@ export function IpServicesBillSheet() {
                         {/* THE PAID COLUMN IS BACK, and it is back for this sheet
                             only. On the claim bill it stated the same fact twice
                             and read as two. Here it IS the fact the sheet is
-                            about: these counters were paid at their own windows,
-                            and their money is what the block totals below take
-                            off. A family checking a receipt in their hand finds
-                            it on this row. */}
+                            about: what has already been settled against the stay,
+                            which is what the block below takes off. A family
+                            checking a receipt in their hand finds it on this row.
+                            THE PHARMACY'S AND THE LAB'S INVOICES ARE NOT LISTED -
+                            a receipt number here says the bill is included in
+                            this statement, and theirs are not. */}
                         {b.sourceBills.map((x) => (
                           <tr key={x.receiptNo}>
                             <td className="py-[3px] pr-1 font-mono text-[8.5px]">{x.receiptNo}</td>
@@ -454,8 +460,6 @@ export function IpServicesBillSheet() {
                     </thead>
                     <tbody>
                       <BlockRow label={BLOCK_LABEL.SERVICES} note="bed, ward services and consultation" blk={m.services} />
-                      <BlockRow label={BLOCK_LABEL.LAB} note="at cost - not discountable" blk={m.lab} />
-                      <BlockRow label={BLOCK_LABEL.PHARMACY} note="at MRP - not discountable" blk={m.pharmacy} />
                       {/* GST GETS ITS OWN ROW RATHER THAN A NOTE ON THE SERVICES
                     LINE. Folded into that row's note, the Amount column no
                     longer added up to the Total beside it, and a family
@@ -546,8 +550,8 @@ export function IpServicesBillSheet() {
                 </div>
 
                 <div className="mt-4 border-t border-[#333] pt-1 text-center text-[8.5px] text-[#57655f]">
-                  Computer-generated bill. Discount applies to hospital services only; medicines and investigations are
-                  billed at cost. Amounts already paid at the pharmacy and laboratory counters have been deducted.
+                  Computer-generated bill. Hospital services only - medicines and investigations are billed separately
+                  at the pharmacy and laboratory counters, on their own invoices.
                 </div>
               </td>
             </tr>

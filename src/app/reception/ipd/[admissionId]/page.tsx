@@ -552,7 +552,7 @@ export default function AdmissionSheetPage() {
                   money the insurer is carrying, and the service refuses it. */}
               {a.payerType === "SELF_PAY" && (
                 <a href={`/print/services-bill/${a.id}`} target="_blank" rel="noopener noreferrer"
-                  title="The self-pay bill — services discounted, pharmacy and lab at cost, everything already paid deducted"
+                  title="The self-pay bill — hospital services only, discounted; the pharmacy and the lab bill at their own counters"
                   className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
                   <Icon name="receipt" size={13} /> Services bill
                 </a>
