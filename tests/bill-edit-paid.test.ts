@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  assertTotalCoversCollected, invoiceStatusFrom, InvoiceMathError,
+  assertTotalCoversCollected, invoiceStatusFrom, InvoiceMathError, computeInvoiceTotals,
 } from "@/server/billing/calc";
 
 /**
@@ -93,5 +93,42 @@ describe("the two together - a realistic correction round", () => {
     // ₹1200 collected, correct total ₹900. Refusing is the point: ₹300 is owed
     // BACK to the patient, and that has to be a refund with a row of its own.
     expect(() => assertTotalCoversCollected(900, 1200)).toThrow(/refund/i);
+  });
+});
+
+describe("a settled bill stays editable - the desk must be able to reach its date", () => {
+  /**
+   * THE BUG THIS REPLACED. The edit dialog predicted the new total as a PRE-GST
+   * subtotal and compared it against money collected, which includes GST. On any
+   * bill carrying tax the comparison was always "below collected", and both Save
+   * buttons are disabled on that flag - so all 275 settled pharmacy bills were
+   * frozen. Not just their amounts: their DATE too, which is what the counter
+   * was actually trying to change.
+   *
+   * The dialog now predicts with computeInvoiceTotals, the same function
+   * updateInvoice stores with, so the two cannot disagree.
+   */
+  const predict = (lines: { unitPrice: number; qty?: number; gstRatePct?: number }[], discount = 0) =>
+    computeInvoiceTotals(lines.map((l, i) => ({ description: `line ${i}`, ...l })), discount).total;
+
+  it("does not refuse a bill whose lines are unchanged", () => {
+    // 1000 + 12% GST = 1120 collected. Re-dating changes no line.
+    const total = predict([{ unitPrice: 1000, gstRatePct: 12 }]);
+    expect(total).toBe(1120);
+    // The pre-GST comparison that used to gate Save: 1000 < 1120, so it blocked.
+    expect(1000 < 1120).toBe(true);
+    // Against the real total there is nothing to refuse.
+    expect(() => assertTotalCoversCollected(total, 1120)).not.toThrow();
+  });
+
+  it("still refuses a genuine drop below the money collected", () => {
+    // The floor has to keep holding - this is the case the flag exists for.
+    const total = predict([{ unitPrice: 300, gstRatePct: 12 }]);
+    expect(() => assertTotalCoversCollected(total, 1120)).toThrow(InvoiceMathError);
+  });
+
+  it("tolerates a rounding crumb on a bill settled to the exact rupee", () => {
+    const total = predict([{ unitPrice: 333.33, gstRatePct: 5 }]);
+    expect(() => assertTotalCoversCollected(total, total + 0.01)).not.toThrow();
   });
 });

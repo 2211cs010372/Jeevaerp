@@ -34,6 +34,53 @@ describe("reading a pack label", () => {
     expect(parsePack("100G")).toEqual({ size: 1, unit: "tube", known: true });
   });
 
+  it("reads every spelling of a gram the counter actually types", () => {
+    // MEGAHEAL GEL BIG was entered as "50GR". Only GM and G were recognised, so
+    // GR fell through to the unknown-suffix branch, which keeps the number - and
+    // a single 50g tube became fifty dispensing units. The shelf then read 249
+    // for five tubes, and its Rs 375 MRP divided down to Rs 7.50 a tube.
+    //
+    // The pack label is typed by whoever keys the distributor's invoice, so the
+    // spelling varies and the arithmetic must not.
+    for (const label of ["50GR", "50GRS", "50GRM", "50GRMS", "50GMS", "50GRAM", "50GRAMS"]) {
+      expect(parsePack(label)).toEqual({ size: 1, unit: "tube", known: true });
+    }
+  });
+
+  it("reads a truncated millilitre - the catalogue is full of them", () => {
+    // "NS 500ML" arrived from the MIS import with pack "500M": the label was cut
+    // one character short. Read as a count it put 41,983 units on a shelf holding
+    // 84 bottles and quoted 7 paise for a bottle of saline.
+    expect(parsePack("500M")).toEqual({ size: 1, unit: "bottle", known: true });
+    expect(parsePack("100M")).toEqual({ size: 1, unit: "bottle", known: true });
+    expect(parsePack("1L")).toEqual({ size: 1, unit: "bottle", known: true });
+  });
+
+  it("reads a strength keyed into the pack field as one container", () => {
+    // Not a pack size at all, but it lands in this field. Whatever "500MG" is,
+    // it is one of something and never five hundred.
+    expect(parsePack("500MG")).toEqual({ size: 1, unit: "tube", known: true });
+    expect(parsePack("1KG")).toEqual({ size: 1, unit: "tube", known: true });
+  });
+
+  it("survives the apostrophe OCR leaves in a measure", () => {
+    // SCALP VEIN SET 22'G - and 22 is a needle gauge, so reading it as a count
+    // was doubly wrong: 2,200 units for 100 sets.
+    expect(parsePack("22'G")).toEqual({ size: 1, unit: "tube", known: true });
+    // The apostrophe rule must not swallow "10'S", which really is ten of them.
+    expect(parsePack("10'S")).toEqual({ size: 10, unit: "unit", known: true });
+  });
+
+  it("allows a fractional measure but never a fractional count", () => {
+    // A 2.5ML ampoule is one ampoule; a 6.5GR sachet is one sachet.
+    expect(parsePack("2.5ML")).toEqual({ size: 1, unit: "bottle", known: true });
+    expect(parsePack("6.5GR")).toEqual({ size: 1, unit: "tube", known: true });
+    // But there is no such thing as 2.5 tablets in a strip, and half a bare
+    // something is not a shelf quantity. Refused rather than rounded.
+    expect(parsePack("2.5T")).toEqual({ size: 1, unit: "unit", known: false });
+    expect(parsePack("4.5")).toEqual({ size: 1, unit: "unit", known: false });
+  });
+
   it("keeps counting labels counting - the distinction is the whole point", () => {
     // Tablets and capsules DO leave the shelf one at a time, so their pack size
     // is a real multiplier. Collapsing these to 1 would be the mirror-image bug:

@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PrimaryButton } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { DiscountInput } from "@/components/portal/ui/bill-fields";
 import { api, ApiClientError } from "@/lib/api-client";
 import { localDateISO } from "@/lib/date";
+// Pure arithmetic - no database, no clock, no network (see the header of that
+// file). Imported so this dialog predicts the total using the SAME function the
+// server stores it with, rather than an approximation of it.
+import { computeInvoiceTotals } from "@/server/billing/calc";
 
 /**
  * EDITING A BILL, IN ONE PLACE.
@@ -95,11 +99,45 @@ export function EditBillDialog({
   // below it. Shown, and checked live against the running subtotal, so the desk
   // finds out while typing rather than from a red box after pressing Save.
   const collected = inv ? Number(inv.amountPaid) || 0 : 0;
+  /** Lines before discount and before GST - what the discount box works against. */
   const subtotal = inv ? inv.items.reduce((s, i) => s + Number(i.unitPrice || 0) * (i.qty || 1), 0) : 0;
-  const afterDiscount = Math.max(0, subtotal - (Number(inv?.discountAmount) || 0));
-  // Compared before GST, which the server adds per line on save - so this warns
-  // a little early rather than a little late, which is the safer direction.
-  const belowCollected = collected > 0 && afterDiscount < collected;
+
+  /**
+   * WHAT THE SERVER WILL ACTUALLY STORE - GST included.
+   *
+   * This used to be a pre-GST subtotal compared against a GST-inclusive figure,
+   * described as warning "a little early". It did not warn early; it warned
+   * ALWAYS. Money collected on a bill includes its tax, the lines summed here do
+   * not, so `subtotal < collected` held on every settled bill that carried any
+   * GST - which is all 275 of the pharmacy's. Both Save buttons are disabled on
+   * this flag, so a collected bill could not be corrected at all: not its lines,
+   * not its amount, and not its date, which is what the counter kept hitting.
+   *
+   * Computed by the same pure function `updateInvoice` uses, so what this screen
+   * predicts and what the server stores cannot drift apart.
+   */
+  const newTotal = useMemo(() => {
+    if (!inv?.items.length) return 0;
+    try {
+      return computeInvoiceTotals(
+        inv.items.map((i) => ({
+          description: i.description,
+          qty: i.qty,
+          unitPrice: Number(i.unitPrice) || 0,
+          gstRatePct: Number(i.gstRatePct) || 0,
+        })),
+        Number(inv.discountAmount) || 0,
+      ).total;
+    } catch {
+      // A discount above the subtotal throws here and is caught by its own field.
+      // Not a reason to seize the Save button - the server states the refusal.
+      return 0;
+    }
+  }, [inv]);
+
+  // The same paise tolerance assertTotalCoversCollected applies, so a bill
+  // settled to the exact rupee is not refused on a rounding crumb.
+  const belowCollected = collected > 0 && newTotal < collected - 0.01;
 
   async function save(): Promise<boolean> {
     if (!inv) return false;
@@ -185,8 +223,8 @@ export function EditBillDialog({
                   {belowCollected ? (
                     <>
                       <strong>₹{collected.toFixed(2)} has already been collected on this bill.</strong>{" "}
-                      The lines now come to ₹{afterDiscount.toFixed(2)}, which is less than that — the server will
-                      refuse this. Refund the difference first, then correct the bill.
+                      The lines now come to ₹{newTotal.toFixed(2)} including GST, which is less than that — the
+                      server will refuse this. Refund the difference first, then correct the bill.
                     </>
                   ) : (
                     <>

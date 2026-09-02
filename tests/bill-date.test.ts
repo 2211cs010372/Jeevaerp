@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { resolveBillDate, BillDateError } from "@/server/billing/calc";
+import { invoiceDayWhere } from "@/server/services/billing.service";
 
 /**
  * THE DATE PRINTED ON A GST DOCUMENT.
@@ -109,5 +110,42 @@ describe("the two date controls agree", () => {
     const d = resolveBillDate("2026-08-01", at("2026-08-13T10:00:00Z"))!;
     expect(d.getDate()).toBe(1);
     expect(d.getMonth() + 1).toBe(8);
+  });
+});
+
+describe("finding a bill under the day it shows", () => {
+  /**
+   * THE BUG THIS REPLACED. The pharmacy counter reported that bill dates "are
+   * not editing and saving". The save was never broken - `billDate` was written
+   * correctly every time. The LOOKUP was: "By date" filtered on `createdAt`, so
+   * a bill re-dated to the 28th stayed findable only under the day it was typed.
+   * The desk picked the 28th, saw nothing, and concluded it had not saved.
+   */
+  it("finds a bill that was re-dated INTO the chosen day", () => {
+    const w = invoiceDayWhere("2026-08-28");
+    expect(w).toHaveProperty("OR");
+    const [redated] = (w as { OR: { billDate: { gte: Date; lt: Date } }[] }).OR;
+    expect(redated.billDate.gte.getDate()).toBe(28);
+    // Local midnight to local midnight - not UTC, or half of the 27th's takings
+    // come back under the 28th.
+    expect(redated.billDate.gte.getHours()).toBe(0);
+    expect(redated.billDate.lt.getDate()).toBe(29);
+  });
+
+  it("still finds an ordinary bill under the day it was raised", () => {
+    // The overwhelming majority: never re-dated, so createdAt IS the shown date.
+    const w = invoiceDayWhere("2026-08-28") as {
+      OR: [unknown, { billDate: null; createdAt: { gte: Date; lt: Date } }];
+    };
+    const plain = w.OR[1];
+    expect(plain.billDate).toBeNull();
+    expect(plain.createdAt.gte.getDate()).toBe(28);
+  });
+
+  it("does not narrow the list at all when no day is asked for", () => {
+    // The working queue must stay the working queue.
+    expect(invoiceDayWhere(undefined)).toEqual({});
+    expect(invoiceDayWhere("")).toEqual({});
+    expect(invoiceDayWhere("not-a-date")).toEqual({});
   });
 });

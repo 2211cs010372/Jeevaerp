@@ -78,8 +78,23 @@ const SUFFIX_UNITS: { re: RegExp; unit: string; counts: boolean }[] = [
   // what the pharmacy holds and hands over. "bottle" and "tube" cover the
   // catalogue as it stands; a 100gm jar of powder would read "jar" more
   // naturally, and reads "tube" instead - a wording cost, not an arithmetic one.
-  { re: /^(?:ML|M L)$/i, unit: "bottle", counts: false },
-  { re: /^(?:GM?|GRAM)$/i, unit: "tube", counts: false },
+  //
+  // EVERY SPELLING THE COUNTER ACTUALLY TYPES, not just the tidy one. The
+  // catalogue had GR, GMS and GRM sitting beside GM, and only GM was recognised
+  // - so MEGAHEAL GEL BIG "50GR" became fifty dispensing units of a single 50g
+  // tube, put 249 "units" on a shelf holding five tubes, and quoted Rs 7.50 for
+  // a tube whose MRP is Rs 375. A missing spelling is not a cosmetic gap here;
+  // it is the difference between a measure and a count.
+  //
+  // A leading apostrophe is allowed because OCR leaves one ("22'G"). It cannot
+  // swallow "'S": that is matched by its own entry below, and every pattern here
+  // requires a letter that "S" is not.
+  //
+  // MG/MCG are strengths rather than pack sizes, and land in this field when
+  // somebody keys the strength by mistake. They belong here all the same: a
+  // "500MG" pack is one of something, never five hundred.
+  { re: /^['`’,]?(?:M|ML|MLS|L|LT|LTR|LTRS|LITRE|LITER|LITRES|LITERS)$/i, unit: "bottle", counts: false },
+  { re: /^['`’,]?(?:G|GM|GMS|GR|GRS|GRM|GRMS|GRAM|GRAMS|KG|MG|MCG)$/i, unit: "tube", counts: false },
 
   // COUNTS. These really are N things that leave the shelf one at a time.
   { re: /^T(?:AB)?$/i, unit: "tablet", counts: true },
@@ -105,7 +120,11 @@ export function parsePack(label: string | null | undefined): PackSpec {
   if (!raw) return { size: 1, unit: "unit", known: false };
 
   // Strip the noise OCR leaves around the join: "1225ML", "15 T", "10-S".
-  const m = raw.replace(/\s+/g, "").match(/^(\d{1,4})\s*([A-Za-z'`’,]{0,6})$/);
+  //
+  // A FRACTION IS ALLOWED, because a measure can be one: "2.5ML" and "6.5GR" are
+  // both real labels in the catalogue. It is only ever a measure, though - see
+  // the integer check below.
+  const m = raw.replace(/\s+/g, "").match(/^(\d{1,4}(?:\.\d{1,3})?)\s*([A-Za-z'`’,]{0,6})$/);
   if (!m) return { size: 1, unit: "unit", known: false };
 
   const size = Number(m[1]);
@@ -113,13 +132,22 @@ export function parsePack(label: string | null | undefined): PackSpec {
 
   const suffix = m[2] ?? "";
   if (!suffix) {
-    // A bare number is a count of somethings - "10" means ten of them.
+    // A bare number is a count of somethings - "10" means ten of them. Half a
+    // something is not, so "4.5" alone stays unread rather than being rounded
+    // into a shelf quantity nobody wrote down.
+    if (!Number.isInteger(size)) return { size: 1, unit: "unit", known: false };
     return { size, unit: "unit", known: true };
   }
   for (const { re, unit, counts } of SUFFIX_UNITS) {
     // A measure yields ONE container regardless of how big the number is: 200ML
-    // and 15ML are both a single bottle, differing only in what is in them.
-    if (re.test(suffix)) return { size: counts ? size : 1, unit, known: true };
+    // and 15ML are both a single bottle, differing only in what is in them - so
+    // a fractional measure is fine, it still describes one container.
+    if (!re.test(suffix)) continue;
+    if (!counts) return { size: 1, unit, known: true };
+    // A fractional COUNT is a label we have misread: there is no such thing as
+    // 2.5 tablets in a strip. Refuse it rather than round it.
+    if (!Number.isInteger(size)) return { size: 1, unit: "unit", known: false };
+    return { size, unit, known: true };
   }
   // A suffix we don't recognise. Take the size (it is unambiguous) but don't
   // invent a unit name.

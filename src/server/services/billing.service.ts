@@ -649,27 +649,24 @@ export async function updateInvoice(
       inv.refunds.map((r: { amount: { toString(): string } }) => ({ amount: Number(r.amount.toString()) })),
     );
 
-    // recompute
-    let subtotal = 0;
-    const items = input.lines.map((l) => {
-      const qty = l.qty && l.qty > 0 ? l.qty : 1;
-      const amount = r2(qty * l.unitPrice);
-      subtotal = r2(subtotal + amount);
-      return { ...l, qty, amount, gstRatePct: l.gstRatePct ?? 0 };
-    });
-    const discount = r2(input.discountAmount ?? 0);
-    if (discount > subtotal) throw new ApiError(400, "Discount can't exceed the bill amount");
-
-    const ratio = subtotal > 0 ? discount / subtotal : 0;
-    let taxable = 0, cgst = 0, sgst = 0;
-    for (const it of items) {
-      const after = r2(it.amount * (1 - ratio));
-      taxable = r2(taxable + after);
-      const tax = r2((after * it.gstRatePct) / 100);
-      cgst = r2(cgst + tax / 2);
-      sgst = r2(sgst + tax / 2);
+    // ── RECOMPUTE, THROUGH THE ONE FUNCTION THAT DOES THIS ──
+    //
+    // This was a hand-copied second implementation of computeInvoiceTotals -
+    // identical arithmetic, separately maintained. The edit dialog then had to
+    // guess at what it would produce, guessed pre-GST, and disabled its own Save
+    // button on every settled bill as a result. Two copies of the invoice
+    // arithmetic is how that happens, so now there is one.
+    let calc;
+    try {
+      calc = computeInvoiceTotals(
+        input.lines.map((l) => ({ ...l, unitPrice: l.unitPrice, gstRatePct: l.gstRatePct ?? 0 })),
+        input.discountAmount ?? 0,
+      );
+    } catch (e) {
+      if (e instanceof InvoiceMathError) throw new ApiError(400, e.message);
+      throw e;
     }
-    const total = r2(taxable + cgst + sgst);
+    const { items, subtotal, discount, taxable, cgst, sgst, total } = calc;
 
     // The floor, checked now that there is a new total to check it against. The
     // rule and its wording live in billing/calc, where they are tested.
@@ -695,6 +692,28 @@ export async function updateInvoice(
       inv.refunds.map((r: { amount: { toString(): string } }) => ({ amount: Number(r.amount.toString()) })),
     );
 
+    // ── WHAT THE LINES POINT AT SURVIVES THE REWRITE ──
+    //
+    // A pharmacy line carries the batch it was dispensed from and a lab line the
+    // test it bills. The edit below deletes every line and writes it back, and
+    // the dialog only ever sends description/qty/price - so before this, ANY
+    // correction silently cut those links. Five pharmacy bills in this database
+    // lost all 38 of their batch references that way: the medicine was still on
+    // the bill, but which strip it came off was gone, and with it the recall
+    // trail from a batch back to the patients who were given it.
+    //
+    // Carried by POSITION, and only while the description still matches. A line
+    // somebody has rewritten into a different medicine must NOT inherit the last
+    // one's batch - a wrong traceability link is worse than an absent one, and
+    // the absent one is what an untouched line never has to fall back on.
+    const prevLines = await tx.invoiceItem.findMany({
+      where: { invoiceId: inv.id },
+      // No explicit order column; ids are cuids written in line order, so this
+      // reconstructs the order the desk is looking at.
+      orderBy: { id: "asc" },
+      select: { description: true, batchId: true, labTestId: true },
+    });
+
     // swap the items wholesale (receiptNo is preserved - same invoice, corrected)
     await tx.invoiceItem.deleteMany({ where: { invoiceId: inv.id } });
     await tx.invoice.update({
@@ -713,11 +732,20 @@ export async function updateInvoice(
         // among these fields - see the schema note on billDate.
         ...(billDate === undefined ? {} : { billDate }),
         items: {
-          create: items.map((it) => ({
-            description: it.description, hsnSac: it.hsnSac ?? null, qty: it.qty,
-            unitPrice: s2(it.unitPrice), amount: s2(it.amount), gstRatePct: s2(it.gstRatePct),
-            labTestId: it.labTestId ?? null,
-          })),
+          create: items.map((it, idx) => {
+            // Same slot, same description -> the same physical line, so whatever
+            // it pointed at still applies. See the note above deleteMany.
+            const prev = prevLines[idx];
+            const carried = prev && prev.description === it.description ? prev : null;
+            return {
+              description: it.description, hsnSac: it.hsnSac ?? null, qty: it.qty,
+              unitPrice: s2(it.unitPrice), amount: s2(it.amount), gstRatePct: s2(it.gstRatePct),
+              batchId: carried?.batchId ?? null,
+              // An explicit test from the caller wins; otherwise keep the one the
+              // line already had, which is what a date or price correction means.
+              labTestId: it.labTestId ?? carried?.labTestId ?? null,
+            };
+          }),
         },
       },
     });
@@ -809,6 +837,53 @@ export function billsLimit(raw: string | null | undefined): number {
   return Math.min(n, BILLS_PAGE_MAX);
 }
 
+/**
+ * "Show me the bills for the 28th" - as a query, matched on the day each bill
+ * SHOWS.
+ *
+ * ── ONE CALENDAR DAY, WHEN THE DESK ASKS FOR ONE ──
+ *
+ * Without this the screen could only ever filter the last `limit` bills it had
+ * already fetched, so "show me the 3rd" came back empty on any day further back
+ * than a hundred invoices - which in this hospital is about a week. The filter
+ * has to be a query, not a client-side pass over a truncated list.
+ *
+ * LOCAL midnight to local midnight. `new Date("2026-08-03")` is UTC midnight,
+ * which in IST is 05:30 on the 3rd: half a day of the 2nd's takings would come
+ * back under the 3rd, and the day close would disagree with this screen.
+ *
+ * ── THE DAY ASKED FOR IS THE DAY THE BILL SHOWS ──
+ *
+ * Matched on the EFFECTIVE date - the corrected `billDate` where a desk has set
+ * one, the raised date otherwise. That is exactly what the list prints in its
+ * date column and what the patient's copy carries.
+ *
+ * Matching `createdAt` alone is what made re-dating look broken at the pharmacy
+ * counter: a bill moved to the 28th saved correctly, then could not be found
+ * under the 28th, because the filter was still looking at the day it was typed.
+ * The desk read that as "the date did not save" and re-dated it again.
+ *
+ * This is a LOOKUP, not an accounting question. Money still belongs to the day
+ * it was taken - the till and the day close both count `createdAt` and neither
+ * goes through here - so re-dating a bill still never moves cash between days.
+ */
+export function invoiceDayWhere(onDate?: string):
+  | Record<string, never>
+  | { OR: [{ billDate: { gte: Date; lt: Date } }, { billDate: null; createdAt: { gte: Date; lt: Date } }] } {
+  if (!onDate) return {};
+  const [y, m, d] = onDate.split("-").map(Number);
+  if (!y || !m || !d) return {};
+  const dayRange = { gte: new Date(y, m - 1, d), lt: new Date(y, m - 1, d + 1) };
+  return {
+    OR: [
+      // Re-dated INTO this day, whenever it was actually raised.
+      { billDate: dayRange },
+      // Never re-dated, so the day it was raised is the day it shows.
+      { billDate: null, createdAt: dayRange },
+    ],
+  };
+}
+
 export async function listInvoices(source?: InvoiceSourceT, limit = 50, onDate?: string): Promise<{
   id: string; receiptNo: string; source: string; status: string; totalAmount: string;
   amountPaid: string; refunded: string; refundable: string;
@@ -828,28 +903,12 @@ export async function listInvoices(source?: InvoiceSourceT, limit = 50, onDate?:
 }[]> {
   const MODE_ORDER = ["CASH", "UPI", "CARD", "NETBANKING", "OTHER"];
 
-  // ── ONE CALENDAR DAY, WHEN THE DESK ASKS FOR ONE ──
-  //
-  // Without this the screen could only ever filter the last `limit` bills it had
-  // already fetched, so "show me the 3rd" came back empty on any day further
-  // back than a hundred invoices - which in this hospital is about a week. The
-  // filter has to be a query, not a client-side pass over a truncated list.
-  //
-  // LOCAL midnight to local midnight. `new Date("2026-08-03")` is UTC midnight,
-  // which in IST is 05:30 on the 3rd: half a day of the 2nd's takings would come
-  // back under the 3rd, and the day close would disagree with this screen.
-  let dayRange: { gte: Date; lt: Date } | undefined;
-  if (onDate) {
-    const [y, m, d] = onDate.split("-").map(Number);
-    if (y && m && d) {
-      dayRange = { gte: new Date(y, m - 1, d), lt: new Date(y, m - 1, d + 1) };
-    }
-  }
+  const onEffectiveDay = invoiceDayWhere(onDate);
 
   const rows = await prisma.invoice.findMany({
     where: {
       ...(source ? { source } : {}),
-      ...(dayRange ? { createdAt: dayRange } : {}),
+      ...onEffectiveDay,
     },
     // Ordered by when it was RAISED, not by the printed date. The list is the
     // desk's working queue - most recent work first - and a bill back-dated to
