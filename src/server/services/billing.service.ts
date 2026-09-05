@@ -934,7 +934,15 @@ export function invoiceDayWhere(onDate?: string):
   };
 }
 
-export async function listInvoices(source?: InvoiceSourceT, limit = 50, onDate?: string): Promise<{
+/**
+ * The bills a desk works from.
+ *
+ * `source` narrows to one counter. `excludeSource` keeps one counter OUT, which
+ * is the shape reception needs: the pharmacy settles, voids and reprints its own
+ * bills at its own window, so a medicine receipt on the front desk's queue is a
+ * row nobody there is meant to act on.
+ */
+export async function listInvoices(source?: InvoiceSourceT, limit = 50, onDate?: string, excludeSource?: InvoiceSourceT): Promise<{
   id: string; receiptNo: string; source: string; status: string; totalAmount: string;
   amountPaid: string; refunded: string; refundable: string;
   /** Distinct payment types used on this bill: [] unpaid, ["CASH"], or ["CASH","UPI"] for a split. */
@@ -958,6 +966,12 @@ export async function listInvoices(source?: InvoiceSourceT, limit = 50, onDate?:
   const rows = await prisma.invoice.findMany({
     where: {
       ...(source ? { source } : {}),
+      // A counter that does not settle another counter's bills does not list
+      // them either. Its own clause rather than folded into `source`, so a
+      // request naming a source that is also excluded comes back empty - the
+      // safe direction for a filter whose whole job is keeping bills off a
+      // screen.
+      ...(excludeSource ? { NOT: { source: excludeSource } } : {}),
       ...onEffectiveDay,
     },
     // Ordered by when it was RAISED, not by the printed date. The list is the

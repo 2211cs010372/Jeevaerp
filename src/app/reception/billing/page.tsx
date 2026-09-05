@@ -858,7 +858,6 @@ export default function BillingPage() {
               <p className="rounded-lg bg-[var(--p-amber-soft)] px-3 py-2 text-[12px] leading-relaxed text-[#8a6414]">
                 The bill is marked <b>cancelled</b>, not deleted - the receipt number stays used, which is what GST expects.
                 {Number(voiding.amountPaid) > 0 && <> This bill already took <b>₹{money(voiding.amountPaid)}</b>; voiding it does <b>not</b> hand the cash back.</>}
-                {voiding.source === "PHARMACY" && <> This is a <b>pharmacy</b> bill: voiding it also puts its medicine back on the shelf.</>}
               </p>
             </div>
             <div className="flex justify-end gap-3 border-t border-[var(--p-border)] p-5">

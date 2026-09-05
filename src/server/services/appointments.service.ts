@@ -7,6 +7,7 @@ import { logAudit } from "./audit.service";
 import { createInvoice } from "./billing.service";
 import { notifyOpBooked, notifyOpCancelled } from "./notify.service";
 import { getAfterHoursOpPolicy } from "./op-pricing.service";
+import { generateSlots, SLOT_HORIZON_DAYS, DIARY_START, DIARY_END, DIARY_SLOT_MIN } from "./slots.service";
 import { publishLive } from "@/server/realtime/publish";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import type { AuthUser } from "@/lib/auth/types";
@@ -1140,16 +1141,51 @@ export async function createDoctorProfile(
     });
 
     // WITHOUT A DIARY A DOCTOR CANNOT BE BOOKED. The same round-the-clock
-    // schedule admin gives a new consultant - see DIARY_* in admin.service. A
-    // doctor added here who then does not appear on the booking screen would
-    // read as this page not having worked.
-    await tx.doctorSchedule.createMany({
-      data: [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({
-        doctorId: d.id, dayOfWeek, startTime: "00:00", endTime: "24:00", slotMinutes: 15,
-      })),
-    });
+    // schedule admin gives a new consultant - DIARY_* lives in slots.service now,
+    // so the two paths cannot drift apart again. A doctor added here who then
+    // does not appear on the booking screen would read as this page not working.
+    //
+    // THE RETURN TYPE ON THE CALLBACK IS THE REPAIR, and where it sits is the
+    // whole point. This wrote `slotMinutes`, which is not a column -
+    // DoctorSchedule spells it `slotDurationMin` - and nothing caught it:
+    // `.map()` infers its element type FROM the callback, so the literal was
+    // never checked against anything and the excess-property check had nothing
+    // to fire on. The unknown argument went to Prisma, which rejects one
+    // outright, and the transaction failed every time. From the day this screen
+    // shipped, reception could not add a doctor AT ALL, while admin - which had
+    // the name right - could.
+    //
+    // Annotating the ARRAY does not fix it; inference still runs outwards from
+    // the callback and tsc stays quiet. Annotating the callback's RETURN does -
+    // the literal is checked as written, and the same typo is a compile error
+    // rather than a save button that quietly refuses.
+    const diary = [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek): Prisma.DoctorScheduleCreateManyInput => ({
+      doctorId: d.id, dayOfWeek,
+      startTime: DIARY_START, endTime: DIARY_END, slotDurationMin: DIARY_SLOT_MIN,
+    }));
+    await tx.doctorSchedule.createMany({ data: diary });
     return d;
   });
+
+  // ── A DIARY IS NOT YET A BOOKABLE GRID ──
+  //
+  // DoctorSchedule is the template; DoctorSlot is what the booking screen
+  // actually offers. Admin generates the slots the moment it creates a
+  // consultant and this did not - so even with the write above fixed, a doctor
+  // added here would sit on the roster with no times against them, bookable
+  // from nowhere until somebody happened to press Regenerate.
+  //
+  // AFTER the transaction, for the reason admin does it after its own: a
+  // round-the-clock horizon is tens of thousands of rows, and holding a
+  // transaction open across them blocks the table. A doctor with a diary and no
+  // slots yet is recoverable; a half-created doctor is not. So a failure here is
+  // logged rather than thrown - the doctor exists and is correct, and only the
+  // grid is missing.
+  try {
+    await generateSlots(SLOT_HORIZON_DAYS, doctor.id);
+  } catch (e) {
+    console.error("[reception] doctor created but slot generation failed:", e);
+  }
 
   await logAudit(actor, {
     action: "DOCTOR_CREATED", targetTable: "Doctor", targetId: doctor.id,

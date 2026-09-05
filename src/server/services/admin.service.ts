@@ -5,7 +5,7 @@ import { logAudit } from "./audit.service";
 import { DUTY_DOCTOR } from "./appointments.service";
 import { collectionByMode, type ModeTotal } from "./reports.service";
 import { pharmacyProfitSummary } from "./pharmacy.service";
-import { generateSlots, SLOT_HORIZON_DAYS } from "./slots.service";
+import { generateSlots, SLOT_HORIZON_DAYS, DIARY_START, DIARY_END, DIARY_SLOT_MIN } from "./slots.service";
 import bcrypt from "bcryptjs";
 import type { Role, Prisma } from "@prisma/client";
 import type { AuthUser } from "@/lib/auth/types";
@@ -16,16 +16,6 @@ import {
 } from "@/lib/audit-query";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
-
-/**
- * The consulting diary a newly created doctor gets: round the clock, seven days,
- * 15-minute cadence. It matches what the hospital advertises on every consultant
- * panel ("Open 24 Hours"); reception re-cuts it to 10 minutes from the booking
- * screen when the desk wants finer granularity.
- */
-const DIARY_START = "00:00";
-const DIARY_END = "24:00";
-const DIARY_SLOT_MIN = 15;
 
 /** Top-line numbers for the admin overview. */
 export async function adminOverview(): Promise<{

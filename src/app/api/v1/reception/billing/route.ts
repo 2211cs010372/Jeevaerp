@@ -5,10 +5,23 @@ import { billsLimit, BILLS_PAGE_MAX, listInvoices } from "@/server/services/bill
 
 export const dynamic = "force-dynamic";
 
-/** Every bill the desk might need to settle, void or reprint. */
+/**
+ * Every bill the desk might need to settle, void or reprint - EXCEPT the
+ * pharmacy's.
+ *
+ * A medicine receipt is raised, settled, voided and reprinted at the medicine
+ * window, which has its own bills screen and its own till. They were on this
+ * list as well, which padded the front desk's working queue with rows nobody
+ * there acts on - and let a receptionist void a dispense from a screen with no
+ * sight of the shelf, which now moves stock as well as money.
+ */
 export const GET = handler(async (req) => {
   await requireRole(req, "RECEPTIONIST", "ADMIN");
-  const source = req.nextUrl.searchParams.get("source") ?? undefined;
+  // The one source this desk does not carry is not one it can ask for either:
+  // `?source=PHARMACY` would otherwise be handed straight to the query and walk
+  // past the exclusion below.
+  const asked = req.nextUrl.searchParams.get("source") ?? undefined;
+  const source = asked === "PHARMACY" ? undefined : asked;
   // `date` is yyyy-mm-dd and narrows to that one calendar day. Without it the
   // desk gets its usual working queue - the most recent hundred bills.
   const date = req.nextUrl.searchParams.get("date") ?? undefined;
@@ -25,6 +38,6 @@ export const GET = handler(async (req) => {
   // reached through the day filter, which is a query and has the whole table
   // behind it.
   const limit = billsLimit(req.nextUrl.searchParams.get("limit"));
-  const invoices = await listInvoices(source as never, date ? BILLS_PAGE_MAX : limit, date);
+  const invoices = await listInvoices(source as never, date ? BILLS_PAGE_MAX : limit, date, "PHARMACY");
   return NextResponse.json({ invoices });
 });

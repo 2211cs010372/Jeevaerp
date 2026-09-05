@@ -11,6 +11,22 @@ import { addDateOnlyDays, localDateISO, parseDateOnly } from "@/lib/date";
  */
 export const SLOT_HORIZON_DAYS = 30;
 
+/**
+ * The consulting diary a newly created doctor gets: round the clock, seven days,
+ * 15-minute cadence. It matches what the hospital advertises on every consultant
+ * panel ("Open 24 Hours"); reception re-cuts it to 10 minutes from the booking
+ * screen when the desk wants finer granularity.
+ *
+ * HERE, not in whichever service happens to add a doctor, because two services
+ * do: admin creates a consultant with a login, reception creates a bookable
+ * profile without one. They were separately written and they drifted - one of
+ * them spelled the cadence at a column name that does not exist - so the diary
+ * is defined once, next to the code that reads it back to build the grid.
+ */
+export const DIARY_START = "00:00";
+export const DIARY_END = "24:00";
+export const DIARY_SLOT_MIN = 15;
+
 /** "HH:MM" -> minutes since midnight. "24:00" is a valid END of day. */
 function toMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(":").map(Number);
