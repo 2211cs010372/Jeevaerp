@@ -125,6 +125,10 @@ export async function middleware(req: NextRequest) {
   return NextResponse.next();
 }
 
+// `api` is excluded here, not just early-returned above: without it the
+// middleware function still boots on every single API call only to hand the
+// request straight back, and on Fluid that boot is billed CPU. The guard at the
+// top of middleware() stays as the belt to this braces.
 export const config = {
-  matcher: ["/((?!_next|favicon.ico|.*\\..*).*)"],
+  matcher: ["/((?!api|_next|favicon.ico|.*\\..*).*)"],
 };

@@ -199,24 +199,31 @@ export function PortalShell({
     ));
   }, [localPath, badgePaths]);
 
+  // meta.key is the portal slug, which is deliberately identical to its topic.
+  const portalTopic = isTopic(meta.key) ? [meta.key] : [];
+  const liveEnabled =
+    portalTopic.length > 0 && localPath !== "/login" && badgePaths.length > 0;
+
   useEffect(() => {
     pullBadges();
-    // The slow timer stays as the floor. useLive below makes it immediate when
-    // the socket is up; this keeps the number honest when it is not.
+    // useLive below already refreshes on the realtime signal, on returning to
+    // the tab, and on its own fallback poll WHILE THE SOCKET IS DOWN. A second
+    // unconditional timer on top of that re-fetches every badge path once a
+    // minute from every open portal for nothing, which is exactly the
+    // per-request bill use-live.ts is written to avoid. It stays only as the
+    // floor for a portal whose key is not a live topic, where useLive is off.
+    if (liveEnabled) return;
     const timer = setInterval(pullBadges, 60_000);
     return () => clearInterval(timer);
-  }, [pullBadges]);
+  }, [pullBadges, liveEnabled]);
 
   // A badge is the one thing on screen a member of staff is meant to ACT on -
   // money not collected, a patient waiting, a test nobody ordered. Up to a
   // minute stale was tolerable when nothing else moved; now that every screen
   // updates live, a lagging badge is the thing that looks broken.
-  //
-  // meta.key is the portal slug, which is deliberately identical to its topic.
-  const portalTopic = isTopic(meta.key) ? [meta.key] : [];
   useLive(portalTopic, pullBadges, {
     events: badgeEvents,
-    enabled: portalTopic.length > 0 && localPath !== "/login" && badgePaths.length > 0,
+    enabled: liveEnabled,
   });
 
   const badgeCount = (item: NavItem): number => {
