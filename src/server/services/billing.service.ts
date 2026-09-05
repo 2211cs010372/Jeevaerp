@@ -778,7 +778,8 @@ export async function updateInvoice(
 
 /**
  * Cancel an invoice. Never deleted - status flips to CANCELLED and it stays in
- * the ledger forever. Any lab tests on it are released so they can be re-billed.
+ * the ledger forever. Any lab tests on it are released so they can be re-billed,
+ * and any medicine on it goes back on the shelf.
  */
 export async function cancelInvoice(
   actor: AuthUser,
@@ -790,10 +791,49 @@ export async function cancelInvoice(
   await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const inv = await tx.invoice.findUnique({
       where: { id: input.invoiceId },
-      select: { id: true, status: true, notes: true },
+      select: {
+        id: true, receiptNo: true, status: true, notes: true,
+        // Only the lines that moved stock. A batch is what a dispensed line
+        // carries; a consultation or a lab line has none and reverses nothing.
+        items: { where: { batchId: { not: null } }, select: { batchId: true, qty: true } },
+      },
     });
     if (!inv) throw new ApiError(404, "Invoice not found");
     if (inv.status === "CANCELLED") throw new ApiError(400, "This invoice is already cancelled");
+
+    // ── VOIDING A PHARMACY BILL PUTS THE MEDICINE BACK ON THE SHELF ──
+    //
+    // The sale decremented the batch FEFO picked from and wrote a DISPENSE row
+    // against it. Voiding used to undo the money and nothing else, so a sale
+    // billed to the wrong patient - or handed back across the counter, which is
+    // the ordinary reason this counter voids at all - left the strip physically
+    // on the shelf and missing from the system. The next FEFO pick could not see
+    // it, the stock sheet under-counted it, and the only correction was a
+    // pharmacist remembering to type a manual adjustment with the right batch
+    // and the right quantity.
+    //
+    // REVERSED OFF THE INVOICE LINES, NOT OFF THE LEDGER. A DISPENSE row carries
+    // no invoice reference, so the ledger cannot say which movements belong to
+    // this bill. The line can: it holds the exact batch it was dispensed from
+    // and keeps that link through a bill edit. So what goes back is what the
+    // bill currently says - which is what this patient was actually charged for.
+    //
+    // A RETURN row per line, mirroring the DISPENSE row per line the sale wrote,
+    // stamped with the receipt so a batch's history reads as a pair. Cancelling
+    // an already-cancelled bill is refused above, which is what stops the same
+    // batch being credited twice.
+    const returnedUnits = inv.items.reduce((n: number, l: { qty: number }) => n + l.qty, 0);
+    for (const line of inv.items) {
+      if (!line.batchId) continue;
+      await tx.stockBatch.update({ where: { id: line.batchId }, data: { quantity: { increment: line.qty } } });
+      await tx.stockTransaction.create({
+        data: {
+          batchId: line.batchId, type: "RETURN", qty: line.qty,
+          refId: inv.receiptNo, reason: `Bill voided: ${input.reason.trim()}`,
+          performedById: actor.id,
+        },
+      });
+    }
 
     // Release the lab tests so they can be billed again on a corrected invoice.
     await tx.invoiceItem.updateMany({ where: { invoiceId: inv.id }, data: { labTestId: null } });
@@ -807,7 +847,17 @@ export async function cancelInvoice(
       },
     });
 
-    await logAudit(actor, { action: "INVOICE_CANCELLED", targetTable: "Invoice", targetId: inv.id, meta: { reason: input.reason.trim() }, ...ctx }, tx);
+    await logAudit(actor, {
+      action: "INVOICE_CANCELLED", targetTable: "Invoice", targetId: inv.id,
+      // The units that went back on the shelf ride along, so "what did voiding
+      // this bill return, and who did it" is answerable from the bill's own
+      // audit row rather than by matching timestamps against the stock ledger.
+      meta: {
+        reason: input.reason.trim(),
+        ...(returnedUnits > 0 ? { stockReturned: returnedUnits } : {}),
+      },
+      ...ctx,
+    }, tx);
   });
 
   return getInvoice(input.invoiceId);

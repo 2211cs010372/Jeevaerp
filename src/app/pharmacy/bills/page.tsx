@@ -849,7 +849,7 @@ export default function PharmacyBillsPage() {
             <p className="rounded-lg bg-[var(--p-amber-soft)] px-3 py-2 text-[12px] leading-relaxed text-[#8a6414]">
               The bill is marked <b>cancelled</b>, not deleted - the receipt number stays used, which is what GST expects.
               {Number(voiding.amountPaid) > 0 && <> This bill already took <b>₹{money(voiding.amountPaid)}</b>; voiding it does <b>not</b> hand the cash back — use <b>Refund</b> for that.</>}
-              {" "}It does not put the strips back on the shelf either; that is a stock return.
+              {" "}The medicine <b>goes back on the shelf</b> - every batch on this bill is credited back to stock. So void it when the strips are actually back at the counter; if the patient has walked out with them, refund instead.
             </p>
           </div>
         </Modal>

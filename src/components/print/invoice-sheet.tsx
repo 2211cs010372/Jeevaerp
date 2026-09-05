@@ -86,8 +86,8 @@ const HALF_A4_MM = 138.5;
  * of half-sheets that have to be kept together, cut apart, and read across.
  *
  * So past a threshold the bill stops being a half-sheet document and becomes a
- * full one. NINE ITEMS is where that turns over: eight is comfortably inside
- * what a half-sheet holds, and by nine the bill is already spilling onto a
+ * full one. EIGHT ITEMS is where that turns over: seven is comfortably inside
+ * what a half-sheet holds, and by eight the bill is already spilling onto a
  * second half - at which point it is using a whole A4 anyway, and using it as
  * two loose halves instead of one page.
  *
@@ -105,7 +105,7 @@ const HALF_A4_MM = 138.5;
 const FULL_A4_MM = 278;
 
 /** Does this bill want a whole sheet rather than half of one? */
-const wantsFullSheet = (inv: Invoice) => inv.source === "PHARMACY" && inv.items.length > 8;
+const wantsFullSheet = (inv: Invoice) => inv.source === "PHARMACY" && inv.items.length > 7;
 
 /**
  * The name the pharmacy counter bills under - see the note at `hospitalName`.
@@ -212,7 +212,7 @@ const BILL_MONO_CSS = `
     border-top: .8px solid var(--pr-ink); border-bottom: .8px solid var(--pr-ink);
   }
   /**
-   * ── 1.28, AND IT IS WHAT MAKES EIGHT ITEMS FIT ──
+   * ── 1.28, BECAUSE A BILL ROW IS NOT A PARAGRAPH ──
    *
    * The rows inherited the sheet's 1.45 line-height, which is a setting for
    * PROSE - it opens paragraphs up so the eye can find the next line across a
@@ -221,13 +221,13 @@ const BILL_MONO_CSS = `
    * buying nothing but paper: 2.4px a row, and a half-sheet's worth over eight
    * of them.
    *
-   * Eight items is the number that matters, because eight is where the bill is
-   * meant to turn over to a full sheet (see wantsFullSheet). It was not fitting
-   * - a straightforward eight-line pharmacy bill packed to seven rows and sent
-   * the eighth to a second half-sheet, so the counter cut and stapled two
-   * halves to hand over a bill the design says is a one-sheet bill. Tightening
-   * the leading is what closes that gap, and it closes it without taking a
-   * point off anything anybody reads.
+   * It is what keeps the half-sheet honest right at its limit. Seven items is
+   * the most one carries - by eight the bill turns over to a full sheet, see
+   * wantsFullSheet - and at 1.45 a bill sized to the half-sheet was not fitting
+   * on it: it packed a row short and sent its last line to a second half-sheet,
+   * so the counter cut and stapled two halves to hand over a bill the design
+   * says is a one-sheet bill. Tightening the leading is what closes that gap,
+   * and it closes it without taking a point off anything anybody reads.
    *
    * A name too long for its column still wraps, and still wraps to a row this
    * measures - the packing reads real heights, so a bill of long names simply
