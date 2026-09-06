@@ -1,4 +1,5 @@
 import { collectionByMode, type ModeTotal } from "./reports.service";
+import { parseLocalDate, startOfLocalDay } from "@/lib/date";
 import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api";
 import { logAudit } from "./audit.service";
@@ -1013,11 +1014,17 @@ export async function medicineBatches(medicineId: string) {
  * unit-counted one. Getting this wrong doesn't crash - it just quietly reports a
  * ₹6 sale of paracetamol as a ₹750 loss.
  */
-export async function pharmacyProfitSummary(): Promise<{
+export async function pharmacyProfitSummary(opts?: { dateISO?: string }): Promise<{
   profitToday: string; marginPct: number;
   stockValueCost: string; stockValueMrp: string; potentialProfit: string;
 }> {
-  const today = new Date(); today.setHours(0, 0, 0, 0);
+  // `dateISO` moves the PROFIT window only. The stock valuation below is
+  // deliberately left as "what is on the shelf right now" - there is no history
+  // of past shelf contents to value, and a report for last Tuesday that claimed
+  // to know Tuesday's stock value would be inventing it. The daily report says
+  // so where it prints the number.
+  const today = opts?.dateISO ? parseLocalDate(opts.dateISO) : new Date();
+  today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
   const [todayItems, batches] = await Promise.all([
     prisma.invoiceItem.findMany({
@@ -1025,7 +1032,10 @@ export async function pharmacyProfitSummary(): Promise<{
       select: { qty: true, unitPrice: true, batch: { select: { purchasePrice: true, packSize: true } } },
     }),
     prisma.stockBatch.findMany({
-      where: { quantity: { gt: 0 }, expiryDate: { gte: today } },
+      // startOfLocalDay(), not `today`: the shelf is valued as it stands NOW
+      // whatever day the profit window is for. Reusing `today` for a back-dated
+      // report would count batches that have expired since as still sellable.
+      where: { quantity: { gt: 0 }, expiryDate: { gte: startOfLocalDay() } },
       select: { quantity: true, mrp: true, purchasePrice: true, packSize: true },
     }),
   ]);

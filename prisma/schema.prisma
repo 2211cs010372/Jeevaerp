@@ -2323,6 +2323,25 @@ model HospitalConfig {
   /// What the day fee is multiplied by inside the window. 2 = double.
   afterHoursOpMultiplier Decimal @default(2) @db.Decimal(4, 2)
 
+  // ── THE NIGHTLY REPORT TO THE OWNERS ──────────────────────────────────────
+  //
+  // Recipients live here rather than only in the environment because the list
+  // changes for business reasons - a partner joins, an accountant leaves - and
+  // needing a developer and a redeploy for that means the list goes stale and
+  // the wrong person keeps receiving the hospital's takings.
+  //
+  // Free text, not a related table. It is a distribution list of at most a
+  // dozen entries, typed and corrected in one box; a join table would be more
+  // schema for the same string. Parsing, de-duplication and validation live in
+  // src/lib/daily-report.ts, and REPORT_EMAILS / REPORT_WHATSAPP_NUMBERS in the
+  // environment remain the fallback for whichever list is still blank.
+  /// Send the 9:30 PM report. Off = the cron builds nothing and mails nobody.
+  dailyReportEnabled    Boolean @default(true)
+  /// Comma-separated inboxes. Blank falls back to REPORT_EMAILS.
+  reportEmails          String? @db.Text
+  /// Comma-separated mobiles. Blank falls back to REPORT_WHATSAPP_NUMBERS.
+  reportWhatsappNumbers String? @db.Text
+
   // ── WHAT THE PUBLIC SITE CAN DO ───────────────────────────────────────────
   /// Master switch for online appointment booking.
   onlineBookingEnabled    Boolean @default(true)

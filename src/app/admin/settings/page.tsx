@@ -38,6 +38,9 @@ interface Config {
   afterHoursOpStart: string;
   afterHoursOpEnd: string;
   afterHoursOpMultiplier: number;
+  dailyReportEnabled: boolean;
+  reportEmails: string;
+  reportWhatsappNumbers: string;
 }
 
 const blank: Config = {
@@ -56,6 +59,9 @@ const blank: Config = {
   afterHoursOpStart: "20:00",
   afterHoursOpEnd: "06:00",
   afterHoursOpMultiplier: 2,
+  dailyReportEnabled: true,
+  reportEmails: "",
+  reportWhatsappNumbers: "",
 };
 
 /** Matches the server's cap. Rejected here too so a 3 MB photo fails instantly. */
@@ -88,6 +94,7 @@ export default function SettingsPage() {
           ...r.config,
           gstin: r.config.gstin ?? "", phone: r.config.phone ?? "", email: r.config.email ?? "",
           tagline: r.config.tagline ?? "", invoiceFooterNote: r.config.invoiceFooterNote ?? "",
+          reportEmails: r.config.reportEmails ?? "", reportWhatsappNumbers: r.config.reportWhatsappNumbers ?? "",
           brandName: r.config.brandName || "Jeeva",
           // A Prisma Decimal arrives over JSON as a string ("2"), and the number
           // input plus the min/max check both want a real number.
@@ -301,6 +308,49 @@ export default function SettingsPage() {
 
         {/* ── SMS ────────────────────────────────────────────────────────── */}
         <SmsCard />
+
+        {/* ── DAILY REPORT ───────────────────────────────────────────────── */}
+        <Card
+          title="Daily report"
+          sub="The whole day — collections, billing, ward, lab, pharmacy — sent to the owners every night at 9:30 PM, by email and WhatsApp."
+        >
+          <Toggle
+            checked={f.dailyReportEnabled}
+            onChange={(v) => set("dailyReportEnabled")(v)}
+            label="Send the nightly report"
+            on="At 9:30 PM the report is built for that day and sent to everyone listed below."
+            off="Nothing is sent automatically. The Send now button below still works — it is an explicit request, not the schedule."
+          />
+          <div className="grid gap-4 border-b border-[var(--p-border)] p-6 last:border-b-0 sm:grid-cols-2">
+            <label className="block">
+              <span className="block text-[12px] font-semibold uppercase tracking-[0.05em] text-[var(--p-muted)]">Email recipients</span>
+              <textarea
+                value={f.reportEmails}
+                onChange={(e) => set("reportEmails")(e.target.value)}
+                rows={3} placeholder={"owner@example.com,\naccounts@example.com"}
+                className={`${fld} mt-2 resize-y font-mono text-[12.5px]`}
+              />
+              <span className="mt-1.5 block text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+                Commas, spaces or new lines — all three work. Everyone listed is on the same
+                message and can see the others.
+              </span>
+            </label>
+            <label className="block">
+              <span className="block text-[12px] font-semibold uppercase tracking-[0.05em] text-[var(--p-muted)]">WhatsApp numbers</span>
+              <textarea
+                value={f.reportWhatsappNumbers}
+                onChange={(e) => set("reportWhatsappNumbers")(e.target.value)}
+                rows={3} placeholder={"9876543210,\n9876543211"}
+                className={`${fld} mt-2 resize-y font-mono text-[12.5px]`}
+              />
+              <span className="mt-1.5 block text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+                10-digit Indian mobiles. WhatsApp gets a short summary — the full statement
+                is in the email.
+              </span>
+            </label>
+          </div>
+          <DailyReportStatus />
+        </Card>
 
         {/* ── BILL EDITING ───────────────────────────────────────────────── */}
         <Card title="Billing" sub="Who is allowed to rewrite a bill after it has been raised.">
@@ -575,6 +625,160 @@ function SmsCard() {
         </div>
       </div>
     </Card>
+  );
+}
+
+/**
+ * Whether the nightly report can actually go out, and a way to prove it.
+ *
+ * Same lesson as SmsCard: "the report didn't arrive" is not actionable on its
+ * own. An email key can be valid while the sending DOMAIN is unverified, and a
+ * WhatsApp account can be live while the template is still waiting for Meta -
+ * two different problems with the same symptom. So this names each channel's
+ * state separately, says how many people are on each list and where that list
+ * came from, and lets an admin send one real report and read what happened.
+ */
+function DailyReportStatus() {
+  const [info, setInfo] = useState<{
+    recipients: {
+      enabled: boolean; emails: string[]; phones: string[];
+      emailSource: "settings" | "env" | "none"; phoneSource: "settings" | "env" | "none";
+    };
+    email: { configured: boolean; provider: string | null; from: string | null; reason?: string };
+    whatsapp: { configured: boolean; provider: string | null; reportTemplateReady: boolean; freeTextEnabled: boolean; disabled: boolean };
+    schedule: string;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{
+    date: string;
+    skipped?: string;
+    email: { attempted: number; sent: boolean; reason?: string };
+    whatsapp: { attempted: number; sent: number; failures: { to: string; reason?: string }[] };
+  } | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  const load = () => api.get<{ status: NonNullable<typeof info> }>("/admin/daily-report")
+    .then((r) => setInfo(r.status)).catch(() => {});
+
+  useEffect(() => { load(); }, []);
+
+  async function sendNow() {
+    setBusy(true); setResult(null); setFailed(null);
+    try {
+      setResult(await api.post("/admin/daily-report", {}));
+      // The send re-reads the saved recipients, so refresh the counts beside
+      // the button - they are the numbers that were actually used.
+      await load();
+    } catch (e) {
+      setFailed(e instanceof ApiClientError ? e.message : "Request failed");
+    } finally { setBusy(false); }
+  }
+
+  const emailSourceNote = (s: string, n: number) =>
+    n === 0 ? "nobody listed" : s === "env" ? `${n} from REPORT_EMAILS` : `${n} from this screen`;
+  const phoneSourceNote = (s: string, n: number) =>
+    n === 0 ? "nobody listed" : s === "env" ? `${n} from REPORT_WHATSAPP_NUMBERS` : `${n} from this screen`;
+
+  return (
+    <div className="space-y-4 p-6">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Stat
+          label="Email"
+          value={info?.email.configured ? `${info.email.provider} · ${emailSourceNote(info.recipients.emailSource, info.recipients.emails.length)}` : "not configured"}
+          tone={info?.email.configured ? (info.recipients.emails.length ? "good" : "bad") : "bad"}
+        />
+        <Stat
+          label="WhatsApp"
+          value={
+            !info ? "…"
+              : !info.whatsapp.configured ? "not configured"
+              : !info.whatsapp.reportTemplateReady ? "no approved template"
+              : `${info.whatsapp.provider} · ${phoneSourceNote(info.recipients.phoneSource, info.recipients.phones.length)}`
+          }
+          tone={info?.whatsapp.configured && info.whatsapp.reportTemplateReady && info.recipients.phones.length ? "good" : "bad"}
+        />
+        <Stat
+          label="Schedule"
+          value={info ? (info.recipients.enabled ? info.schedule : "switched off") : "…"}
+          tone={info?.recipients.enabled ? "good" : "bad"}
+        />
+      </div>
+
+      {info && !info.email.configured && (
+        <p className="rounded-lg bg-[var(--p-rose-soft)] px-4 py-2.5 text-[12px] leading-relaxed text-[var(--p-rose)]">
+          <b>No email is being sent.</b> {info.email.reason ?? "The provider is not configured."} Add a
+          Resend API key and a sender on a verified domain, then redeploy. Until then the report is
+          written to the server log instead of being sent.
+        </p>
+      )}
+      {info && info.email.configured && !info.whatsapp.reportTemplateReady && (
+        <p className="rounded-lg bg-[var(--p-bg)] px-4 py-2.5 text-[12px] leading-relaxed text-[var(--p-muted)]">
+          <b>Email only for now.</b> WhatsApp will not send until a business-initiated template is
+          approved — the same paperwork as a DLT registration for SMS. The exact body to register is
+          written out in <code>src/lib/daily-report.ts</code>. Nothing else changes when it arrives:
+          paste the template name into <code>WHATSAPP_TPL_DAILY_REPORT</code> and it starts sending.
+        </p>
+      )}
+
+      <div className="rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] p-4">
+        <p className="text-[12.5px] font-semibold text-[var(--p-ink)]">Send today&apos;s report now</p>
+        <p className="mt-0.5 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+          Sends a real report for today to everyone on the saved lists — press <b>Save settings</b>
+          first if you have just edited them, because this uses what is stored, not what is typed.
+          Useful the morning after a night the schedule missed.
+        </p>
+        <button onClick={sendNow} disabled={busy}
+          className="btn-primary mt-3 inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[13px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45">
+          {busy ? <Spinner /> : <Icon name="check" size={14} />} {busy ? "Sending…" : "Send now"}
+        </button>
+
+        {failed && (
+          <p className="mt-3 rounded-lg bg-[var(--p-rose-soft)] px-4 py-2.5 text-[12.5px] text-[var(--p-rose)]">{failed}</p>
+        )}
+
+        {result && (
+          <div className={`mt-3 rounded-lg border px-4 py-3 ${
+            result.email.sent || result.whatsapp.sent > 0
+              ? "border-[var(--p-teal)]/30 bg-[var(--p-teal-soft)]"
+              : "border-[var(--p-rose)]/30 bg-[var(--p-rose-soft)]"
+          }`}>
+            <p className={`text-[13px] font-bold ${
+              result.email.sent || result.whatsapp.sent > 0 ? "text-[var(--p-teal-deep)]" : "text-[var(--p-rose)]"
+            }`}>
+              {result.skipped === "no-recipients"
+                ? "Nobody is on either list — nothing was sent."
+                : result.skipped === "disabled"
+                  ? "The nightly report is switched off."
+                  : `Report for ${result.date}.`}
+            </p>
+            {!result.skipped && (
+              <ul className="mt-1.5 space-y-1 text-[12.5px] leading-relaxed text-[var(--p-text)]">
+                <li>
+                  Email: {result.email.sent
+                    ? `sent to ${result.email.attempted} recipient${result.email.attempted === 1 ? "" : "s"}`
+                    : `not sent${result.email.reason ? ` (${result.email.reason})` : ""}`}
+                </li>
+                <li>
+                  WhatsApp: {result.whatsapp.attempted === 0
+                    ? "no numbers listed"
+                    : `${result.whatsapp.sent} of ${result.whatsapp.attempted} sent`}
+                  {result.whatsapp.failures.length > 0 && (
+                    <span className="text-[var(--p-muted)]">
+                      {" — "}{result.whatsapp.failures.map((x) => `${x.to} (${x.reason ?? "failed"})`).join(", ")}
+                    </span>
+                  )}
+                </li>
+              </ul>
+            )}
+            <p className="mt-1.5 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+              <code>not-configured</code> no provider keys · <code>no-template</code> the WhatsApp
+              template is not approved yet · <code>config</code> the key or sending domain is
+              refused, which retrying will not fix.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

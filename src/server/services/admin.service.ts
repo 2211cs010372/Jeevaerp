@@ -1059,6 +1059,7 @@ export async function updateHospitalConfig(
     billEditingEnabled?: boolean;
     afterHoursOpEnabled?: boolean; afterHoursOpStart?: string;
     afterHoursOpEnd?: string; afterHoursOpMultiplier?: number;
+    dailyReportEnabled?: boolean; reportEmails?: string; reportWhatsappNumbers?: string;
   },
   ctx: { ipAddress?: string; userAgent?: string }
 ) {
@@ -1069,10 +1070,11 @@ export async function updateHospitalConfig(
       accountsTabEnabled: true, billEditingEnabled: true,
       afterHoursOpEnabled: true, afterHoursOpStart: true,
       afterHoursOpEnd: true, afterHoursOpMultiplier: true,
+      dailyReportEnabled: true, reportEmails: true, reportWhatsappNumbers: true,
     },
   });
 
-  const { logoDataUrl, faviconDataUrl, tagline, invoiceFooterNote, ...rest } = input;
+  const { logoDataUrl, faviconDataUrl, tagline, invoiceFooterNote, reportEmails, reportWhatsappNumbers, ...rest } = input;
   const data = {
     ...rest,
     gstin: input.gstin || null,
@@ -1080,6 +1082,11 @@ export async function updateHospitalConfig(
     email: input.email || null,
     tagline: tagline?.trim() || null,
     invoiceFooterNote: invoiceFooterNote?.trim() || null,
+    // Absent = the caller is not editing the distribution list; empty = it was
+    // cleared on purpose. Collapsing the two with a spread would let any save of
+    // the settings form wipe a list the form did not send.
+    ...(reportEmails === undefined ? {} : { reportEmails: reportEmails.trim() || null }),
+    ...(reportWhatsappNumbers === undefined ? {} : { reportWhatsappNumbers: reportWhatsappNumbers.trim() || null }),
     // Absent = leave the current logo alone. Empty string = the admin pressed
     // Remove. Those are different intentions and a spread would collapse them.
     ...(logoDataUrl === undefined ? {} : { logoDataUrl: logoDataUrl === "" ? null : logoDataUrl }),
@@ -1131,6 +1138,21 @@ export async function updateHospitalConfig(
     if (input.afterHoursOpMultiplier !== undefined
         && input.afterHoursOpMultiplier !== Number(existing.afterHoursOpMultiplier)) {
       changes.afterHoursOpMultiplier = `${Number(existing.afterHoursOpMultiplier)}x -> ${input.afterHoursOpMultiplier}x`;
+    }
+    // WHO GETS THE HOSPITAL'S TAKINGS IN THEIR INBOX. The recipients themselves
+    // are not written to the log - an audit row that lists every owner's email
+    // and mobile is a second copy of the distribution list in a table more
+    // people can read. The COUNT is enough to answer "somebody was added on the
+    // 14th"; the list itself is one screen away for anyone entitled to see it.
+    if (input.dailyReportEnabled !== undefined && input.dailyReportEnabled !== existing.dailyReportEnabled) {
+      changes.dailyReportEnabled = `${existing.dailyReportEnabled} -> ${input.dailyReportEnabled}`;
+    }
+    const listSize = (s: string | null | undefined) => (s?.trim() ? s.split(/[,;\s]+/).filter(Boolean).length : 0);
+    if (reportEmails !== undefined && (reportEmails.trim() || null) !== (existing.reportEmails || null)) {
+      changes.reportEmails = `${listSize(existing.reportEmails)} -> ${listSize(reportEmails)} recipient(s)`;
+    }
+    if (reportWhatsappNumbers !== undefined && (reportWhatsappNumbers.trim() || null) !== (existing.reportWhatsappNumbers || null)) {
+      changes.reportWhatsappNumbers = `${listSize(existing.reportWhatsappNumbers)} -> ${listSize(reportWhatsappNumbers)} number(s)`;
     }
     if (logoDataUrl !== undefined && (logoDataUrl || null) !== (existing.logoDataUrl || null)) {
       changes.logo = logoDataUrl ? "replaced" : "removed";

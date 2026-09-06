@@ -151,6 +151,15 @@ export const hospitalConfigSchema = z.object({
   /// bill. See the HospitalConfig column comment for why it defaults off.
   billEditingEnabled: z.boolean().optional(),
 
+  // The nightly report to the owners. Both lists are free text because that is
+  // what a distribution list is - typed, pasted, corrected at a desk. They are
+  // parsed and de-duplicated in lib/daily-report.ts, which also drops anything
+  // that is not an address or an Indian mobile, so a stray word costs a
+  // recipient rather than a rejected form.
+  dailyReportEnabled: z.boolean().optional(),
+  reportEmails: z.string().trim().max(2000).optional().or(z.literal("")),
+  reportWhatsappNumbers: z.string().trim().max(1000).optional().or(z.literal("")),
+
   // After-hours OP pricing. The times are "HH:MM" on a 24-hour clock; end may be
   // earlier than start, which means the window crosses midnight.
   afterHoursOpEnabled: z.boolean().optional(),
@@ -159,6 +168,17 @@ export const hospitalConfigSchema = z.object({
   // Floor of 1 and not 0: this is a surcharge, and a multiplier below 1 would
   // quietly turn the night shift into a discount.
   afterHoursOpMultiplier: z.coerce.number().min(1).max(10).optional(),
+});
+
+/**
+ * Send the daily report now.
+ *
+ * The date is optional and means "today" when absent. It exists for the case
+ * the button is really for: a night the cron missed, re-sent the next morning
+ * for the day it should have covered.
+ */
+export const dailyReportSendSchema = z.object({
+  date: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").optional(),
 });
 
 /**

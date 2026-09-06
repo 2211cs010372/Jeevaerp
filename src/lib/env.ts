@@ -63,6 +63,57 @@ const schema = z.object({
   SMS_ADMIN_NUMBERS: z.string().optional(),
   /** Set to "off" to stop every notification SMS. Never affects OTP. */
   SMS_NOTIFICATIONS: z.string().optional(),
+
+  // ---- Email (src/lib/email.ts) ----
+  //
+  // Both are needed before a single mail leaves the building - a key with no
+  // sender, or a sender on an unverified domain, is rejected by the provider.
+  // Absent => the message is logged instead of sent, except a staff OTP in
+  // production, which throws rather than silently dropping a login code.
+  /** Resend API key. Dashboard -> API Keys. */
+  RESEND_API_KEY: z.string().optional(),
+  /** e.g. `Jeeva Hospital <reports@jeevamultispecialityhospital.com>`. The
+   *  domain must be verified in Resend or every send is refused. */
+  EMAIL_FROM: z.string().optional(),
+
+  // ---- WhatsApp (src/lib/whatsapp.ts) ----
+  //
+  // Two providers, chosen automatically from whichever keys are present;
+  // WHATSAPP_PROVIDER forces one. Nothing set => messages are logged, which is
+  // the honest state until a Meta business account and an approved template
+  // exist. See the file header for the 24-hour-window rule.
+  WHATSAPP_PROVIDER: z.enum(["meta", "twilio"]).optional(),
+  WHATSAPP_TOKEN: z.string().optional(),
+  WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
+  /** Overrides Meta's graph host - for a BSP that proxies the same request shape. */
+  WHATSAPP_API_BASE: z.string().optional(),
+  TWILIO_ACCOUNT_SID: z.string().optional(),
+  TWILIO_AUTH_TOKEN: z.string().optional(),
+  TWILIO_WHATSAPP_FROM: z.string().optional(),
+  /** Approved template NAME (Meta) or Content SID (Twilio) for the daily report. */
+  WHATSAPP_TPL_DAILY_REPORT: z.string().optional(),
+  /** Template language code. Must match the approved template exactly. */
+  WHATSAPP_TPL_LANG: z.string().optional(),
+  /** "on" allows plain-text sends - only works inside the 24-hour window. */
+  WHATSAPP_ALLOW_FREE_TEXT: z.string().optional(),
+  /** "off" stops every WhatsApp message, the twin of SMS_NOTIFICATIONS. */
+  WHATSAPP_NOTIFICATIONS: z.string().optional(),
+
+  // ---- The daily report (src/server/services/daily-report.service.ts) ----
+  //
+  // Recipients are edited on the admin settings screen and stored on
+  // HospitalConfig; these two are the FALLBACK for whichever list is still
+  // blank there, and the only source in the window between deploying this and
+  // running the migration.
+  REPORT_EMAILS: z.string().optional(),
+  REPORT_WHATSAPP_NUMBERS: z.string().optional(),
+  /**
+   * Shared secret for /api/v1/cron/daily-report. Set it on the Vercel project
+   * and Vercel sends it as a Bearer token on every scheduled call. WITHOUT IT
+   * THE ENDPOINT REFUSES TO RUN - it reads the whole hospital's takings and
+   * mails them, so an unauthenticated version of it is a scheduled data leak.
+   */
+  CRON_SECRET: z.string().optional(),
 });
 
 /**
