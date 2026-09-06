@@ -11,6 +11,7 @@ import {
   renderWhatsAppText, whatsappReportVars, reportSubject, rs,
   type DailyReport,
 } from "@/lib/daily-report";
+import { renderReportPdf, reportPdfFilename } from "@/lib/daily-report-pdf";
 import type { AuthUser } from "@/lib/auth/types";
 
 /**
@@ -324,7 +325,8 @@ export async function reportRecipients(): Promise<ReportRecipients> {
 export interface SendResult {
   date: string;
   skipped?: "disabled" | "no-recipients";
-  email: { attempted: number; sent: boolean; reason?: string };
+  /** `pdf` says whether the statement was attached - it can fail on its own. */
+  email: { attempted: number; sent: boolean; reason?: string; pdf?: boolean };
   whatsapp: { attempted: number; sent: number; failures: { to: string; reason?: string }[] };
 }
 
@@ -361,14 +363,30 @@ export async function sendDailyReport(opts?: {
   // ── email ───────────────────────────────────────────────────────────────
   let email: SendResult["email"] = { attempted: to.emails.length, sent: false, reason: "no-recipients" };
   if (to.emails.length) {
+    // THE PDF IS A BONUS, THE BODY IS THE REPORT. Everything in the attachment
+    // is already in the mail, so a font or a layout error must cost the
+    // attachment and nothing else - never the night's report. Hence the catch.
+    let attachments: { filename: string; content: string; contentType: string }[] | undefined;
+    try {
+      const pdf = await renderReportPdf(report);
+      attachments = [{
+        filename: reportPdfFilename(report),
+        content: Buffer.from(pdf).toString("base64"),
+        contentType: "application/pdf",
+      }];
+    } catch (err) {
+      console.error("[daily-report] PDF failed, sending without it", err);
+    }
+
     const out = await deliverEmail({
       to: to.emails,
       subject: reportSubject(report),
       html: renderReportHtml(report),
       text: renderReportText(report),
+      attachments,
       label: "daily-report",
     });
-    email = { attempted: to.emails.length, sent: out.sent, reason: out.reason };
+    email = { attempted: to.emails.length, sent: out.sent, reason: out.reason, pdf: !!attachments };
   }
 
   // ── whatsapp ────────────────────────────────────────────────────────────

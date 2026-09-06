@@ -312,7 +312,7 @@ export default function SettingsPage() {
         {/* ── DAILY REPORT ───────────────────────────────────────────────── */}
         <Card
           title="Daily report"
-          sub="The whole day — collections, billing, ward, lab, pharmacy — sent to the owners every night at 9:30 PM, by email and WhatsApp."
+          sub="The whole day — collections, billing, ward, lab, pharmacy — sent to the owners every night at 9:30 PM. Email carries a printable PDF statement; WhatsApp gets the headline numbers."
         >
           <Toggle
             checked={f.dailyReportEnabled}
@@ -644,7 +644,7 @@ function DailyReportStatus() {
       enabled: boolean; emails: string[]; phones: string[];
       emailSource: "settings" | "env" | "none"; phoneSource: "settings" | "env" | "none";
     };
-    email: { configured: boolean; provider: string | null; from: string | null; reason?: string };
+    email: { configured: boolean; provider: string | null; from: string | null; host?: string; reason?: string };
     whatsapp: { configured: boolean; provider: string | null; reportTemplateReady: boolean; freeTextEnabled: boolean; disabled: boolean };
     schedule: string;
   } | null>(null);
@@ -652,7 +652,7 @@ function DailyReportStatus() {
   const [result, setResult] = useState<{
     date: string;
     skipped?: string;
-    email: { attempted: number; sent: boolean; reason?: string };
+    email: { attempted: number; sent: boolean; reason?: string; pdf?: boolean };
     whatsapp: { attempted: number; sent: number; failures: { to: string; reason?: string }[] };
   } | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
@@ -706,9 +706,17 @@ function DailyReportStatus() {
 
       {info && !info.email.configured && (
         <p className="rounded-lg bg-[var(--p-rose-soft)] px-4 py-2.5 text-[12px] leading-relaxed text-[var(--p-rose)]">
-          <b>No email is being sent.</b> {info.email.reason ?? "The provider is not configured."} Add a
-          Resend API key and a sender on a verified domain, then redeploy. Until then the report is
-          written to the server log instead of being sent.
+          <b>No email is being sent.</b> {info.email.reason ?? "The provider is not configured."} Set
+          <code> SMTP_HOST</code>, <code>SMTP_USER</code> and <code>SMTP_PASS</code> to the hospital
+          mailbox, then redeploy. Until then the report is written to the server log instead of
+          being sent.
+        </p>
+      )}
+      {info?.email.configured && info.email.from && (
+        <p className="text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+          Sending as <b>{info.email.from}</b>
+          {info.email.host ? <> via <code>{info.email.host}</code></> : null}. Replies go to that
+          mailbox, so it should be one somebody reads.
         </p>
       )}
       {info && info.email.configured && !info.whatsapp.reportTemplateReady && (
@@ -723,14 +731,23 @@ function DailyReportStatus() {
       <div className="rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] p-4">
         <p className="text-[12.5px] font-semibold text-[var(--p-ink)]">Send today&apos;s report now</p>
         <p className="mt-0.5 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
-          Sends a real report for today to everyone on the saved lists — press <b>Save settings</b>
-          first if you have just edited them, because this uses what is stored, not what is typed.
-          Useful the morning after a night the schedule missed.
+          Sends a real report for today to everyone on the saved lists — the email carries the
+          printable statement as a PDF attachment. Press <b>Save settings</b> first if you have just
+          edited the lists, because this uses what is stored, not what is typed. Useful the morning
+          after a night the schedule missed.
         </p>
-        <button onClick={sendNow} disabled={busy}
-          className="btn-primary mt-3 inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[13px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45">
-          {busy ? <Spinner /> : <Icon name="check" size={14} />} {busy ? "Sending…" : "Send now"}
-        </button>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button onClick={sendNow} disabled={busy}
+            className="btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[13px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45">
+            {busy ? <Spinner /> : <Icon name="check" size={14} />} {busy ? "Sending…" : "Send now"}
+          </button>
+          {/* A plain link, not a fetch: the browser's own PDF viewer is better
+              than anything worth building here, and the cookie goes with it. */}
+          <a href="/api/v1/admin/daily-report?pdf=1" target="_blank" rel="noopener"
+            className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] bg-white px-4 py-2 text-[13px] font-semibold text-[var(--p-text)] transition-colors hover:border-[var(--p-teal)]">
+            <Icon name="file" size={14} /> Open today&apos;s PDF
+          </a>
+        </div>
 
         {failed && (
           <p className="mt-3 rounded-lg bg-[var(--p-rose-soft)] px-4 py-2.5 text-[12.5px] text-[var(--p-rose)]">{failed}</p>
@@ -755,7 +772,10 @@ function DailyReportStatus() {
               <ul className="mt-1.5 space-y-1 text-[12.5px] leading-relaxed text-[var(--p-text)]">
                 <li>
                   Email: {result.email.sent
-                    ? `sent to ${result.email.attempted} recipient${result.email.attempted === 1 ? "" : "s"}`
+                    ? `sent to ${result.email.attempted} recipient${result.email.attempted === 1 ? "" : "s"}` +
+                      // The attachment can fail on its own without costing the
+                      // mail, so it is reported on its own.
+                      (result.email.pdf ? " with the PDF attached" : " — but the PDF could not be built")
                     : `not sent${result.email.reason ? ` (${result.email.reason})` : ""}`}
                 </li>
                 <li>

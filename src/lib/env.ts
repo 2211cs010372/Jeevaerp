@@ -66,15 +66,30 @@ const schema = z.object({
 
   // ---- Email (src/lib/email.ts) ----
   //
-  // Both are needed before a single mail leaves the building - a key with no
-  // sender, or a sender on an unverified domain, is rejected by the provider.
-  // Absent => the message is logged instead of sent, except a staff OTP in
-  // production, which throws rather than silently dropping a login code.
-  /** Resend API key. Dashboard -> API Keys. */
+  // Two providers, chosen automatically from whichever credentials are present;
+  // EMAIL_PROVIDER forces one. Nothing set => the message is logged instead of
+  // sent, except a staff OTP in production, which throws rather than silently
+  // dropping a login code.
+  //
+  // SMTP is the primary: the hospital's own Hostinger mailbox sends to any
+  // recipient the moment the password is set, with no domain verification.
+  /** e.g. smtp.hostinger.com */
+  SMTP_HOST: z.string().optional(),
+  /** 465 (implicit TLS) or 587 (STARTTLS). Defaults to 465. */
+  SMTP_PORT: z.string().optional(),
+  /** Overrides the TLS mode implied by the port. Rarely needed. */
+  SMTP_SECURE: z.string().optional(),
+  /** The FULL mailbox address, e.g. info@jeevamultispecialityhospital.com */
+  SMTP_USER: z.string().optional(),
+  /** That mailbox's own password - not the hosting panel login. */
+  SMTP_PASS: z.string().optional(),
+  /** Resend API key. Dashboard -> API Keys. The fallback provider. */
   RESEND_API_KEY: z.string().optional(),
-  /** e.g. `Jeeva Hospital <reports@jeevamultispecialityhospital.com>`. The
-   *  domain must be verified in Resend or every send is refused. */
+  /** e.g. `Jeeva Hospital <reports@jeevamultispecialityhospital.com>`.
+   *  Optional on SMTP (defaults to SMTP_USER); REQUIRED by Resend, whose
+   *  domain must be verified there or every send is refused. */
   EMAIL_FROM: z.string().optional(),
+  EMAIL_PROVIDER: z.enum(["smtp", "resend"]).optional(),
 
   // ---- WhatsApp (src/lib/whatsapp.ts) ----
   //
