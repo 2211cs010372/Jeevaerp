@@ -11,6 +11,8 @@ import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 interface Row {
   id: string; opNumber: string; time: string; status: string; price: string; visitDate: string;
   referredByName: string | null; referralSource: string | null;
+  /** The referral came from the patient record, not from this visit. */
+  referralFromPatient: boolean;
   patient: { id: string; displayId: string; name: string };
   /** NULL on an emergency/casualty visit taken with no consultant named. */
   doctor: { id: string; name: string; department: string } | null;
@@ -117,7 +119,11 @@ export default function AdminAppointmentsPage() {
             <section data-rise className="surface mb-6 overflow-hidden">
               <div className="border-b border-[var(--p-border)] px-6 py-4">
                 <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Referrals by person</h3>
-                <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">How many visits each referrer sent in. Tap to filter.</p>
+                <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">
+                  How many <b>visits</b> each referrer sent in — not how many patients. A referral
+                  recorded on a patient at registration counts again on each of their later visits.
+                  Tap to filter.
+                </p>
               </div>
               <div className="flex flex-wrap gap-2 p-5">
                 <button onClick={() => setReferrer(null)}
@@ -162,6 +168,17 @@ export default function AdminAppointmentsPage() {
                         <div className="text-[12px] text-[var(--p-muted)]">Referred by</div>
                         <div className="text-[13px] text-[var(--p-ink)]">{r.referredByName}</div>
                         {r.referralSource && <div className="text-[11px] text-[var(--p-muted)]">{r.referralSource}</div>}
+                        {/* Says which record answered. A referral held on the
+                            patient repeats on every later visit, so without this
+                            a repeat visit reads as a fresh referral. */}
+                        {r.referralFromPatient && (
+                          <div className="mt-0.5 text-[10.5px] text-[var(--p-muted)]">from patient record</div>
+                        )}
+                      </>
+                    ) : r.referralSource ? (
+                      <>
+                        <div className="text-[12px] text-[var(--p-muted)]">Source</div>
+                        <div className="text-[13px] text-[var(--p-ink)]">{r.referralSource}</div>
                       </>
                     ) : <span className="text-[12px] text-[var(--p-muted)]">Walk-in</span>}
                   </div>

@@ -3,6 +3,7 @@ import { nextId } from "@/lib/ids";
 import { ApiError } from "@/lib/api";
 import { localDateISO, parseDateOnly } from "@/lib/date";
 import { opFeeFor } from "@/lib/after-hours";
+import { resolveReferral } from "@/lib/referral";
 import { logAudit } from "./audit.service";
 import { createInvoice } from "./billing.service";
 import { notifyOpBooked, notifyOpCancelled } from "./notify.service";
@@ -70,8 +71,13 @@ export const DUTY_DOCTOR = {
 /** Admin-facing appointment - INCLUDES the referral snapshot. */
 export interface AdminAppointmentDTO extends AppointmentDTO {
   visitDate: string;
+  /** Resolved by lib/referral.ts: this visit's referral, else the patient's. */
   referredByName: string | null;
   referralSource: string | null;
+  /** true when the referral above came from the PATIENT record, not this visit.
+   *  The screen says so, because a patient-level referral repeats on every
+   *  later visit - so a tally over it counts visits, not new patients. */
+  referralFromPatient: boolean;
   /** Most recent invoice raised against this visit, with how it was paid. */
   bill: { total: string; status: string; paymentModes: string[] } | null;
 }
@@ -403,6 +409,16 @@ export async function adminAppointmentHistory(limit = 100): Promise<AdminAppoint
     orderBy: { createdAt: "desc" }, take: limit,
     select: {
       ...apptSelect,
+      // Overrides apptSelect's narrower `patient`, rather than widening the
+      // shared one. apptSelect is also what the RECEPTION queue reads, and the
+      // referral is admin-only - see the note in reception.service.ts. Reception
+      // must not even fetch it, never mind serialize it.
+      patient: {
+        select: {
+          id: true, displayId: true, fullName: true,
+          referredByName: true, referralSource: true,
+        },
+      },
       invoices: {
         orderBy: { createdAt: "desc" }, take: 1,
         select: { totalAmount: true, status: true, payments: { select: { mode: true, amount: true } } },
@@ -410,7 +426,11 @@ export async function adminAppointmentHistory(limit = 100): Promise<AdminAppoint
     },
   });
   type Inv = { totalAmount: { toString(): string }; status: string; payments: { mode: string; amount: { toString(): string } }[] };
-  return rows.map((a: ApptRow & { invoices: Inv[] }) => {
+  type AdminRow = Omit<ApptRow, "patient"> & {
+    patient: ApptRow["patient"] & { referredByName: string | null; referralSource: string | null };
+    invoices: Inv[];
+  };
+  return rows.map((a: AdminRow) => {
     const inv = a.invoices[0];
     const bill = inv
       ? {
@@ -419,12 +439,19 @@ export async function adminAppointmentHistory(limit = 100): Promise<AdminAppoint
           paymentModes: MODE_ORDER.filter((m) => inv.payments.some((p) => p.mode === m && Number(p.amount.toString()) > 0)),
         }
       : null;
+    // This visit's referral if the booking desk typed one, else the patient's.
+    // In practice it is nearly always the patient's: the registration form is
+    // the one that gets filled, and the booking form's copy is left blank. See
+    // lib/referral.ts for why that made this whole screen read "Walk-in".
+    const referral = resolveReferral(a, a.patient);
     return {
       id: a.id, opNumber: a.opNumber, time: a.timeAtBooking, status: a.status, type: a.type,
       price: a.priceAtBooking.toString(),
       hasRx: a._count.prescriptionUploads > 0,
       visitDate: a.visitDate.toISOString().slice(0, 10),
-      referredByName: a.referredByName, referralSource: a.referralSource,
+      referredByName: referral.name,
+      referralSource: referral.source,
+      referralFromPatient: referral.fromPatient,
       patient: { id: a.patient.id, displayId: a.patient.displayId, name: a.patient.fullName },
       doctor: a.doctor,
       bill,
