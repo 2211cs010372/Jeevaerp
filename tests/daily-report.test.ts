@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   parseEmailList, parsePhoneList, rs, esc,
-  renderReportHtml, renderReportText, renderWhatsAppText, whatsappReportVars, reportSubject,
+  renderReportHtml, renderReportText, renderNoticeHtml, renderNoticeText,
+  renderWhatsAppText, whatsappReportVars, reportSubject,
   type DailyReport,
 } from "@/lib/daily-report";
 
@@ -167,6 +168,60 @@ describe("renderReportHtml - the complete statement", () => {
   it("renders alerts when there are any, and no alert box when there are none", () => {
     expect(html).toContain("Needs attention");
     expect(renderReportHtml(report({ alerts: [] }))).not.toContain("Needs attention");
+  });
+});
+
+describe("renderNoticeHtml / renderNoticeText - the covering letter", () => {
+  it("is the letter the hospital dictated, in order", () => {
+    const text = renderNoticeText(report());
+    const order = [
+      "Dear Admin,",
+      "has been generated successfully by",
+      "Please find the attached report below for your reference",
+      "Kindly review the report and verify the details at your convenience",
+      "Thank you for your time and attention",
+      "Regards,",
+      "Management",
+    ];
+    let at = -1;
+    for (const line of order) {
+      const next = text.indexOf(line);
+      expect(next, line).toBeGreaterThan(at);
+      at = next;
+    }
+  });
+
+  it("fills the date placeholder with the day the report is FOR", () => {
+    // Not "today": a report re-sent the next morning for a night the schedule
+    // missed must still name the day it covers.
+    expect(renderNoticeHtml(report({ date: "2026-09-05" }))).toContain("Sat, 5 Sep 2026");
+    expect(renderNoticeText(report({ date: "2026-09-05" }))).toContain("Sat, 5 Sep 2026");
+  });
+
+  it("names the hospital from its own config, not a string typed into the mail", () => {
+    // A covering letter that spells the hospital differently from the statement
+    // it covers is the first thing a reader notices.
+    const html = renderNoticeHtml(report({ hospital: { name: "Some Other Hospital" } }));
+    expect(html).toContain("Some Other Hospital");
+    expect(html).not.toContain("Jeeva");
+  });
+
+  it("does NOT repeat the statement the PDF already carries", () => {
+    // The whole point of the letter: a body that has already rendered forty rows
+    // of figures leaves an owner nothing to open, and the attachment - the copy
+    // that prints and files - goes unread underneath it.
+    const html = renderNoticeHtml(report());
+    for (const section of ["By payment type", "Laboratory", "Doctors", "Insurance", "1,46,000"]) {
+      expect(html).not.toContain(section);
+    }
+  });
+
+  it("escapes a hospital name so it cannot break the letter", () => {
+    expect(renderNoticeHtml(report({ hospital: { name: "A & B <i>" } }))).toContain("A &amp; B &lt;i&gt;");
+  });
+
+  it("has a text part - a mail without one scores as spam", () => {
+    expect(renderNoticeText(report()).length).toBeGreaterThan(60);
   });
 });
 

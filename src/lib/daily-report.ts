@@ -231,6 +231,20 @@ export function dayLabel(dateISO: string): string {
 }
 
 /**
+ * "Sun, 6 Sep 2026, 21:30" - when this report was assembled.
+ *
+ * Hand-formatted for the same reason dayLabel is: toLocaleString renders
+ * September as "Sep" on one Node build and "Sept" on another, and the PDF and
+ * the mail disagreeing about the date they were generated is exactly the kind
+ * of small inconsistency that makes people doubt the figures.
+ */
+export function stampLabel(generatedAt: string): string {
+  const d = new Date(generatedAt);
+  const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return `${dayLabel(iso)}, ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/**
  * Escape anything that came out of the database before it goes into the HTML.
  *
  * Doctor names, ward labels and till names are typed by staff. One apostrophe
@@ -412,13 +426,78 @@ export function renderReportHtml(r: DailyReport): string {
 
     `<tr><td style="padding:22px 0 0">` +
     `<div style="font:11.5px system-ui,-apple-system,Segoe UI,sans-serif;color:${MUTED};line-height:1.6">` +
-    `Generated ${esc(new Date(r.generatedAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }))}. ` +
+    `Generated ${esc(stampLabel(r.generatedAt))}. ` +
     `Counter figures match the day-close statement in the admin console for the same date. ` +
     `Insurer billing and settlements are shown separately because no drawer sees that money.` +
     `</div></td></tr>` +
 
     `</table></td></tr></table></div>`
   );
+}
+
+// ---------------------------------------------------------------------------
+// THE MAIL BODY - a note, not the report
+// ---------------------------------------------------------------------------
+
+/**
+ * WHAT THE EMAIL ACTUALLY SAYS.
+ *
+ * The report is the PDF. This is the covering note: the day it is for, and the
+ * two numbers worth seeing before deciding whether to open anything. A mail
+ * client that has already rendered forty rows of figures gives an owner nothing
+ * to open, and the attachment - the copy that prints, forwards and files - goes
+ * unread underneath it.
+ *
+ * The full HTML report below has NOT been deleted. It is what goes out when the
+ * PDF fails to build: a note saying a statement is attached, with no statement
+ * attached, is the one outcome worse than either.
+ */
+export function renderNoticeHtml(r: DailyReport): string {
+  // The hospital's name comes from HospitalConfig, not a string typed in here.
+  // The attached statement takes it from the same place, and a covering letter
+  // that spells the hospital differently from the document it is covering is
+  // the first thing a reader notices and the last thing anyone remembers to fix.
+  const name = esc(r.hospital.name);
+  const p = `margin:0 0 14px;font:14px/1.7 system-ui,-apple-system,Segoe UI,sans-serif;color:${INK}`;
+
+  return (
+    `<div style="background:#f5f8f9;padding:24px 12px">` +
+    `<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:560px;margin:0 auto;background:#fff;border:1px solid ${LINE};border-radius:14px">` +
+    `<tr><td style="padding:30px 32px">` +
+
+    `<p style="${p}">Dear Admin,</p>` +
+
+    `<p style="${p}">Your daily report for <b>${esc(dayLabel(r.date))}</b> has been generated ` +
+    `successfully by <b>${name}</b>.</p>` +
+
+    `<p style="${p}">Please find the attached report below for your reference. Kindly review the ` +
+    `report and verify the details at your convenience.</p>` +
+
+    `<p style="${p}">Thank you for your time and attention.</p>` +
+
+    `<p style="margin:22px 0 0;font:14px/1.7 system-ui,-apple-system,Segoe UI,sans-serif;color:${INK}">` +
+    `Regards,<br><b>${name}</b><br>Management` +
+    `</p>` +
+
+    `</td></tr></table></div>`
+  );
+}
+
+/** The same letter as text. A mail with no text part scores as spam. */
+export function renderNoticeText(r: DailyReport): string {
+  return [
+    "Dear Admin,",
+    "",
+    `Your daily report for ${dayLabel(r.date)} has been generated successfully by ${r.hospital.name}.`,
+    "",
+    "Please find the attached report below for your reference. Kindly review the report and verify the details at your convenience.",
+    "",
+    "Thank you for your time and attention.",
+    "",
+    "Regards,",
+    r.hospital.name,
+    "Management",
+  ].join("\n");
 }
 
 // ---------------------------------------------------------------------------

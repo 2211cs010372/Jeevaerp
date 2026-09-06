@@ -8,6 +8,7 @@ import { sendWhatsAppTemplate, sendWhatsAppText, whatsappStatus } from "@/lib/wh
 import { formatPhone } from "@/lib/phone";
 import {
   parseEmailList, parsePhoneList, renderReportHtml, renderReportText,
+  renderNoticeHtml, renderNoticeText,
   renderWhatsAppText, whatsappReportVars, reportSubject, rs,
   type DailyReport,
 } from "@/lib/daily-report";
@@ -363,9 +364,10 @@ export async function sendDailyReport(opts?: {
   // ── email ───────────────────────────────────────────────────────────────
   let email: SendResult["email"] = { attempted: to.emails.length, sent: false, reason: "no-recipients" };
   if (to.emails.length) {
-    // THE PDF IS A BONUS, THE BODY IS THE REPORT. Everything in the attachment
-    // is already in the mail, so a font or a layout error must cost the
-    // attachment and nothing else - never the night's report. Hence the catch.
+    // THE PDF IS THE REPORT AND THE BODY IS A COVERING NOTE - so a font or a
+    // layout error here would otherwise send an owner a mail announcing a
+    // statement that is not attached. Hence the catch AND the swap below: when
+    // there is no PDF, the body goes back to being the full report.
     let attachments: { filename: string; content: string; contentType: string }[] | undefined;
     try {
       const pdf = await renderReportPdf(report);
@@ -375,14 +377,14 @@ export async function sendDailyReport(opts?: {
         contentType: "application/pdf",
       }];
     } catch (err) {
-      console.error("[daily-report] PDF failed, sending without it", err);
+      console.error("[daily-report] PDF failed, sending the full report in the body instead", err);
     }
 
     const out = await deliverEmail({
       to: to.emails,
       subject: reportSubject(report),
-      html: renderReportHtml(report),
-      text: renderReportText(report),
+      html: attachments ? renderNoticeHtml(report) : renderReportHtml(report),
+      text: attachments ? renderNoticeText(report) : renderReportText(report),
       attachments,
       label: "daily-report",
     });

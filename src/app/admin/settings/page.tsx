@@ -312,7 +312,7 @@ export default function SettingsPage() {
         {/* ── DAILY REPORT ───────────────────────────────────────────────── */}
         <Card
           title="Daily report"
-          sub="The whole day — collections, billing, ward, lab, pharmacy — sent to the owners every night at 9:30 PM. Email carries a printable PDF statement; WhatsApp gets the headline numbers."
+          sub="The whole day — collections, billing, ward, lab, pharmacy — sent to the owners every night at 9:30 PM. The email is a short note with the statement attached as a PDF; WhatsApp gets the headline numbers."
         >
           <Toggle
             checked={f.dailyReportEnabled}
@@ -731,8 +731,8 @@ function DailyReportStatus() {
       <div className="rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] p-4">
         <p className="text-[12.5px] font-semibold text-[var(--p-ink)]">Send today&apos;s report now</p>
         <p className="mt-0.5 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
-          Sends a real report for today to everyone on the saved lists — the email carries the
-          printable statement as a PDF attachment. Press <b>Save settings</b> first if you have just
+          Sends a real report for today to everyone on the saved lists — a short covering note with
+          the full statement attached as a PDF. Press <b>Save settings</b> first if you have just
           edited the lists, because this uses what is stored, not what is typed. Useful the morning
           after a night the schedule missed.
         </p>
