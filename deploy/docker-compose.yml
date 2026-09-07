@@ -1,0 +1,103 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ONE HOSPITAL, ONE BOX.
+#
+# Postgres, the app and TLS on a single VPS. This is the whole hosting story for
+# a fifty-bed hospital, and it is the same shape a large deployment has - app,
+# database, reverse proxy - with everything on one machine instead of five.
+#
+#   docker compose up -d
+#
+# ─── WHY THE APP IS NOT BUILT INSIDE A CONTAINER ─────────────────────────────
+#
+# `next build` COLLECTS PAGE DATA, and collecting page data connects to the
+# database. A Dockerfile that runs the build therefore needs live database
+# credentials at BUILD time, which means secrets in build args and a build that
+# fails whenever the database is briefly unreachable. That failure is already
+# known on this project and it is intermittent, which is the worst kind to meet
+# inside an image build.
+#
+# So the app is built on the host, where .env is already present, and the
+# container runs the finished output. `npm run build && docker compose up -d`.
+#
+# ─── WHAT IS DELIBERATELY NOT HERE ───────────────────────────────────────────
+#
+# No PgBouncer: one hospital opens a handful of connections and a pooler is one
+# more thing to misconfigure. Add it when the box serves more than about ten.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-hms}
+      # Postgres will not initialise a data directory that was created with a
+      # different locale, and the default on alpine differs from most hosts.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Nightly dumps land here, on the host, so they survive `docker compose down -v`.
+      - ./backups:/backups
+    # NOT published to the internet. The app reaches it over the compose
+    # network; anything else reaches it through an SSH tunnel. A Postgres port
+    # open to the world is found by scanners within hours.
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hms} -d ${POSTGRES_DB:-hms}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # Postgres is the only process here that must never be OOM-killed: the app
+    # restarting costs a page reload, the database restarting mid-write costs a
+    # transaction somebody was standing at a counter for.
+    shm_size: 256mb
+
+  app:
+    image: node:22-alpine
+    restart: unless-stopped
+    working_dir: /app
+    # The built application, mounted read-only. Rebuild on the host and
+    # `docker compose restart app` to deploy - no image registry, no CI.
+    volumes:
+      - ../:/app:ro
+      # Next writes its cache at runtime; a read-only mount alone makes it fall
+      # over on the first request that revalidates.
+      - nextcache:/app/.next/cache
+    env_file:
+      - ./.env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      # The app talks to the database by its compose service name.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hms}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-hms}?schema=public
+      DIRECT_URL: postgresql://${POSTGRES_USER:-hms}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-hms}?schema=public
+    command: npx next start -p 3000
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    # The only two ports open to the internet. 80 exists so Caddy can answer
+    # the ACME challenge and redirect everything else to 443.
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      - app
+
+volumes:
+  pgdata:
+  nextcache:
+  caddydata:
+  caddyconfig:

@@ -1,0 +1,46 @@
+# TLS, automatically. Caddy obtains and renews the certificate from Let's
+# Encrypt on its own - there is no certbot cron to forget about, which is how
+# most self-hosted sites eventually go down on a Sunday.
+#
+# The portals are SUBDOMAINS (see src/middleware.ts): admin., reception.,
+# doctor., pharmacy., labs., insurance. Each needs a DNS A record pointing at
+# this box, and Caddy needs them listed so it requests a certificate for each.
+
+jeevamultispecialityhospital.com,
+www.jeevamultispecialityhospital.com,
+admin.jeevamultispecialityhospital.com,
+reception.jeevamultispecialityhospital.com,
+doctor.jeevamultispecialityhospital.com,
+pharmacy.jeevamultispecialityhospital.com,
+labs.jeevamultispecialityhospital.com,
+insurance.jeevamultispecialityhospital.com {
+
+	encode zstd gzip
+
+	# The app decides everything about routing and auth; Caddy only carries the
+	# request and the client's real address. Without these two headers the rate
+	# limiter counts every hospital under one key, and the audit log records the
+	# proxy's IP for every action.
+	reverse_proxy app:3000 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	# Patient records are behind these hosts. Tell browsers never to try plain
+	# HTTP again, and keep the pages out of other people's frames.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+	}
+}

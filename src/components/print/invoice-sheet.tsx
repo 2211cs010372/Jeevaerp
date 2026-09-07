@@ -67,9 +67,10 @@ import { billItemName, billItemBatch } from "@/lib/bill-item-name";
  * line printed between them is the real midpoint rather than an approximation
  * somebody has to eyeball.
  *
- * A LAB BILL THEREFORE NEEDS NO PAGE BREAK. Both its copies live on one sheet -
- * patient above the cut, hospital below it - which is one sheet of paper per
- * lab bill instead of two.
+ * A SHORT LAB BILL THEREFORE NEEDS NO PAGE BREAK. Both its copies live on one
+ * sheet - patient above the cut, hospital below it - which is one sheet of paper
+ * per lab bill instead of two. A lab bill of eight items or more leaves this
+ * stationery for the full sheet; see FULL_SHEET_FROM below for what that costs.
  *
  * Nothing is edge-to-edge: the @page margin reserves the border no printer can
  * reach, so there is nothing for a driver to clip or to shrink to fit.
@@ -91,12 +92,34 @@ const HALF_A4_MM = 138.5;
  * second half - at which point it is using a whole A4 anyway, and using it as
  * two loose halves instead of one page.
  *
- * PHARMACY ONLY, and the exclusions are not arbitrary. A lab bill prints TWICE
- * on one A4 - patient above the cut, hospital below it - and that pairing is the
- * whole reason the half-sheet exists; giving it a full page would double the
- * lab's paper to print the same two copies. Consultations are three lines.
- * Inpatient stays have their own A4 document already (detailed-bill-sheet).
- * Pharmacy is the counter whose bills actually run long.
+ * PHARMACY AND LAB. Consultations are three lines. Inpatient stays have their
+ * own A4 document already (detailed-bill-sheet). Those two are the counters
+ * whose bills actually run long.
+ *
+ * ── THE LAB BILL'S PAPER, WHICH IS NOT THE PHARMACY'S ──
+ *
+ * A lab bill prints TWICE - patient above the cut, hospital below it - so on a
+ * half-sheet BOTH copies live on one A4. That pairing is the whole reason this
+ * stationery exists, and it is why the lab was left out of this rule at first.
+ *
+ * It still holds for a SHORT lab bill, and those are almost all of them: of 561
+ * lab bills on this hospital's own data, 538 carry seven items or fewer and are
+ * untouched by the threshold. The 23 that carry eight or more are the ones this
+ * is for, and there the arithmetic changes sides:
+ *
+ *   half-sheet, fits one half   2 copies x 1 half = 1 A4
+ *   half-sheet, spills to two   2 copies x 2 halves = 2 A4
+ *   full sheet                  2 copies x 1 page  = 2 A4
+ *
+ * So a long lab bill that was already spilling costs the same paper either way,
+ * and buys a page per copy instead of two loose halves that have to be cut
+ * apart and read across. One that was NOT yet spilling costs a second A4.
+ *
+ * WHICH OF THOSE APPLIES AT EXACTLY EIGHT IS NOT SETTLED HERE. Row height is
+ * measured in the browser and lab names are short single lines where a
+ * medicine's wrap to two, so a lab half-sheet holds more rows than a pharmacy
+ * one. Eight is the number the hospital asked for; if these bills turn out to
+ * have been fitting on one half, this constant is where to raise it.
  *
  * 278mm, not the 279mm the page's content box measures: browsers round page
  * geometry in device pixels, and a box exactly as tall as the printable area
@@ -104,8 +127,15 @@ const HALF_A4_MM = 138.5;
  */
 const FULL_A4_MM = 278;
 
+/** Counters whose bills run long enough to outgrow a half-sheet. */
+const FULL_SHEET_SOURCES = new Set(["PHARMACY", "LAB"]);
+
+/** Item count from which a bill takes a whole sheet rather than half of one. */
+export const FULL_SHEET_FROM = 8;
+
 /** Does this bill want a whole sheet rather than half of one? */
-const wantsFullSheet = (inv: Invoice) => inv.source === "PHARMACY" && inv.items.length > 7;
+export const wantsFullSheet = (inv: { source: string; items: unknown[] }) =>
+  FULL_SHEET_SOURCES.has(inv.source) && inv.items.length >= FULL_SHEET_FROM;
 
 /**
  * The name the pharmacy counter bills under - see the note at `hospitalName`.
