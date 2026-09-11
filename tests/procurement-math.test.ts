@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   effectiveUnitCost, lineValue, lineTax, orderTotals,
-  suggestedOrderQty, daysOfCover, invoiceVariance, receiptTotal, round2,
+  suggestedOrderQty, daysOfCover, invoiceVariance, receiptTotal, round2, roundInvoiceBillPrice,
 } from "@/lib/pharmacy/procurement-math";
 
 describe("free goods - the number that makes margin honest", () => {
@@ -201,5 +201,26 @@ describe("the receipt totals hang together", () => {
     expect(landed).toBe(42.17);                    // spread across 23
     // The shelf gains 23 units whose total cost is what we actually paid.
     expect(Math.round(landed * (qty + free))).toBe(Math.round(value));
+  });
+});
+
+describe("invoice bill price rounding rules", () => {
+  it("removes paisas and keeps 5rs ending as neutral", () => {
+    expect(roundInvoiceBillPrice(14.87)).toBe("15");
+    expect(roundInvoiceBillPrice(25.00)).toBe("25");
+    expect(roundInvoiceBillPrice(295.00)).toBe("295");
+    expect(roundInvoiceBillPrice(5.00)).toBe("5");
+  });
+
+  it("rounds up digit < 5 to 10 boundary", () => {
+    expect(roundInvoiceBillPrice(12.30)).toBe("10");
+    expect(roundInvoiceBillPrice(3.20)).toBe("10");
+    expect(roundInvoiceBillPrice(53.10)).toBe("50");
+  });
+
+  it("rounds up digit > 5 to 20 boundary", () => {
+    expect(roundInvoiceBillPrice(18.59)).toBe("20");
+    expect(roundInvoiceBillPrice(7.80)).toBe("20");
+    expect(roundInvoiceBillPrice(57.40)).toBe("60");
   });
 });

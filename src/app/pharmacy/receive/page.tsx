@@ -234,16 +234,27 @@ function ReceiveInner() {
   const [mobileScanOpen, setMobileScanOpen] = useState(false);
   const [mobileScanQr, setMobileScanQr] = useState<string | null>(null);
   const [mobileScanSessionId, setMobileScanSessionId] = useState<string | null>(null);
+  /** Exact epoch ms when the session was created — drives the countdown. */
+  const [mobileScanStartedAt, setMobileScanStartedAt] = useState<number>(0);
+  /** Seconds remaining, updated by rAF ticker — zero when expired. */
+  const [mobileScanSecsLeft, setMobileScanSecsLeft] = useState(600);
   const mobilePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mobileRafRef = useRef<number | null>(null);
 
   /** Create a session and show the QR popup. */
+  const TTL_SECS = 600; // must match server-side TTL_MS / 1000
+
+  /** Create a session, capture epoch for exact countdown, show QR popup. */
   async function startMobileScan() {
     setError(null);
     try {
+      const now = Date.now();
       const r = await api.post<{ sessionId: string; token: string }>("/pharmacy/mobile-scan");
       const url = `${window.location.origin}/pharmacy/mobile-scan/${r.sessionId}?t=${r.token}`;
       const QRCode = (await import("qrcode")).default;
       const qrDataUrl = await QRCode.toDataURL(url, { width: 280, margin: 2, color: { dark: "#0f172a" } });
+      setMobileScanStartedAt(now);
+      setMobileScanSecsLeft(TTL_SECS);
       setMobileScanSessionId(r.sessionId);
       setMobileScanQr(qrDataUrl);
       setMobileScanOpen(true);
@@ -251,6 +262,32 @@ function ReceiveInner() {
       setError("Could not start a mobile scan session.");
     }
   }
+
+  /**
+   * rAF-driven ticker. Uses the epoch anchor (`mobileScanStartedAt`) so the
+   * display always matches reality even if the tab is backgrounded and then
+   * brought back — no drift from setInterval skips.
+   */
+  useEffect(() => {
+    if (!mobileScanOpen || !mobileScanStartedAt) return;
+
+    let rafId: number;
+    const tick = () => {
+      const elapsed = (Date.now() - mobileScanStartedAt) / 1000;
+      const left = Math.max(0, TTL_SECS - elapsed);
+      setMobileScanSecsLeft(left);
+      if (left > 0) {
+        rafId = requestAnimationFrame(tick);
+      } else {
+        // Session expired — close the popup automatically.
+        closeMobileScan();
+      }
+    };
+    rafId = requestAnimationFrame(tick);
+    mobileRafRef.current = rafId;
+    return () => cancelAnimationFrame(rafId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mobileScanOpen, mobileScanStartedAt]);
 
   /** Poll for the mobile upload while the QR modal is open. */
   useEffect(() => {
@@ -262,7 +299,6 @@ function ReceiveInner() {
         if (!r.ok) return;
         const data = await r.json();
         if (data.status === "uploaded" && data.imageBase64) {
-          // Convert base64 back to a File and feed the existing OCR pipeline.
           const mime = data.imageMime || "image/jpeg";
           const binary = atob(data.imageBase64);
           const bytes = new Uint8Array(binary.length);
@@ -288,7 +324,10 @@ function ReceiveInner() {
     setMobileScanOpen(false);
     setMobileScanQr(null);
     setMobileScanSessionId(null);
+    setMobileScanStartedAt(0);
+    setMobileScanSecsLeft(TTL_SECS);
     if (mobilePollRef.current) clearInterval(mobilePollRef.current);
+    if (mobileRafRef.current) cancelAnimationFrame(mobileRafRef.current);
   }
 
   const load = useCallback(async () => {
@@ -436,8 +475,11 @@ function ReceiveInner() {
   async function extractFromInvoice(file: File) {
     setOcrBusy(true); setOcrPct(0); setError(null); setOcrNote(null);
     try {
+      const { preprocessImageForOcr } = await import("@/lib/pharmacy/image-preprocess");
+      const cleanBlob = await preprocessImageForOcr(file);
+
       const { recognize } = await import("tesseract.js");
-      const { data } = await recognize(file, "eng", {
+      const { data } = await recognize(cleanBlob, "eng", {
         logger: (m: { status: string; progress: number }) => {
           if (m.status === "recognizing text") setOcrPct(Math.round(m.progress * 100));
         },
@@ -445,11 +487,13 @@ function ReceiveInner() {
       const { parseInvoiceHeader } = await import("@/lib/pharmacy/invoice-parse");
       const inv = parseInvoiceHeader(data.text, suppliers.map((sp) => ({ id: sp.id, name: sp.name })));
 
+      const { roundInvoiceBillPrice } = await import("@/lib/pharmacy/procurement-math");
+
       // Header: supplier, invoice number, date, total.
       if (inv.supplierId && !poId) setSupplierId(inv.supplierId);
       if (inv.invoiceNo) setInvoiceNo(inv.invoiceNo);
       if (inv.invoiceDate) setInvoiceDate(inv.invoiceDate);
-      if (inv.netAmount) setInvoiceAmount(inv.netAmount);
+      if (inv.netAmount) setInvoiceAmount(roundInvoiceBillPrice(inv.netAmount));
 
       // Lines, matched to the catalogue by name where possible.
       const byName = new Map<string, Med>();
@@ -457,7 +501,6 @@ function ReceiveInner() {
       const matchMed = (name: string) => {
         const key = name.trim().toLowerCase();
         if (byName.has(key)) return byName.get(key)!;
-        // Fall back to the longest catalogue name contained in the OCR'd text.
         let best: Med | null = null;
         for (const m2 of meds) {
           const n = m2.name.trim().toLowerCase();
@@ -474,14 +517,10 @@ function ReceiveInner() {
           unit: med?.unit ?? "unit",
           batchNo: r.batchNo.toUpperCase(),
           expiryDate: r.expiry,
-          // Kept verbatim, decimal point and all. Stripping non-digits turned
-          // the invoice's "2.5" into "25" - twenty-five bottles instead of two
-          // and a half, silently, with nothing on screen to notice. A
-          // fractional quantity is flagged below and the pharmacist resolves it.
           qty: r.qty,
           freeQty: r.free,
           unitCost: r.rate,
-          mrp: r.mrp,
+          mrp: roundInvoiceBillPrice(r.mrp),
           pack: r.pack,
           oMrp: r.oMrp,
           gst: r.gst,
@@ -1031,63 +1070,80 @@ function ReceiveInner() {
       )}
 
       {/* ── MOBILE SCAN — QR code popup ───────────────────────────────────── */}
-      {mobileScanOpen && mobileScanQr && (
-        <div
-          className="modal-veil"
-          onClick={(e) => { if (e.target === e.currentTarget) closeMobileScan(); }}
-        >
-          <div className="surface flex w-full max-w-sm flex-col items-center bg-white">
-            {/* Header */}
-            <div className="w-full border-b border-[var(--p-border)] px-6 py-4 text-center">
-              <div className="flex items-center justify-between">
-                <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Scan with Mobile</h3>
-                <button
-                  onClick={closeMobileScan}
-                  className="grid h-7 w-7 place-items-center rounded-md text-[var(--p-muted)] transition-colors hover:bg-[var(--p-rose-soft)] hover:text-[var(--p-rose)]"
-                  aria-label="Close"
-                >
-                  <Icon name="x" size={14} />
-                </button>
-              </div>
-              <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">
-                Point your phone camera at this QR code
-              </p>
-            </div>
-
-            {/* QR code */}
-            <div className="flex flex-col items-center px-8 py-7 text-center">
-              <div className="rounded-2xl border-2 border-[var(--p-border)] bg-white p-3 shadow-sm">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={mobileScanQr} alt="Mobile scan QR code" width={240} height={240} />
-              </div>
-
-              <div className="mt-5 space-y-1">
-                <div className="flex items-center justify-center gap-2 text-[13px] font-semibold text-[var(--p-teal-deep)]">
-                  {/* Pulsing dot to show it's live */}
-                  <span className="relative flex h-2.5 w-2.5">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--p-teal)] opacity-75" />
-                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[var(--p-teal)]" />
-                  </span>
-                  Waiting for photo from phone…
+      {mobileScanOpen && mobileScanQr && (() => {
+        const secsLeft = Math.ceil(mobileScanSecsLeft);
+        const mm = String(Math.floor(secsLeft / 60)).padStart(2, "0");
+        const ss = String(secsLeft % 60).padStart(2, "0");
+        const urgent = secsLeft <= 30;
+        return (
+          <div
+            className="modal-veil"
+            onClick={(e) => { if (e.target === e.currentTarget) closeMobileScan(); }}
+          >
+            <style>{MOBILE_SCAN_CSS}</style>
+            <div className="surface flex w-full max-w-sm flex-col items-center bg-white">
+              {/* Header — original style */}
+              <div className="w-full border-b border-[var(--p-border)] px-6 py-4 text-center">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Scan with Mobile</h3>
+                  <button
+                    onClick={closeMobileScan}
+                    className="grid h-7 w-7 place-items-center rounded-md text-[var(--p-muted)] transition-colors hover:bg-[var(--p-rose-soft)] hover:text-[var(--p-rose)]"
+                    aria-label="Close"
+                  >
+                    <Icon name="x" size={14} />
+                  </button>
                 </div>
-                <p className="text-[11.5px] leading-relaxed text-[var(--p-muted)]">
-                  Open your phone camera, scan the code above,<br />
-                  then take a photo of the invoice.
+                <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">
+                  Point your phone camera at this QR code
                 </p>
               </div>
 
-              <div className="mt-5 rounded-lg bg-[var(--p-bg)] px-4 py-2.5 text-[11px] leading-relaxed text-[var(--p-muted)]">
-                The code expires in <b>10 minutes</b> · No login required on the phone
+              {/* QR code — original card style, beam overlay added */}
+              <div className="flex flex-col items-center px-8 py-7 text-center">
+                <div className="relative overflow-hidden rounded-2xl border-2 border-[var(--p-border)] bg-white p-3 shadow-sm">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={mobileScanQr} alt="Mobile scan QR code" width={240} height={240} />
+                  {/* Subtle scanning beam — same style as before */}
+                  <div className="scan-beam pointer-events-none absolute inset-x-0 top-0" />
+                </div>
+
+                {/* Pulsing dot + status — original style */}
+                <div className="mt-5 space-y-1">
+                  <div className="flex items-center justify-center gap-2 text-[13px] font-semibold text-[var(--p-teal-deep)]">
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--p-teal)] opacity-75" />
+                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[var(--p-teal)]" />
+                    </span>
+                    Waiting for photo from phone…
+                  </div>
+                  <p className="text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+                    Open your phone camera, scan the code above,<br />
+                    then take a photo of the invoice.
+                  </p>
+                </div>
+
+                {/* Info strip — original style, timer wired in */}
+                <div className={`mt-5 flex items-center justify-between gap-4 rounded-lg px-4 py-2.5 text-[11px] leading-relaxed ${
+                  urgent
+                    ? "bg-[var(--p-rose-soft)] text-[var(--p-rose)]"
+                    : "bg-[var(--p-bg)] text-[var(--p-muted)]"
+                }`}>
+                  <span>No login required on the phone</span>
+                  <span className={`num font-mono font-semibold tabular-nums ${urgent ? "text-[var(--p-rose)]" : "text-[var(--p-teal-deep)]"}`}>
+                    {mm}:{ss}
+                  </span>
+                </div>
+              </div>
+
+              {/* Footer — original style */}
+              <div className="flex w-full justify-center border-t border-[var(--p-border)] p-4">
+                <GhostButton onClick={closeMobileScan}>Cancel</GhostButton>
               </div>
             </div>
-
-            {/* Footer */}
-            <div className="flex w-full justify-center border-t border-[var(--p-border)] p-4">
-              <GhostButton onClick={closeMobileScan}>Cancel</GhostButton>
-            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── VIEW A RECEIPT ────────────────────────────────────────────────── */}
       {view && (
@@ -1298,4 +1354,53 @@ const GRN_CSS = `
 .grn-bad { border-color: var(--p-rose) !important; background: var(--p-rose-soft); }
 .grn-bad:focus { border-color: var(--p-rose) !important; }
 .grn-row-bad > td { background: color-mix(in srgb, var(--p-rose-soft) 55%, transparent); }
+`;
+
+/**
+ * Keyframe animations for the mobile scan QR popup.
+ *
+ * .scan-beam  — a semi-transparent green stripe that glides from top to bottom
+ *               of the QR card on a 2.4 s loop, giving the impression the code
+ *               is being read. Speed matches the 2 s server poll so the beam
+ *               landing near the bottom visually coincides with "checking…".
+ *
+ * .qr-border-urgent — when < 30 s remain the QR border pulses red at 0.8 s to
+ *               draw attention without being alarming. Synchronised to nothing
+ *               in particular — it just needs to be noticeable.
+ */
+const MOBILE_SCAN_CSS = `
+/* ── scanning beam ─────────────────────────────────────────────────────── */
+.scan-beam {
+  height: 36px;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(13,148,136,.18) 40%,
+    rgba(13,148,136,.32) 50%,
+    rgba(13,148,136,.18) 60%,
+    transparent 100%
+  );
+  animation: beamSlide 2.4s cubic-bezier(.45,0,.55,1) infinite;
+}
+@keyframes beamSlide {
+  0%   { transform: translateY(-36px); opacity: 0; }
+  8%   { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { transform: translateY(222px); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scan-beam { animation: none; opacity: 0; }
+}
+
+/* ── urgent border pulse (<30 s) ────────────────────────────────────────── */
+.qr-border-urgent {
+  animation: urgentPulse 0.8s ease-in-out infinite alternate;
+}
+@keyframes urgentPulse {
+  from { box-shadow: 0 0 0 0 rgba(225,29,72,0); }
+  to   { box-shadow: 0 0 0 5px rgba(225,29,72,.25); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .qr-border-urgent { animation: none; }
+}
 `;

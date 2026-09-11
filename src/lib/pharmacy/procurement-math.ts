@@ -14,6 +14,32 @@
 export const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /**
+ * Invoice bill price & MRP rounding rules:
+ * - Drops paisas (rounds to integer rupees).
+ * - Evaluates single rupee / last digit:
+ *   - Ends in 5 or 0: neutral (kept as-is e.g. 5, 15, 25, 295).
+ *   - Ends in < 5 (1, 2, 3, 4): rounds up to 10 boundary (e.g. 1..4 -> 10).
+ *   - Ends in > 5 (6, 7, 8, 9): rounds up to 20 boundary (e.g. 6..9 -> 20).
+ */
+export function roundInvoiceBillPrice(price: number | string | null | undefined): string {
+  if (price == null || price === "") return "";
+  const n = typeof price === "number" ? price : parseFloat(String(price).replace(/[^\d.]/g, ""));
+  if (isNaN(n) || n <= 0) return String(price);
+
+  const val = Math.round(n);
+  const lastDigit = val % 10;
+  const tens = Math.floor(val / 10) * 10;
+
+  if (lastDigit === 5 || lastDigit === 0) {
+    return String(val);
+  } else if (lastDigit < 5) {
+    return String(tens > 0 ? tens : 10);
+  } else {
+    return String(tens > 0 ? tens + 10 : 20);
+  }
+}
+
+/**
  * The landed cost of ONE unit, after free goods.
  *
  * Indian distribution runs on schemes: "10+1", "20+3". If you record the
