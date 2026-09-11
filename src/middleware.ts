@@ -62,10 +62,11 @@ export async function middleware(req: NextRequest) {
       return NextResponse.redirect(url, 308);
     }
 
-    // The login page for a portal is always reachable (no session yet).
+    // The login page and mobile-scan QR pages are always reachable without a session.
     const isLoginPage = pathname === "/login";
+    const isMobileScan = pathname.startsWith("/mobile-scan/");
 
-    if (!isLoginPage) {
+    if (!isLoginPage && !isMobileScan) {
       const role = await roleFromRequest(req);
       const allowed = role !== null && SUBDOMAIN_ALLOWED_ROLES[portal].includes(role);
       if (!allowed) {
@@ -105,7 +106,8 @@ export async function middleware(req: NextRequest) {
     // route group /<portal>/… already matches, so no URL rewrite is needed -
     // we only forward x-portal-path so the portal layout can tell login from app.
     const isLoginPage = pathname === `/${pathPortal}/login`;
-    if (!isLoginPage) {
+    const isMobileScanPath = pathname.startsWith(`/${pathPortal}/mobile-scan/`);
+    if (!isLoginPage && !isMobileScanPath) {
       const role = await roleFromRequest(req);
       const allowed = role !== null && SUBDOMAIN_ALLOWED_ROLES[pathPortal].includes(role);
       if (!allowed) {

@@ -11,15 +11,16 @@ import { portalDenied } from "@/lib/auth/portal-guard";
 export default async function PharmacyLayout({ children }: { children: React.ReactNode }) {
   const path = (await headers()).get("x-portal-path") ?? "";
   const isLogin = path.endsWith("/login");
+  const isMobileScan = path.includes("/mobile-scan/");
   // Only PHARMACIST and ADMIN get past here. Checked before the print branch
   // below: a print sheet renders without the shell, not without a session.
-  if (!isLogin) {
+  // Mobile-scan is opened on the pharmacist's phone via QR — no session needed.
+  if (!isLogin && !isMobileScan) {
     const denied = await portalDenied("pharmacy", "Pharmacy");
     if (denied) return denied;
   }
-  // Login and print pages render bare - no sidebar/topbar. Print especially:
-  // the sheet must flow in normal document order so a long A5 bill can paginate.
-  if (isLogin || path.includes("/print/")) return <>{children}</>;
+  // Login, print, and mobile-scan render bare — no sidebar/topbar.
+  if (isLogin || path.includes("/print/") || isMobileScan) return <>{children}</>;
   return (
     <PortalShell portalKey="pharmacy" userName="Pharmacy User" title="Pharmacy">
       {children}

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { PrimaryButton } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
@@ -229,6 +229,67 @@ function ReceiveInner() {
   const [ocrBusy, setOcrBusy] = useState(false);
   const [ocrPct, setOcrPct] = useState(0);
   const [ocrNote, setOcrNote] = useState<string | null>(null);
+
+  // ── Mobile scan: QR-based remote capture ──────────────────────────────────
+  const [mobileScanOpen, setMobileScanOpen] = useState(false);
+  const [mobileScanQr, setMobileScanQr] = useState<string | null>(null);
+  const [mobileScanSessionId, setMobileScanSessionId] = useState<string | null>(null);
+  const mobilePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  /** Create a session and show the QR popup. */
+  async function startMobileScan() {
+    setError(null);
+    try {
+      const r = await api.post<{ sessionId: string; token: string }>("/pharmacy/mobile-scan");
+      const url = `${window.location.origin}/pharmacy/mobile-scan/${r.sessionId}?t=${r.token}`;
+      const QRCode = (await import("qrcode")).default;
+      const qrDataUrl = await QRCode.toDataURL(url, { width: 280, margin: 2, color: { dark: "#0f172a" } });
+      setMobileScanSessionId(r.sessionId);
+      setMobileScanQr(qrDataUrl);
+      setMobileScanOpen(true);
+    } catch {
+      setError("Could not start a mobile scan session.");
+    }
+  }
+
+  /** Poll for the mobile upload while the QR modal is open. */
+  useEffect(() => {
+    if (!mobileScanOpen || !mobileScanSessionId) return;
+
+    const poll = async () => {
+      try {
+        const r = await fetch(`/api/v1/pharmacy/mobile-scan?sessionId=${mobileScanSessionId}`);
+        if (!r.ok) return;
+        const data = await r.json();
+        if (data.status === "uploaded" && data.imageBase64) {
+          // Convert base64 back to a File and feed the existing OCR pipeline.
+          const mime = data.imageMime || "image/jpeg";
+          const binary = atob(data.imageBase64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const file = new File([bytes], "mobile-invoice.jpg", { type: mime });
+          closeMobileScan();
+          setScanFile(file);
+          extractFromInvoice(file);
+        }
+      } catch {
+        // Silently retry on network hiccups.
+      }
+    };
+
+    mobilePollRef.current = setInterval(poll, 2000);
+    return () => {
+      if (mobilePollRef.current) clearInterval(mobilePollRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mobileScanOpen, mobileScanSessionId]);
+
+  function closeMobileScan() {
+    setMobileScanOpen(false);
+    setMobileScanQr(null);
+    setMobileScanSessionId(null);
+    if (mobilePollRef.current) clearInterval(mobilePollRef.current);
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -685,6 +746,16 @@ function ReceiveInner() {
                       e.target.value = "";
                     }} />
                 </label>
+                {/* ── MOBILE SCAN: QR code on desktop, camera on phone ── */}
+                <button
+                  type="button"
+                  disabled={ocrBusy}
+                  onClick={startMobileScan}
+                  className={`inline-flex items-center gap-2 rounded-lg border border-[var(--p-teal)] px-3.5 py-2 text-[13px] font-semibold text-[var(--p-teal)] transition-colors hover:bg-[var(--p-teal-soft)] disabled:cursor-not-allowed disabled:opacity-50`}
+                >
+                  <Icon name="smartphone" size={14} />
+                  Scan with Mobile
+                </button>
                 {scanFile && !ocrBusy && (
                   <span className="text-[12px] text-[var(--p-muted)]">{scanFile.name}</span>
                 )}
@@ -957,6 +1028,65 @@ function ReceiveInner() {
             </p>
           </div>
         </Modal>
+      )}
+
+      {/* ── MOBILE SCAN — QR code popup ───────────────────────────────────── */}
+      {mobileScanOpen && mobileScanQr && (
+        <div
+          className="modal-veil"
+          onClick={(e) => { if (e.target === e.currentTarget) closeMobileScan(); }}
+        >
+          <div className="surface flex w-full max-w-sm flex-col items-center bg-white">
+            {/* Header */}
+            <div className="w-full border-b border-[var(--p-border)] px-6 py-4 text-center">
+              <div className="flex items-center justify-between">
+                <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Scan with Mobile</h3>
+                <button
+                  onClick={closeMobileScan}
+                  className="grid h-7 w-7 place-items-center rounded-md text-[var(--p-muted)] transition-colors hover:bg-[var(--p-rose-soft)] hover:text-[var(--p-rose)]"
+                  aria-label="Close"
+                >
+                  <Icon name="x" size={14} />
+                </button>
+              </div>
+              <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">
+                Point your phone camera at this QR code
+              </p>
+            </div>
+
+            {/* QR code */}
+            <div className="flex flex-col items-center px-8 py-7 text-center">
+              <div className="rounded-2xl border-2 border-[var(--p-border)] bg-white p-3 shadow-sm">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={mobileScanQr} alt="Mobile scan QR code" width={240} height={240} />
+              </div>
+
+              <div className="mt-5 space-y-1">
+                <div className="flex items-center justify-center gap-2 text-[13px] font-semibold text-[var(--p-teal-deep)]">
+                  {/* Pulsing dot to show it's live */}
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--p-teal)] opacity-75" />
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[var(--p-teal)]" />
+                  </span>
+                  Waiting for photo from phone…
+                </div>
+                <p className="text-[11.5px] leading-relaxed text-[var(--p-muted)]">
+                  Open your phone camera, scan the code above,<br />
+                  then take a photo of the invoice.
+                </p>
+              </div>
+
+              <div className="mt-5 rounded-lg bg-[var(--p-bg)] px-4 py-2.5 text-[11px] leading-relaxed text-[var(--p-muted)]">
+                The code expires in <b>10 minutes</b> · No login required on the phone
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex w-full justify-center border-t border-[var(--p-border)] p-4">
+              <GhostButton onClick={closeMobileScan}>Cancel</GhostButton>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── VIEW A RECEIPT ────────────────────────────────────────────────── */}

@@ -29,6 +29,7 @@ import {
   PrinterIcon, Shield01Icon, TruckIcon, Package01Icon, InboxIcon,
   ArrowTurnBackwardIcon, Cancel01Icon, Settings01Icon, PaintBoardIcon,
   ArrowUpRight01Icon,
+  SmartPhone01Icon,
 } from "@hugeicons/core-free-icons";
 
 export type IconName =
@@ -36,7 +37,7 @@ export type IconName =
   | "flask" | "receipt" | "rupee" | "trend" | "bed" | "search" | "plus"
   | "check" | "logout" | "chevron" | "activity" | "clock" | "alert" | "file" | "printer" | "shield"
   | "truck" | "box" | "inbox" | "undo" | "x" | "settings" | "palette"
-  | "external";
+  | "external" | "smartphone";
 
 /** Meaning -> drawing. The only place the vendor's names appear. */
 const glyphs: Record<IconName, typeof DashboardSquare01Icon> = {
@@ -76,6 +77,8 @@ const glyphs: Record<IconName, typeof DashboardSquare01Icon> = {
   palette: PaintBoardIcon,
   /* leaves this page - a link that opens somewhere else */
   external: ArrowUpRight01Icon,
+  /* the phone the pharmacist scans the QR with */
+  smartphone: SmartPhone01Icon,
 };
 
 export function Icon({ name, size = 18, className = "" }: { name: IconName; size?: number; className?: string }) {
