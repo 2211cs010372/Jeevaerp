@@ -11,6 +11,8 @@ import { DiscountInput, PaymentSection, type Tender } from "@/components/portal/
 import { AdmissionBanner, useAdmission } from "@/components/portal/reception/admission-banner";
 import { InpatientPicker } from "@/components/portal/reception/inpatient-picker";
 
+import { MobileScanModal } from "@/components/portal/ui/mobile-scan-modal";
+
 interface Patient { id: string; displayId: string; fullName: string; phone: string; }
 interface Med {
   id: string; name: string; unit: string; gstRatePct: string;
@@ -63,6 +65,51 @@ export default function DispensePage() {
   const [directAddress, setDirectAddress] = useState("");
   const [directBusy, setDirectBusy] = useState(false);
   const [directError, setDirectError] = useState<string | null>(null);
+  const [showMobileScanModal, setShowMobileScanModal] = useState(false);
+  const [scanBusy, setScanBusy] = useState(false);
+
+  const handleMobileScanComplete = async (base64Data: string) => {
+    setScanBusy(true);
+    try {
+      const res = await api.post<{ items: Array<{ name: string; qty: number; dosage?: string }> }>("/ai/vision-ocr", {
+        imageBase64: base64Data,
+        docType: "PRESCRIPTION",
+      });
+      if (res.items && res.items.length > 0) {
+        const medicinesRes = await api.get<{ medicines: Med[] }>("/pharmacy/medicines");
+        const byName = new Map(medicinesRes.medicines.map((m) => [m.name.toLowerCase(), m]));
+        const newLines: Line[] = [];
+        for (const item of res.items) {
+          const m = byName.get(item.name.toLowerCase());
+          if (m && m.inStock > 0) {
+            newLines.push({
+              medicineId: m.id,
+              name: m.name,
+              unit: m.unit,
+              qty: Math.min(item.qty || 1, m.inStock),
+              mrp: Number(m.unitMrp ?? m.mrp ?? 0),
+              gst: Number(m.gstRatePct ?? 0),
+              inStock: m.inStock,
+              packSize: Math.max(1, m.packSize),
+              packLabel: m.packLabel,
+              prescribedQty: item.qty || 1,
+              perDay: 2,
+              courseCritical: m.courseCritical,
+              locked: m.courseCritical,
+            });
+          }
+        }
+        if (newLines.length > 0) {
+          setLines((prev) => [...prev, ...newLines]);
+        }
+      }
+    } catch (err) {
+      setError("Failed to extract items from scan photo.");
+    } finally {
+      setScanBusy(false);
+      setShowMobileScanModal(false);
+    }
+  };
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -242,15 +289,25 @@ export default function DispensePage() {
           <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Dispense medicines</h1>
           <p className="mt-1 text-[13px] text-[var(--p-muted)]">Counter sale &amp; direct pill dispensing for walk-in users or prescription queue.</p>
         </div>
-        {!patient && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => setPatientTab(patientTab === "search" ? "direct" : "search")}
-            className="flex items-center gap-2 rounded-lg border border-[var(--p-blue)]/30 bg-[var(--p-blue-soft)] px-4 py-2 text-[12.5px] font-medium text-[var(--p-blue-deep)] transition-colors hover:bg-[var(--p-blue)]/15"
+            type="button"
+            onClick={() => setShowMobileScanModal(true)}
+            className="flex items-center gap-2 rounded-lg border border-[var(--p-blue)]/40 bg-[var(--p-blue-soft)] px-4 py-2 text-[12.5px] font-medium text-[var(--p-blue-deep)] transition-colors hover:bg-[var(--p-blue)]/20"
           >
-            <Icon name={patientTab === "search" ? "plus" : "search"} size={14} />
-            {patientTab === "search" ? "⚡ Direct Pill Sale (Walk-in User)" : "Search Registered Patients"}
+            <Icon name="camera" size={15} />
+            ⚡ Mobile Scan (QR Rx)
           </button>
-        )}
+          {!patient && (
+            <button
+              onClick={() => setPatientTab(patientTab === "search" ? "direct" : "search")}
+              className="flex items-center gap-2 rounded-lg border border-[var(--p-border)] bg-white px-4 py-2 text-[12.5px] font-medium text-[var(--p-ink)] transition-colors hover:bg-[var(--p-bg)]"
+            >
+              <Icon name={patientTab === "search" ? "plus" : "search"} size={14} />
+              {patientTab === "search" ? "Direct Pill Sale" : "Search Registered Patients"}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
@@ -576,6 +633,14 @@ export default function DispensePage() {
           </div>
         </aside>
       </div>
+
+      <MobileScanModal
+        open={showMobileScanModal}
+        onClose={() => setShowMobileScanModal(false)}
+        onScanComplete={handleMobileScanComplete}
+        title="Rx Mobile QR Scanner"
+        subtitle="Scan doctor's prescription chit with smartphone camera to auto-extract items"
+      />
     </PortalScroll>
   );
 }

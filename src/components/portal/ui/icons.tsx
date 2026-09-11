@@ -37,7 +37,7 @@ export type IconName =
   | "flask" | "receipt" | "rupee" | "trend" | "bed" | "search" | "plus"
   | "check" | "logout" | "chevron" | "activity" | "clock" | "alert" | "file" | "printer" | "shield"
   | "truck" | "box" | "inbox" | "undo" | "x" | "settings" | "palette"
-  | "external" | "smartphone";
+  | "external" | "smartphone" | "camera" | "share";
 
 /** Meaning -> drawing. The only place the vendor's names appear. */
 const glyphs: Record<IconName, typeof DashboardSquare01Icon> = {
@@ -79,7 +79,10 @@ const glyphs: Record<IconName, typeof DashboardSquare01Icon> = {
   external: ArrowUpRight01Icon,
   /* the phone the pharmacist scans the QR with */
   smartphone: SmartPhone01Icon,
+  camera: SmartPhone01Icon,
+  share: ArrowUpRight01Icon,
 };
+
 
 export function Icon({ name, size = 18, className = "" }: { name: IconName; size?: number; className?: string }) {
   return (

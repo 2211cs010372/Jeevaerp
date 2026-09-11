@@ -12,8 +12,12 @@ import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import { AdmissionBanner, useAdmission } from "@/components/portal/reception/admission-banner";
 import { InpatientPicker } from "@/components/portal/reception/inpatient-picker";
 import { PRINT_CSS, RxTable } from "@/components/print/stationery";
-import { parsePrescriptionText, isEmptyParse, describeParse, type ParsedVitals } from "@/lib/prescription-parse";
+import { parsePrescriptionText, parsePrescriptionWithAi, isEmptyParse, describeParse, type ParsedVitals } from "@/lib/prescription-parse";
 import { bedLabel } from "@/lib/beds";
+import { MobileScanModal } from "@/components/portal/ui/mobile-scan-modal";
+import { WhatsAppShareButton } from "@/components/portal/ui/whatsapp-share-button";
+import { RxViewModal, type RxRecord } from "@/components/portal/pharmacy/rx-view-modal";
+
 
 interface Patient { id: string; displayId: string; fullName: string; phone: string; }
 interface Visit { id: string; opNumber: string; visitDate: string; doctorName: string; department: string; }
@@ -225,6 +229,8 @@ export default function UploadPrescriptionPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ sent: boolean; visitId: string | null; fileUrl?: string | null; generated?: boolean } | null>(null);
+  const [showMobileScanModal, setShowMobileScanModal] = useState(false);
+  const [activeRxModal, setActiveRxModal] = useState<RxRecord | null>(null);
 
   // Everything the form currently holds, mirrored into a ref. The loader needs
   // to know whether a human has typed anything before it fills the fields in,
@@ -312,6 +318,42 @@ export default function UploadPrescriptionPage() {
     setVitals(d.vitals);
     setLabInput("");
   }, []);
+
+  const handleMobileScanComplete = useCallback(async (base64Data: string) => {
+    setOcrBusy(true); setOcrPct(0); setError(null);
+    try {
+      const parsed = await parsePrescriptionWithAi(base64Data);
+      if (isEmptyParse(parsed)) {
+        setError("AI Scanner couldn't extract usable items off that photo. Please try a clearer picture.");
+        return;
+      }
+      const before = draft.current;
+      const mergedVitals = { ...before.vitals };
+      for (const k of Object.keys(mergedVitals) as (keyof ParsedVitals)[]) {
+        if (parsed.vitals[k]) mergedVitals[k] = parsed.vitals[k];
+      }
+      applyDraft({
+        items: parsed.medicines.length
+          ? parsed.medicines.map((m) => ({
+              medicineName: m.medicineName,
+              qty: Math.max(1, Number(m.qty) || 1),
+              dosage: m.dosage,
+            }))
+          : before.items,
+        labs: parsed.labs.length ? parsed.labs : before.labs,
+        diagnosis: parsed.diagnosis || before.diagnosis,
+        advice: parsed.advice || before.advice,
+        nextVisit: parsed.nextVisit || before.nextVisit,
+        caseHistory: parsed.caseHistory || before.caseHistory,
+        vitals: mergedVitals,
+      });
+      setPreExtract(before);
+      setExtracted(describeParse(parsed));
+    } catch {
+      setError("AI Reader failed to run on this photo.");
+    } finally { setOcrBusy(false); }
+  }, [applyDraft]);
+
 
   const clearDraft = useCallback(() => {
     applyDraft(EMPTY_DRAFT);
@@ -688,11 +730,21 @@ export default function UploadPrescriptionPage() {
                 <Icon name="printer" size={13} /> Print OPD sheet
               </a>
             )}
+            {patient && (
+              <WhatsAppShareButton
+                phone={patient.phone}
+                patientName={patient.fullName}
+                type="prescription"
+                documentId={done.visitId || patient.displayId}
+                pdfUrl={done.fileUrl || (done.visitId ? `/print/opd/${done.visitId}` : undefined)}
+              />
+            )}
             <a href="/" className="text-[13px] font-semibold text-[var(--p-cyan-deep)] underline underline-offset-2">Back to today</a>
             <button onClick={() => setDone(null)} className="text-[var(--p-cyan-deep)]">✕</button>
           </span>
         </div>
       )}
+
       {error && <div data-rise className="mb-4 rounded-lg border border-[var(--p-rose)]/25 bg-[var(--p-rose-soft)] px-4 py-3 text-[14px] text-[var(--p-rose)]">{error}</div>}
 
       <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
@@ -938,6 +990,26 @@ export default function UploadPrescriptionPage() {
                 )}
               </label>
 
+              <div className="flex items-center justify-between rounded-xl border border-[var(--p-blue)]/30 bg-white p-4 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--p-blue-soft)] text-[var(--p-blue-deep)]">
+                    <Icon name="camera" size={18} />
+                  </span>
+                  <div>
+                    <p className="text-[14px] font-semibold text-[var(--p-ink)]">Scan with Smartphone Camera (QR)</p>
+                    <p className="text-[12px] text-[var(--p-muted)]">No scanner or app needed - scan QR code with phone, snap photo &amp; upload instantly</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowMobileScanModal(true)}
+                  className="btn-primary rounded-lg px-4 py-2 text-xs font-semibold text-white shadow-sm"
+                >
+                  Mobile Scan (QR)
+                </button>
+              </div>
+
+
               {/* Tesseract needs pixels. Only worth saying once a PDF is sitting there. */}
               {isPdf && (
                 <p className="rounded-xl border border-[var(--p-border)] bg-[var(--p-bg)] p-4 text-[13px] leading-relaxed text-[var(--p-muted)]">
@@ -1150,6 +1222,23 @@ export default function UploadPrescriptionPage() {
                       </Pill>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setActiveRxModal({
+                            id: e.id,
+                            fileUrl: e.fileUrl,
+                            appointmentId: e.appointmentId,
+                            title: e.title,
+                            status: e.status,
+                            patient: patient!,
+                            items: items.map((i) => ({ medicineName: i.medicineName, medicineId: i.medicineId ?? null, qty: i.qty, dosage: i.dosage })),
+                          })
+                        }
+                        className="rounded-lg border border-[var(--p-blue)]/40 bg-[var(--p-blue-soft)] px-2.5 py-1 text-[12px] font-semibold text-[var(--p-blue-deep)] hover:bg-[var(--p-blue)]/20"
+                      >
+                        ⚡ Open Rx Popup
+                      </button>
                       {e.fileUrl ? (
                         <a href={e.fileUrl} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[12px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">View scan</a>
                       ) : e.appointmentId ? (
@@ -1179,6 +1268,20 @@ export default function UploadPrescriptionPage() {
           </div>
         </aside>
       </div>
+
+      <MobileScanModal
+        open={showMobileScanModal}
+        onClose={() => setShowMobileScanModal(false)}
+        onScanComplete={handleMobileScanComplete}
+        title="Rx Mobile QR Scanner"
+        subtitle="Scan with smartphone camera to photograph &amp; upload doctor's prescription"
+      />
+
+      <RxViewModal
+        open={!!activeRxModal}
+        onClose={() => setActiveRxModal(null)}
+        rx={activeRxModal}
+      />
     </PortalScroll>
   );
-}
+}

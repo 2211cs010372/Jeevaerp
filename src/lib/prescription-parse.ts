@@ -279,8 +279,29 @@ function takeQty(s: string): { text: string; qty: string } {
  * prefixes every Indian prescription starts with. Restricted to that list - a
  * general re-speller would invent word breaks inside real brand names.
  */
+const LATIN_FREQ: Record<string, string> = {
+  OD: "1-0-0 (Once daily)",
+  BD: "1-0-1 (Twice daily)",
+  BID: "1-0-1 (Twice daily)",
+  TDS: "1-1-1 (Thrice daily)",
+  TID: "1-1-1 (Thrice daily)",
+  QID: "1-1-1-1 (Four times daily)",
+  HS: "0-0-1 (At bedtime)",
+  QHS: "0-0-1 (At bedtime)",
+  SOS: "As needed (SOS)",
+  STAT: "Single dose (STAT)",
+};
+
+const LATIN_RE = /\b(BD|BID|TDS|TID|OD|QID|HS|QHS|SOS|STAT)\b/i;
+
 function splitDoseForm(s: string): string {
-  return s.replace(/^(TAB|CAP|SYP|SYRUP|INJ|OINT|CREAM|DROPS?|SUSP)\.?([A-Za-z])/i, "$1 $2");
+  let res = s.replace(/^(TAB|CAP|SYP|SYRUP|INJ|OINT|CREAM|DROPS?|SUSP|SACHET|GEL)\.?([A-Za-z])/i, "$1 $2");
+  // Expand common handwritten shorthands
+  res = res.replace(/\bPCM\b/i, "PARACETAMOL");
+  res = res.replace(/\bAMOX\b/i, "AMOXICILLIN");
+  res = res.replace(/\bPANTO\b/i, "PANTOPRAZOLE");
+  res = res.replace(/\bAZITH\b/i, "AZITHROMYCIN");
+  return res;
 }
 
 /** Strip the noise OCR glues onto a handwritten drug name. */
@@ -290,34 +311,38 @@ function cleanName(s: string): string {
     .replace(/[^A-Za-z0-9 .\-/%+()]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
-    // A name that is only punctuation or a stray digit is not a name.
     .replace(/^[^A-Za-z]+$/, "");
 }
 
 /**
  * One ℞ line into a medicine.
- *
- * Requires a NAME with real letters in it. A line that OCRs down to "1. ..."
- * with no legible drug is dropped rather than added as an empty row: an empty
- * row in the ℞ list is a row somebody has to notice and delete, and the ones
- * that get missed are sent to the pharmacy.
  */
 function parseRxLine(raw: string): ParsedMed | null {
   const line = raw.replace(/\s+/g, " ").trim();
   if (line.length < 3) return null;
-  // The table's own column header, read back as a row.
   if (/^(?:medicine|dosage|timing|duration|s\.?no)\b/i.test(line)) return null;
 
   const dose = line.match(DOSE);
+  const latin = !dose ? line.match(LATIN_RE) : null;
+
   let namePart = line;
   let dosage = "";
 
   if (dose && dose.index !== undefined) {
     namePart = line.slice(0, dose.index);
     const pattern = `${dose[1]}-${dose[2]}-${dose[3]}`.replace(/\s+/g, "");
-    // Everything after the pattern is timing & duration - "after food 5 days".
     const timing = line
       .slice(dose.index + dose[0].length)
+      .replace(/[^A-Za-z0-9 .\-/]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    dosage = timing ? `${pattern} ${timing}`.slice(0, 120) : pattern;
+  } else if (latin && latin.index !== undefined) {
+    namePart = line.slice(0, latin.index);
+    const code = latin[1].toUpperCase();
+    const pattern = LATIN_FREQ[code] || code;
+    const timing = line
+      .slice(latin.index + latin[0].length)
       .replace(/[^A-Za-z0-9 .\-/]/g, " ")
       .replace(/\s+/g, " ")
       .trim();
@@ -326,7 +351,6 @@ function parseRxLine(raw: string): ParsedMed | null {
 
   const { text, qty } = takeQty(namePart);
   const medicineName = splitDoseForm(cleanName(text));
-  // Two letters is the floor: "BC" is a plausible shorthand, "B" is noise.
   if ((medicineName.match(/[A-Za-z]/g) ?? []).length < 2) return null;
 
   return { medicineName: medicineName.slice(0, 120), qty, dosage };
@@ -422,3 +446,52 @@ export function parsePrescriptionText(text: string): ParsedPrescription {
     caseHistory: textOf(secs, "caseHistory", 1200),
   };
 }
+
+/**
+ * AI-enhanced prescription parsing using Gemini Vision API.
+ * Calls /api/v1/ai/vision-ocr with image base64, falling back to text parsing.
+ */
+export async function parsePrescriptionWithAi(
+  imageBase64: string,
+  fallbackText?: string
+): Promise<ParsedPrescription> {
+  try {
+    const res = await fetch("/api/v1/ai/vision-ocr", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageBase64, mode: "prescription" }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && Array.isArray(data.prescriptionItems) && data.prescriptionItems.length > 0) {
+        const medicines: ParsedMed[] = data.prescriptionItems.map((item: any) => ({
+          medicineName: String(item.name || "").toUpperCase().trim(),
+          dosage: `${item.frequency || "OD"} ${item.duration ? `· ${item.duration}` : ""}`.trim(),
+          qty: "1",
+        }));
+
+
+        const baseParse = fallbackText ? parsePrescriptionText(fallbackText) : {
+          vitals: NO_VITALS,
+          medicines: [],
+          labs: [],
+          nextVisit: "",
+          diagnosis: "",
+          advice: "",
+          caseHistory: "",
+        };
+
+        return {
+          ...baseParse,
+          medicines: medicines.length > 0 ? medicines : baseParse.medicines,
+        };
+      }
+    }
+  } catch (err) {
+    console.warn("AI Vision OCR call failed, using text fallback:", err);
+  }
+
+  return parsePrescriptionText(fallbackText || "");
+}
+

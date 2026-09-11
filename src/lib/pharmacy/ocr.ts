@@ -133,7 +133,55 @@ export async function recognizeInvoice(
     prepared.push(r.canvas);
   }
 
-  // ---- 2. recognise (24-95%), escalating page segmentation ----
+  // ---- 2. AI Vision API pass (if available) ----
+  if (prepared.length > 0) {
+    try {
+      onProgress?.({ pct: 20, stage: "Analyzing with AI Model..." });
+      const firstCanvas = prepared[0];
+      const base64Data = firstCanvas.toDataURL("image/jpeg", 0.85);
+
+      const aiRes = await fetch("/api/v1/ai/vision-ocr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64: base64Data, mode: "invoice" }),
+      });
+
+      if (aiRes.ok) {
+        const aiData = await aiRes.json();
+        if (aiData.success && Array.isArray(aiData.invoiceItems) && aiData.invoiceItems.length > 0) {
+          onProgress?.({ pct: 100, stage: "AI Analysis Complete" });
+          const rows: ParsedRow[] = aiData.invoiceItems.map((item: any) => ({
+            medicine: item.medicine || "",
+            pack: item.pack || "",
+            qty: item.qty || "0",
+            free: item.free || "0",
+            oMrp: "",
+            batchNo: item.batchNo || "",
+            mrp: item.mrp || "0",
+            expiry: item.expiry || "",
+            rate: item.rate || "0",
+            amount: item.amount || "0",
+            gst: item.gst || "12",
+            hsn: item.hsn || "",
+            supplier: aiData.invoiceHeader?.supplierName || "",
+            confidence: "high",
+          }));
+
+          return {
+            text: JSON.stringify(aiData),
+            rows,
+            prepared,
+            skewDeg,
+            passes: 1,
+          };
+        }
+      }
+    } catch (err) {
+      console.warn("AI Vision OCR attempt failed, proceeding to Tesseract pass:", err);
+    }
+  }
+
+  // ---- 3. recognise (24-95%), escalating page segmentation ----
   const worker = await getWorker(onProgress);
   let best: { text: string; rows: ParsedRow[] } = { text: "", rows: [] };
   let passes = 0;
@@ -178,3 +226,4 @@ export async function recognizeInvoice(
   onProgress?.({ pct: 100, stage: "Done" });
   return { text: best.text, rows: best.rows, prepared, skewDeg, passes };
 }
+
