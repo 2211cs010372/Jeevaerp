@@ -510,15 +510,28 @@ function ReceiveInner() {
           if (hdr.invoiceDate) setInvoiceDate(hdr.invoiceDate);
           if (hdr.netAmount) setInvoiceAmount(roundInvoiceBillPrice(hdr.netAmount));
 
-          const byName = new Map<string, Med>();
-          for (const m2 of meds) byName.set(m2.name.trim().toLowerCase(), m2);
-          const matchMed = (name: string) => {
-            const key = name.trim().toLowerCase();
+          const cleanKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+          const matchMed = (rawName: string) => {
+            if (!rawName) return null;
+            const key = rawName.trim().toLowerCase();
             if (byName.has(key)) return byName.get(key)!;
+            
+            const normKey = cleanKey(rawName);
+            if (!normKey) return null;
+
             let best: Med | null = null;
+            let bestScore = 0;
+
             for (const m2 of meds) {
-              const n = m2.name.trim().toLowerCase();
-              if (n.length >= 4 && (key.includes(n) || n.includes(key)) && (!best || m2.name.length > best.name.length)) best = m2;
+              const normM = cleanKey(m2.name);
+              if (normM === normKey) return m2;
+              if (normM.length >= 4 && (normKey.includes(normM) || normM.includes(normKey))) {
+                const score = Math.min(normM.length, normKey.length);
+                if (score > bestScore) {
+                  bestScore = score;
+                  best = m2;
+                }
+              }
             }
             return best;
           };
