@@ -113,7 +113,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<AiOcrResponse
 
     const cleanBase64 = imageBase64.replace(/^data:image\/[a-z]+;base64,/, "");
 
-    // ── PASS 1: FEW-SHOT EXTRACTION ──
+    // ── PASS 1: UNIVERSAL FEW-SHOT EXTRACTION ──
     const pass1Prompt =
       mode === "prescription"
         ? `You are an expert medical AI OCR assistant. Analyze the image of a doctor's handwritten or printed prescription.
@@ -131,56 +131,64 @@ Respond STRICTLY in valid JSON format:
     { "name": "PARACETAMOL 650MG", "dosage": "650mg", "frequency": "TDS", "duration": "5 days", "instructions": "After food" }
   ]
 }`
-        : `You are a high-precision pharmaceutical GST invoice OCR specialist.
-Extract ALL header details and EVERY product row from this Indian pharma distributor tax invoice (e.g. S R MEDICALS, VISHWANATH PHARMA format).
+        : `You are a world-class Universal Pharmaceutical GST Invoice AI Specialist.
+Your task is to analyze ANY Indian pharma distributor tax invoice image (computerized, dot-matrix, thermal, multi-column, or printed bill) regardless of column order, table style, or distributor layout (e.g., Vishwanath Medical Stores, S R Medicals, Mahaveer, Balaji, Apollo, Sun Pharma, Cipla, Mankind, Micro Labs, etc.).
 
-HEADER fields to extract:
-- "supplierName": company / distributor name (e.g. S R MEDICALS)
-- "gstin": 15-character GSTIN (e.g. 36AWZPG5948E1ZX)
-- "invoiceNo": tax invoice number (e.g. ROH1447)
-- "invoiceDate": date string (DD/MM/YYYY)
-- "netAmount": total invoice amount string (e.g. 4740.00)
+Analyze the visual structure of the document:
+1. HEADER EXTRACTION:
+- "supplierName": Distributor / Vendor company name at top header (e.g., VISHWANATH MEDICAL STORES).
+- "gstin": 15-character GST identification number.
+- "invoiceNo": Bill / Tax Invoice / Cash Memo number (e.g. RR8970).
+- "invoiceDate": Invoice date (in DD/MM/YYYY format e.g. 23/07/2026).
+- "netAmount": Total final bill amount payable at bottom (e.g. 14276.00).
 
-ITEMS array where each item must contain:
-- "medicine": full product name (e.g. AZIL KENZOL SOAP, ERNS LYNIX LOTION, WALB RABZOT L)
-- "pack": pack size string (e.g. 75gm, 60ML, 10'S, 15'S)
-- "qty": billed quantity string (e.g. 10.0 -> "10")
-- "free": free quantity string (default "0")
-- "batchNo": batch number string (e.g. K-035, PNC-015, 26030604, EHC124, AC250392)
-- "mrp": MRP price string (e.g. 160.00, 140.00, 106.78, 93.50, 168.75)
-- "expiry": expiry date string in MM/YY format (e.g. 01/28, 12/27, 05/27, 07/27)
-- "rate": purchase rate / unit price string (e.g. 42.00, 35.00, 28.00, 32.00)
-- "amount": line total amount string (e.g. 420.00, 350.00, 280.00, 320.00)
-- "gst": GST percentage string (e.g. "5", "12", "18")
-- "hsn": 8-digit HSN code string (e.g. 34011110, 30049011, 30049091)
+2. ITEMS TABLE EXTRACTION:
+Visually align columns regardless of order!
+For EVERY single product row (SNO 1 to N), extract:
+- "medicine": full product trade name + dosage form (e.g. "SMUTH SUS", "DULCOFLEX TAB", "CREMAFFIN SYP", "GLYCOMET GP 0.5 TAB").
+- "pack": pack size string (e.g. "200ML", "15T", "5S", "15'S", "10'S", "10T").
+- "qty": billed quantity (numeric or decimal e.g. "3", "10", "2.5").
+- "free": bonus/free quantity (default "0", or decimal e.g. "0.5").
+- "batchNo": exact batch string from the BATCH column (e.g. "MPB260688", "DLA26026", "SIH0887A", "48020919", "60002868"). Ignore manufacturer abbreviations (like ARIS, AVEN, U.S., BOOT, SUN, PFIZ) that may appear in an adjacent column!
+- "mrp": Maximum Retail Price string (e.g. "181.88", "18.59", "295.00").
+- "expiry": Expiry date formatted strictly as MM/YY or MM/YYYY (e.g. "01/28", "02/29", "04/28").
+- "rate": Wholesale purchase rate / unit cost string (e.g. "138.57", "14.87", "225.00").
+- "amount": Billed line total amount (e.g. "415.71", "148.70", "562.50").
+- "gst": GST percentage number string without % sign (e.g. "5", "12", "18", "28").
+- "hsn": HSN code string (e.g. "300490", "34011110").
+
+STRICT GUARANTEES:
+- Do NOT skip any product row! Extract ALL rows from item 1 to the last item.
+- Do NOT combine lines or mistake manufacturer names for batch numbers.
+- Verify math: Qty * Rate should match Amount.
 
 Respond STRICTLY in valid JSON format:
 {
-  "header": { "supplierName": "S R MEDICALS", "gstin": "36AWZPG5948E1ZX", "invoiceNo": "ROH1447", "invoiceDate": "23/07/2026", "netAmount": "4740.00" },
+  "header": { "supplierName": "VISHWANATH MEDICAL STORES", "gstin": "36AASFV8075E1ZJ", "invoiceNo": "RR8970", "invoiceDate": "23/07/2026", "netAmount": "14276.00" },
   "items": [
-    { "medicine": "AZIL KENZOL SOAP", "pack": "75gm", "qty": "10", "free": "0", "batchNo": "K-035", "mrp": "160.00", "expiry": "01/28", "rate": "42.00", "amount": "420.00", "gst": "5", "hsn": "34011110" }
+    { "medicine": "SMUTH SUS", "pack": "200ML", "qty": "3", "free": "0", "batchNo": "MPB260688", "mrp": "181.88", "expiry": "01/28", "rate": "138.57", "amount": "415.71", "gst": "5", "hsn": "300490" }
   ]
 }`;
 
     const parsed1 = await callGemini(apiKey, pass1Prompt, cleanBase64);
 
-    // ── PASS 2: SELF-REFINEMENT & VERIFICATION PASS ──
+    // ── PASS 2: ZERO-ERROR AUDITOR VERIFICATION PASS ──
     let finalParsed = parsed1;
     let passesRun = 1;
 
     if (mode === "invoice" && Array.isArray(parsed1?.items) && parsed1.items.length > 0) {
       try {
-        const pass2Prompt = `You are a Senior Auditor verifying pharmaceutical OCR extraction.
-Review the original invoice image and the following extracted JSON data:
+        const pass2Prompt = `You are a Senior Pharmaceutical Auditor conducting a Zero-Error Verification Audit.
+Review the original invoice image and the Pass 1 extracted JSON:
 ${JSON.stringify(parsed1, null, 2)}
 
-Perform a strict verification:
-1. Ensure EVERY single product row printed on the invoice is included without missing any lines.
-2. Verify arithmetic: Qty * Rate should equal Amount (e.g., 10 * 42.00 = 420.00).
-3. Ensure Batch Numbers, Expiry dates (MM/YY), MRP, and HSN codes match the photo with 100% precision.
-4. Correct any minor OCR noise or misread characters.
+Audit Checklist:
+1. ROW COUNT VERIFICATION: Count total rows on invoice image. Ensure EVERY single item row is present in the output array. If any row was missed, add it now.
+2. COLUMN DISAMBIGUATION: Ensure batchNo is strictly the batch string, NOT the manufacturer code (ARIS, AVEN, U.S., SUN, PFIZ, BOOT, INTA, etc.).
+3. ARITHMETIC VERIFICATION: Verify Qty * Rate = Amount for every row. Fix any OCR typos (e.g. misreading '0' as 'O', '1' as 'I', '8' as 'B').
+4. EXPIRY DATE FORMAT: Ensure expiry is formatted as MM/YY or MM/YYYY.
 
-Return the final audited JSON with keys "header" and "items".
+Return the audited final JSON with keys "header" and "items".
 Respond STRICTLY in valid JSON format.`;
 
         const parsed2 = await callGemini(apiKey, pass2Prompt, cleanBase64);
@@ -215,9 +223,12 @@ Respond STRICTLY in valid JSON format.`;
       const invoiceItems: AiOcrInvoiceItem[] = rawItems.map((it: any) => {
         const qtyNum = parseFloat(String(it.qty || "0"));
         const rateNum = parseFloat(String(it.rate || "0"));
-        const calcAmt = (!Number.isNaN(qtyNum) && !Number.isNaN(rateNum) && qtyNum > 0 && rateNum > 0)
-          ? (qtyNum * rateNum).toFixed(2)
-          : String(it.amount || "0");
+        const printedAmt = parseFloat(String(it.amount || "0"));
+        const calcAmt = (!Number.isNaN(printedAmt) && printedAmt > 0)
+          ? printedAmt.toFixed(2)
+          : (!Number.isNaN(qtyNum) && !Number.isNaN(rateNum) && qtyNum > 0 && rateNum > 0)
+            ? (qtyNum * rateNum).toFixed(2)
+            : String(it.amount || "0");
 
         return {
           medicine: String(it.medicine || "").toUpperCase().trim(),
