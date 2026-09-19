@@ -21,6 +21,8 @@ export const saveLabResultsSchema = z.object({
    * that were never actually read.
    */
   impression: z.string().trim().max(600).nullish(),
+  /** The date and time the test was completed/reported. */
+  completedAt: z.string().trim().nullish(),
 });
 
 export const orderTestsSchema = z.object({

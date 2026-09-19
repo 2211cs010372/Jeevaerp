@@ -54,6 +54,7 @@ interface TabState {
   sheet: Sheet | null;
   rows: ResultRow[];
   impression: string;
+  completedAt: string;
   loading: boolean;
   error: string | null;
   /** Edited since it was loaded or last saved - what a close would throw away. */
@@ -62,7 +63,19 @@ interface TabState {
   savedNow: boolean;
 }
 
-const BLANK: TabState = { sheet: null, rows: [], impression: "", loading: true, error: null, dirty: false, savedNow: false };
+const BLANK: TabState = { sheet: null, rows: [], impression: "", completedAt: "", loading: true, error: null, dirty: false, savedNow: false };
+
+function formatDateForInput(iso: string | null | undefined): string {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  } catch {
+    return "";
+  }
+}
 
 /**
  * A range bound the sheet can actually grade against.
@@ -138,6 +151,7 @@ export function ResultSheet({
       const sh = await api.get<Sheet>(`/labs/tests/${id}/results`);
       patch(id, {
         sheet: sh, rows: sh.results, impression: sh.test.impression ?? "",
+        completedAt: formatDateForInput(sh.test.completedAt),
         loading: false, error: null, dirty: false,
       });
     } catch (e) {
@@ -213,7 +227,11 @@ export function ResultSheet({
     try {
       // Impression is always sent, even empty: on this screen a cleared box means
       // the technician deleted what they had written, not "leave it as it was".
-      await api.put(`/labs/tests/${id}/results`, { items, impression: active.impression.trim() });
+      await api.put(`/labs/tests/${id}/results`, {
+        items,
+        impression: active.impression.trim(),
+        completedAt: active.completedAt ? new Date(active.completedAt).toISOString() : null,
+      });
       patch(id, { dirty: false, savedNow: true });
       setTabs((ts) => ts.map((t) => (t.id === id ? { ...t, status: "COMPLETED" } : t)));
       onSaved({ id, testName: activeTab.testName }, patientName);
@@ -404,25 +422,41 @@ export function ResultSheet({
             WITH the values in front of you, in one action. Per tab: an
             impression belongs to the test it describes, never to the panel. */}
         {active?.sheet && (
-          <div className="mx-6 mb-4">
-            <label className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
-              Impression / diagnosis from these results
-            </label>
-            <textarea
-              value={active.impression}
-              onChange={(e) => patch(activeId, { impression: e.target.value, dirty: true })}
-              maxLength={600}
-              placeholder="What these numbers show - e.g. Microcytic hypochromic anaemia. Suggest serum ferritin."
-              className="mt-1.5 min-h-[64px] w-full resize-y rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-[13px] leading-relaxed text-[var(--p-ink)] outline-none focus:border-[var(--p-teal)]"
-            />
-            <p className="mt-1 text-[11px] leading-relaxed text-[var(--p-muted)]">
-              Optional, and about <span className="font-semibold">{activeTab.testName}</span> alone. Goes onto the
-              patient&apos;s OPD sheet under <span className="font-semibold">Investigation</span>, attributed to the lab.
-              The consulting doctor&apos;s diagnosis is separate and this never replaces it.
-              {active.sheet.test.impression && active.sheet.test.technicianName && (
-                <> Currently written by <span className="font-semibold">{active.sheet.test.technicianName}</span>.</>
-              )}
-            </p>
+          <div className="mx-6 mb-4 flex flex-col gap-4 sm:flex-row sm:items-start">
+            <div className="flex-1">
+              <label className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
+                Impression / diagnosis from these results
+              </label>
+              <textarea
+                value={active.impression}
+                onChange={(e) => patch(activeId, { impression: e.target.value, dirty: true })}
+                maxLength={600}
+                placeholder="What these numbers show - e.g. Microcytic hypochromic anaemia. Suggest serum ferritin."
+                className="mt-1.5 min-h-[64px] w-full resize-y rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-[13px] leading-relaxed text-[var(--p-ink)] outline-none focus:border-[var(--p-teal)]"
+              />
+              <p className="mt-1 text-[11px] leading-relaxed text-[var(--p-muted)]">
+                Optional, and about <span className="font-semibold">{activeTab.testName}</span> alone. Goes onto the
+                patient&apos;s OPD sheet under <span className="font-semibold">Investigation</span>, attributed to the lab.
+                The consulting doctor&apos;s diagnosis is separate and this never replaces it.
+                {active.sheet.test.impression && active.sheet.test.technicianName && (
+                  <> Currently written by <span className="font-semibold">{active.sheet.test.technicianName}</span>.</>
+                )}
+              </p>
+            </div>
+            <div className="w-full shrink-0 sm:w-56">
+              <label className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
+                Reported Date &amp; Time
+              </label>
+              <input
+                type="datetime-local"
+                value={active.completedAt}
+                onChange={(e) => patch(activeId, { completedAt: e.target.value, dirty: true })}
+                className="mt-1.5 w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-[13px] text-[var(--p-ink)] outline-none focus:border-[var(--p-teal)]"
+              />
+              <p className="mt-1 text-[11px] leading-relaxed text-[var(--p-muted)]">
+                Date &amp; time printed on the report sheet.
+              </p>
+            </div>
           </div>
         )}
 

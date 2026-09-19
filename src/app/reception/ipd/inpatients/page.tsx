@@ -101,6 +101,7 @@ export default function InpatientsPage() {
   }
 
   const [discharges, setDischarges] = useState<Discharged[]>([]);
+  const [dischargeQuery, setDischargeQuery] = useState("");
   const [disc, setDisc] = useState(0);
   const [payNow, setPayNow] = useState(true);
   /** Cashless only: what the family pays at the desk. Starts at nothing. */
@@ -261,6 +262,18 @@ export default function InpatientsPage() {
 
   const fld = "w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]";
 
+  const filteredDischarges = discharges.filter((d) => {
+    if (!dischargeQuery.trim()) return true;
+    const q = dischargeQuery.trim().toLowerCase();
+    return (
+      d.patient.fullName.toLowerCase().includes(q) ||
+      d.ipNumber.toLowerCase().includes(q) ||
+      d.patient.displayId.toLowerCase().includes(q) ||
+      d.ward.toLowerCase().includes(q) ||
+      d.doctor.name.toLowerCase().includes(q)
+    );
+  });
+
   return (
     <PortalScroll>
       <div data-rise className="surface dotgrid mb-6 flex flex-wrap items-center justify-between gap-4 px-6 py-5">
@@ -366,92 +379,110 @@ export default function InpatientsPage() {
       {/* ---------- RECENTLY DISCHARGED - re-print bills after the patient has left ---------- */}
       {discharges.length > 0 && (
         <section data-rise className="surface mt-6 overflow-hidden">
-          <div className="border-b border-[var(--p-border)] px-6 py-4">
-            <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Recently discharged</h3>
-            <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">Re-print the bill or open the record after the patient has left the ward.</p>
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--p-border)] px-6 py-4">
+            <div>
+              <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Recently discharged</h3>
+              <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">Re-print the bill or open the record after the patient has left the ward.</p>
+            </div>
+            <div className="relative w-full max-w-xs">
+              <input
+                type="text"
+                value={dischargeQuery}
+                onChange={(e) => setDischargeQuery(e.target.value)}
+                placeholder="Search discharged patients..."
+                className="w-full rounded-lg border border-[var(--p-border)] bg-white py-1.5 pl-8 pr-3 text-[13px] text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]"
+              />
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--p-muted)]">
+                <Icon name="search" size={14} />
+              </span>
+            </div>
           </div>
           <div className="divide-y divide-[var(--p-border)]">
-            {discharges.map((d) => (
-              <div key={d.id} className="flex flex-wrap items-center justify-between gap-4 px-6 py-3.5">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[14px] font-semibold text-[var(--p-ink)]">{d.patient.fullName}</span>
-                    <span className="font-mono text-[12px] text-[var(--p-blue)]">{d.ipNumber}</span>
-                    {/* Only the exceptions are marked. An ordinary discharge needs
-                        no label; a death or an abscond must not be able to pass as
-                        one in a list the desk scans quickly. */}
-                    {d.outcome && d.outcome !== "DISCHARGED" && (
-                      <span className="rounded bg-[var(--p-bg)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
-                        {OUTCOME_SHORT[d.outcome as AdmissionStatusValue] ?? d.outcome}
-                      </span>
+            {filteredDischarges.length === 0 ? (
+              <p className="px-6 py-8 text-center text-[13px] text-[var(--p-muted)]">No discharged patients match &quot;{dischargeQuery}&quot;.</p>
+            ) : (
+              filteredDischarges.map((d) => (
+                <div key={d.id} className="flex flex-wrap items-center justify-between gap-4 px-6 py-3.5">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[14px] font-semibold text-[var(--p-ink)]">{d.patient.fullName}</span>
+                      <span className="font-mono text-[12px] text-[var(--p-blue)]">{d.ipNumber}</span>
+                      {/* Only the exceptions are marked. An ordinary discharge needs
+                          no label; a death or an abscond must not be able to pass as
+                          one in a list the desk scans quickly. */}
+                      {d.outcome && d.outcome !== "DISCHARGED" && (
+                        <span className="rounded bg-[var(--p-bg)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
+                          {OUTCOME_SHORT[d.outcome as AdmissionStatusValue] ?? d.outcome}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 text-[13px] text-[var(--p-muted)]">
+                      <span className="tabular">{d.patient.displayId}</span> · {d.ward} · {d.days}d · {d.doctor.name} · closed {prettyDateTime(d.dischargedAt)}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {d.invoice && (
+                      <div className="text-right">
+                        <div className="font-mono text-[13px] font-semibold text-[var(--p-ink)] tabular">₹{money(d.invoice.totalAmount)}</div>
+                        <div className="font-mono text-[11px] text-[var(--p-muted)]">{d.invoice.receiptNo}</div>
+                      </div>
+                    )}
+                    <button onClick={() => openHistory(d)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+                      <Icon name="activity" size={14} /> History
+                    </button>
+                    <a href={`/print/discharge/${d.id}`} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+                      <Icon name="file" size={14} /> Summary
+                    </a>
+                    {/* THE ITEMISED BILL - every bed night, charge, medicine and
+                        test on one sheet. The insurance desk has had this all
+                        along; a self-paying family asking "what am I paying for?"
+                        needs the same page, and the route already existed with
+                        nothing linking to it. */}
+                    <a href={`/print/bill/${d.id}`} target="_blank" rel="noopener noreferrer"
+                      title="Itemised bill for the whole stay"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+                      <Icon name="receipt" size={14} /> Detailed bill
+                    </a>
+                    {/* The self-pay reading of the same stay - see the note on the
+                        inpatient rows above. Most wanted right here: the family is
+                        gone, they ring asking what the discount actually came to,
+                        and the desk needs the sheet that says so. */}
+                    {d.payerType === "SELF_PAY" && (
+                      <a href={`/print/services-bill/${d.id}`} target="_blank" rel="noopener noreferrer"
+                        title="Hospital services only, discounted - the pharmacy and the lab bill at their own counters"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
+                        <Icon name="receipt" size={14} /> Services bill
+                      </a>
+                    )}
+                    {/* BACK INTO THE STAY AFTER IT IS CLOSED.
+                        This heading has always promised "open the record after the
+                        patient has left the ward" and there was no way to do it -
+                        every button here printed something. A discharge date typed
+                        wrong, a bed rate corrected a day late, a charge that should
+                        never have been on the tab: all of them are edited from the
+                        stay sheet, and all of them were unreachable the moment the
+                        bed was freed. The sheet's own Edit gates what may still be
+                        changed on a closed stay and re-issues the invoice when it
+                        is, so nothing here needs its own rules. */}
+                    <Link href={`/ipd/${d.id}`}
+                      title="Open the stay - correct the dates, the bed rate or the nursing rate"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">
+                      <Icon name="bed" size={14} /> Open sheet
+                    </Link>
+                    {d.invoice ? (
+                      <a href={`/print/invoice/${d.invoice.id}`} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--p-blue)] px-3.5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[var(--p-blue-deep)]">
+                        <Icon name="receipt" size={14} /> Print bill
+                      </a>
+                    ) : (
+                      <span className="text-[12px] text-[var(--p-muted)]">No IPD invoice</span>
                     )}
                   </div>
-                  <div className="mt-1 text-[13px] text-[var(--p-muted)]">
-                    <span className="tabular">{d.patient.displayId}</span> · {d.ward} · {d.days}d · {d.doctor.name} · closed {prettyDateTime(d.dischargedAt)}
-                  </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  {d.invoice && (
-                    <div className="text-right">
-                      <div className="font-mono text-[13px] font-semibold text-[var(--p-ink)] tabular">₹{money(d.invoice.totalAmount)}</div>
-                      <div className="font-mono text-[11px] text-[var(--p-muted)]">{d.invoice.receiptNo}</div>
-                    </div>
-                  )}
-                  <button onClick={() => openHistory(d)}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
-                    <Icon name="activity" size={14} /> History
-                  </button>
-                  <a href={`/print/discharge/${d.id}`} target="_blank" rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
-                    <Icon name="file" size={14} /> Summary
-                  </a>
-                  {/* THE ITEMISED BILL - every bed night, charge, medicine and
-                      test on one sheet. The insurance desk has had this all
-                      along; a self-paying family asking "what am I paying for?"
-                      needs the same page, and the route already existed with
-                      nothing linking to it. */}
-                  <a href={`/print/bill/${d.id}`} target="_blank" rel="noopener noreferrer"
-                    title="Itemised bill for the whole stay"
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
-                    <Icon name="receipt" size={14} /> Detailed bill
-                  </a>
-                  {/* The self-pay reading of the same stay - see the note on the
-                      inpatient rows above. Most wanted right here: the family is
-                      gone, they ring asking what the discount actually came to,
-                      and the desk needs the sheet that says so. */}
-                  {d.payerType === "SELF_PAY" && (
-                    <a href={`/print/services-bill/${d.id}`} target="_blank" rel="noopener noreferrer"
-                      title="Hospital services only, discounted - the pharmacy and the lab bill at their own counters"
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
-                      <Icon name="receipt" size={14} /> Services bill
-                    </a>
-                  )}
-                  {/* BACK INTO THE STAY AFTER IT IS CLOSED.
-                      This heading has always promised "open the record after the
-                      patient has left the ward" and there was no way to do it -
-                      every button here printed something. A discharge date typed
-                      wrong, a bed rate corrected a day late, a charge that should
-                      never have been on the tab: all of them are edited from the
-                      stay sheet, and all of them were unreachable the moment the
-                      bed was freed. The sheet's own Edit gates what may still be
-                      changed on a closed stay and re-issues the invoice when it
-                      is, so nothing here needs its own rules. */}
-                  <Link href={`/ipd/${d.id}`}
-                    title="Open the stay - correct the dates, the bed rate or the nursing rate"
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">
-                    <Icon name="bed" size={14} /> Open sheet
-                  </Link>
-                  {d.invoice ? (
-                    <a href={`/print/invoice/${d.invoice.id}`} target="_blank" rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--p-blue)] px-3.5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[var(--p-blue-deep)]">
-                      <Icon name="receipt" size={14} /> Print bill
-                    </a>
-                  ) : (
-                    <span className="text-[12px] text-[var(--p-muted)]">No IPD invoice</span>
-                  )}
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </section>
       )}

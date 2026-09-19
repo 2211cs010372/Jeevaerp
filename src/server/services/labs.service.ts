@@ -1052,7 +1052,7 @@ export async function labOrderReportData(orderId: string): Promise<LabOrderRepor
  */
 export async function saveLabResults(
   actor: AuthUser,
-  input: { labTestId: string; items: LabResultInput[]; complete?: boolean; impression?: string | null },
+  input: { labTestId: string; items: LabResultInput[]; complete?: boolean; impression?: string | null; completedAt?: string | null },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<{ results: LabResultDTO[]; abnormal: number; impression: string | null }> {
   const test = await prisma.labTest.findUnique({
@@ -1096,6 +1096,12 @@ export async function saveLabResults(
   // clearing what they wrote. Collapsing the two would silently wipe the note
   // every time an older client saved a correction to the numbers.
   const impression = input.impression === undefined ? undefined : (input.impression?.trim() || null);
+  const compDate = input.completedAt !== undefined
+    ? (input.completedAt ? new Date(input.completedAt) : null)
+    : undefined;
+  if (compDate && isNaN(compDate.getTime())) {
+    throw new ApiError(400, "Invalid reported date");
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.labResultItem.deleteMany({ where: { labTestId: input.labTestId } });
@@ -1104,12 +1110,19 @@ export async function saveLabResults(
       await tx.labTest.update({
         where: { id: input.labTestId },
         data: {
-          status: "COMPLETED", completedAt: new Date(), technicianId: actor.id,
+          status: "COMPLETED",
+          completedAt: compDate !== undefined ? (compDate ?? new Date()) : new Date(),
+          technicianId: actor.id,
           ...(impression !== undefined ? { impression } : {}),
         },
       });
-    } else if (impression !== undefined) {
-      await tx.labTest.update({ where: { id: input.labTestId }, data: { impression } });
+    } else {
+      const dataToUpdate: Record<string, unknown> = {};
+      if (impression !== undefined) dataToUpdate.impression = impression;
+      if (compDate !== undefined) dataToUpdate.completedAt = compDate;
+      if (Object.keys(dataToUpdate).length > 0) {
+        await tx.labTest.update({ where: { id: input.labTestId }, data: dataToUpdate });
+      }
     }
   });
 
