@@ -77,6 +77,24 @@ function formatDateForInput(iso: string | null | undefined): string {
   }
 }
 
+function formatDateTimeAmPm(iso: string | null | undefined): string {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleString("en-US", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch {
+    return "";
+  }
+}
+
 /**
  * A range bound the sheet can actually grade against.
  *
@@ -454,7 +472,11 @@ export function ResultSheet({
                 className="mt-1.5 w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-[13px] text-[var(--p-ink)] outline-none focus:border-[var(--p-teal)]"
               />
               <p className="mt-1 text-[11px] leading-relaxed text-[var(--p-muted)]">
-                Date &amp; time printed on the report sheet.
+                {active.completedAt && formatDateTimeAmPm(active.completedAt) ? (
+                  <>Prints as: <span className="font-semibold text-[var(--p-teal-deep)]">{formatDateTimeAmPm(active.completedAt)}</span></>
+                ) : (
+                  "Date & time printed on the report sheet (with AM/PM)."
+                )}
               </p>
             </div>
           </div>
