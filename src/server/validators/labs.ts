@@ -220,9 +220,7 @@ export const updateInvoiceSchema = z.object({
    * keystroke away at a counter. The past is left open: back-dating to the day
    * treatment was actually given is the entire reason this field exists.
    */
-  billDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Give the date as YYYY-MM-DD")
-    .refine((d) => !Number.isNaN(Date.parse(`${d}T00:00:00`)), "That is not a real date")
-    .nullish(),
+  billDate: z.string().trim().nullish(),
 });
 
 export const cancelInvoiceSchema = z.object({

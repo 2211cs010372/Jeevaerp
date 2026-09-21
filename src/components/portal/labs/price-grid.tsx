@@ -32,6 +32,8 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { useDebounce } from "@/lib/use-debounce";
+import { Pagination } from "@/components/portal/ui/pagination";
 // The SAME comparison the server writes by. If the screen decided "changed" its
 // own way, the Save button would offer a count the server then disagreed with -
 // "3 prices" saved as 2, with no explanation of which one it dropped.
@@ -63,7 +65,10 @@ export function LabPriceGrid({ note }: { note?: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [q, setQ] = useState("");
+  const debouncedQ = useDebounce(q, 300);
   const [filter, setFilter] = useState<Filter>("all");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   async function load() {
     setLoading(true);
@@ -112,7 +117,7 @@ export function LabPriceGrid({ note }: { note?: React.ReactNode }) {
   );
 
   const shown = useMemo(() => {
-    const needle = q.trim().toLowerCase();
+    const needle = debouncedQ.trim().toLowerCase();
     return items.filter((i) => {
       // The zero filter reads the SAVED price, not the draft: a row must not
       // vanish from under the cursor the moment a price is typed into it.
@@ -121,7 +126,16 @@ export function LabPriceGrid({ note }: { note?: React.ReactNode }) {
       if (!needle) return true;
       return i.name.toLowerCase().includes(needle) || (i.code ?? "").toLowerCase().includes(needle);
     });
-  }, [items, q, filter, original]);
+  }, [items, original, debouncedQ, filter]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedQ, filter, pageSize]);
+
+  const totalPages = Math.ceil(shown.length / pageSize) || 1;
+  const pagedShown = useMemo(() => {
+    return shown.slice((page - 1) * pageSize, page * pageSize);
+  }, [shown, page, pageSize]);
 
   async function save() {
     if (!dirty.length) return;
@@ -249,7 +263,7 @@ export function LabPriceGrid({ note }: { note?: React.ReactNode }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--p-border)]">
-              {shown.map((i) => {
+              {pagedShown.map((i) => {
                 const was = original.get(i.id) ?? money(i.price);
                 const now = draft[i.id] ?? "";
                 const parsed = parsePrice(now);
@@ -299,6 +313,17 @@ export function LabPriceGrid({ note }: { note?: React.ReactNode }) {
               })}
             </tbody>
           </table>
+        )}
+        {!loading && shown.length > 0 && (
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            totalItems={shown.length}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+            itemLabel="tests"
+          />
         )}
       </section>
 

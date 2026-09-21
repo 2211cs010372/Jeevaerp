@@ -26,6 +26,10 @@ import { api, ApiClientError } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
 import { TOPICS } from "@/lib/realtime/topics";
 
+import { useDebounce } from "@/lib/use-debounce";
+import { Pagination } from "@/components/portal/ui/pagination";
+import { useMemo } from "react";
+
 interface Test {
   id: string; testName: string; status: string; price: string | null; reportFileUrl: string | null;
   createdAt: string; completedAt: string | null; billed: boolean;
@@ -66,6 +70,34 @@ export default function LabQueuePage() {
   const [editing, setEditing] = useState<string | null>(null);
   const doctors = useDoctorRoster();
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  const [q, setQ] = useState("");
+  const debouncedQ = useDebounce(q, 300);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  const filteredOrders = useMemo(() => {
+    const needle = debouncedQ.trim().toLowerCase();
+    if (!needle) return orders;
+    return orders.filter((o) => {
+      const pName = (o.patient?.fullName ?? "").toLowerCase();
+      const pId = (o.patient?.displayId ?? "").toLowerCase();
+      const pPhone = (o.patient?.phone ?? "").toLowerCase();
+      const docName = (o.appointment?.doctorName ?? o.referringDoctor?.name ?? "").toLowerCase();
+      const opNum = (o.appointment?.opNumber ?? "").toLowerCase();
+      const testNames = o.tests.map((t) => t.testName.toLowerCase()).join(" ");
+      return pName.includes(needle) || pId.includes(needle) || pPhone.includes(needle) || docName.includes(needle) || opNum.includes(needle) || testNames.includes(needle);
+    });
+  }, [orders, debouncedQ]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedQ, filter, pageSize]);
+
+  const totalPages = Math.ceil(filteredOrders.length / pageSize) || 1;
+  const pagedOrders = useMemo(() => {
+    return filteredOrders.slice((page - 1) * pageSize, page * pageSize);
+  }, [filteredOrders, page, pageSize]);
 
   /** The order the result sheet is open on, and the tab it opened at. */
   const [sheet, setSheet] = useState<SheetTarget | null>(null);
@@ -230,6 +262,17 @@ export default function LabQueuePage() {
         </div>
       )}
 
+      <div data-rise className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="relative min-w-[240px] flex-1">
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search patient name, Jeeva ID, phone, test name, doctor..."
+            className="w-full rounded-lg border border-[var(--p-border)] bg-white px-3.5 py-2 text-sm text-[var(--p-ink)] outline-none transition-colors focus:border-[var(--p-teal)]"
+          />
+        </div>
+      </div>
+
       {/* Saved, and every report is one click away. Not auto-opened: a popup
           fired from a save is the first thing a browser blocks, and a technician
           who gets nothing when they expected a report assumes the save failed. */}
@@ -272,14 +315,14 @@ export default function LabQueuePage() {
       <section data-rise className="surface overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-20 text-[13px] text-[var(--p-muted)]"><Spinner /> Loading orders…</div>
-        ) : orders.length === 0 ? (
+        ) : filteredOrders.length === 0 ? (
           <div className="dotgrid flex flex-col items-center py-20 text-center">
             <span className="flex h-12 w-12 items-center justify-center rounded-full border border-[var(--p-border)] bg-white text-[var(--p-muted)]"><Icon name="flask" size={20} /></span>
-            <p className="mt-3 text-[13px] text-[var(--p-muted)]">No {filter === "ALL" ? "" : filter.toLowerCase()} orders.</p>
+            <p className="mt-3 text-[13px] text-[var(--p-muted)]">{q.trim() ? "Nothing matches that search." : `No ${filter === "ALL" ? "" : filter.toLowerCase()} orders.`}</p>
           </div>
         ) : (
           <div className="divide-y divide-[var(--p-border)]">
-            {orders.map((o) => {
+            {pagedOrders.map((o) => {
               const many = o.tests.length > 1;
               const open = expanded.has(o.id);
               // An order of one is drawn as the test it is - an expander that
@@ -430,6 +473,17 @@ export default function LabQueuePage() {
               );
             })}
           </div>
+        )}
+        {!loading && filteredOrders.length > 0 && (
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            totalItems={filteredOrders.length}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+            itemLabel="orders"
+          />
         )}
       </section>
 

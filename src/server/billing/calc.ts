@@ -246,14 +246,26 @@ export function resolveBillDate(
   if (input === null) return null;
 
   const s = input.trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new BillDateError("Give the date as YYYY-MM-DD");
+  if (!s) throw new BillDateError("That is not a real date & time");
 
-  const d = new Date(`${s}T12:00:00`);
-  if (Number.isNaN(d.getTime())) throw new BillDateError("That is not a real date");
-  // "2026-02-31" parses in some engines by rolling into March. Round-tripping the
-  // parsed date back to its parts is what catches a day that does not exist.
-  const back = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  if (back !== s) throw new BillDateError("That is not a real date");
+  const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  const dateTimeMatch = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$/.exec(s);
+
+  if (!dateOnlyMatch && !dateTimeMatch) {
+    throw new BillDateError("That is not a real date & time");
+  }
+
+  const match = dateOnlyMatch || dateTimeMatch!;
+  const year = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const day = parseInt(match[3], 10);
+
+  const d = new Date(dateOnlyMatch ? `${s}T12:00:00` : s);
+  if (Number.isNaN(d.getTime())) throw new BillDateError("That is not a real date & time");
+
+  if (d.getFullYear() !== year || d.getMonth() + 1 !== month || d.getDate() !== day) {
+    throw new BillDateError("That is not a real date & time");
+  }
 
   // A day of slack, not zero: the desk's clock and the server's are never quite
   // the same, and a bill dated "today" must not be refused at 23:58 because the

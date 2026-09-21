@@ -41,9 +41,26 @@ export interface EditableOrder {
 }
 
 /** "2026-08-04" in the browser's own calendar - what a date field wants. */
-const dateValue = (iso: string) => {
+const formatDateTimeForInput = (iso: string | null) => {
+  if (!iso) return "";
   const d = new Date(iso);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  if (isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+const formatDateTimeAmPm = (val: string) => {
+  if (!val) return "";
+  const d = new Date(val);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleString("en-US", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
 };
 
 export function OrderEditPanel({ order, doctors, onSaved, onClose }: {
@@ -53,8 +70,9 @@ export function OrderEditPanel({ order, doctors, onSaved, onClose }: {
   onSaved: () => void;
   onClose: () => void;
 }) {
-  const entered = dateValue(order.createdAt);
-  const [date, setDate] = useState(dateValue(order.orderedAt ?? order.createdAt));
+  const enteredInput = formatDateTimeForInput(order.createdAt);
+  const initialInput = formatDateTimeForInput(order.orderedAt ?? order.createdAt);
+  const [date, setDate] = useState(initialInput);
   // The select's value is a doctor id, "" for self-referral, or the in-house
   // sentinel. An order carrying a referringName is one the hospital referred.
   const initialReferrer =
@@ -67,7 +85,7 @@ export function OrderEditPanel({ order, doctors, onSaved, onClose }: {
   // who saw the patient. The field is shown but locked, so the answer to "why
   // can't I set this?" is on screen rather than in a rejected save.
   const fromVisit = !!order.appointment;
-  const dirty = date !== dateValue(order.orderedAt ?? order.createdAt)
+  const dirty = date !== initialInput
     || (!fromVisit && doctorId !== initialReferrer);
 
   async function save() {
@@ -77,7 +95,7 @@ export function OrderEditPanel({ order, doctors, onSaved, onClose }: {
         // Sent only when it changed, and `null` clears rather than omits - an
         // absent key means "leave it alone" all the way to the column.
         ...(fromVisit ? {} : { referringDoctorId: doctorId || null }),
-        orderedAt: date === entered ? null : date,
+        orderedAt: date === enteredInput ? null : (date ? new Date(date).toISOString() : null),
       });
       onSaved();
     } catch (e) {
@@ -90,23 +108,28 @@ export function OrderEditPanel({ order, doctors, onSaved, onClose }: {
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <label className="mb-1.5 block text-[12px] font-semibold text-[var(--p-ink)]">
-            Registered on <span className="font-normal text-[var(--p-muted)]">(the day the sample came in)</span>
+            Registered on <span className="font-normal text-[var(--p-muted)]">(date &amp; time the sample came in)</span>
           </label>
           <input
-            type="date" value={date} max={dateValue(new Date().toISOString())}
+            type="datetime-local" value={date} max={formatDateTimeForInput(new Date().toISOString())}
             onChange={(e) => setDate(e.target.value)}
             className="w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm text-[var(--p-ink)] outline-none transition-colors focus:border-[var(--p-teal)]"
           />
+          {date && formatDateTimeAmPm(date) && (
+            <p className="mt-1 text-[11px] font-medium text-[var(--p-teal-deep)]">
+              Prints as: {formatDateTimeAmPm(date)}
+            </p>
+          )}
           <p className="mt-1 text-[12px] leading-snug text-[var(--p-muted)]">
             Prints on the report as Registered On.
-            {date !== entered ? (
+            {date !== enteredInput ? (
               <>
-                {" "}Typed in on <span className="tabular">{entered}</span> -{" "}
-                <button onClick={() => setDate(entered)} className="underline underline-offset-2 hover:text-[var(--p-ink)]">
+                {" "}Typed in on <span className="tabular">{formatDateTimeAmPm(order.createdAt)}</span> -{" "}
+                <button onClick={() => setDate(enteredInput)} className="underline underline-offset-2 hover:text-[var(--p-ink)]">
                   use that instead
                 </button>.
               </>
-            ) : " Same day it was typed in."}
+            ) : " Same time it was typed in."}
           </p>
         </div>
 

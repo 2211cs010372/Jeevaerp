@@ -58,6 +58,36 @@ export interface EditableInvoice {
   amountPaid: string;
 }
 
+function formatDateTimeForInput(iso: string | null | undefined): string {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  } catch {
+    return "";
+  }
+}
+
+function formatDateTimeAmPm(iso: string | null | undefined): string {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleString("en-US", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch {
+    return "";
+  }
+}
+
 export function EditBillDialog({
   invoiceId,
   accent = "teal",
@@ -72,7 +102,7 @@ export function EditBillDialog({
   const [inv, setInv] = useState<EditableInvoice | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** The printed date, as "YYYY-MM-DD". Seeded from the bill once it arrives. */
+  /** The printed date and time as YYYY-MM-DDTHH:mm. Seeded from the bill once it arrives. */
   const [date, setDate] = useState("");
 
   useEffect(() => {
@@ -81,16 +111,16 @@ export function EditBillDialog({
       .then((r) => {
         if (!live) return;
         setInv(r.invoice);
-        setDate(localDateISO(new Date(r.invoice.billDate ?? r.invoice.createdAt)));
+        setDate(formatDateTimeForInput(r.invoice.billDate ?? r.invoice.createdAt));
       })
       .catch((e) => { if (live) setError(e instanceof ApiClientError ? e.message : "Couldn't open the bill."); });
     return () => { live = false; };
   }, [invoiceId]);
 
-  /** The real date this bill was raised - what the box goes back to on Reset. */
-  const realDate = inv ? localDateISO(new Date(inv.createdAt)) : "";
+  /** The real date/time this bill was raised - what the box goes back to on Reset. */
+  const realDate = inv ? formatDateTimeForInput(inv.createdAt) : "";
   const dateMoved = !!inv && date !== realDate;
-  const future = date > localDateISO(new Date());
+  const future = date ? new Date(date).getTime() > Date.now() + 24 * 60 * 60 * 1000 : false;
 
   // ── WHAT HAS ALREADY BEEN COLLECTED ──
   //
@@ -156,7 +186,7 @@ export function EditBillDialog({
         // override is CLEARED rather than stored as a value equal to createdAt.
         // A bill carrying a redundant billDate would read, in the audit log and
         // to the next person, as one somebody deliberately re-dated.
-        billDate: dateMoved ? date : null,
+        billDate: dateMoved ? (date ? new Date(date).toISOString() : null) : null,
       });
       onSaved();
       return true;
@@ -236,18 +266,17 @@ export function EditBillDialog({
                 </div>
               )}
 
-              {/* ── THE PRINTED DATE ──
+              {/* ── THE PRINTED DATE & TIME ──
                   Above the lines because it is the field people come here for
-                  after the fact: the amounts were right, the day was not. */}
+                  after the fact: the amounts were right, the day/time was not. */}
               <div className="mb-5 border-b border-[var(--p-border)] pb-5">
                 <label className="mb-1.5 block text-[10.5px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
-                  Bill date
+                  Bill date &amp; time
                 </label>
                 <div className="flex flex-wrap items-center gap-3">
                   <input
-                    type="date"
+                    type="datetime-local"
                     value={date}
-                    max={localDateISO(new Date())}
                     onChange={(e) => setDate(e.target.value)}
                     className={`${fld} !w-auto`}
                   />
@@ -256,25 +285,29 @@ export function EditBillDialog({
                       onClick={() => setDate(realDate)}
                       className="rounded-lg border border-[var(--p-border)] px-3 py-1.5 text-[12px] font-medium text-[var(--p-text)] hover:border-[var(--p-teal)]"
                     >
-                      Back to {new Date(realDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}
+                      Back to {formatDateTimeAmPm(realDate)}
                     </button>
                   )}
                 </div>
+                {date && formatDateTimeAmPm(date) && (
+                  <p className="mt-1.5 text-[11.5px] font-medium text-[var(--p-teal-deep)]">
+                    Prints as: <span className="font-semibold">{formatDateTimeAmPm(date)}</span>
+                  </p>
+                )}
                 {future ? (
                   <p className="mt-2 text-[11.5px] text-[var(--p-rose)]">
                     A bill can&apos;t be dated in the future.
                   </p>
                 ) : dateMoved ? (
                   <p className="mt-2 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
-                    The printed bill will show this date. The day&apos;s collection and the GST return still
+                    The printed bill will show this date and time. The day&apos;s collection and the GST return still
                     count it on{" "}
-                    {new Date(inv.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })},
+                    {formatDateTimeAmPm(inv.createdAt)},
                     when it was actually raised — so re-dating a bill never moves money between days.
                   </p>
                 ) : (
                   <p className="mt-2 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
-                    The day this bill was raised. Change it if the treatment was given on a different day
-                    to the one it was typed in.
+                    The day &amp; time this bill was raised. Change it if the treatment was given on a different day or time.
                   </p>
                 )}
               </div>

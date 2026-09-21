@@ -38,6 +38,9 @@ import { api, ApiClientError } from "@/lib/api-client";
 import { suggestTestCode } from "@/lib/lab-code";
 import { departmentFor } from "@/lib/lab-reference";
 
+import { useDebounce } from "@/lib/use-debounce";
+import { Pagination } from "@/components/portal/ui/pagination";
+
 interface Item {
   id: string; name: string; code: string | null;
   price: string; gstRatePct: string;
@@ -84,7 +87,10 @@ export default function LabCatalogPage() {
   const [edit, setEdit] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
   const [q, setQ] = useState("");
+  const debouncedQ = useDebounce(q, 300);
   const [filter, setFilter] = useState<Filter>("all");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(15);
   /** The open test's normal values; null until they arrive, [] when it has none. */
   const [rows, setRows] = useState<Row[] | null>(null);
   const [rowsBusy, setRowsBusy] = useState(false);
@@ -122,14 +128,23 @@ export default function LabCatalogPage() {
   );
 
   const shown = useMemo(() => {
-    const needle = q.trim().toLowerCase();
+    const needle = debouncedQ.trim().toLowerCase();
     return items.filter((i) => {
       if (filter === "unpriced" && !(i.active && Number(i.price) === 0)) return false;
       if (filter === "inactive" && i.active) return false;
       if (!needle) return true;
       return i.name.toLowerCase().includes(needle) || (i.code ?? "").toLowerCase().includes(needle);
     });
-  }, [items, q, filter]);
+  }, [items, debouncedQ, filter]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedQ, filter, pageSize]);
+
+  const totalPages = Math.ceil(shown.length / pageSize) || 1;
+  const pagedShown = useMemo(() => {
+    return shown.slice((page - 1) * pageSize, page * pageSize);
+  }, [shown, page, pageSize]);
 
   /** Open the modal on a test - existing or new - and fetch its normal values. */
   const open = useCallback(async (item: Item | null) => {
@@ -328,7 +343,7 @@ export default function LabCatalogPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--p-border)]">
-              {shown.map((i) => {
+              {pagedShown.map((i) => {
                 const zero = i.active && Number(i.price) === 0;
                 return (
                   <tr key={i.id} className={i.active ? "" : "opacity-55"}>
@@ -362,6 +377,17 @@ export default function LabCatalogPage() {
               })}
             </tbody>
           </table>
+        )}
+        {!loading && shown.length > 0 && (
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            totalItems={shown.length}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+            itemLabel="tests"
+          />
         )}
       </section>
 
