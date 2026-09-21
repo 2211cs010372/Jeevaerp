@@ -197,17 +197,21 @@ function toPublicDoctor(d: DoctorRow): Doctor {
  * export and its JSON-LD all ask for the same list and get one query.
  */
 export const listPublicDoctors = cache(async (): Promise<Doctor[]> => {
-  const rows = await prisma.doctor.findMany({
-    where: { active: true },
-    orderBy: [{ department: "asc" }, { name: "asc" }],
-    select: {
-      id: true, name: true, specialization: true, department: true,
-      consultationFee: true, qualification: true, experienceYears: true,
-      age: true, languages: true, bio: true,
-      schedules: { where: { isActive: true }, select: { dayOfWeek: true, startTime: true, endTime: true } },
-    },
-  });
-  return rows.map(toPublicDoctor);
+  try {
+    const rows = await prisma.doctor.findMany({
+      where: { active: true },
+      orderBy: [{ department: "asc" }, { name: "asc" }],
+      select: {
+        id: true, name: true, specialization: true, department: true,
+        consultationFee: true, qualification: true, experienceYears: true,
+        age: true, languages: true, bio: true,
+        schedules: { where: { isActive: true }, select: { dayOfWeek: true, startTime: true, endTime: true } },
+      },
+    });
+    return rows.map(toPublicDoctor);
+  } catch {
+    return [];
+  }
 });
 
 /** One consultant by cuid, or undefined. Reads the cached list, not a new query. */

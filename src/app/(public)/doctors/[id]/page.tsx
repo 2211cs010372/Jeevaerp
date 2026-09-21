@@ -11,7 +11,11 @@ import { doctorByParam, doctorHref, doctorSlug, isCanonicalParam } from "@/lib/d
  *  the reception desk appears on the next deploy, or on revalidation.
  *  The param is the NAME SLUG, never the raw id - see lib/doctors.ts. */
 export async function generateStaticParams() {
-  return (await listPublicDoctors()).map((d) => ({ id: doctorSlug(d) }));
+  try {
+    return (await listPublicDoctors()).map((d) => ({ id: doctorSlug(d) }));
+  } catch {
+    return [];
+  }
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {

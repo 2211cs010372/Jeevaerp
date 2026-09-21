@@ -10,7 +10,12 @@ import { doctorHref } from "@/lib/doctors";
  * in robots.ts too, and nothing behind a login belongs in a sitemap.
  */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const doctors = await listPublicDoctors();
+  let doctors: Awaited<ReturnType<typeof listPublicDoctors>> = [];
+  try {
+    doctors = await listPublicDoctors();
+  } catch {
+    doctors = [];
+  }
   const now = new Date();
 
   const staticPages = [
