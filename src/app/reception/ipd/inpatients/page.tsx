@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { PrimaryButton, Pill } from "@/components/portal/ui/primitives";
@@ -220,8 +220,8 @@ export default function InpatientsPage() {
     try {
       const params = new URLSearchParams();
       if (statusTab) params.set("status", statusTab);
-      if (fromDate) params.set("fromDate", fromDate);
-      if (toDate) params.set("toDate", toDate);
+      if (fromDate.trim()) params.set("fromDate", fromDate.trim());
+      if (toDate.trim()) params.set("toDate", toDate.trim());
       if (searchQuery.trim()) {
         if (searchField === "MOBILE") params.set("mobile", searchQuery.trim());
         else if (searchField === "IP") params.set("ip", searchQuery.trim());
@@ -235,14 +235,22 @@ export default function InpatientsPage() {
         api.get<{ discharges: Discharged[] }>("/ipd/discharges").catch(() => ({ discharges: [] as Discharged[] })),
       ]);
       setRows(r.inpatients); setDischarges(d.discharges);
+      setError(null);
     }
-    catch (e) { if (!quiet) setError(e instanceof ApiClientError ? e.message : "Couldn't load inpatients."); }
-    finally { if (!quiet) setLoading(false); }
+    catch (e) {
+      setError(e instanceof ApiClientError ? e.message : "Couldn't load inpatients.");
+    }
+    finally {
+      setLoading(false);
+    }
   }, [searchQuery, searchField, fromDate, toDate, statusTab]);
 
+  const isFirstMount = useRef(true);
   useEffect(() => {
+    const isFirst = isFirstMount.current;
+    isFirstMount.current = false;
     const t = setTimeout(() => {
-      load(true);
+      load(isFirst ? false : Boolean(searchQuery));
     }, searchQuery ? 300 : 0);
     return () => clearTimeout(t);
   }, [load, searchQuery]);

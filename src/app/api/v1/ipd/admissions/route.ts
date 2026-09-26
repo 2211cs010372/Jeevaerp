@@ -18,14 +18,14 @@ export const GET = handler(async (req) => {
   // of what either already sees on the stay they are billing to.
   await requireRole(req, "RECEPTIONIST", "ADMIN", "DOCTOR", "INSURANCE_DESK", "PHARMACIST", "LAB_TECH");
   const { searchParams } = new URL(req.url);
-  const q = searchParams.get("q") ?? undefined;
-  const mobile = searchParams.get("mobile") ?? undefined;
-  const ip = searchParams.get("ip") ?? undefined;
-  const op = searchParams.get("op") ?? undefined;
-  const name = searchParams.get("name") ?? undefined;
-  const fromDate = searchParams.get("fromDate") ?? searchParams.get("from") ?? undefined;
-  const toDate = searchParams.get("toDate") ?? searchParams.get("to") ?? undefined;
-  const status = searchParams.get("status") ?? undefined;
+  const q = searchParams.get("q")?.trim() || undefined;
+  const mobile = searchParams.get("mobile")?.trim() || undefined;
+  const ip = searchParams.get("ip")?.trim() || undefined;
+  const op = searchParams.get("op")?.trim() || undefined;
+  const name = searchParams.get("name")?.trim() || undefined;
+  const fromDate = searchParams.get("fromDate")?.trim() || searchParams.get("from")?.trim() || undefined;
+  const toDate = searchParams.get("toDate")?.trim() || searchParams.get("to")?.trim() || undefined;
+  const status = searchParams.get("status")?.trim() || undefined;
 
   const inpatients = await currentInpatients({
     q,

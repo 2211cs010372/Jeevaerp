@@ -600,13 +600,13 @@ export async function currentInpatients(filters?: InpatientFilters): Promise<Inp
 
   const andClauses: Prisma.AdmissionWhereInput[] = [];
 
-  if (filters?.fromDate || filters?.toDate) {
+  if (filters?.fromDate?.trim() || filters?.toDate?.trim()) {
     const admittedAtFilter: Prisma.DateTimeFilter = {};
-    if (filters.fromDate) {
-      admittedAtFilter.gte = parseLocalDate(filters.fromDate);
+    if (filters.fromDate?.trim()) {
+      admittedAtFilter.gte = parseLocalDate(filters.fromDate.trim());
     }
-    if (filters.toDate) {
-      const endOfDay = parseLocalDate(filters.toDate);
+    if (filters.toDate?.trim()) {
+      const endOfDay = parseLocalDate(filters.toDate.trim());
       endOfDay.setHours(23, 59, 59, 999);
       admittedAtFilter.lte = endOfDay;
     }
@@ -683,7 +683,7 @@ export async function currentInpatients(filters?: InpatientFilters): Promise<Inp
     attendantName: string | null; attendantPhone: string | null;
     payerType: string; insurer: string | null; policyNo: string | null;
     dailyChargeAtAdmit: { toString(): string }; wardNameAtAdmit: string;
-    bed: { bedNo: string };
+    bed: { bedNo: string } | null;
     charges: { qty: number; unitPrice: { toString(): string } }[];
     doctor: { name: string; department: string };
     patient: { id: string; displayId: string; fullName: string; age: number | null; dob: Date | null; gender: string | null; phone: string };
@@ -698,7 +698,7 @@ export async function currentInpatients(filters?: InpatientFilters): Promise<Inp
       id: r.id, ipNumber: r.ipNumber, status: r.status,
       admittedAt: r.admittedAt.toISOString(),
       dischargedAt: r.dischargedAt ? r.dischargedAt.toISOString() : null,
-      days, ward: r.wardNameAtAdmit, bedNo: r.bed.bedNo,
+      days, ward: r.wardNameAtAdmit, bedNo: r.bed?.bedNo ?? "-",
       dailyCharge: daily.toFixed(2),
       bedCharge: bedCharge.toFixed(2),
       extrasCharge: extrasCharge.toFixed(2),
