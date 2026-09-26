@@ -1,12 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { PrimaryButton, Pill } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { DiscountInput, PaymentSection, type Tender } from "@/components/portal/ui/bill-fields";
 import { PortalScroll } from "@/components/portal/portal-scroll";
+import PortalDatePicker from "@/components/portal/ui/datepicker";
+import { localDateISO, addDays } from "@/lib/date";
 import { api, ApiClientError } from "@/lib/api-client";
 import {
   DISCHARGE_OUTCOMES, OUTCOME_LABEL, OUTCOME_SHORT, OUTCOME_HELP,
@@ -23,6 +26,7 @@ interface Inpatient {
   id: string; ipNumber: string; admittedAt: string; days: number;
   ward: string; bedNo: string; dailyCharge: string; runningCharge: string;
   reason: string | null; attendantName: string | null; attendantPhone: string | null;
+  status?: string; dischargedAt?: string | null;
   /** Who settles this stay, decided at admission. Changes what the desk asks for. */
   payerType: string; insurer: string | null; policyNo: string | null;
   doctor: { name: string; department: string };
@@ -79,10 +83,79 @@ interface Discharged {
   invoice: { id: string; receiptNo: string; totalAmount: string; status: string } | null;
 }
 
+function SearchParamsHandler({
+  onParams,
+}: {
+  onParams: (p: { q?: string; from?: string; to?: string; status?: string; field?: string }) => void;
+}) {
+  const params = useSearchParams();
+  useEffect(() => {
+    const q = params.get("q") ?? params.get("search") ?? undefined;
+    const from = params.get("from") ?? params.get("fromDate") ?? undefined;
+    const to = params.get("to") ?? params.get("toDate") ?? undefined;
+    const status = params.get("status") ?? undefined;
+    const field = params.get("field") ?? undefined;
+    if (q || from || to || status || field) {
+      onParams({ q, from, to, status, field });
+    }
+  }, [params, onParams]);
+  return null;
+}
+
 export default function InpatientsPage() {
   const [rows, setRows] = useState<Inpatient[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // ── SEARCH & FILTER STATE ──
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchField, setSearchField] = useState<"ALL" | "MOBILE" | "IP" | "OP" | "NAME">("ALL");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [statusTab, setStatusTab] = useState<"ADMITTED" | "DISCHARGED" | "ALL">("ADMITTED");
+
+  const onUrlParams = useCallback((p: { q?: string; from?: string; to?: string; status?: string; field?: string }) => {
+    if (p.q !== undefined) setSearchQuery(p.q);
+    if (p.from !== undefined) setFromDate(p.from);
+    if (p.to !== undefined) setToDate(p.to);
+    if (p.status !== undefined && (p.status === "ADMITTED" || p.status === "DISCHARGED" || p.status === "ALL")) {
+      setStatusTab(p.status as any);
+    }
+    if (p.field !== undefined && ["ALL", "MOBILE", "IP", "OP", "NAME"].includes(p.field.toUpperCase())) {
+      setSearchField(p.field.toUpperCase() as any);
+    }
+  }, []);
+
+  function setDatePreset(preset: "all" | "today" | "yesterday" | "week" | "month") {
+    if (preset === "all") {
+      setFromDate("");
+      setToDate("");
+    } else if (preset === "today") {
+      const today = localDateISO();
+      setFromDate(today);
+      setToDate(today);
+    } else if (preset === "yesterday") {
+      const yesterday = localDateISO(addDays(new Date(), -1));
+      setFromDate(yesterday);
+      setToDate(yesterday);
+    } else if (preset === "week") {
+      setFromDate(localDateISO(addDays(new Date(), -6)));
+      setToDate(localDateISO());
+    } else if (preset === "month") {
+      const now = new Date();
+      setFromDate(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`);
+      setToDate(localDateISO());
+    }
+  }
+
+  const hasActiveFilters = Boolean(searchQuery.trim() || fromDate || toDate || statusTab !== "ADMITTED" || searchField !== "ALL");
+  function resetFilters() {
+    setSearchQuery("");
+    setSearchField("ALL");
+    setFromDate("");
+    setToDate("");
+    setStatusTab("ADMITTED");
+  }
 
   const [dischargeOf, setDischargeOf] = useState<Inpatient | null>(null);
   const [sheet, setSheet] = useState<DischSheet | null>(null);
@@ -145,16 +218,35 @@ export default function InpatientsPage() {
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
+      const params = new URLSearchParams();
+      if (statusTab) params.set("status", statusTab);
+      if (fromDate) params.set("fromDate", fromDate);
+      if (toDate) params.set("toDate", toDate);
+      if (searchQuery.trim()) {
+        if (searchField === "MOBILE") params.set("mobile", searchQuery.trim());
+        else if (searchField === "IP") params.set("ip", searchQuery.trim());
+        else if (searchField === "OP") params.set("op", searchQuery.trim());
+        else if (searchField === "NAME") params.set("name", searchQuery.trim());
+        else params.set("q", searchQuery.trim());
+      }
+
       const [r, d] = await Promise.all([
-        api.get<{ inpatients: Inpatient[] }>("/ipd/admissions"),
+        api.get<{ inpatients: Inpatient[] }>(`/ipd/admissions?${params.toString()}`),
         api.get<{ discharges: Discharged[] }>("/ipd/discharges").catch(() => ({ discharges: [] as Discharged[] })),
       ]);
       setRows(r.inpatients); setDischarges(d.discharges);
     }
     catch (e) { if (!quiet) setError(e instanceof ApiClientError ? e.message : "Couldn't load inpatients."); }
     finally { if (!quiet) setLoading(false); }
-  }, []);
-  useEffect(() => { load(); }, [load]);
+  }, [searchQuery, searchField, fromDate, toDate, statusTab]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      load(true);
+    }, searchQuery ? 300 : 0);
+    return () => clearTimeout(t);
+  }, [load, searchQuery]);
+
   // Beds free up and dues appear while this board is open.
   useLive([TOPICS.IPD], () => load(true));
 
@@ -274,16 +366,245 @@ export default function InpatientsPage() {
     );
   });
 
+  const filteredRows = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return rows.filter((r) => {
+      // 1. Status Filter
+      if (statusTab === "ADMITTED" && r.status && r.status !== "ADMITTED") return false;
+      if (statusTab === "DISCHARGED" && (!r.status || r.status === "ADMITTED")) return false;
+
+      // 2. Date Filter
+      if (fromDate || toDate) {
+        const rowDate = r.admittedAt ? r.admittedAt.slice(0, 10) : "";
+        if (fromDate && rowDate < fromDate) return false;
+        if (toDate && rowDate > toDate) return false;
+      }
+
+      // 3. Search Query
+      if (!q) return true;
+      const phone = (r.patient.phone || "").toLowerCase();
+      const attendantPhone = (r.attendantPhone || "").toLowerCase();
+      const ip = (r.ipNumber || "").toLowerCase();
+      const op = (r.patient.displayId || "").toLowerCase();
+      const name = (r.patient.fullName || "").toLowerCase();
+      const attendantName = (r.attendantName || "").toLowerCase();
+
+      if (searchField === "MOBILE") {
+        return phone.includes(q) || attendantPhone.includes(q);
+      }
+      if (searchField === "IP") {
+        return ip.includes(q);
+      }
+      if (searchField === "OP") {
+        return op.includes(q);
+      }
+      if (searchField === "NAME") {
+        return name.includes(q) || attendantName.includes(q);
+      }
+      return (
+        phone.includes(q) ||
+        attendantPhone.includes(q) ||
+        ip.includes(q) ||
+        op.includes(q) ||
+        name.includes(q) ||
+        attendantName.includes(q)
+      );
+    });
+  }, [rows, searchQuery, searchField, fromDate, toDate, statusTab]);
+
   return (
     <PortalScroll>
-      <div data-rise className="surface dotgrid mb-6 flex flex-wrap items-center justify-between gap-4 px-6 py-5">
+      <Suspense fallback={null}>
+        <SearchParamsHandler onParams={onUrlParams} />
+      </Suspense>
+
+      <div data-rise className="surface dotgrid mb-5 flex flex-wrap items-center justify-between gap-4 px-6 py-5">
         <div>
-          <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Inpatients</h1>
-          <p className="mt-1 text-[14px] text-[var(--p-muted)]">Everyone currently in a bed, with the stay charge running.</p>
+          <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">IP Admissions &amp; Inpatients</h1>
+          <p className="mt-1 text-[14px] text-[var(--p-muted)]">
+            Search all admitted patients by mobile number, IP number, OP / UHID, name, and admission dates.
+          </p>
         </div>
         <Link href="/ipd" className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">
           <Icon name="bed" size={15} /> Bed board
         </Link>
+      </div>
+
+      {/* ── SEARCH & FILTER CONTROLS ── */}
+      <div data-rise className="surface mb-5 p-5">
+        <div className="flex flex-col gap-4">
+          {/* Top row: Status tabs + Date presets */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {/* Status tabs */}
+            <div className="flex items-center gap-1 rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] p-1">
+              {([
+                { k: "ADMITTED", label: "Currently Admitted" },
+                { k: "DISCHARGED", label: "Discharged / Closed" },
+                { k: "ALL", label: "All Admissions" },
+              ] as const).map((tab) => {
+                const count =
+                  tab.k === "ADMITTED" ? rows.filter((r) => !r.status || r.status === "ADMITTED").length :
+                  tab.k === "DISCHARGED" ? rows.filter((r) => r.status && r.status !== "ADMITTED").length || discharges.length :
+                  rows.length;
+                return (
+                  <button
+                    key={tab.k}
+                    onClick={() => setStatusTab(tab.k)}
+                    className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors ${
+                      statusTab === tab.k
+                        ? "bg-white font-semibold text-[var(--p-blue)] shadow-sm"
+                        : "text-[var(--p-muted)] hover:text-[var(--p-ink)]"
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    <span className={`rounded-full px-1.5 py-0.5 text-[11px] font-mono ${
+                      statusTab === tab.k ? "bg-[var(--p-blue-soft)] text-[var(--p-blue-deep)]" : "bg-black/5 text-[var(--p-muted)]"
+                    }`}>
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Quick date presets */}
+            <div className="flex flex-wrap items-center gap-1 text-[12px]">
+              <span className="mr-1 font-medium text-[var(--p-muted)]">Admitted:</span>
+              {[
+                { k: "today", label: "Today" },
+                { k: "yesterday", label: "Yesterday" },
+                { k: "week", label: "Last 7d" },
+                { k: "month", label: "This Month" },
+                { k: "all", label: "All time" },
+              ].map((p) => {
+                const isSelected =
+                  p.k === "all" ? !fromDate && !toDate :
+                  p.k === "today" ? fromDate === localDateISO() && toDate === localDateISO() :
+                  false;
+                return (
+                  <button
+                    key={p.k}
+                    onClick={() => setDatePreset(p.k as any)}
+                    className={`rounded-md px-2.5 py-1 transition-colors ${
+                      isSelected
+                        ? "bg-[var(--p-blue-soft)] font-semibold text-[var(--p-blue-deep)]"
+                        : "border border-[var(--p-border)] bg-white text-[var(--p-text)] hover:border-[var(--p-blue)]"
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Second row: Search Input + Field Selector + Date Pickers */}
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
+            {/* Search Input (spans 6 cols on md) */}
+            <div className="relative md:col-span-6">
+              <div className="flex items-center gap-2 rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm focus-within:border-[var(--p-blue)]">
+                <Icon name="search" size={16} className="shrink-0 text-[var(--p-muted)]" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search by mobile, IP no., OP no. (UHID), or patient name…"
+                  className="w-full bg-transparent text-[13.5px] text-[var(--p-ink)] outline-none placeholder:text-[var(--p-muted)]"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery("")}
+                    className="rounded p-0.5 text-[var(--p-muted)] hover:bg-[var(--p-bg)] hover:text-[var(--p-ink)]"
+                    title="Clear search"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Search Field Filter (spans 2 cols on md) */}
+            <div className="md:col-span-2">
+              <select
+                value={searchField}
+                onChange={(e) => setSearchField(e.target.value as any)}
+                className="w-full rounded-lg border border-[var(--p-border)] bg-white px-2.5 py-2 text-[13px] text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]"
+              >
+                <option value="ALL">All Fields</option>
+                <option value="MOBILE">Mobile Phone</option>
+                <option value="IP">IP Number</option>
+                <option value="OP">OP / UHID</option>
+                <option value="NAME">Patient Name</option>
+              </select>
+            </div>
+
+            {/* Date Range: From & To (spans 4 cols on md) */}
+            <div className="flex items-center gap-2 md:col-span-4">
+              <div className="w-1/2">
+                <PortalDatePicker
+                  value={fromDate}
+                  onChange={setFromDate}
+                  accent="blue"
+                  placeholder="From date"
+                />
+              </div>
+              <span className="text-[12px] font-medium text-[var(--p-muted)]">to</span>
+              <div className="w-1/2">
+                <PortalDatePicker
+                  value={toDate}
+                  onChange={setToDate}
+                  accent="blue"
+                  placeholder="To date"
+                />
+              </div>
+              {(fromDate || toDate) && (
+                <button
+                  onClick={() => { setFromDate(""); setToDate(""); }}
+                  className="rounded-lg border border-[var(--p-border)] bg-white px-2 py-2 text-[12px] text-[var(--p-muted)] hover:text-[var(--p-ink)]"
+                  title="Clear dates"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Active filter chips & Reset */}
+          {hasActiveFilters && (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--p-border)] pt-3 text-[12.5px]">
+              <div className="flex flex-wrap items-center gap-2 text-[var(--p-muted)]">
+                <span>Active filters:</span>
+                {searchQuery && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-[var(--p-blue-soft)] px-2.5 py-0.5 font-medium text-[var(--p-blue-deep)]">
+                    {searchField === "ALL" ? "Search" : searchField}: &quot;{searchQuery}&quot;
+                    <button onClick={() => setSearchQuery("")} className="hover:opacity-75">✕</button>
+                  </span>
+                )}
+                {(fromDate || toDate) && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-[var(--p-blue-soft)] px-2.5 py-0.5 font-medium text-[var(--p-blue-deep)]">
+                    Dates: {fromDate || "any"} → {toDate || "any"}
+                    <button onClick={() => { setFromDate(""); setToDate(""); }} className="hover:opacity-75">✕</button>
+                  </span>
+                )}
+                {statusTab !== "ADMITTED" && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-[var(--p-bg)] px-2.5 py-0.5 font-medium text-[var(--p-ink)]">
+                    Status: {statusTab === "DISCHARGED" ? "Discharged" : "All"}
+                    <button onClick={() => setStatusTab("ADMITTED")} className="hover:opacity-75">✕</button>
+                  </span>
+                )}
+                <span className="text-[var(--p-muted)]">
+                  ({filteredRows.length} patient{filteredRows.length === 1 ? "" : "s"} found)
+                </span>
+              </div>
+              <button
+                onClick={resetFilters}
+                className="text-[12px] font-medium text-[var(--p-blue)] hover:underline"
+              >
+                Reset all filters
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {error && !dischargeOf && <div data-rise className="mb-4 rounded-lg border border-[var(--p-rose)]/25 bg-[var(--p-rose-soft)] px-4 py-3 text-[14px] text-[var(--p-rose)]">{error}</div>}
@@ -291,87 +612,126 @@ export default function InpatientsPage() {
       <section data-rise className="surface overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-16 text-[14px] text-[var(--p-muted)]"><Spinner /> Loading…</div>
-        ) : rows.length === 0 ? (
-          <p className="py-16 text-center text-[14px] text-[var(--p-muted)]">No one is admitted right now.</p>
+        ) : filteredRows.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <span className="grid h-12 w-12 place-items-center rounded-full border border-[var(--p-border)] text-[var(--p-muted)]">
+              <Icon name="search" size={20} />
+            </span>
+            <p className="mt-3 text-[15px] font-semibold text-[var(--p-ink)]">No admitted patients match your filters.</p>
+            <p className="mt-1 max-w-sm text-[13px] text-[var(--p-muted)]">
+              {hasActiveFilters ? "Try adjusting or clearing your search query and date filters." : "Nobody is currently admitted in the hospital."}
+            </p>
+            {hasActiveFilters && (
+              <button
+                onClick={resetFilters}
+                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--p-blue-deep)]"
+              >
+                Clear all filters
+              </button>
+            )}
+          </div>
         ) : (
           <div className="divide-y divide-[var(--p-border)]">
-            {rows.map((r) => (
-              <div key={r.id} className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[14px] font-semibold text-[var(--p-ink)]">{r.patient.fullName}</span>
-                    <span className="font-mono text-[12px] text-[var(--p-blue)]">{r.ipNumber}</span>
-                    {/* Visible on the row, not only inside the discharge modal.
-                        The desk sorts its day off this list, and "who is cashless"
-                        changes what it says to a family in the corridor. */}
-                    {r.payerType === "INSURANCE" && (
-                      <span title={`Cashless · ${r.insurer ?? "insurer"}`}
-                        className="rounded bg-[var(--p-blue-soft)] px-1.5 py-0.5 text-[10.5px] font-semibold uppercase text-[var(--p-blue-deep)]">
-                        {r.insurer ?? "Insurance"}
+            {filteredRows.map((r) => {
+              const isClosedStay = r.status && r.status !== "ADMITTED";
+              return (
+                <div key={r.id} className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[14px] font-semibold text-[var(--p-ink)]">{r.patient.fullName}</span>
+                      <span className="rounded bg-[var(--p-blue-soft)] px-2 py-0.5 font-mono text-[12px] font-semibold text-[var(--p-blue-deep)]" title="IP Number">
+                        IP: {r.ipNumber}
                       </span>
+                      {r.payerType === "INSURANCE" && (
+                        <span title={`Cashless · ${r.insurer ?? "insurer"}`}
+                          className="rounded bg-[var(--p-blue-soft)] px-1.5 py-0.5 text-[10.5px] font-semibold uppercase text-[var(--p-blue-deep)]">
+                          {r.insurer ?? "Insurance"}
+                        </span>
+                      )}
+                      <Pill tone={isClosedStay ? "cancelled" : "checkedin"}>{bedLabel(r.ward, r.bedNo)}</Pill>
+                      {isClosedStay && (
+                        <span className="rounded bg-[var(--p-bg)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
+                          {OUTCOME_SHORT[r.status as AdmissionStatusValue] ?? r.status}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[13px] text-[var(--p-muted)]">
+                      <span className="tabular font-medium text-[var(--p-ink)]" title="OP Number / UHID">OP: {r.patient.displayId}</span>
+                      {r.patient.phone && (
+                        <>
+                          <span>·</span>
+                          <a href={`tel:${r.patient.phone}`} className="inline-flex items-center gap-1 font-mono text-[12.5px] text-[var(--p-blue)] hover:underline" title="Call patient">
+                            📞 {r.patient.phone}
+                          </a>
+                        </>
+                      )}
+                      {r.patient.age != null && <span>· {r.patient.age}y</span>}
+                      <span>· {r.doctor.name}</span>
+                      <span>·</span>
+                      <span className="text-[var(--p-ink)] font-medium" title={prettyDateTime(r.admittedAt)}>
+                        Admitted: {prettyDate(r.admittedAt.slice(0, 10))} ({r.days}d)
+                      </span>
+                      {r.dischargedAt && (
+                        <span className="text-[var(--p-muted)]" title={prettyDateTime(r.dischargedAt)}>
+                          · Closed: {prettyDate(r.dischargedAt.slice(0, 10))}
+                        </span>
+                      )}
+                      {r.reason && <span>· {r.reason}</span>}
+                    </div>
+                    {r.attendantName && (
+                      <div className="mt-0.5 text-[12px] text-[var(--p-muted)]">
+                        Attendant: {r.attendantName}
+                        {r.attendantPhone && (
+                          <a href={`tel:${r.attendantPhone}`} className="ml-1 font-mono text-[11.5px] text-[var(--p-blue)] hover:underline">
+                            · 📞 {r.attendantPhone}
+                          </a>
+                        )}
+                      </div>
                     )}
-                    <Pill tone="checkedin">{bedLabel(r.ward, r.bedNo)}</Pill>
                   </div>
-                  <div className="mt-1 text-[13px] text-[var(--p-muted)]">
-                    <span className="tabular">{r.patient.displayId}</span>
-                    {r.patient.age != null && ` · ${r.patient.age}y`}
-                    {" · "}{r.doctor.name}
-                    {r.reason && ` · ${r.reason}`}
-                  </div>
-                  {r.attendantName && (
-                    <div className="mt-0.5 text-[12px] text-[var(--p-muted)]">
-                      Attendant: {r.attendantName}{r.attendantPhone && ` · ${r.attendantPhone}`}
+                  <div className="flex items-center gap-4">
+                    <div className="text-right">
+                      <div className="font-mono text-[14px] font-semibold text-[var(--p-ink)] tabular">₹{r.runningCharge}</div>
+                      <div className="text-[12px] text-[var(--p-muted)]">
+                        bed ₹{r.bedCharge} ({r.days}d)
+                        {r.extras > 0 && <> + {r.extras} charge{r.extras === 1 ? "" : "s"} ₹{r.extrasCharge}</>}
+                      </div>
                     </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-4">
-                  <div className="text-right">
-                    <div className="font-mono text-[14px] font-semibold text-[var(--p-ink)] tabular">₹{r.runningCharge}</div>
-                    <div className="text-[12px] text-[var(--p-muted)]">
-                      bed ₹{r.bedCharge} ({r.days}d)
-                      {r.extras > 0 && <> + {r.extras} charge{r.extras === 1 ? "" : "s"} ₹{r.extrasCharge}</>}
-                    </div>
-                  </div>
-                  <button onClick={() => openHistory(r)}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
-                    <Icon name="activity" size={14} /> History
-                  </button>
-                  <a href={`/print/bill/${r.id}`} target="_blank" rel="noopener noreferrer"
-                    title="Itemised bill for the stay so far"
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
-                    <Icon name="receipt" size={14} /> Detailed bill
-                  </a>
-                  {/* ── THE SAME STAY, PRICED FOR A FAMILY THAT IS PAYING IT ──
-                      The sheet beside this one is the claim bill: one gross
-                      figure with the discount off the bottom. That is the right
-                      document for a TPA and the wrong one for the discount
-                      conversation at the counter, where the hospital's own
-                      services are negotiable and the medicines and the tests
-                      are not. Self-paying stays only - including one an insurer
-                      refused, which is SELF_PAY by the time it lands here. */}
-                  {r.payerType === "SELF_PAY" && (
-                    <a href={`/print/services-bill/${r.id}`} target="_blank" rel="noopener noreferrer"
-                      title="Hospital services only, discounted - the pharmacy and the lab bill at their own counters"
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
-                      <Icon name="receipt" size={14} /> Services bill
+                    <button onClick={() => openHistory(r)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+                      <Icon name="activity" size={14} /> History
+                    </button>
+                    <a href={`/print/bill/${r.id}`} target="_blank" rel="noopener noreferrer"
+                      title="Itemised bill for the stay so far"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+                      <Icon name="receipt" size={14} /> Detailed bill
                     </a>
-                  )}
-                  <a href={`/print/discharge/${r.id}`} target="_blank" rel="noopener noreferrer"
-                    title="The running bill for this stay - bed, nursing, pharmacy and charges"
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
-                    <Icon name="receipt" size={14} /> Bill
-                  </a>
-                  <Link href={`/ipd/${r.id}`}
-                    className="rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">
-                    Open sheet
-                  </Link>
-                  <button onClick={() => { setDischargeOf(r); setDisc(0); setCopay(0); setCopayTouched(false); }}
-                    className="btn-primary rounded-lg px-3.5 py-2 text-[13px] font-semibold text-white">
-                    Discharge
-                  </button>
+                    {r.payerType === "SELF_PAY" && (
+                      <a href={`/print/services-bill/${r.id}`} target="_blank" rel="noopener noreferrer"
+                        title="Hospital services only, discounted - the pharmacy and the lab bill at their own counters"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
+                        <Icon name="receipt" size={14} /> Services bill
+                      </a>
+                    )}
+                    <a href={`/print/discharge/${r.id}`} target="_blank" rel="noopener noreferrer"
+                      title="Discharge summary / bill"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+                      <Icon name={isClosedStay ? "file" : "receipt"} size={14} /> {isClosedStay ? "Summary" : "Bill"}
+                    </a>
+                    <Link href={`/ipd/${r.id}`}
+                      className="rounded-lg border border-[var(--p-border)] px-3 py-2 text-[13px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">
+                      Open sheet
+                    </Link>
+                    {!isClosedStay && (
+                      <button onClick={() => { setDischargeOf(r); setDisc(0); setCopay(0); setCopayTouched(false); }}
+                        className="btn-primary rounded-lg px-3.5 py-2 text-[13px] font-semibold text-white">
+                        Discharge
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>

@@ -17,7 +17,28 @@ export const GET = handler(async (req) => {
   // sometimes lands on the wrong record. Reading who is in a bed is well short
   // of what either already sees on the stay they are billing to.
   await requireRole(req, "RECEPTIONIST", "ADMIN", "DOCTOR", "INSURANCE_DESK", "PHARMACIST", "LAB_TECH");
-  return NextResponse.json({ inpatients: await currentInpatients() });
+  const { searchParams } = new URL(req.url);
+  const q = searchParams.get("q") ?? undefined;
+  const mobile = searchParams.get("mobile") ?? undefined;
+  const ip = searchParams.get("ip") ?? undefined;
+  const op = searchParams.get("op") ?? undefined;
+  const name = searchParams.get("name") ?? undefined;
+  const fromDate = searchParams.get("fromDate") ?? searchParams.get("from") ?? undefined;
+  const toDate = searchParams.get("toDate") ?? searchParams.get("to") ?? undefined;
+  const status = searchParams.get("status") ?? undefined;
+
+  const inpatients = await currentInpatients({
+    q,
+    mobile,
+    ip,
+    op,
+    name,
+    fromDate,
+    toDate,
+    status,
+  });
+
+  return NextResponse.json({ inpatients });
 });
 
 /** Admit: patient by Jeeva ID, onto an AVAILABLE bed, under a doctor. */

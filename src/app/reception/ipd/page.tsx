@@ -16,7 +16,7 @@ interface Bed {
   id: string; bedNo: string; status: string;
   /** `days` counts started days from admission, minimum 1 - what the bill charges. */
   patient: {
-    displayId: string; fullName: string; ipNumber: string; admissionId: string;
+    displayId: string; fullName: string; phone?: string; ipNumber: string; admissionId: string;
     admittedAt: string; days: number;
   } | null;
 }
@@ -116,6 +116,7 @@ export default function BedBoardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  const [bedFilter, setBedFilter] = useState("");
 
   // The hospital's own insurer list, not the one compiled into this file. Falls
   // back to the built-in names until the fetch lands - see useInsurers.
@@ -264,11 +265,44 @@ export default function BedBoardPage() {
       <div className="grid gap-5 xl:grid-cols-[1fr_380px]">
         {/* ───────── BED BOARD ───────── */}
         <section data-rise className="surface overflow-hidden">
-          <div className="border-b border-[var(--p-border)] px-6 py-4">
-            <h2 className="text-[14px] font-semibold text-[var(--p-ink)]">Ward &amp; bed board</h2>
-            <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">
-              Live. Discharging frees the bed for the next admission immediately.
-            </p>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--p-border)] px-6 py-4">
+            <div>
+              <h2 className="text-[14px] font-semibold text-[var(--p-ink)]">Ward &amp; bed board</h2>
+              <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">
+                Live. Discharging frees the bed for the next admission immediately.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="relative w-full max-w-xs">
+                <input
+                  type="text"
+                  value={bedFilter}
+                  onChange={(e) => setBedFilter(e.target.value)}
+                  placeholder="Search bed by mobile, IP, OP, name…"
+                  className="w-full rounded-lg border border-[var(--p-border)] bg-white py-1.5 pl-8 pr-7 text-[13px] text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]"
+                />
+                <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--p-muted)]">
+                  <Icon name="search" size={14} />
+                </span>
+                {bedFilter && (
+                  <button
+                    onClick={() => setBedFilter("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 px-1 text-xs text-[var(--p-muted)] hover:text-[var(--p-ink)]"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              {bedFilter && (
+                <Link
+                  href={`/ipd/inpatients?q=${encodeURIComponent(bedFilter)}`}
+                  className="shrink-0 rounded-lg border border-[var(--p-border)] bg-white px-2.5 py-1.5 text-[12px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]"
+                  title="Search this query in Inpatients list"
+                >
+                  Inpatients list →
+                </Link>
+              )}
+            </div>
           </div>
 
           {loading ? (
@@ -305,10 +339,17 @@ export default function BedBoardPage() {
                       const st = b.status.toLowerCase();
                       const picked = bedId === b.id;
                       const shown = occupant?.admission.id === b.patient?.admissionId && !!b.patient;
+                      const bq = bedFilter.trim().toLowerCase();
+                      const matches = !bq || (b.patient && (
+                        b.patient.fullName.toLowerCase().includes(bq) ||
+                        b.patient.ipNumber.toLowerCase().includes(bq) ||
+                        b.patient.displayId.toLowerCase().includes(bq) ||
+                        (b.patient.phone && b.patient.phone.includes(bq))
+                      )) || b.bedNo.toLowerCase().includes(bq);
                       return (
                         <button key={b.id} onClick={() => tapBed(b, w)}
                           disabled={b.status === "MAINTENANCE"}
-                          className={`bed-card bed-${st} ${picked ? "is-picked" : ""} ${shown ? "is-shown" : ""}`}>
+                          className={`bed-card bed-${st} ${picked ? "is-picked" : ""} ${shown ? "is-shown" : ""} ${bq && matches ? "ring-2 ring-[var(--p-blue)] shadow-md" : ""} ${bq && !matches ? "opacity-30" : ""}`}>
                           <BedGlyph status={b.status} />
                           <span className="bed-no">{bedShort(b.bedNo)}</span>
                           {b.patient ? (

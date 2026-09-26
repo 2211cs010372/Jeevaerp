@@ -17,7 +17,7 @@ import { mergeAdvice } from "@/lib/advised-lab";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, PaymentMode, ChargeCategory } from "@prisma/client";
 import { bedLabel } from "@/lib/beds";
-import { dateOnlyISO } from "@/lib/date";
+import { dateOnlyISO, parseLocalDate } from "@/lib/date";
 import { perUnitPrice } from "@/lib/pharmacy/pack";
 import { ipServicesBill, bucketOfSection, isDiscountable, type IpBillBucket } from "@/lib/ip-services-bill";
 import {
@@ -219,7 +219,7 @@ export async function bedBoard(): Promise<{
        * the number the family is being charged for and the two can't disagree.
        */
       patient: {
-        displayId: string; fullName: string; ipNumber: string; admissionId: string;
+        displayId: string; fullName: string; phone?: string; ipNumber: string; admissionId: string;
         admittedAt: string; days: number;
       } | null;
     }[];
@@ -237,7 +237,7 @@ export async function bedBoard(): Promise<{
           admissions: {
             where: { status: "ADMITTED" },
             take: 1,
-            select: { id: true, ipNumber: true, admittedAt: true, patient: { select: { displayId: true, fullName: true } } },
+            select: { id: true, ipNumber: true, admittedAt: true, patient: { select: { displayId: true, fullName: true, phone: true } } },
           },
         },
       },
@@ -247,7 +247,7 @@ export async function bedBoard(): Promise<{
   type WardRow = {
     id: string; name: string; category: string; floor: string | null;
     dailyCharge: { toString(): string }; gstRatePct: { toString(): string };
-    beds: { id: string; bedNo: string; status: string; admissions: { id: string; ipNumber: string; admittedAt: Date; patient: { displayId: string; fullName: string } }[] }[];
+    beds: { id: string; bedNo: string; status: string; admissions: { id: string; ipNumber: string; admittedAt: Date; patient: { displayId: string; fullName: string; phone: string } }[] }[];
   };
 
   // One clock for the whole board: computing "now" per bed would let two beds
@@ -265,7 +265,7 @@ export async function bedBoard(): Promise<{
         id: b.id, bedNo: b.bedNo, status: b.status,
         patient: adm
           ? {
-              displayId: adm.patient.displayId, fullName: adm.patient.fullName,
+              displayId: adm.patient.displayId, fullName: adm.patient.fullName, phone: adm.patient.phone,
               ipNumber: adm.ipNumber, admissionId: adm.id,
               admittedAt: adm.admittedAt.toISOString(), days: stayDays(adm.admittedAt, now),
             }
@@ -562,21 +562,111 @@ export async function admitPatient(
   };
 }
 
-/** Everyone currently in a bed, with the running charge so far. */
-export async function currentInpatients(): Promise<{
-  id: string; ipNumber: string; admittedAt: string; days: number;
+export interface InpatientFilters {
+  q?: string;
+  mobile?: string;
+  ip?: string;
+  op?: string;
+  name?: string;
+  fromDate?: string;
+  toDate?: string;
+  status?: string;
+}
+
+export interface InpatientRowDTO {
+  id: string; ipNumber: string; status: string;
+  admittedAt: string; dischargedAt: string | null; days: number;
   ward: string; bedNo: string; dailyCharge: string; runningCharge: string;
   bedCharge: string; extrasCharge: string; extras: number;
   reason: string | null; attendantName: string | null; attendantPhone: string | null;
   payerType: string; insurer: string | null; policyNo: string | null;
   doctor: { name: string; department: string };
   patient: { id: string; displayId: string; fullName: string; age: number | null; dob: string | null; gender: string | null; phone: string };
-}[]> {
+}
+
+/** Everyone currently in a bed, with the running charge so far, optionally filtered. */
+export async function currentInpatients(filters?: InpatientFilters): Promise<InpatientRowDTO[]> {
+  const where: Prisma.AdmissionWhereInput = {};
+
+  if (filters?.status === "ALL") {
+    // No status constraint
+  } else if (filters?.status === "DISCHARGED") {
+    where.status = { in: CLOSED_STATUS_LIST };
+  } else if (filters?.status && filters.status !== "ADMITTED") {
+    where.status = filters.status as AdmissionStatusValue;
+  } else {
+    where.status = "ADMITTED";
+  }
+
+  const andClauses: Prisma.AdmissionWhereInput[] = [];
+
+  if (filters?.fromDate || filters?.toDate) {
+    const admittedAtFilter: Prisma.DateTimeFilter = {};
+    if (filters.fromDate) {
+      admittedAtFilter.gte = parseLocalDate(filters.fromDate);
+    }
+    if (filters.toDate) {
+      const endOfDay = parseLocalDate(filters.toDate);
+      endOfDay.setHours(23, 59, 59, 999);
+      admittedAtFilter.lte = endOfDay;
+    }
+    andClauses.push({ admittedAt: admittedAtFilter });
+  }
+
+  if (filters?.mobile?.trim()) {
+    const m = filters.mobile.trim();
+    andClauses.push({
+      OR: [
+        { patient: { phone: { contains: m, mode: "insensitive" } } },
+        { attendantPhone: { contains: m, mode: "insensitive" } },
+      ],
+    });
+  }
+
+  if (filters?.ip?.trim()) {
+    const ip = filters.ip.trim();
+    andClauses.push({
+      ipNumber: { contains: ip, mode: "insensitive" },
+    });
+  }
+
+  if (filters?.op?.trim()) {
+    const op = filters.op.trim();
+    andClauses.push({
+      patient: { displayId: { contains: op, mode: "insensitive" } },
+    });
+  }
+
+  if (filters?.name?.trim()) {
+    const name = filters.name.trim();
+    andClauses.push({
+      patient: { fullName: { contains: name, mode: "insensitive" } },
+    });
+  }
+
+  if (filters?.q?.trim()) {
+    const q = filters.q.trim();
+    andClauses.push({
+      OR: [
+        { patient: { fullName: { contains: q, mode: "insensitive" } } },
+        { patient: { displayId: { contains: q, mode: "insensitive" } } },
+        { patient: { phone: { contains: q, mode: "insensitive" } } },
+        { ipNumber: { contains: q, mode: "insensitive" } },
+        { attendantName: { contains: q, mode: "insensitive" } },
+        { attendantPhone: { contains: q, mode: "insensitive" } },
+      ],
+    });
+  }
+
+  if (andClauses.length > 0) {
+    where.AND = andClauses;
+  }
+
   const rows = await prisma.admission.findMany({
-    where: { status: "ADMITTED" },
-    orderBy: { admittedAt: "asc" },
+    where,
+    orderBy: { admittedAt: "desc" },
     select: {
-      id: true, ipNumber: true, admittedAt: true, reason: true,
+      id: true, ipNumber: true, status: true, admittedAt: true, dischargedAt: true, reason: true,
       attendantName: true, attendantPhone: true,
       payerType: true, insurer: true, policyNo: true,
       dailyChargeAtAdmit: true, wardNameAtAdmit: true,
@@ -589,7 +679,7 @@ export async function currentInpatients(): Promise<{
 
   const now = new Date();
   return rows.map((r: {
-    id: string; ipNumber: string; admittedAt: Date; reason: string | null;
+    id: string; ipNumber: string; status: string; admittedAt: Date; dischargedAt: Date | null; reason: string | null;
     attendantName: string | null; attendantPhone: string | null;
     payerType: string; insurer: string | null; policyNo: string | null;
     dailyChargeAtAdmit: { toString(): string }; wardNameAtAdmit: string;
@@ -598,13 +688,16 @@ export async function currentInpatients(): Promise<{
     doctor: { name: string; department: string };
     patient: { id: string; displayId: string; fullName: string; age: number | null; dob: Date | null; gender: string | null; phone: string };
   }) => {
-    const days = stayDays(r.admittedAt, now);
+    const end = r.dischargedAt ?? now;
+    const days = stayDays(r.admittedAt, end);
     const daily = Number(r.dailyChargeAtAdmit.toString());
     const bedCharge = days * daily;
     // The bed is not the bill. Procedures, oxygen and pharmacy all ride along.
     const extrasCharge = r.charges.reduce((s, c) => s + c.qty * Number(c.unitPrice.toString()), 0);
     return {
-      id: r.id, ipNumber: r.ipNumber, admittedAt: r.admittedAt.toISOString(),
+      id: r.id, ipNumber: r.ipNumber, status: r.status,
+      admittedAt: r.admittedAt.toISOString(),
+      dischargedAt: r.dischargedAt ? r.dischargedAt.toISOString() : null,
       days, ward: r.wardNameAtAdmit, bedNo: r.bed.bedNo,
       dailyCharge: daily.toFixed(2),
       bedCharge: bedCharge.toFixed(2),
