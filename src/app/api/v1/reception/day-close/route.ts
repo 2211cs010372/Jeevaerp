@@ -19,7 +19,7 @@ const TILLS: Till[] = ["RECEPTION", "PHARMACY", "LAB", "ADMIN"];
  * view the owner needs.
  */
 export const GET = handler(async (req) => {
-  const actor = await requireRole(req, "RECEPTIONIST", "PHARMACIST", "LAB_TECH", "ADMIN");
+  const actor = await requireRole(req, "RECEPTIONIST", "PHARMACIST", "ADMIN");
   const url = new URL(req.url);
   const date = url.searchParams.get("date") ?? undefined;
   const asked = url.searchParams.get("till")?.toUpperCase();

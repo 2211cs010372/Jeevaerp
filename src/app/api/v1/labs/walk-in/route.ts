@@ -8,14 +8,17 @@ import { walkInSchema } from "@/server/validators/labs";
 export const dynamic = "force-dynamic";
 
 /**
- * The lab counter in one call: register the walk-in if they are new, order the
- * tests, and bill them.
+ * One call for a lab transaction: register the walk-in if they are new, order
+ * the tests, and - at reception - bill them.
  *
- * LAB_TECH can register a patient through here even though the reception
- * registration endpoint doesn't allow it. That is the point - a lab that cannot
- * create a record has to send a walk-in to another desk to be typed in before
- * it can take a sample, and the schema needs a Patient row before it can hold a
- * test or an invoice. The form behind this asks for a name and a mobile only.
+ * LAB_TECH can register a patient and ORDER through here even though the
+ * reception registration endpoint doesn't allow it. That is the point - a lab
+ * that cannot create a record has to send a walk-in to another desk to be typed
+ * in before it can take a sample, and the schema needs a Patient row before it
+ * can hold a test. The form behind this asks for a name and a mobile only.
+ *
+ * It cannot BILL: money for lab tests is taken at reception. A `bill` from a
+ * lab login is refused in walkInOrder before anything is written.
  */
 export const POST = handler(async (req) => {
   const actor = await requireRole(req, "LAB_TECH", "RECEPTIONIST", "ADMIN");

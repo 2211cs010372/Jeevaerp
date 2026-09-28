@@ -9,11 +9,15 @@ import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api } from "@/lib/api-client";
 import { useLive } from "@/lib/realtime/use-live";
 import { TOPICS } from "@/lib/realtime/topics";
-import { CollectionsCard, type CollectionMode } from "@/components/portal/ui/collections-card";
 
+/**
+ * The bench's numbers only. `/labs/stats` also returns the day's lab revenue
+ * and collections; the lab takes no money any more (reception bills lab
+ * tests), so this screen does not read them.
+ */
 interface Stats {
-  pending: number; completedToday: number; totalToday: number; revenueToday: string;
-  unbilled: number; reportsPending: number; ipdTests: number; collections: CollectionMode[];
+  pending: number; completedToday: number; totalToday: number;
+  unbilled: number; reportsPending: number; ipdTests: number;
 }
 interface Test {
   id: string; testName: string; status: string; price: string | null; createdAt: string;
@@ -58,8 +62,8 @@ export default function LabsDashboard() {
         <p className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--p-teal)]">Laboratory · {today}</p>
         <h1 className="mt-2 font-serif-p text-[clamp(24px,3vw,32px)] font-semibold text-[var(--p-ink)]">Lab overview</h1>
         <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-[var(--p-muted)]">
-          Samples come in, results go out. Every test is billed at the counter - unless the
-          patient is in a bed, in which case it rides on their room tab.
+          Samples come in, results go out. Tests are ordered here and paid for at reception - an
+          inpatient&apos;s go onto their stay as a bill due at discharge.
         </p>
 
         {stats && (
@@ -67,7 +71,7 @@ export default function LabsDashboard() {
             <span className="rounded-full bg-black/[0.06] px-3.5 py-1.5 font-mono text-[11.5px] text-[var(--p-ink)]">{stats.pending} on the bench</span>
             <span className="rounded-full bg-black/[0.06] px-3.5 py-1.5 font-mono text-[11.5px] text-[var(--p-ink)]">{stats.completedToday} done today</span>
             {stats.reportsPending > 0 && <span className="rounded-full bg-[var(--p-amber-soft)] px-3.5 py-1.5 font-mono text-[11.5px] font-semibold text-[#8a6414]">{stats.reportsPending} report{stats.reportsPending === 1 ? "" : "s"} to upload</span>}
-            {stats.unbilled > 0 && <span className="rounded-full bg-[var(--p-rose-soft)] px-3.5 py-1.5 font-mono text-[11.5px] font-semibold text-[var(--p-rose)]">{stats.unbilled} unbilled</span>}
+            {stats.unbilled > 0 && <span className="rounded-full bg-[var(--p-amber-soft)] px-3.5 py-1.5 font-mono text-[11.5px] font-semibold text-[#8a6414]">{stats.unbilled} waiting at reception to be billed</span>}
             {stats.ipdTests > 0 && <span className="rounded-full bg-[var(--p-blue-soft)] px-3.5 py-1.5 font-mono text-[11.5px] font-semibold text-[var(--p-blue-deep)]">{stats.ipdTests} for the ward</span>}
           </div>
         )}
@@ -75,18 +79,17 @@ export default function LabsDashboard() {
         <div className="mt-4 flex flex-wrap gap-2">
           <Link href="/order" className="rounded-full border border-black/15 px-3.5 py-1.5 text-[12px] font-medium text-[var(--p-text)] transition-colors hover:bg-black/[0.05]">Order tests</Link>
           <Link href="/queue" className="inline-flex items-center gap-2 rounded-full bg-[var(--p-teal)] px-4 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-[var(--p-teal-deep)]"><Icon name="flask" size={13} /> Test queue</Link>
-          <Link href="/billing" className="rounded-full border border-black/15 px-3.5 py-1.5 text-[12px] font-medium text-[var(--p-text)] transition-colors hover:bg-black/[0.05]">Generate bill</Link>
         </div>
       </div>
 
       {/* ---- 01 numbers ---- */}
       <SectionHead index="01 · Today in numbers" title="The bench at a glance"
-        desc="What is waiting, what is finished, what still needs a report attached, and what the till took." />
+        desc="What is waiting, what is finished, and what still needs a report attached." />
       <div data-rise className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Kpi icon="flask" label="Pending tests" value={stats?.pending ?? 0} sub="awaiting results" delay={0} />
         <Kpi icon="check" label="Completed today" value={stats?.completedToday ?? 0} sub={`of ${stats?.totalToday ?? 0} ordered`} delay={60} />
         <Kpi icon="file" label="Reports to upload" value={stats?.reportsPending ?? 0} sub="finished, no file yet" delay={120} />
-        <Kpi icon="rupee" label="Revenue today" value={Number(stats?.revenueToday ?? 0)} prefix="₹" sub="lab billing" delay={180} />
+        <Kpi icon="bed" label="For the ward" value={stats?.ipdTests ?? 0} sub="inpatient tests pending" delay={180} />
       </div>
 
       {/* ---- 02 the bench ---- */}
@@ -136,13 +139,9 @@ export default function LabsDashboard() {
             <div className="divide-y divide-[var(--p-border)]">
               <Action href="/order" icon="plus" title="Order tests" sub="Walk-in or from a visit" />
               <Action href="/queue" icon="flask" title="Test queue" sub="Upload reports, complete tests" />
-              <Action href="/billing" icon="rupee" title="Generate bill" sub="GST invoice for lab tests" />
-              <Action href="/invoices" icon="receipt" title="Invoices" sub="Everything billed at the lab" />
-              <Action href="/patients" icon="search" title="Patient history" sub="Last visit, tests, invoices" />
+              <Action href="/patients" icon="search" title="Patient history" sub="Last visit, tests, results" />
             </div>
           </section>
-
-          <CollectionsCard modes={stats?.collections ?? []} accent="teal" subtitle="Collected at the lab today" />
         </div>
       </div>
 
@@ -222,7 +221,7 @@ function SectionHead({ index, title, desc }: { index: string; title: string; des
   );
 }
 
-function Action({ href, icon, title, sub }: { href: string; icon: "plus" | "flask" | "rupee" | "search" | "receipt"; title: string; sub: string }) {
+function Action({ href, icon, title, sub }: { href: string; icon: "plus" | "flask" | "search"; title: string; sub: string }) {
   return (
     <Link href={href} className="flex items-center gap-3 px-5 py-3.5 transition-colors hover:bg-[var(--p-bg)]">
       <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--p-teal-soft)] text-[var(--p-teal)]"><Icon name={icon} size={17} /></span>

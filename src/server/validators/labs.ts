@@ -147,6 +147,15 @@ export const walkInSchema = z
     referringDoctorId: z.string().trim().min(1).optional(),
     /** Tests already ordered and still unbilled, to include on this bill. */
     labTestIds: z.array(z.string().trim().min(1)).default([]),
+    /** The OP visit the new tests come off - reception links one to a chit. */
+    appointmentId: z.string().trim().min(1).optional(),
+    /** The doctor's advised rows this order fulfils - see orderTestsSchema. */
+    fromAdvised: z
+      .array(z.object({
+        advisedLabId: z.string().trim().min(1),
+        catalogId: z.string().trim().min(1),
+      }))
+      .optional(),
     /** Omit to order without taking money (the bill is raised later). */
     bill: z
       .object({

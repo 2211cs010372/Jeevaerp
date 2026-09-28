@@ -1,18 +1,18 @@
 "use client";
 
 /**
- * THE LAB COUNTER, END TO END.
+ * ORDER LAB TESTS - the bench's way in. No money changes hands here.
  *
  * A walk-in arrives with a chit and no file. Before this screen could register
- * them, they were sent to reception to be typed in, then back here to have
- * tests ordered, then to Billing to pay - three queues for one transaction, and
- * the tests that never got billed were always the ones where somebody gave up
- * halfway.
+ * them, they were sent to reception to be typed in and back again, and plenty
+ * of them didn't come back. So: who (existing record, a bed upstairs, or a name
+ * and a mobile) and what (the catalogue) - in one submit, and the sample can be
+ * taken.
  *
- * So: who (existing record or a name and a mobile), what (the catalogue), and
- * the money - in one submit. The bill is optional, because a test ordered
- * against an admitted patient is settled at discharge and a test on account is
- * billed later, but for the person standing at the window it is the default.
+ * THE MONEY IS RECEPTION'S. An outpatient's tests land on reception's Lab
+ * billing screen ready to bill; an inpatient's go onto their stay as a bill due
+ * at discharge, so the discharge desk sees it even if nobody collects it
+ * sooner. The server refuses a bill from a lab login outright.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -23,16 +23,14 @@ import { PortalScroll } from "@/components/portal/portal-scroll";
 import { PatientStep, draftName, draftPayload, type PatientChoice } from "@/components/portal/labs/patient-step";
 import { TestPicker, type CatalogItem } from "@/components/portal/labs/test-picker";
 import { ReferrerSelect, useDoctorRoster } from "@/components/portal/labs/referrer-select";
-import { BillAside, type Settlement } from "@/components/portal/labs/bill-aside";
-import { InvoiceView, type LabInvoice } from "@/components/portal/labs/invoice-view";
 import { api, ApiClientError } from "@/lib/api-client";
 import { formatAge } from "@/lib/age";
 import { formatPhone } from "@/lib/phone";
 
-interface WalkInResult {
+interface OrderResult {
   patient: { id: string; displayId: string; fullName: string; phone: string; age: number | null; dob: string | null; gender: string | null; isNew: boolean };
   tests: { id: string; testName: string }[];
-  invoice: LabInvoice | null;
+  /** An inpatient: the tests went onto the stay as a bill due at discharge. */
   chargedToRoom: boolean;
 }
 
@@ -44,13 +42,10 @@ export default function OrderTestsPage() {
   const [referrerId, setReferrerId] = useState("");
   const doctors = useDoctorRoster();
 
-  const [billNow, setBillNow] = useState(true);
-  const [settlement, setSettlement] = useState<Settlement>({ discountAmount: 0, payments: [], valid: true });
-
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [result, setResult] = useState<WalkInResult | null>(null);
+  const [result, setResult] = useState<OrderResult | null>(null);
 
   useEffect(() => {
     api.get<{ catalog: CatalogItem[] }>("/labs/catalog")
@@ -62,32 +57,21 @@ export default function OrderTestsPage() {
     setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   const selected = useMemo(() => catalog.filter((c) => picked.has(c.id)), [catalog, picked]);
-  const lines = selected.map((c) => ({ id: c.id, label: c.name, amount: Number(c.price) }));
+  const total = selected.reduce((s, c) => s + Number(c.price), 0);
 
   const patientName = choice ? (choice.kind === "existing" ? choice.patient.fullName : draftName(choice.draft)) : "";
-  /**
-   * An admitted patient is billed to their stay by the server, whatever this
-   * screen says - see labs.service. Leaving "Raise the bill now" switched on
-   * for them showed a payment box that took no money and reconciled to
-   * nothing, and a technician who filled it in believed they had collected.
-   */
   const inpatient = choice?.kind === "existing" ? choice.admission : undefined;
-  const canSubmit = !!choice && picked.size > 0 && !busy && (inpatient ? true : !billNow || settlement.valid);
+  const canSubmit = !!choice && picked.size > 0 && !busy;
 
   async function submit() {
     if (!choice || picked.size === 0) return;
     setError(null); setBusy(true);
     try {
-      const r = await api.post<WalkInResult>("/labs/walk-in", {
+      // No `bill` - ever. See the note at the top.
+      const r = await api.post<OrderResult>("/labs/walk-in", {
         ...(choice.kind === "existing" ? { patientId: choice.patient.id } : { newPatient: draftPayload(choice.draft) }),
         catalogIds: [...picked],
         referringDoctorId: referrerId || undefined,
-        bill: billNow && !inpatient
-          ? {
-              discountAmount: settlement.discountAmount || undefined,
-              payments: settlement.payments.length ? settlement.payments : undefined,
-            }
-          : undefined,
       });
       setResult(r);
     } catch (e) {
@@ -96,19 +80,14 @@ export default function OrderTestsPage() {
   }
 
   function reset() {
-    setResult(null); setChoice(null); setPicked(new Set()); setReferrerId("");
-    setBillNow(true); setSettlement({ discountAmount: 0, payments: [], valid: true }); setError(null);
+    setResult(null); setChoice(null); setPicked(new Set()); setReferrerId(""); setError(null);
   }
 
   // ── done ──
   if (result) {
-    const banner = <PatientBanner result={result} />;
-    if (result.invoice) {
-      return <InvoiceView invoice={result.invoice} onNew={reset} newLabel="New order" banner={banner} />;
-    }
     return (
       <div className="mx-auto max-w-lg">
-        {banner}
+        <PatientBanner result={result} />
         <div className="surface mt-4 flex flex-col items-center p-8 text-center">
           <SuccessCheck />
           <h3 className="mt-4 font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">
@@ -116,16 +95,11 @@ export default function OrderTestsPage() {
           </h3>
           <p className="mt-1 text-[13px] leading-relaxed text-[var(--p-muted)]">
             {result.chargedToRoom
-              ? "This patient is admitted, so the tests were billed to their stay and are due at discharge. Do not collect at the counter."
-              : "Nothing has been charged yet. The tests are in the queue and show as unbilled until a bill is raised."}
+              ? "This patient is admitted, so the tests went onto their stay as a lab bill due at discharge. Take nothing here - reception or the discharge desk collects it."
+              : "Take nothing here. Send the patient to reception to pay - the tests are waiting there, ready to bill."}
           </p>
           <div className="mt-6 flex flex-wrap justify-center gap-3">
             <PrimaryButton onClick={reset}><Icon name="plus" size={15} /> Order more</PrimaryButton>
-            {!result.chargedToRoom && (
-              <a href="/labs/billing" className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
-                <Icon name="rupee" size={15} /> Bill them
-              </a>
-            )}
             <a href="/labs/queue" className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
               <Icon name="flask" size={15} /> Test queue
             </a>
@@ -140,8 +114,8 @@ export default function OrderTestsPage() {
       <div data-rise className="surface dotgrid mb-6 px-6 py-5">
         <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">Order lab tests</h1>
         <p className="mt-1 text-[13px] leading-relaxed text-[var(--p-muted)]">
-          No doctor visit needed. A patient who has never been here can be registered on this screen -
-          a name and a mobile is enough - and billed in the same action. Prices are snapshotted at order time.
+          No doctor visit needed. A patient who has never been here can be registered on this screen - a name and a mobile
+          is enough. Prices are snapshotted at order time. <strong>Payment is taken at reception</strong>, not here.
         </p>
       </div>
 
@@ -181,33 +155,43 @@ export default function OrderTestsPage() {
         </div>
 
         <aside data-rise className="lg:sticky lg:top-6 lg:self-start">
-          <BillAside
-            title={inpatient ? "Goes on the stay" : billNow ? "Order & bill" : "Order summary"}
-            lines={lines}
-            emptyText="No tests selected."
-            billNow={inpatient ? null : billNow}
-            onBillNowChange={setBillNow}
-            billNowLabel="Raise the bill now"
-            onSettlementChange={setSettlement}
-            error={error}
-            footnote={
-              inpatient
-                ? `${inpatient.ipNumber} · ${inpatient.ward} ${inpatient.bedNo}. These tests are added to the running tab for this stay and settle at discharge. Take nothing at the counter.`
-                : billNow
-                  ? "GST is applied per test from the catalogue, server-side. An admitted patient is billed to their stay instead - the counter takes nothing."
-                  : "The tests go to the queue unbilled. Raise the bill from the Billing page whenever the patient settles."
-            }
-            action={
+          <div className="surface overflow-hidden">
+            <div className="border-b border-[var(--p-border)] px-5 py-4">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--p-ink)]">
+                {inpatient ? "Goes on the stay" : "Order summary"}
+              </p>
+            </div>
+            <div className="max-h-64 divide-y divide-[var(--p-border)] overflow-y-auto">
+              {selected.length === 0 ? (
+                <p className="px-5 py-8 text-center text-[12px] text-[var(--p-muted)]">No tests selected.</p>
+              ) : selected.map((c) => (
+                <div key={c.id} className="flex items-start justify-between gap-3 px-5 py-3">
+                  <span className="text-[12px] text-[var(--p-text)]">{c.name}</span>
+                  <span className="shrink-0 font-mono text-[12px] text-[var(--p-ink)]">₹{Number(c.price).toFixed(2)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-between border-t border-[var(--p-border)] px-5 py-3 text-[13px]">
+              <span className="text-[var(--p-muted)]">Price at order</span>
+              <span className="font-mono text-[var(--p-ink)]">₹{total.toFixed(2)}</span>
+            </div>
+            {error && <div className="border-t border-[var(--p-border)] bg-[var(--p-rose-soft)] px-5 py-3 text-[12px] leading-relaxed text-[var(--p-rose)]">{error}</div>}
+            <div className="border-t border-[var(--p-border)] p-5">
               <PrimaryButton onClick={submit} disabled={!canSubmit} full>
-                {busy ? <><Spinner /> {billNow && !inpatient ? "Ordering & billing…" : "Ordering…"}</> : (
+                {busy ? <><Spinner /> Ordering…</> : (
                   <>
-                    <Icon name={inpatient ? "bed" : billNow ? "receipt" : "flask"} size={15} />
-                    {inpatient ? "Add to the stay" : billNow ? "Order & bill" : "Order"} {picked.size || ""} test{picked.size === 1 ? "" : "s"}
+                    <Icon name={inpatient ? "bed" : "flask"} size={15} />
+                    Order {picked.size || ""} test{picked.size === 1 ? "" : "s"}
                   </>
                 )}
               </PrimaryButton>
-            }
-          />
+              <div className="mt-3 text-center text-[11px] leading-relaxed text-[var(--p-muted)]">
+                {inpatient
+                  ? `${inpatient.ipNumber} · ${inpatient.ward} ${inpatient.bedNo}. The tests go onto the stay as a lab bill due at discharge. Take nothing here.`
+                  : "Take nothing here - reception bills these tests and takes the payment."}
+              </div>
+            </div>
+          </div>
         </aside>
       </div>
     </PortalScroll>
@@ -219,7 +203,7 @@ export default function OrderTestsPage() {
  * it was given. That number is the only way back to this patient, and the one
  * moment it can be written onto the chit in their hand is now.
  */
-function PatientBanner({ result }: { result: WalkInResult }) {
+function PatientBanner({ result }: { result: OrderResult }) {
   const p = result.patient;
   return (
     <div className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3 ${
@@ -232,7 +216,6 @@ function PatientBanner({ result }: { result: WalkInResult }) {
           {formatAge(p) && ` · ${formatAge(p)}`}
         </p>
       </div>
-      
       {p.isNew && (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-[var(--p-teal-deep)]">
           <Icon name="check" size={12} /> Newly registered - give them this ID

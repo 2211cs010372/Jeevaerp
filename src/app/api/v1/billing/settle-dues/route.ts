@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
  * settleDues for how the tender is spread over the invoices.
  */
 export const POST = handler(async (req) => {
-  const actor = await requireRole(req, "RECEPTIONIST", "PHARMACIST", "LAB_TECH", "ADMIN");
+  const actor = await requireRole(req, "RECEPTIONIST", "PHARMACIST", "ADMIN");
   const input = await parseBody(req, settleDuesSchema);
   const result = await settleDues(
     actor,

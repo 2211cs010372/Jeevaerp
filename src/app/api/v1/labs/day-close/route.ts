@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 /** The laboratory's own drawer - money taken at the sample counter. */
 export const GET = handler(async (req) => {
-  await requireRole(req, "LAB_TECH", "ADMIN");
+  await requireRole(req, "ADMIN");
   const date = new URL(req.url).searchParams.get("date") ?? undefined;
   return NextResponse.json(await dayClose({ dateISO: date, till: "LAB" }));
 });

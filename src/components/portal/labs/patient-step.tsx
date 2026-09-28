@@ -252,7 +252,10 @@ export function PatientStep({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--p-border)] px-6 py-4">
         <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">{step} · Patient</h3>
         <div className="flex gap-1 rounded-full border border-[var(--p-border)] bg-white p-1">
-          {([["find", "Registered"], ["inpatient", "Inpatient"], ["new", "New walk-in"]] as const).map(([m, label]) => (
+          {/* The counter's own words for the three - the same split the
+              pharmacy works to: an outpatient on file, somebody in a bed, and
+              somebody who has never been here. */}
+          {([["find", "OP patient"], ["inpatient", "Inpatient (IP)"], ["new", "New walk-in"]] as const).map(([m, label]) => (
             <button
               key={m}
               onClick={() => { setMode(m); onChange(m === "new" && draftValid(draft) ? { kind: "new", draft } : null); }}

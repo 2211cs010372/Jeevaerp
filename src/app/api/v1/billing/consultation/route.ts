@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 /** Bill a walk-in OP consultation. Reception / lab / admin. */
 export const POST = handler(async (req) => {
-  const actor = await requireRole(req, "RECEPTIONIST", "LAB_TECH", "ADMIN");
+  const actor = await requireRole(req, "RECEPTIONIST", "ADMIN");
   const i = await parseBody(req, billConsultationSchema);
   const invoice = await createInvoice(
     actor,

@@ -125,7 +125,9 @@ describe("publishers and subscribers agree", () => {
       path.join("reception", "billing", "page.tsx"),
       path.join("admin", "bills", "page.tsx"),
       path.join("admin", "day-close", "page.tsx"),
-      path.join("labs", "invoices", "page.tsx"),
+      // Lab money is taken at reception now; the lab portal's invoices screen
+      // is gone, and this is where lab bills are raised.
+      path.join("reception", "labs", "page.tsx"),
     ];
     for (const suffix of moneyScreens) {
       const f = files.find((x) => x.path.endsWith(suffix));

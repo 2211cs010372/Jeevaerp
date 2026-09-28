@@ -26,7 +26,7 @@ export const GET = handler(async (req, ctx) => {
  * updateInvoice - a permission belongs next to the write, not next to the URL.
  */
 export const PATCH = handler(async (req, ctx) => {
-  const actor = await requireRole(req, "RECEPTIONIST", "LAB_TECH", "PHARMACIST", "INSURANCE_DESK", "ADMIN");
+  const actor = await requireRole(req, "RECEPTIONIST", "PHARMACIST", "INSURANCE_DESK", "ADMIN");
   const { id } = await ctx.params;
   const body = await parseBody(req, updateInvoiceSchema.omit({ invoiceId: true }));
   const invoice = await updateInvoice(actor, { invoiceId: id, ...body }, auditContext(req));

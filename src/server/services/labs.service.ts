@@ -351,6 +351,14 @@ export async function orderTests(
      * showing as outstanding. Optional - a walk-in order has no advice behind it.
      */
     fromAdvised?: { advisedLabId: string; catalogId: string }[];
+    /**
+     * The caller bills an inpatient's tests itself - reception, taking the money
+     * or leaving it due as the tests are ordered. Without it an inpatient order
+     * raises its own unpaid stay bill below, which is what an order from the lab
+     * bench needs: the lab takes no money, and the discharge desk must still see
+     * the due.
+     */
+    skipStayBill?: boolean;
   },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<LabTestDTO[] & { chargedToRoom?: boolean }> {
@@ -450,7 +458,7 @@ export async function orderTests(
   // Unpaid on purpose: the family settles on the way out, not at the collection
   // window. Linked to the admission so the discharge desk can see it
   // outstanding and nobody leaves owing the lab money.
-  if (admission) {
+  if (admission && !input.skipStayBill) {
     await createInvoice(
       actor,
       {
@@ -1155,9 +1163,38 @@ export async function saveLabResults(
 }
 
 /**
+ * The stay a set of tests is billed to, or null for an outpatient bill.
+ *
+ * One bill belongs to one stay or to none. An inpatient's tests hang off the
+ * admission and their bill is what the discharge desk chases; putting a test
+ * from an earlier OP visit on it, or tests from two stays, would hand that desk
+ * a due that is partly somebody else's.
+ */
+export function stayOfLabTests(tests: { admissionId: string | null }[]): string | null {
+  const stays = new Set(tests.map((t) => t.admissionId));
+  if (stays.size > 1) {
+    throw new ApiError(400, "Bill a stay's tests on their own - not with outpatient tests or another stay's");
+  }
+  return tests[0]?.admissionId ?? null;
+}
+
+/**
+ * Money for lab tests is taken at reception. The lab bench orders and runs
+ * tests; a lab login asking for a bill is refused rather than quietly obeyed.
+ */
+export function assertMayBillLab(actor: Pick<AuthUser, "role">): void {
+  if (actor.role === "LAB_TECH") {
+    throw new ApiError(403, "Lab bills are raised at reception. Order the tests here and send the patient to reception to pay.");
+  }
+}
+
+/**
  * Generate a GST bill for one or more lab tests. GST rate comes from each
  * test's catalog entry (0% = exempt, the correct default for diagnostics -
  * the hospital's CA can set real rates per test in the catalog).
+ *
+ * An inpatient's tests are billed ONTO THEIR STAY, the way the pharmacy bills
+ * a ward strip: tendered now at reception, or left due for the discharge desk.
  */
 export async function billLabTests(
   actor: AuthUser,
@@ -1170,13 +1207,15 @@ export async function billLabTests(
   },
   ctx: { ipAddress?: string; userAgent?: string }
 ) {
+  assertMayBillLab(actor);
   if (!input.labTestIds.length) throw new ApiError(400, "Select at least one test to bill");
 
   const tests = await prisma.labTest.findMany({
     where: { id: { in: input.labTestIds } },
     select: {
       id: true, testName: true, priceAtOrder: true, patientId: true,
-      appointmentId: true,
+      appointmentId: true, admissionId: true,
+      admission: { select: { ipNumber: true } },
       catalog: { select: { gstRatePct: true, code: true } },
       invoiceItems: { select: { id: true } },
       appointment: { select: { patientId: true } },
@@ -1199,11 +1238,27 @@ export async function billLabTests(
     });
   }
 
-  const appointmentId = tests.find((t: { appointmentId: string | null }) => t.appointmentId)?.appointmentId ?? undefined;
+  const admissionId = stayOfLabTests(tests);
+  const appointmentId = admissionId
+    ? undefined
+    : tests.find((t: { appointmentId: string | null }) => t.appointmentId)?.appointmentId ?? undefined;
+
+  // The note says which of the two happened, because the discharge desk reads
+  // it to decide whether this bill is still theirs to chase.
+  const tendered = (input.payments ?? []).reduce((s, p) => s + p.amount, 0) + (input.payment?.amount ?? 0);
+  const ipNumber = tests.find((t) => t.admission)?.admission?.ipNumber ?? "";
+  const notes = admissionId
+    ? `Inpatient ${ipNumber} - ${tendered > 0 ? "paid at reception" : "due at discharge"}`
+    : undefined;
 
   return createInvoice(
     actor,
-    { patientId: input.patientId, source: "LAB", appointmentId, lines, discountAmount: input.discountAmount, payment: input.payment, payments: input.payments },
+    {
+      patientId: input.patientId, source: "LAB", appointmentId,
+      ...(admissionId ? { admissionId } : {}),
+      lines, discountAmount: input.discountAmount, payment: input.payment, payments: input.payments,
+      notes,
+    },
     ctx
   );
 }
@@ -1233,9 +1288,10 @@ export interface WalkInResultDTO {
   /** Null when no bill was asked for, or when the charge went to a room tab. */
   invoice: InvoiceDTO | null;
   /**
-   * The patient is in a bed, so the tests raised their own bill due at
-   * discharge and NO money is taken at the counter. The UI has to say this out
-   * loud or the desk asks an inpatient's family to pay twice.
+   * The patient is in a bed and the tests' bill is on the stay, DUE AT
+   * DISCHARGE - nothing was taken now. False when reception took the money for
+   * an inpatient on the spot. The UI has to say this out loud or the family is
+   * asked to pay twice, or not at all.
    */
   chargedToRoom: boolean;
 }
@@ -1263,6 +1319,10 @@ export async function walkInOrder(
     labTestIds: string[];
     /** The doctor on the chit they walked in with, when they walked in with one. */
     referringDoctorId?: string;
+    /** The OP visit these tests come off, when reception links one. */
+    appointmentId?: string;
+    /** The doctor's advised rows this order fulfils - see orderTests. */
+    fromAdvised?: { advisedLabId: string; catalogId: string }[];
     bill?: {
       discountAmount?: number;
       payments?: { mode: "CASH" | "UPI" | "CARD" | "NETBANKING" | "OTHER"; amount: number; reference?: string }[];
@@ -1270,6 +1330,10 @@ export async function walkInOrder(
   },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<WalkInResultDTO> {
+  // Before anything is written: a lab login may order, never bill. Refused up
+  // front so a rejected bill does not leave a registration and an order behind.
+  if (input.bill) assertMayBillLab(actor);
+
   // ---- 1. who ----
   let patient: WalkInPatientDTO;
   if (input.newPatient) {
@@ -1305,24 +1369,31 @@ export async function walkInOrder(
   }
 
   // ---- 2. what ----
+  //
+  // With a bill on the way, the order leaves an inpatient's stay bill to step
+  // 3, which raises it with whatever reception took (or nothing, and it is due
+  // at discharge). Without one - an order from the lab bench - orderTests
+  // raises the stay bill itself, unpaid, so the discharge desk still sees it.
   let tests: LabTestDTO[] = [];
-  let chargedToRoom = false;
+  let admitted = false;
   if (input.catalogIds.length > 0) {
     const ordered = await orderTests(
       actor,
-      { patientId: patient.id, catalogIds: input.catalogIds, referringDoctorId: input.referringDoctorId },
+      {
+        patientId: patient.id, catalogIds: input.catalogIds, referringDoctorId: input.referringDoctorId,
+        appointmentId: input.appointmentId, fromAdvised: input.fromAdvised,
+        skipStayBill: !!input.bill,
+      },
       ctx,
     );
-    chargedToRoom = !!ordered.chargedToRoom;
+    admitted = !!ordered.chargedToRoom;
     tests = [...ordered];
   }
 
   // ---- 3. the money ----
-  //
-  // Skipped entirely for an inpatient: orderTests already raised their LAB bill
-  // against the stay, and billing again here would charge the same tests twice.
   let invoice: InvoiceDTO | null = null;
-  if (input.bill && !chargedToRoom) {
+  const tookMoney = (input.bill?.payments ?? []).some((p) => p.amount > 0);
+  if (input.bill) {
     const labTestIds = [...tests.map((t) => t.id), ...input.labTestIds];
     try {
       invoice = await billLabTests(
@@ -1341,12 +1412,23 @@ export async function walkInOrder(
       if (tests.length > 0) {
         throw new ApiError(
           e instanceof ApiError ? e.status : 400,
-          `${reason}. The ${tests.length === 1 ? "test is" : "tests are"} in the queue for ${patient.displayId} - raise the bill from the Billing page.`
+          `${reason}. The ${tests.length === 1 ? "test is" : "tests are"} in the queue for ${patient.displayId} - bill ${tests.length === 1 ? "it" : "them"} from reception's Lab tests screen.`
         );
       }
       throw e;
     }
   }
+
+  // Billing only earlier tests says nothing about a bed from step 2, so ask the
+  // tests themselves: billLabTests put the bill on a stay exactly when they
+  // hang off one.
+  const onStay = admitted || (
+    invoice != null && input.labTestIds.length > 0 &&
+    (await prisma.labTest.count({ where: { id: { in: input.labTestIds }, admissionId: { not: null } } })) > 0
+  );
+  // No bill at all is the lab-bench order: an inpatient's then went onto the
+  // stay unpaid in step 2. With a bill, it is on the stay only if nothing was taken.
+  const chargedToRoom = onStay && (input.bill ? !tookMoney : true);
 
   return { patient, tests, invoice, chargedToRoom };
 }

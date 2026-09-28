@@ -63,10 +63,14 @@ export const PORTALS: Record<string, PortalMeta> = {
       { label: "Book appointment", href: "/book", icon: "calendar" },
       { label: "Prescriptions", href: "/prescriptions", icon: "file" },
       {
+        // THE ONLY PLACE LAB TESTS ARE PAID FOR - OP patient, inpatient or a
+        // new walk-in. The lab bench orders and runs them and takes no money.
+        //
         // A test the doctor advised that nobody ordered is work that ROTS if
         // unseen - exactly what this badge is reserved for. The doctor assumes
         // it was done and waits for a result that is never coming.
-        label: "Lab tests", href: "/labs", icon: "flask",
+        label: "Lab billing", href: "/labs", icon: "flask",
+        hint: "Bill lab tests - OP, inpatient or a new walk-in",
         badge: {
           path: "/reception/advised-labs?limit=1", field: "count", tone: "amber",
           // Only ordering or declining a test moves this. Check-ins do not.
@@ -259,9 +263,9 @@ export const PORTALS: Record<string, PortalMeta> = {
       // Every price in one editable column - the screen for correcting a lot of
       // them at once. Same rows as the catalogue, same door admin uses.
       { label: "Test prices", href: "/prices", icon: "rupee" },
-      { label: "Billing", href: "/billing", icon: "rupee" },
-      { label: "Invoices", href: "/invoices", icon: "receipt" },
-      { label: "Day close", href: "/day-close", icon: "trend" },
+      // NO BILLING, INVOICES OR DAY CLOSE. The lab orders and runs tests; the
+      // money for them is taken at reception (Lab billing), and the server
+      // refuses a bill from a lab login. See labs.service assertMayBillLab.
       { label: "Patients", href: "/patients", icon: "search" },
     ],
   },

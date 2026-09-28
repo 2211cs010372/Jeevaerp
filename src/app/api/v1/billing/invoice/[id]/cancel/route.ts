@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 /** Cancel an invoice (never deleted - kept in the ledger, tests released). */
 export const POST = handler(async (req, ctx) => {
-  const actor = await requireRole(req, "RECEPTIONIST", "LAB_TECH", "PHARMACIST", "ADMIN");
+  const actor = await requireRole(req, "RECEPTIONIST", "PHARMACIST", "ADMIN");
   const { id } = await ctx.params;
   const { reason } = await parseBody(req, cancelInvoiceSchema);
   const invoice = await cancelInvoice(actor, { invoiceId: id, reason }, auditContext(req));
