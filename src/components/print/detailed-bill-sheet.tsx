@@ -544,9 +544,10 @@ export function DetailedBillSheet() {
                       {Number(b.gst) > 0 && <T k="Total GST" v={money(b.gst)} />}
                       <T k="Net Amount" v={money(b.netBill)} rule />
                       <T k="Advance Paid" v={money(b.advance)} />
-                      {/* Money the pharmacy and lab windows already took on bills that
-                  are listed above. Without this row the sheet adds those bills
-                  into its total and then asks for them a second time. */}
+                      {/* Money already taken at a counter: the pharmacy and lab
+                  windows on the bills listed above, and the discharge desk on
+                  the stay's own bill. Without this row the sheet adds those
+                  bills into its total and then asks for them a second time. */}
                       {Number(b.counterPaid) > 0 && (
                         <T k="Paid at Counter" v={money(b.counterPaid)} />
                       )}

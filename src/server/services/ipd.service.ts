@@ -4,7 +4,7 @@ import { nextId } from "@/lib/ids";
 import { logAudit } from "./audit.service";
 import { splitInvoice } from "@/lib/insurance-split";
 import { createInvoice, updateInvoice, recordPayment, getInvoice, syncStayCoverage, type PaymentModeT } from "./billing.service";
-import { ADVANCE_REF_PREFIX, advancePaymentRef, applyAdvances, heldAsOf } from "@/server/billing/advances";
+import { ADVANCE_REF_PREFIX, advancePaymentRef, applyAdvances, heldAsOf, isAdvanceAdjustment, takenOnStayBill } from "@/server/billing/advances";
 import { notifyAdmitted, notifyDischarged, notifyAdvanceReceived } from "./notify.service";
 // One rounding definition across the whole system - money must not be
 // rounded two different ways in two different files. `resolveChargeDate` is the
@@ -3318,9 +3318,11 @@ export interface DetailedBillDTO {
   /** Lines with no price yet (a prescribed medicine with no batch). */
   draftUnpricedCount: number;
   /**
-   * Money ALREADY TAKEN at the pharmacy and lab windows on bills that are
-   * listed above. Subtracted from the net, exactly like an advance is - it is
-   * the same thing: the stay's money, collected before the stay was billed.
+   * Money ALREADY TAKEN at a counter: at the pharmacy and lab windows on bills
+   * that are listed above, and at the discharge desk against the stay's own
+   * bill (deposits excepted - they are `advance`). Subtracted from the net,
+   * exactly like an advance is - it is the same thing: the stay's money,
+   * already in a drawer.
    */
   counterPaid: string;
   /**
@@ -3350,6 +3352,23 @@ export interface DetailedBillDTO {
  * dispensed and what did it cost"; the name and the money do that.
  */
 const medicineNameOnly = (description: string) => description.split(" · ")[0].trim();
+
+/**
+ * The names a billed pharmacy line answers to, when a ward prescription is
+ * checked against it.
+ *
+ * A single-unit item is invoiced as "NAME (unit) · Batch …" (see dispense), so
+ * medicineNameOnly leaves "NAME (unit)" while the prescription says "NAME".
+ * Compared as-is the two never matched, and a prescription with no invoice of
+ * its own came back as unbilled medicine the invoice had already charged.
+ * Both forms are offered, lower-cased: adding a key can only catch a match the
+ * full name already missed, never lose one it found.
+ */
+export function medicineMatchKeys(billedName: string): string[] {
+  const name = billedName.trim().toLowerCase();
+  const bare = name.replace(/\s*\([^()]*\)$/, "").trim();
+  return bare && bare !== name ? [name, bare] : [name];
+}
 
 /** Which printed heading each running-tab category is filed under. */
 const BILL_SECTION: Record<string, string> = {
@@ -3430,11 +3449,17 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
         select: {
           receiptNo: true, source: true, createdAt: true, payer: true,
           discountAmount: true, cgstAmount: true, sgstAmount: true,
+          // With the lines, fixes what a counter bill's discount came to - see
+          // counterDiscount below.
+          taxableAmount: true,
           // Needed to know whether a folded-in counter bill has ALREADY been
           // paid. Without this the sheet adds a paid pharmacy bill into its
           // gross and then asks the family for it a second time.
           totalAmount: true,
-          payments: { select: { amount: true, mode: true, createdAt: true } },
+          // `reference` tells a carried-over deposit apart from money taken at
+          // the desk; refunds net the latter. See takenOnStayBill.
+          payments: { select: { amount: true, mode: true, reference: true, createdAt: true } },
+          refunds: { select: { amount: true } },
           items: {
             select: {
               description: true, hsnSac: true, qty: true, unitPrice: true, amount: true,
@@ -3450,6 +3475,19 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   const end = a.dischargedAt ?? new Date();
   const days = stayDays(a.admittedAt, end);
   const num = (d: { toString(): string } | null | undefined) => (d == null ? 0 : Number(d.toString()));
+
+  // ── ONCE THE STAY'S FINAL BILL IS RAISED, THIS SHEET IS WHAT WAS BILLED ──
+  //
+  // While the patient is in a bed, a test the lab has not invoiced or a ward
+  // medicine the pharmacy has not billed is still on its way to a bill, so it
+  // prints and counts (see the draft lines below). After discharge nothing is on
+  // its way any more: the family settled the stay bill, and a test nobody
+  // invoiced then kept this sheet showing a balance on a stay that had been
+  // paid in full - weeks later, on every reprint. So a finalised stay carries
+  // invoiced lines only, which is also what its tax invoices say. The owner's
+  // call, 28 Sep 2026. A cancelled stay bill does not count: the query drops it,
+  // and the drafts come back with the reopened stay.
+  const finalised = a.invoices.some((i) => i.source === "IPD");
   const m2 = (n: number) => round2(n).toFixed(2);
 
   const groups: BillGroupDTO[] = [];
@@ -3552,18 +3590,48 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   // reads as a running account - every item listed once, each marked paid or
   // due, and only the difference asked for.
   let counterPaid = 0;
+  // THE COUNTERS' OWN DISCOUNTS AND GST. Their lines are folded in below at the
+  // line amount - before that bill's discount and without its tax - while what
+  // was paid on them is the bill's TOTAL. Without these the sheet asked for a
+  // taxed pharmacy bill short by its GST, and on a stay paid in full printed a
+  // Net Amount smaller than the money received against it.
+  let counterDiscount = 0;
+  let counterGst = 0;
+  // Paise the windows left uncollected on bills that read as PAID - see below.
+  let paiseShort = 0;
   const sourceBills: BillSourceDTO[] = [];
   {
     const SECTION_OF: Record<string, string> = {
       PHARMACY: "PHARMACY", LAB: "INVESTIGATIONS", OTHER: "SERVICES", CONSULTATION: "SERVICES",
     };
     for (const inv of a.invoices) {
-      // The IPD invoice is this bill, not an input to it.
-      if (inv.source === "IPD") continue;
+      // The IPD invoice is this bill, not an input to it - its lines are the
+      // ones above. But what the discharge desk TOOK against it is money
+      // received like any counter's, and comes off with theirs. Without this a
+      // family who settled the balance in cash was shown that cash as still
+      // owed. Deposits are left out: `advance` below already has them.
+      if (inv.source === "IPD") {
+        counterPaid = round2(counterPaid + takenOnStayBill(
+          inv.payments.map((p) => ({ amount: num(p.amount), reference: p.reference })),
+          inv.refunds.map((r) => ({ amount: num(r.amount) })),
+        ));
+        continue;
+      }
 
       const paid = inv.payments.reduce((s, p) => round2(s + num(p.amount)), 0);
       const total = num(inv.totalAmount);
       counterPaid = round2(counterPaid + paid);
+      // The discount this bill ACTUALLY applied is whatever its printed lines
+      // add up to above its taxable value - rounding included - so lines, less
+      // discount, plus GST lands on the bill's own total to the paisa.
+      const printed = inv.items.reduce((s, it) => round2(s + num(it.amount)), 0);
+      counterDiscount = round2(counterDiscount + round2(printed - num(inv.taxableAmount)));
+      counterGst = round2(counterGst + num(inv.cgstAmount) + num(inv.sgstAmount));
+      // A bill the window left a paisa short on reads as PAID (see `status`),
+      // and must not come back as a balance here either. Per bill, so three
+      // such bills on one stay do not add up to a debt none of them has.
+      const short = round2(total - paid);
+      if (short > 0 && short <= 0.01) paiseShort = round2(paiseShort + short);
       // PART only where something was paid AND something is still owed - a
       // rounding-sized remainder must not print as a debt.
       const status: BillPaidStatus =
@@ -3639,7 +3707,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   // they are all drafts. They are priced, though - a lab test's price is fixed
   // when it is ordered and snapshotted onto the row, so the amount is the real
   // one and not a guess.
-  const labLines: BillLineDTO[] = a.labTests.map((t) => ({
+  const labLines: BillLineDTO[] = (finalised ? [] : a.labTests).map((t) => ({
     date: t.createdAt.toISOString(),
     issueNo: t.orderGroupId ? t.orderGroupId.slice(-8).toUpperCase() : null,
     code: t.catalog?.code ?? null,
@@ -3690,7 +3758,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   //   printed on it; a prescription is written in tablets. Using the pack price
   //   as the tablet price is the 15x overcharge perUnitPrice exists to prevent -
   //   see the note on pharmacy.service's unitMrp.
-  const unbilledItems = a.prescriptionUploads.flatMap((u) =>
+  const unbilledItems = (finalised ? [] : a.prescriptionUploads).flatMap((u) =>
     u.items.map((it) => ({ ...it, at: u.createdAt }))
   );
   const medIds = [...new Set(unbilledItems.map((i) => i.medicineId).filter(Boolean) as string[])];
@@ -3719,8 +3787,13 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   // would then appear twice: once as a billed invoice line and once as a draft.
   // On a bill whose drafts count towards the total, that is money charged twice.
   // Same belt as the investigations above, and for the same reason.
+  //
+  // The commonest way to get here is a ward dispense whose invoice failed after
+  // its prescription was filed: the retry bills the strip, and the first
+  // attempt's prescription is left with no invoice. Matched on medicineMatchKeys
+  // because a single-unit line is invoiced as "NAME (unit)".
   const invoicedMedicines = new Set(
-    (bySection.get("PHARMACY") ?? []).map((l) => l.description.trim().toLowerCase())
+    (bySection.get("PHARMACY") ?? []).flatMap((l) => medicineMatchKeys(l.description))
   );
   const draftMedLines: BillLineDTO[] = unbilledItems
     .filter((it) => !invoicedMedicines.has(it.medicineName.trim().toLowerCase()))
@@ -3745,16 +3818,24 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
 
   // ── The money block ──
   //
-  // The bill number and the tax figures come from the IPD invoice specifically -
-  // the stay's own document. Pharmacy and lab invoices are folded into the lines
-  // above on a claim, but they are not what this sheet IS, and their receipt
-  // numbers must never end up in the "Bill No" box an insurer files it under.
+  // The bill number comes from the IPD invoice specifically - the stay's own
+  // document. Pharmacy and lab invoices are folded into the lines above, but
+  // they are not what this sheet IS, and their receipt numbers must never end up
+  // in the "Bill No" box an insurer files it under.
+  //
+  // The discount and the GST are the stay's PLUS the counters' - their lines are
+  // on this sheet, so their tax is too, and the Total GST row then matches the
+  // tax invoices the pharmacy issued for the same strips.
   const gross = groups.reduce((s, g) => round2(s + Number(g.total)), 0);
   const inv = a.invoices.find((i) => i.source === "IPD");
-  const discount = num(inv?.discountAmount);
-  const gst = round2(num(inv?.cgstAmount) + num(inv?.sgstAmount));
+  const discount = round2(num(inv?.discountAmount) + counterDiscount);
+  const gst = round2(num(inv?.cgstAmount) + num(inv?.sgstAmount) + counterGst);
   const netBill = round2(gross - discount + gst);
   const advance = a.advances.reduce((s, x) => round2(s + num(x.amount)), 0);
+  // A rounding-sized remainder is not a debt - the same paisa `sourceBills`
+  // already reads as PAID. Taken off per counter bill above, and once more here
+  // for the stay's own bill, so a settled stay never prints "Balance 0.01".
+  const due = round2(netBill - advance - counterPaid - paiseShort);
 
   // How much of the figure above nobody has invoiced yet, and how many lines
   // could not be priced at all. The sheet prints both: a total that silently
@@ -3777,13 +3858,18 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
       at: x.createdAt.getTime(),
     })),
     ...a.invoices.flatMap((i) =>
-      i.payments.map((p) => ({
-        invoiceNo: i.receiptNo,
-        date: p.createdAt.toISOString(),
-        mode: String(p.mode),
-        amount: m2(num(p.amount)),
-        at: p.createdAt.getTime(),
-      }))
+      i.payments
+        // The deposit, carried onto the stay's invoice at discharge, is already
+        // the row above with its own slip number. Listed again it made the
+        // column add up to more than was ever received.
+        .filter((p) => !isAdvanceAdjustment(p.reference))
+        .map((p) => ({
+          invoiceNo: i.receiptNo,
+          date: p.createdAt.toISOString(),
+          mode: String(p.mode),
+          amount: m2(num(p.amount)),
+          at: p.createdAt.getTime(),
+        }))
     ),
   ]
     .sort((x, y) => x.at - y.at)
@@ -3836,7 +3922,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
     advance: m2(advance),
     // Advance AND counter money both come off. Both are the stay's own money,
     // already in the drawer; the only difference is which window took it.
-    netPayable: m2(Math.max(0, netBill - advance - counterPaid)),
+    netPayable: m2(due > 0.01 ? due : 0),
     draftTotal: m2(draftTotal),
     draftUnpricedCount,
     counterPaid: m2(counterPaid),
@@ -3975,8 +4061,12 @@ export async function ipServicesBillData(admissionId: string): Promise<IpService
         advances: { select: { receiptNo: true, amount: true, mode: true, createdAt: true } },
         invoices: {
           where: { status: { not: "CANCELLED" } },
+          // Newest first, so the stay invoice picked below is the one the IP
+          // bill picks.
+          orderBy: { createdAt: "desc" },
           select: {
             source: true, payer: true, receiptNo: true,
+            discountAmount: true, cgstAmount: true, sgstAmount: true,
             payments: { select: { amount: true, mode: true, reference: true, createdAt: true } },
             refunds: { select: { amount: true } },
           },
@@ -4037,10 +4127,9 @@ export async function ipServicesBillData(admissionId: string): Promise<IpService
     paid[bucket] = round2(paid[bucket] + Number(b.paid));
   }
 
-  // AND MONEY TAKEN AGAINST THE STAY'S OWN INVOICE, which the IP bill does not
-  // credit at all - it subtracts the deposit and the counters and stops there,
-  // so a family who paid the balance in cash at discharge is still shown one.
-  // On a sheet whose whole job is "what do we owe now", that is the number.
+  // AND MONEY TAKEN AGAINST THE STAY'S OWN INVOICE - a family who paid the
+  // balance in cash at discharge must not be shown it again. The IP bill credits
+  // the same money through the same helper, so the two sheets cannot disagree.
   //
   // NET OF REFUNDS, and NEVER the deposit: the discharge applies the admission
   // advance as a payment on this same invoice (see advancePaymentRef), and
@@ -4048,11 +4137,10 @@ export async function ipServicesBillData(admissionId: string): Promise<IpService
   // family's deposit off the bill twice.
   for (const inv of stay.invoices) {
     if (inv.source !== "IPD") continue;
-    const taken = inv.payments
-      .filter((p) => !p.reference?.startsWith(ADVANCE_REF_PREFIX))
-      .reduce((s, p) => round2(s + num(p.amount)), 0);
-    const refunded = inv.refunds.reduce((s, x) => round2(s + num(x.amount)), 0);
-    paid.SERVICES = round2(paid.SERVICES + Math.max(0, round2(taken - refunded)));
+    paid.SERVICES = round2(paid.SERVICES + takenOnStayBill(
+      inv.payments.map((p) => ({ amount: num(p.amount), reference: p.reference })),
+      inv.refunds.map((x) => ({ amount: num(x.amount) })),
+    ));
   }
 
   // ── SERVICES ONLY, FROM HERE DOWN ──
@@ -4082,8 +4170,7 @@ export async function ipServicesBillData(admissionId: string): Promise<IpService
   //
   // The discharge applies the admission deposit as a payment ON THE STAY'S OWN
   // INVOICE (see advancePaymentRef), so a list built from the advances plus every
-  // invoice payment carries it twice. The IP bill lives with that; this sheet
-  // cannot. Its whole claim is "here is everything you have already paid, and
+  // invoice payment carries it twice. Neither sheet lists it twice now. Its whole claim is "here is everything you have already paid, and
   // here is the difference" - a family adding up this column and landing above
   // the deductions in the totals block has been handed a bill that argues with
   // itself.
@@ -4131,18 +4218,26 @@ export async function ipServicesBillData(admissionId: string): Promise<IpService
   // owed. That is subtracted from the refund below. Those dues were eating into
   // the deposit before this sheet ever showed a refund line and they still are;
   // drop them and the desk hands back a deposit the pharmacy is owed out of.
+  // THE STAY'S OWN DISCOUNT AND GST, not the IP bill's. That sheet now adds the
+  // counters' discounts and tax to its own, because it prints their lines; this
+  // one prices the services block, where a pharmacy bill's GST would be tax on
+  // medicines it does not list.
+  const stayBill = stay.invoices.find((i) => i.source === "IPD");
+  const stayDiscount = m2(num(stayBill?.discountAmount));
+  const stayGst = m2(round2(num(stayBill?.cgstAmount) + num(stayBill?.sgstAmount)));
+
   const money = ipServicesBill({
     sections: groups.map((g) => ({ title: g.title, total: g.total })),
-    discount: base.discount,
-    gst: base.gst,
+    discount: stayDiscount,
+    gst: stayGst,
     advance: base.advance,
     paid: { services: paid.SERVICES },
   });
 
   const whole = ipServicesBill({
     sections: base.groups.map((g) => ({ title: g.title, total: g.total })),
-    discount: base.discount,
-    gst: base.gst,
+    discount: stayDiscount,
+    gst: stayGst,
     advance: base.advance,
     paid: { services: paid.SERVICES, lab: paid.LAB, pharmacy: paid.PHARMACY },
   });

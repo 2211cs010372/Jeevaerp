@@ -156,6 +156,27 @@ export function heldAsOf(
   return { prior: r2(prior), total: r2(prior + ordered[at].amount) };
 }
 
+/**
+ * MONEY THE COUNTER TOOK AGAINST A STAY'S OWN BILL - its payments net of
+ * refunds, with every carried-over deposit left out.
+ *
+ * The discharge records each deposit as a payment on the stay's invoice, so
+ * that invoice's paid figure is the deposits PLUS whatever the family handed
+ * over at the desk. A sheet that already subtracts the deposits on their own
+ * line must take only the second part from here, or the deposit comes off the
+ * bill twice. Floored at zero: a refund of deposit money is not negative cash.
+ */
+export function takenOnStayBill(
+  payments: { amount: number; reference?: string | null }[],
+  refunds: { amount: number }[] = [],
+): number {
+  const taken = payments
+    .filter((p) => !isAdvanceAdjustment(p.reference))
+    .reduce((s, p) => r2(s + p.amount), 0);
+  const back = refunds.reduce((s, x) => r2(s + x.amount), 0);
+  return Math.max(0, r2(taken - back));
+}
+
 export function applyAdvances(
   deposits: AdvanceDeposit[],
   outstanding: number,
