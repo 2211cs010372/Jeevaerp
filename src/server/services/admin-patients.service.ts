@@ -257,10 +257,11 @@ export async function getAdminPatientDetail(displayId: string): Promise<AdminPat
         doctor: { select: { name: true, department: true } },
       },
     }),
+    // Every bill, uncapped: "Total billed" and "Outstanding" below are summed
+    // from these rows, so a cap under-reported any patient with more than 50.
     prisma.invoice.findMany({
       where: { patientId: p.id },
       orderBy: { createdAt: "desc" },
-      take: 50,
       select: {
         id: true, receiptNo: true, source: true, status: true, totalAmount: true,
         createdAt: true, payments: { select: { amount: true } },

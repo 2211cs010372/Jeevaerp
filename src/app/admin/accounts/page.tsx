@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { PrimaryButton } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 import { localDateISO } from "@/lib/date";
+import { useDebounce } from "@/lib/use-debounce";
+import { Pagination } from "@/components/portal/ui/pagination";
 
 /* ── types ─────────────────────────────────────────────────────────────── */
 interface Bill {
@@ -153,22 +155,31 @@ function Stat({ label, value, strong }: { label: string; value: number; strong?:
 
 /* ── e-Invoice ─────────────────────────────────────────────────────────── */
 
+/** Bills per page in the picker - a short list to click, with every bill behind the pager. */
+const PICKER_PAGE = 8;
+
 function EInvoicePanel() {
   const [bills, setBills] = useState<Bill[]>([]);
+  const [total, setTotal] = useState(0);
   const [q, setQ] = useState("");
+  const debouncedQ = useDebounce(q.trim(), 300);
+  // A new search starts at page 1. Derived rather than reset in an effect, so a
+  // search is one request, not the old page followed by page 1.
+  const [paged, setPaged] = useState({ q: "", page: 1 });
+  const page = paged.q === debouncedQ ? paged.page : 1;
   const [sel, setSel] = useState<Bill | null>(null);
 
+  // The same register as All bills, searched in the database - so any bill the
+  // hospital has raised can be found here, not only the newest two hundred.
   useEffect(() => {
-    api.get<{ invoices: Bill[] }>("/admin/bills").then((r) => setBills(r.invoices)).catch(() => {});
-  }, []);
-
-  const shown = useMemo(() => {
-    const t = q.trim().toLowerCase();
-    if (!t) return bills.slice(0, 8);
-    return bills
-      .filter((b) => b.receiptNo.toLowerCase().includes(t) || b.patient.fullName.toLowerCase().includes(t) || b.patient.displayId.toLowerCase().includes(t))
-      .slice(0, 8);
-  }, [bills, q]);
+    let live = true;
+    const p = new URLSearchParams({ page: String(page), pageSize: String(PICKER_PAGE) });
+    if (debouncedQ) p.set("q", debouncedQ);
+    api.get<{ invoices: Bill[]; total: number }>(`/admin/bills?${p}`)
+      .then((r) => { if (live) { setBills(r.invoices); setTotal(r.total); } })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [debouncedQ, page]);
 
   return (
     <section data-rise className="surface overflow-hidden">
@@ -187,22 +198,32 @@ function EInvoicePanel() {
           </Field>
         </div>
 
-        <div className="mt-4 divide-y divide-[var(--p-border)] overflow-hidden rounded-lg border border-[var(--p-border)]">
-          {shown.length === 0 ? (
-            <p className="px-4 py-8 text-center text-[13px] text-[var(--p-muted)]">No bills match.</p>
-          ) : shown.map((b) => (
-            <button key={b.id} type="button" onClick={() => setSel(b)}
-              className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-[var(--p-bg)] ${sel?.id === b.id ? "bg-[var(--p-blue-soft)]" : "bg-white"}`}>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-[12.5px] font-semibold text-[var(--p-ink)]">{b.receiptNo}</span>
-                  <span className="rounded bg-[var(--p-border)]/50 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--p-muted)]">{SRC_LABEL[b.source] ?? b.source}</span>
+        <div className="mt-4 overflow-hidden rounded-lg border border-[var(--p-border)]">
+          <div className="divide-y divide-[var(--p-border)]">
+            {bills.length === 0 ? (
+              <p className="px-4 py-8 text-center text-[13px] text-[var(--p-muted)]">No bills match.</p>
+            ) : bills.map((b) => (
+              <button key={b.id} type="button" onClick={() => setSel(b)}
+                className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-[var(--p-bg)] ${sel?.id === b.id ? "bg-[var(--p-blue-soft)]" : "bg-white"}`}>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[12.5px] font-semibold text-[var(--p-ink)]">{b.receiptNo}</span>
+                    <span className="rounded bg-[var(--p-border)]/50 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--p-muted)]">{SRC_LABEL[b.source] ?? b.source}</span>
+                  </div>
+                  <div className="truncate text-[11.5px] text-[var(--p-muted)]">{b.patient.fullName} · {b.patient.displayId}</div>
                 </div>
-                <div className="truncate text-[11.5px] text-[var(--p-muted)]">{b.patient.fullName} · {b.patient.displayId}</div>
-              </div>
-              <span className="shrink-0 font-mono text-[12.5px] text-[var(--p-ink)]">{inr(b.totalAmount)}</span>
-            </button>
-          ))}
+                <span className="shrink-0 font-mono text-[12.5px] text-[var(--p-ink)]">{inr(b.totalAmount)}</span>
+              </button>
+            ))}
+          </div>
+          <Pagination
+            page={page}
+            totalPages={Math.max(1, Math.ceil(total / PICKER_PAGE))}
+            totalItems={total}
+            pageSize={PICKER_PAGE}
+            onPageChange={(n) => setPaged({ q: debouncedQ, page: n })}
+            itemLabel="bills"
+          />
         </div>
 
         {sel && <EInvoiceDetail bill={sel} key={sel.id} />}

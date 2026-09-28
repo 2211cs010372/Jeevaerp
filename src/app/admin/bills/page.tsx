@@ -1,13 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { Icon } from "@/components/portal/ui/icons";
 import { PortalScroll } from "@/components/portal/portal-scroll";
-import { api } from "@/lib/api-client";
+import { Pagination } from "@/components/portal/ui/pagination";
+import { api, ApiClientError } from "@/lib/api-client";
+import { useDebounce } from "@/lib/use-debounce";
 import { useLive } from "@/lib/realtime/use-live";
 import { EditBillDialog } from "@/components/portal/billing/edit-bill-dialog";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
+import {
+  ADMIN_BILLS_PAGE_SIZE, BILL_PAY_FILTERS, BILL_SOURCES, BILL_STATUSES,
+  type BillPayFilter, type BillSearchField, type BillSource, type BillStatus,
+} from "@/lib/admin-bills-query";
 
 interface Bill {
   id: string; receiptNo: string; source: string; status: string;
@@ -16,20 +22,42 @@ interface Bill {
   /** SELF_PAY or INSURANCE - see the PayerType enum. */
   payer: string;
   payerName: string | null;
-  createdAt: string; patient: { displayId: string; fullName: string };
+  createdAt: string;
+  /** The corrected date this bill prints, when a desk has set one. */
+  billDate: string | null;
+  patient: { displayId: string; fullName: string };
+}
+
+/** One page of the register, plus totals over every bill the filters match. */
+interface BillsPage {
+  invoices: Bill[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totals: { billed: string; collected: string };
 }
 
 const inr2 = (n: number) => "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const inr0 = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 
-const SOURCES = ["CONSULTATION", "LAB", "PHARMACY", "IPD", "OTHER"] as const;
 const SRC_LABEL: Record<string, string> = { CONSULTATION: "Consultation", LAB: "Lab", PHARMACY: "Pharmacy", IPD: "Inpatient", OTHER: "Other" };
 const SRC_COLOR: Record<string, string> = { CONSULTATION: "#0b5f55", LAB: "#2f6df6", PHARMACY: "#c77d33", IPD: "#7c5cbf", OTHER: "#94a3b8" };
+const STATUS_LABEL: Record<BillStatus, string> = {
+  PENDING: "Pending", PARTIALLY_PAID: "Part paid", PAID: "Paid", REFUNDED: "Refunded", CANCELLED: "Cancelled",
+};
 
-// Payment-type buckets to filter by. INSURANCE sits alongside the tender types
-// because it is the answer to the same question - how did this bill settle -
-// and because "show me everything with the TPAs" is a question the owner asks.
-const PAY_FILTERS = ["ALL", "CASH", "UPI", "CARD", "SPLIT", "INSURANCE", "UNPAID"] as const;
+/** Which column the search box reads - picked, so "12" finds UHIDs and not every receipt with a 12 in it. */
+const SEARCH_BY: { value: BillSearchField; label: string; hint: string }[] = [
+  { value: "ALL", label: "All fields", hint: "Search receipt no, patient or UHID" },
+  { value: "RECEIPT", label: "Receipt no", hint: "Search by receipt no" },
+  { value: "NAME", label: "Patient name", hint: "Search by patient name" },
+  { value: "UHID", label: "UHID", hint: "Search by UHID" },
+];
+
+const PAGE_SIZES = [25, 50, 100];
+
+const sel = "rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-[13px] text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]";
+const lbl = "text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]";
 
 function billChip(status: string) {
   const map: Record<string, string> = {
@@ -56,11 +84,18 @@ function modeChip(m: string) {
 }
 
 export default function AdminBillsPage() {
-  const [bills, setBills] = useState<Bill[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [source, setSource] = useState<"ALL" | (typeof SOURCES)[number]>("ALL");
-  const [pay, setPay] = useState<(typeof PAY_FILTERS)[number]>("ALL");
+  const [data, setData] = useState<BillsPage | null>(null);
+  const [fetching, setFetching] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [source, setSource] = useState<"ALL" | BillSource>("ALL");
+  const [pay, setPay] = useState<BillPayFilter>("ALL");
+  const [status, setStatus] = useState<"ALL" | BillStatus>("ALL");
+  const [searchBy, setSearchBy] = useState<BillSearchField>("ALL");
   const [q, setQ] = useState("");
+  const debouncedQ = useDebounce(q.trim(), 300);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [pageSize, setPageSize] = useState(ADMIN_BILLS_PAGE_SIZE);
   /**
    * The bill open for correction.
    *
@@ -71,15 +106,55 @@ export default function AdminBillsPage() {
    */
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    const r = await api.get<{ invoices: Bill[] }>("/admin/bills");
-    setBills(r.invoices);
-  }, []);
+  // Every filter except the page number, as the query string the server reads.
+  // The search column only counts once there is something to search, so
+  // switching it over an empty box is not a reload.
+  const filters = useMemo(() => {
+    const p = new URLSearchParams({ pageSize: String(pageSize) });
+    if (source !== "ALL") p.set("source", source);
+    if (pay !== "ALL") p.set("pay", pay);
+    if (status !== "ALL") p.set("status", status);
+    if (debouncedQ) { p.set("q", debouncedQ); p.set("searchBy", searchBy); }
+    if (from) p.set("from", from);
+    if (to) p.set("to", to);
+    return p.toString();
+  }, [source, pay, status, searchBy, debouncedQ, from, to, pageSize]);
 
-  useEffect(() => { load().catch(() => {}).finally(() => setLoading(false)); }, [load]);
+  // Any filter change starts again at page 1 - page 7 of a search that now has
+  // two pages is an empty screen that reads as "no bills". Derived from the
+  // filters rather than reset in an effect, so a filter change is one request
+  // instead of the old page followed by page 1.
+  const [paged, setPaged] = useState({ filters, page: 1 });
+  const page = paged.filters === filters ? paged.page : 1;
+  const setPage = (n: number) => setPaged({ filters, page: n });
+
+  // Typing fires a request per pause; a slow early answer must not land on top
+  // of a later one.
+  const seq = useRef(0);
+  const load = useCallback(async () => {
+    const mine = ++seq.current;
+    setFetching(true);
+    try {
+      const r = await api.get<BillsPage>(`/admin/bills?${filters}&page=${page}`);
+      if (mine !== seq.current) return;
+      // A bill can leave a filter while you sit on its last page - a pending
+      // bill gets paid. Step back to the page that still exists.
+      const last = Math.max(1, Math.ceil(r.total / r.pageSize));
+      if (page > last) { setPaged({ filters, page: last }); return; }
+      setData(r);
+      setError(null);
+    } catch (e) {
+      if (mine === seq.current) setError(e instanceof ApiClientError ? e.message : "Couldn't load bills.");
+    } finally {
+      if (mine === seq.current) setFetching(false);
+    }
+  }, [filters, page]);
+
+  useEffect(() => { load(); }, [load]);
 
   // Bills are raised at four counters. This is the one screen that sees all of
-  // them, so it is the one that most needs to not be stale.
+  // them, so it is the one that most needs to not be stale. A refresh re-reads
+  // the page on screen, not the register.
   useLive([TOPICS.ADMIN], load, {
     events: [EVENTS.INVOICE_RAISED, EVENTS.PAYMENT_TAKEN],
     // Not while a bill is open for correction - a list that reloads under an
@@ -87,35 +162,19 @@ export default function AdminBillsPage() {
     enabled: !editingId,
   });
 
-  const matchPay = (b: Bill) => {
-    if (pay === "ALL") return true;
-    if (pay === "INSURANCE") return b.payer === "INSURANCE";
-    // Every tender bucket below is about money at a counter, so a cashless bill
-    // belongs in none of them - including UNPAID, which means "somebody still
-    // owes us at the desk" and is exactly what an insurance bill is not.
-    if (b.payer === "INSURANCE") return false;
-    if (pay === "UNPAID") return b.paymentModes.length === 0;
-    if (pay === "SPLIT") return b.paymentModes.length > 1;
-    return b.paymentModes.length === 1 && b.paymentModes[0] === pay;
+  const filtered = source !== "ALL" || pay !== "ALL" || status !== "ALL" || searchBy !== "ALL" || q !== "" || from !== "" || to !== "";
+  const resetFilters = () => {
+    setSource("ALL"); setPay("ALL"); setStatus("ALL"); setSearchBy("ALL");
+    setQ(""); setFrom(""); setTo("");
   };
 
-  const shown = useMemo(() => bills.filter((b) => {
-    if (source !== "ALL" && b.source !== source) return false;
-    if (!matchPay(b)) return false;
-    if (q.trim()) {
-      const t = q.toLowerCase();
-      return b.receiptNo.toLowerCase().includes(t) || b.patient.fullName.toLowerCase().includes(t) || b.patient.displayId.toLowerCase().includes(t);
-    }
-    return true;
-  }), [bills, source, pay, q]);
+  // The date the bill PRINTS - the same date the From / To filter reads. Year
+  // included: every bill the hospital has raised is on this screen now, not
+  // just the recent ones.
+  const dt = (b: Bill) => new Date(b.billDate ?? b.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 
-  const totals = useMemo(() => {
-    const billed = shown.reduce((s, b) => s + Number(b.totalAmount), 0);
-    const collected = shown.reduce((s, b) => s + Number(b.amountPaid), 0);
-    return { billed, collected, count: shown.length };
-  }, [shown]);
-
-  const dt = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+  const bills = data?.invoices ?? [];
+  const total = data?.total ?? 0;
 
   return (
     <PortalScroll>
@@ -123,50 +182,91 @@ export default function AdminBillsPage() {
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--p-teal)]">Admin console</p>
         <h1 className="mt-1 font-serif-p text-[24px] font-semibold text-[var(--p-ink)]">All bills</h1>
         <p className="mt-1 text-[13px] text-[var(--p-muted)]">Every invoice across reception, lab, pharmacy and inpatient - with how each was paid.</p>
-        <div className="mt-4 flex items-center gap-2 rounded-lg border border-[var(--p-border)] bg-white px-3 py-2">
-          <Icon name="search" size={15} />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search receipt no, patient or UHID" className="w-full bg-transparent text-[13px] text-[var(--p-ink)] outline-none" />
-          {q && <button onClick={() => setQ("")} className="text-[12px] text-[var(--p-muted)]">clear</button>}
+        <div className="mt-4 flex flex-wrap items-stretch gap-2">
+          <select value={searchBy} onChange={(e) => setSearchBy(e.target.value as BillSearchField)} aria-label="Search in" className={sel}>
+            {SEARCH_BY.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </select>
+          <div className="flex min-w-[220px] flex-1 items-center gap-2 rounded-lg border border-[var(--p-border)] bg-white px-3 py-2">
+            <Icon name="search" size={15} />
+            <input value={q} onChange={(e) => setQ(e.target.value)}
+              placeholder={SEARCH_BY.find((s) => s.value === searchBy)?.hint}
+              className="w-full bg-transparent text-[13px] text-[var(--p-ink)] outline-none" />
+            {q && <button onClick={() => setQ("")} className="text-[12px] text-[var(--p-muted)]">clear</button>}
+          </div>
         </div>
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center gap-2 py-20 text-[13px] text-[var(--p-muted)]"><Spinner /> Loading bills…</div>
+      {/* filters */}
+      <div data-rise className="mb-4 space-y-2">
+        <div className="flex flex-wrap gap-1.5">
+          {(["ALL", ...BILL_SOURCES] as const).map((s) => (
+            <button key={s} onClick={() => setSource(s)}
+              className={`rounded-lg border px-3 py-1.5 text-[12px] font-semibold ${source === s ? "border-[var(--p-teal)] bg-[var(--p-teal)] text-white" : "border-[var(--p-border)] text-[var(--p-muted)]"}`}>
+              {s === "ALL" ? "All sources" : SRC_LABEL[s]}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {BILL_PAY_FILTERS.map((p) => (
+            <button key={p} onClick={() => setPay(p)}
+              className={`rounded-lg border px-3 py-1.5 text-[12px] font-semibold ${pay === p ? "border-[var(--p-cyan-deep)] bg-[var(--p-cyan-soft)] text-[var(--p-cyan-deep)]" : "border-[var(--p-border)] text-[var(--p-muted)]"}`}>
+              {p === "ALL" ? "Any payment" : p[0] + p.slice(1).toLowerCase()}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-end gap-3 pt-1">
+          <label className="flex flex-col gap-1">
+            <span className={lbl}>Status</span>
+            <select value={status} onChange={(e) => setStatus(e.target.value as "ALL" | BillStatus)} className={sel}>
+              <option value="ALL">Any status</option>
+              {BILL_STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+            </select>
+          </label>
+          {/* On the date the bill prints, so a bill re-dated at the desk is
+              found on the day its paper says. */}
+          <label className="flex flex-col gap-1">
+            <span className={lbl}>From</span>
+            <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className={sel} />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className={lbl}>To</span>
+            <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className={sel} />
+          </label>
+          {filtered && (
+            <button onClick={resetFilters}
+              className="rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-[12px] font-semibold text-[var(--p-muted)] transition-colors hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
+              Reset filters
+            </button>
+          )}
+        </div>
+      </div>
+
+      {data === null ? (
+        error ? (
+          <p className="py-20 text-center text-[13px] text-[var(--p-rose)]">{error}</p>
+        ) : (
+          <div className="flex items-center justify-center gap-2 py-20 text-[13px] text-[var(--p-muted)]"><Spinner /> Loading bills…</div>
+        )
       ) : (
         <>
-          {/* filters */}
-          <div data-rise className="mb-4 space-y-2">
-            <div className="flex flex-wrap gap-1.5">
-              {(["ALL", ...SOURCES] as const).map((s) => (
-                <button key={s} onClick={() => setSource(s)}
-                  className={`rounded-lg border px-3 py-1.5 text-[12px] font-semibold ${source === s ? "border-[var(--p-teal)] bg-[var(--p-teal)] text-white" : "border-[var(--p-border)] text-[var(--p-muted)]"}`}>
-                  {s === "ALL" ? "All sources" : SRC_LABEL[s]}
-                </button>
-              ))}
+          {/* summary - over every bill the filters match, not just this page */}
+          <div data-rise className="mb-4 grid grid-cols-3 gap-4">
+            <div className="surface px-5 py-3">
+              <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Bills {fetching && <Spinner size={11} />}</div>
+              <div className="mt-0.5 font-mono text-[19px] font-bold text-[var(--p-ink)]">{total.toLocaleString("en-IN")}</div>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {PAY_FILTERS.map((p) => (
-                <button key={p} onClick={() => setPay(p)}
-                  className={`rounded-lg border px-3 py-1.5 text-[12px] font-semibold ${pay === p ? "border-[var(--p-cyan-deep)] bg-[var(--p-cyan-soft)] text-[var(--p-cyan-deep)]" : "border-[var(--p-border)] text-[var(--p-muted)]"}`}>
-                  {p === "ALL" ? "Any payment" : p[0] + p.slice(1).toLowerCase()}
-                </button>
-              ))}
-            </div>
+            <div className="surface px-5 py-3"><div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Billed</div><div className="mt-0.5 font-mono text-[19px] font-bold text-[var(--p-ink)]">{inr0(Number(data.totals.billed))}</div></div>
+            <div className="surface px-5 py-3"><div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Collected</div><div className="mt-0.5 font-mono text-[19px] font-bold text-[var(--p-teal)]">{inr0(Number(data.totals.collected))}</div></div>
           </div>
 
-          {/* summary */}
-          <div data-rise className="mb-4 grid grid-cols-3 gap-4">
-            <div className="surface px-5 py-3"><div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Bills</div><div className="mt-0.5 font-mono text-[19px] font-bold text-[var(--p-ink)]">{totals.count}</div></div>
-            <div className="surface px-5 py-3"><div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Billed</div><div className="mt-0.5 font-mono text-[19px] font-bold text-[var(--p-ink)]">{inr0(totals.billed)}</div></div>
-            <div className="surface px-5 py-3"><div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Collected</div><div className="mt-0.5 font-mono text-[19px] font-bold text-[var(--p-teal)]">{inr0(totals.collected)}</div></div>
-          </div>
+          {error && <p className="mb-3 text-[12px] text-[var(--p-rose)]">{error} - showing the last page that loaded.</p>}
 
           {/* list */}
           <section data-rise className="surface overflow-hidden">
-            <div className="divide-y divide-[var(--p-border)]">
-              {shown.length === 0 ? (
+            <div className={`divide-y divide-[var(--p-border)] transition-opacity ${fetching ? "opacity-60" : ""}`}>
+              {bills.length === 0 ? (
                 <p className="px-6 py-12 text-center text-[13px] text-[var(--p-muted)]">No bills match.</p>
-              ) : shown.map((b) => (
+              ) : bills.map((b) => (
                 <div key={b.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-6 py-3.5">
                   <div className="min-w-[150px] flex-1">
                     <div className="flex items-center gap-2">
@@ -175,7 +275,7 @@ export default function AdminBillsPage() {
                     </div>
                     <div className="text-[12px] text-[var(--p-muted)]">{b.patient.fullName} · <span className="font-mono">{b.patient.displayId}</span></div>
                   </div>
-                  <div className="min-w-[70px] text-[12px] text-[var(--p-muted)]">{dt(b.createdAt)}</div>
+                  <div className="min-w-[90px] text-[12px] text-[var(--p-muted)]">{dt(b)}</div>
                   <div className="min-w-[150px]">
                     <div className="flex flex-wrap gap-1">
                       {/* "unpaid" is only true of a bill somebody could have paid.
@@ -218,6 +318,16 @@ export default function AdminBillsPage() {
                 </div>
               ))}
             </div>
+            <Pagination
+              page={page}
+              totalPages={Math.max(1, Math.ceil(total / pageSize))}
+              totalItems={total}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              onPageSizeChange={setPageSize}
+              pageSizeOptions={PAGE_SIZES}
+              itemLabel="bills"
+            />
           </section>
         </>
       )}

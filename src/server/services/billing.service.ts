@@ -10,6 +10,7 @@ import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import { isAdvanceAdjustment, advanceReceiptNoFromRef } from "@/server/billing/advances";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, PaymentMode } from "@prisma/client";
+import { buildAdminBillsWhere, COUNTER_MODES, type AdminBillsQuery } from "@/lib/admin-bills-query";
 
 /**
  * Money is handled in paise-precision decimals via string math to avoid float
@@ -934,15 +935,8 @@ export function invoiceDayWhere(onDate?: string):
   };
 }
 
-/**
- * The bills a desk works from.
- *
- * `source` narrows to one counter. `excludeSource` keeps one counter OUT, which
- * is the shape reception needs: the pharmacy settles, voids and reprints its own
- * bills at its own window, so a medicine receipt on the front desk's queue is a
- * row nobody there is meant to act on.
- */
-export async function listInvoices(source?: InvoiceSourceT, limit = 50, onDate?: string, excludeSource?: InvoiceSourceT): Promise<{
+/** One row of a bills list - the shape the desks' queues and the admin register share. */
+export interface InvoiceListRow {
   id: string; receiptNo: string; source: string; status: string; totalAmount: string;
   amountPaid: string; refunded: string; refundable: string;
   /** Distinct payment types used on this bill: [] unpaid, ["CASH"], or ["CASH","UPI"] for a split. */
@@ -958,9 +952,56 @@ export async function listInvoices(source?: InvoiceSourceT, limit = 50, onDate?:
   /** The corrected date this bill prints, when a desk has set one. */
   billDate: string | null;
   patient: { displayId: string; fullName: string };
-}[]> {
-  const MODE_ORDER = ["CASH", "UPI", "CARD", "NETBANKING", "OTHER"];
+}
 
+const INVOICE_LIST_SELECT = {
+  id: true, receiptNo: true, source: true, status: true, totalAmount: true,
+  createdAt: true, billDate: true,
+  payer: true, payerName: true,
+  patient: { select: { displayId: true, fullName: true } },
+  payments: { select: { amount: true, mode: true } },
+  refunds: { select: { amount: true } },
+} as const;
+
+function toInvoiceListRow(i: {
+  id: string; receiptNo: string; source: string; status: string;
+  totalAmount: { toString(): string }; createdAt: Date; billDate: Date | null;
+  payer: string; payerName: string | null;
+  patient: { displayId: string; fullName: string };
+  payments: { amount: { toString(): string }; mode: string }[];
+  refunds: { amount: { toString(): string } }[];
+}): InvoiceListRow {
+  const pays = i.payments.map((x) => ({ amount: Number(x.amount.toString()), mode: x.mode as string }));
+  const refs = (i.refunds ?? []).map((x) => ({ amount: Number(x.amount.toString()) }));
+  // Which tender types actually took money on this bill, in a stable order. The
+  // same list the admin register's payment filter reads, so a row and the
+  // bucket that returned it cannot disagree.
+  const paymentModes = COUNTER_MODES.filter((m) => pays.some((p) => p.mode === m && p.amount > 0));
+  return {
+    id: i.id, receiptNo: i.receiptNo, source: i.source, status: i.status,
+    totalAmount: i.totalAmount.toString(),
+    // NET. A fully refunded bill must not still read as paid.
+    amountPaid: s2(netPaid(pays, refs)),
+    refunded: s2(totalRefunded(refs)),
+    // The desk should never have to work out the ceiling itself.
+    refundable: s2(refundable(pays, refs)),
+    paymentModes,
+    payer: i.payer, payerName: i.payerName,
+    createdAt: i.createdAt.toISOString(),
+    billDate: i.billDate ? i.billDate.toISOString() : null,
+    patient: i.patient,
+  };
+}
+
+/**
+ * The bills a desk works from.
+ *
+ * `source` narrows to one counter. `excludeSource` keeps one counter OUT, which
+ * is the shape reception needs: the pharmacy settles, voids and reprints its own
+ * bills at its own window, so a medicine receipt on the front desk's queue is a
+ * row nobody there is meant to act on.
+ */
+export async function listInvoices(source?: InvoiceSourceT, limit = 50, onDate?: string, excludeSource?: InvoiceSourceT): Promise<InvoiceListRow[]> {
   const onEffectiveDay = invoiceDayWhere(onDate);
 
   const rows = await prisma.invoice.findMany({
@@ -980,42 +1021,59 @@ export async function listInvoices(source?: InvoiceSourceT, limit = 50, onDate?:
     // somebody corrected its date.
     orderBy: { createdAt: "desc" },
     take: limit,
-    select: {
-      id: true, receiptNo: true, source: true, status: true, totalAmount: true,
-      createdAt: true, billDate: true,
-      payer: true, payerName: true,
-      patient: { select: { displayId: true, fullName: true } },
-      payments: { select: { amount: true, mode: true } },
-      refunds: { select: { amount: true } },
+    select: INVOICE_LIST_SELECT,
+  });
+  return rows.map(toInvoiceListRow);
+}
+
+/**
+ * THE ADMIN REGISTER - every bill in the hospital, a page at a time.
+ *
+ * The desks' lists above are working queues and are meant to stop. This one is
+ * the register and must not, so every filter runs here, in the query: the
+ * answer covers the whole invoice table while only one page crosses the wire.
+ * What each filter means lives in admin-bills-query, where it is tested.
+ *
+ * `totals` are over EVERY matching bill, not the page - the summary tiles read
+ * them, and a "Billed" figure that changed as you paged would be no figure at
+ * all. Collected is payments less refunds, which is netPaid summed per bill:
+ * the one definition of "paid".
+ */
+export async function listAdminBills(query: AdminBillsQuery): Promise<{
+  invoices: InvoiceListRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totals: { billed: string; collected: string };
+}> {
+  const where = buildAdminBillsWhere(query);
+  const [rows, total, billed, paid, refunded] = await Promise.all([
+    prisma.invoice.findMany({
+      where,
+      // Most recently RAISED first, like the desks' lists. The id breaks ties,
+      // so two bills raised in the same millisecond cannot trade places between
+      // two page loads and turn up on both pages, or on neither.
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      skip: (query.page - 1) * query.pageSize,
+      take: query.pageSize,
+      select: INVOICE_LIST_SELECT,
+    }),
+    prisma.invoice.count({ where }),
+    prisma.invoice.aggregate({ where, _sum: { totalAmount: true } }),
+    prisma.payment.aggregate({ where: { invoice: { is: where } }, _sum: { amount: true } }),
+    prisma.refund.aggregate({ where: { invoice: { is: where } }, _sum: { amount: true } }),
+  ]);
+  const sum = (v: { toString(): string } | null) => (v === null ? 0 : Number(v.toString()));
+  return {
+    invoices: rows.map(toInvoiceListRow),
+    total,
+    page: query.page,
+    pageSize: query.pageSize,
+    totals: {
+      billed: s2(sum(billed._sum.totalAmount)),
+      collected: s2(sum(paid._sum.amount) - sum(refunded._sum.amount)),
     },
-  });
-  return rows.map((i: {
-    id: string; receiptNo: string; source: string; status: string;
-    totalAmount: { toString(): string }; createdAt: Date; billDate: Date | null;
-    payer: string; payerName: string | null;
-    patient: { displayId: string; fullName: string };
-    payments: { amount: { toString(): string }; mode: string }[];
-    refunds: { amount: { toString(): string } }[];
-  }) => {
-    const pays = i.payments.map((x) => ({ amount: Number(x.amount.toString()), mode: x.mode as string }));
-    const refs = (i.refunds ?? []).map((x) => ({ amount: Number(x.amount.toString()) }));
-    // Which tender types actually took money on this bill, in a stable order.
-    const paymentModes = MODE_ORDER.filter((m) => pays.some((p) => p.mode === m && p.amount > 0));
-    return {
-      id: i.id, receiptNo: i.receiptNo, source: i.source, status: i.status,
-      totalAmount: i.totalAmount.toString(),
-      // NET. A fully refunded bill must not still read as paid.
-      amountPaid: s2(netPaid(pays, refs)),
-      refunded: s2(totalRefunded(refs)),
-      // The desk should never have to work out the ceiling itself.
-      refundable: s2(refundable(pays, refs)),
-      paymentModes,
-      payer: i.payer, payerName: i.payerName,
-      createdAt: i.createdAt.toISOString(),
-      billDate: i.billDate ? i.billDate.toISOString() : null,
-      patient: i.patient,
-    };
-  });
+  };
 }
 
 /**

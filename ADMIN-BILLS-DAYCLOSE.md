@@ -23,8 +23,10 @@ A hospital-wide, read-only close for any date (date picker at top):
 drawer-reconciliation tool for the front desk.)
 
 ## Backend
-- New route `GET /api/v1/admin/bills` - ADMIN-only, lists up to 200 invoices with
-  payment modes (optional `?source=`), via the existing `listInvoices`.
+- New route `GET /api/v1/admin/bills` - ADMIN-only. Every invoice, a page at a
+  time: `?page=&pageSize=` (max 100) plus `q`, `searchBy`, `source`, `status`,
+  `pay`, `from`, `to`, all filtered in the database (`listAdminBills`,
+  `src/lib/admin-bills-query.ts`). Totals cover every matching bill.
 - Day close reuses the existing `/reception/day-close` endpoint (it already allows
   ADMIN) and the `dayClose` report's `byCounter` tally.
 
