@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { owed } from "@/lib/money-round";
 import { r2 } from "@/server/billing/calc";
 import { isAdvanceAdjustment } from "@/server/billing/advances";
 import { foldDrawer, cashInHandOf } from "@/server/billing/drawer";
@@ -378,7 +379,7 @@ export async function dayClose(opts?: { dateISO?: string; till?: Till }): Promis
           receiptNo: i.receiptNo,
           patient: i.patient?.fullName ?? "-",
           total, paid,
-          due: r2(Math.max(0, total - paid)),
+          due: owed(r2(Math.max(0, total - paid))),
         };
       })
       .filter((i) => i.due > 0)

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { owed } from "@/lib/money-round";
 import { ApiError } from "@/lib/api";
 import { DUTY_DOCTOR } from "./appointments.service";
 import { abnormalCount, resultsForTests, type LabResultDTO } from "./labs.service";
@@ -171,7 +172,7 @@ export async function getPatientBills(patientId: string): Promise<PatientBillDTO
     const paid = i.payments.reduce((s, p) => s + Number(p.amount.toString()), 0);
     return {
       id: i.id, receiptNo: i.receiptNo, source: i.source, status: i.status,
-      total: total.toFixed(2), paid: paid.toFixed(2), balance: Math.max(0, total - paid).toFixed(2),
+      total: total.toFixed(2), paid: paid.toFixed(2), balance: owed(Math.max(0, Math.round((total - paid) * 100) / 100)).toFixed(2),
       date: i.createdAt.toISOString().slice(0, 10),
     };
   });

@@ -5,6 +5,8 @@
  * standing up a browser. The pad is only the hands.
  */
 
+import { roundBill } from "@/lib/money-round";
+
 export interface PadLine {
   medicineId: string;
   name: string;
@@ -56,7 +58,8 @@ export function perDayFromDosage(dosage: string | null | undefined): number {
 /**
  * Exactly the invoice's arithmetic. If this drifts from `computeInvoiceTotals`,
  * the pad quotes one number and the bill prints another - and the patient finds
- * out at the counter. A test pins the two together.
+ * out at the counter. A test pins the two together. That includes the rounding
+ * to a whole rupee (lib/money-round).
  */
 export function billTotal(lines: PadLine[], discount: number): number {
   const subtotal = lines.reduce((s, l) => s + l.qty * l.mrp, 0);
@@ -65,7 +68,7 @@ export function billTotal(lines: PadLine[], discount: number): number {
     const after = l.qty * l.mrp * (subtotal > 0 ? 1 - disc / subtotal : 1);
     return s + (after * l.gst) / 100;
   }, 0);
-  return subtotal - disc + gst;
+  return roundBill(subtotal - disc + gst);
 }
 
 /** Every course-critical medicine being given in less than the prescribed amount. */

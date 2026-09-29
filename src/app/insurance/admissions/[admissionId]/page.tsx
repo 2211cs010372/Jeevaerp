@@ -16,6 +16,7 @@ import { repeatBlock, type RepeatBlock } from "@/lib/repeat-guard";
 import { bedLabel } from "@/lib/beds";
 import { EditBillDialog, useBillEditing } from "@/components/portal/billing/edit-bill-dialog";
 import { PatientHistoryPanel } from "@/components/portal/ipd/patient-history-panel";
+import { ForgottenBillsPanel } from "@/components/portal/ipd/forgotten-bills-panel";
 import { StatusPill, NewClaim, type ClaimPrefill } from "@/components/portal/insurance/claims-board";
 // The same rule the desk's worklist uses to decide a stay still owes a claim.
 import { authorisedAmount, excessOver, needsFinalClaim, openPreAuth, openFinalClaim } from "@/lib/final-claim";
@@ -1511,6 +1512,11 @@ export default function AdmissionSheetPage() {
             </div>
           )}
         </section>
+
+        {/* FORGOTTEN BILLS - pharmacy/lab billed as OP while this patient was
+            in the bed (a stay entered late). Put back on the stay from here. */}
+        <ForgottenBillsPanel admissionId={a.id} ipNumber={a.ipNumber} admittedAt={a.admittedAt} dischargedAt={a.dischargedAt} reloadToken={historyToken}
+          onLinked={() => { void load(); loadHistory(); }} />
 
         {/* NURSING / OBSERVATION NOTES - shift handover text, not billed */}
         <section data-rise className="surface overflow-hidden">

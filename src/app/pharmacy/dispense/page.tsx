@@ -6,6 +6,7 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Req, Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { roundBill } from "@/lib/money-round";
 import { DispenseScratchpad, type PadLine } from "@/components/portal/pharmacy/scratchpad";
 import { DiscountInput, PaymentSection, type Tender } from "@/components/portal/ui/bill-fields";
 import { AdmissionBanner, useAdmission } from "@/components/portal/reception/admission-banner";
@@ -212,7 +213,9 @@ export default function DispensePage() {
 
   const subtotal = lines.reduce((s, l) => s + l.qty * l.mrp, 0);
   const gst = lines.reduce((s, l) => s + (l.qty * l.mrp * (subtotal > 0 ? 1 - disc / subtotal : 1) * l.gst) / 100, 0);
-  const total = subtotal - disc + gst;
+  // Whole rupees - the same rounding the server bills with (lib/money-round),
+  // so the payment box asks for exactly what the bill will be.
+  const total = roundBill(subtotal - disc + gst);
 
   /** @param confirmRepeat  pressed "Dispense again" in the "same medicines just billed" dialog. */
   async function submit(confirmRepeat = false) {

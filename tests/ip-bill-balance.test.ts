@@ -190,7 +190,8 @@ describe("the IP bill on a stay paid in full", () => {
   it("asks for an unpaid pharmacy bill's full total, tax included", async () => {
     db.admission = stay({ cashAtDischarge: 55000, orphanRx: false, pharmacyGst: 56.5, pharmacyPaid: 0 });
     const bill = await detailedBillData("adm1");
-    expect(bill.netPayable).toBe("1186.50");
+    // Rs 1,186.50 owed prints as a whole rupee - 50 paise goes down (lib/money-round).
+    expect(bill.netPayable).toBe("1186.00");
   });
 
   it("does not print a paisa the window left behind as a balance", async () => {

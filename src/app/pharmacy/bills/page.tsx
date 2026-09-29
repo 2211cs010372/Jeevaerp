@@ -12,6 +12,7 @@ import {
 } from "@/components/portal/pharmacy/procurement-ui";
 import { EditBillDialog } from "@/components/portal/billing/edit-bill-dialog";
 import { api, ApiClientError } from "@/lib/api-client";
+import { owed } from "@/lib/money-round";
 import { useLive } from "@/lib/realtime/use-live";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import { bedLabel } from "@/lib/beds";
@@ -80,7 +81,8 @@ const billDay = (iso: string) => {
     day: "2-digit", month: "short", ...(sameYear ? {} : { year: "2-digit" }),
   });
 };
-const due = (i: Inv) => Math.max(0, Number(i.totalAmount) - Number(i.amountPaid));
+/** Under a rupee left is not a debt (lib/money-round). */
+const due = (i: Inv) => owed(Math.max(0, Math.round((Number(i.totalAmount) - Number(i.amountPaid)) * 100) / 100));
 /**
  * Is the balance on this bill money somebody at this counter collects?
  *

@@ -9,6 +9,7 @@ import { FlowRail } from "@/components/portal/shell/flow-rail";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, ApiClientError } from "@/lib/api-client";
+import { isSettled } from "@/lib/money-round";
 import { useLive } from "@/lib/realtime/use-live";
 import { TOPICS } from "@/lib/realtime/topics";
 
@@ -67,7 +68,8 @@ export default function ReceptionTodayPage() {
     setStats(s.stats);
     setAppts(a.appointments);
     setUnpaid(b.invoices.filter((i) =>
-      i.status !== "CANCELLED" && Number(i.totalAmount) - Number(i.amountPaid) > 0).length);
+      // Under a rupee left is not a debt (lib/money-round).
+      i.status !== "CANCELLED" && !isSettled(Number(i.totalAmount) - Number(i.amountPaid))).length);
   }, []);
 
   useEffect(() => { refresh().catch(() => { }).finally(() => setLoading(false)); }, [refresh]);

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { owed } from "@/lib/money-round";
 import { ApiError } from "@/lib/api";
 import { logAudit } from "./audit.service";
 import type { AuthUser } from "@/lib/auth/types";
@@ -130,7 +131,7 @@ async function aggregateFor(ids: string[]) {
     revenueBy.set(i.patientId, r2((revenueBy.get(i.patientId) ?? 0) + num(i.totalAmount)));
     if (i.status === "PENDING" || i.status === "PARTIALLY_PAID") {
       const paid = i.payments.reduce((s, p) => r2(s + num(p.amount)), 0);
-      const due = Math.max(0, r2(num(i.totalAmount) - paid));
+      const due = owed(Math.max(0, r2(num(i.totalAmount) - paid)));
       outstandingBy.set(i.patientId, r2((outstandingBy.get(i.patientId) ?? 0) + due));
     }
   }

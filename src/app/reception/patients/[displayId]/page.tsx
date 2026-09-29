@@ -8,6 +8,7 @@ import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { DiscountInput, PaymentSection, type Tender } from "@/components/portal/ui/bill-fields";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { roundBill } from "@/lib/money-round";
 import { RepeatConfirmDialog } from "@/components/portal/repeat-confirm-dialog";
 import { repeatBlock, type RepeatBlock } from "@/lib/repeat-guard";
 
@@ -53,7 +54,9 @@ export default function PatientDetailPage() {
   const [payments, setPayments] = useState<Tender[]>([]);
   const [payValid, setPayValid] = useState(true);
   const [billing, setBilling] = useState(false);
-  const billTotal = Math.max(0, Number(billAmt || 0) - billDisc) * (1 + (Number(billGst) || 0) / 100);
+  // Whole rupees - the same rounding the server bills with (lib/money-round),
+  // so the payment box asks for exactly what the bill will be.
+  const billTotal = roundBill(Math.max(0, Number(billAmt || 0) - billDisc) * (1 + (Number(billGst) || 0) / 100));
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);

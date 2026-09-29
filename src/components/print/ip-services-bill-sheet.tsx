@@ -91,7 +91,7 @@ interface Data {
   money: {
     /** The only block on this sheet - see the note at the top. */
     services: Block;
-    gross: string; discount: string; discountUnapplied: string; gst: string;
+    gross: string; discount: string; discountUnapplied: string; gst: string; roundOff: string;
     netBill: string; paidTotal: string; dueBeforeAdvance: string;
     advance: string; advanceApplied: string; netPayable: string; refundDue: string;
   };
@@ -527,6 +527,8 @@ export function IpServicesBillSheet() {
                       <T k="Gross Amount" v={money(m.gross)} />
                       {Number(m.discount) > 0 && <T k="Discount (services)" v={money(m.discount)} />}
                       {Number(m.gst) > 0 && <T k="Total GST" v={money(m.gst)} />}
+                      {/* Bills are whole rupees (lib/money-round); this squares the paise. */}
+                      {Number(m.roundOff) !== 0 && <T k="Round Off" v={money(m.roundOff)} />}
                       <T k="Net Amount" v={money(m.netBill)} rule />
                       {Number(m.paidTotal) > 0 && <T k="Already Paid" v={money(m.paidTotal)} />}
                       {Number(m.advanceApplied) > 0 && <T k="Advance Paid" v={money(m.advanceApplied)} />}

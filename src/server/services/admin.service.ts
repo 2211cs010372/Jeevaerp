@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { owed } from "@/lib/money-round";
 import { ApiError } from "@/lib/api";
 import { localDateISO, dateOnlyISO } from "@/lib/date";
 import { logAudit } from "./audit.service";
@@ -129,7 +130,7 @@ export async function adminOverview(): Promise<{
   const outstanding = (unpaidInvoices as { totalAmount: { toString(): string }; payments: { amount: { toString(): string } }[] }[])
     .reduce((s, i) => {
       const paid = i.payments.reduce((p, x) => r2(p + num(x.amount)), 0);
-      return r2(s + Math.max(0, num(i.totalAmount) - paid));
+      return r2(s + owed(Math.max(0, r2(num(i.totalAmount) - paid))));
     }, 0);
 
   // pharmacy stock alerts (batch qty at/below reorder)

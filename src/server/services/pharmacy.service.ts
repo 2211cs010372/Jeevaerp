@@ -641,10 +641,28 @@ export async function dispense(
     payments?: { mode: "CASH" | "UPI" | "CARD" | "NETBANKING" | "OTHER"; amount: number; reference?: string }[];
     /** The counter has seen the "same medicines just billed" warning and means it. */
     confirmRepeat?: boolean;
+    /**
+     * Bill onto THIS stay, even one already discharged - the stay sheet adding
+     * medicines that were given in the bed and never billed. Without it the
+     * bill goes to the patient's live admission, if they have one.
+     */
+    stayId?: string;
+    /** The date the bill prints - the day in the stay it belongs to. */
+    billDate?: Date;
   },
   ctx: { ipAddress?: string; userAgent?: string }
 ) {
   if (!input.items.length) throw new ApiError(400, "Add at least one medicine");
+
+  // Checked before any stock moves: a stay that turned out not to be this
+  // patient's must not leave medicine off the shelf with no bill behind it.
+  const namedStay = input.stayId
+    ? await prisma.admission.findFirst({
+        where: { id: input.stayId, patientId: input.patientId },
+        select: { id: true, ipNumber: true, doctor: { select: { name: true } } },
+      })
+    : null;
+  if (input.stayId && !namedStay) throw new ApiError(404, "That stay doesn't belong to this patient.");
 
   // ── ONE CHIT, ONE BILL ──
   //
@@ -796,7 +814,7 @@ export async function dispense(
   // An admitted patient does NOT pay at the medicine counter. The medicine goes
   // on their room tab and settles in the discharge bill. Billing them here would
   // make them pay twice - once at the window, once at discharge.
-  const liveAdmission = await prisma.admission.findFirst({
+  const liveAdmission = namedStay ?? await prisma.admission.findFirst({
     where: { patientId: input.patientId, status: "ADMITTED" },
     select: { id: true, ipNumber: true, doctor: { select: { name: true } } },
   });
@@ -885,14 +903,19 @@ export async function dispense(
       ...(liveAdmission ? { admissionId: liveAdmission.id } : {}),
       lines,
       discountAmount: input.discountAmount,
+      billDate: input.billDate,
       notes: [
         input.shortSupplyReason ? `Short supply: ${input.shortSupplyReason}` : null,
         // The note has to tell the truth about which of the two happened, since
         // the discharge desk reads it to decide whether to chase this bill.
         liveAdmission
-          ? tendered > 0
-            ? `Inpatient ${liveAdmission.ipNumber} - paid at pharmacy`
-            : `Inpatient ${liveAdmission.ipNumber} - due at discharge`
+          ? namedStay
+            // Added afterwards from the stay sheet - "due at discharge" would be
+            // wrong for a stay that has already been discharged.
+            ? `Inpatient ${liveAdmission.ipNumber} - added from the stay sheet, ${tendered > 0 ? "paid" : "due"}`
+            : tendered > 0
+              ? `Inpatient ${liveAdmission.ipNumber} - paid at pharmacy`
+              : `Inpatient ${liveAdmission.ipNumber} - due at discharge`
           : null,
       ].filter(Boolean).join(" · ") || undefined,
       payment: input.payment,
@@ -955,6 +978,111 @@ export async function dispense(
 }
 
 /** The pharmacy work queue: scans reception has dispatched here. */
+/**
+ * BILL MEDICINES WITHOUT TAKING STOCK - the stay sheet's "just bill".
+ *
+ * For medicines a stay was given that the system already accounts for some
+ * other way (the stock was corrected at a count, or taken on a sale that was
+ * never billed) and only the BILL is missing. Priced exactly as the counter
+ * would price it today - the soonest-expiring batch's MRP per unit, falling
+ * back to the most recent batch when none is in stock - but no stock moves.
+ *
+ * The lines carry NO batch on purpose. cancelInvoice puts a line's batch back
+ * on the shelf; a line that never took stock must not be able to add stock
+ * when it is voided.
+ */
+export async function billMedicinesWithoutStock(
+  actor: AuthUser,
+  input: {
+    patientId: string;
+    stayId: string;
+    items: { medicineId: string; qty: number }[];
+    discountAmount?: number;
+    payments?: { mode: "CASH" | "UPI" | "CARD" | "NETBANKING" | "OTHER"; amount: number; reference?: string }[];
+    confirmRepeat?: boolean;
+    /** The date the bill prints - the day in the stay it belongs to. */
+    billDate?: Date;
+  },
+  ctx: { ipAddress?: string; userAgent?: string }
+) {
+  if (!input.items.length) throw new ApiError(400, "Add at least one medicine");
+  const stay = await prisma.admission.findFirst({
+    where: { id: input.stayId, patientId: input.patientId },
+    select: { id: true, ipNumber: true },
+  });
+  if (!stay) throw new ApiError(404, "That stay doesn't belong to this patient.");
+
+  const lines: BillLineInput[] = [];
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  for (const item of input.items) {
+    if (item.qty <= 0) throw new ApiError(400, "Quantity must be at least 1");
+    const med = await prisma.medicine.findUnique({
+      where: { id: item.medicineId },
+      select: { name: true, unit: true, hsnCode: true, gstRatePct: true, hsn: { select: { code: true } }, unitRef: { select: { name: true } } },
+    });
+    if (!med) throw new ApiError(404, "Medicine not found");
+    const batch =
+      (await prisma.stockBatch.findFirst({
+        where: { medicineId: item.medicineId, quantity: { gt: 0 }, expiryDate: { gte: today } },
+        orderBy: { expiryDate: "asc" }, select: { mrp: true, packSize: true },
+      })) ??
+      (await prisma.stockBatch.findFirst({
+        where: { medicineId: item.medicineId }, orderBy: { createdAt: "desc" }, select: { mrp: true, packSize: true },
+      }));
+    if (!batch) throw new ApiError(400, `No price on file for ${med.name} - it has never been stocked. Add it at the pharmacy first.`);
+    lines.push({
+      description: `${med.name} (${resolveMaster(med.unitRef?.name, med.unit).value ?? "unit"})`,
+      qty: item.qty,
+      unitPrice: perUnitPrice(Number(batch.mrp.toString()), batch.packSize),
+      gstRatePct: Number(med.gstRatePct.toString()),
+      hsnSac: resolveMaster(med.hsn?.code, med.hsnCode).value ?? undefined,
+    });
+  }
+
+  // The same bill generated twice - same lines, same patient, minutes apart.
+  if (!input.confirmRepeat) {
+    const sig = (l: { description: string; qty?: number }[]) => l.map((x) => `${x.description}#${x.qty ?? 1}`).sort().join("|");
+    const want = sig(lines);
+    const recent = await prisma.invoice.findMany({
+      where: { patientId: input.patientId, source: "PHARMACY", status: { not: "CANCELLED" }, createdAt: { gte: repeatWindowStart() } },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, receiptNo: true, createdAt: true, totalAmount: true, items: { select: { description: true, qty: true } } },
+    });
+    const same = recent.find((r) => sig(r.items) === want);
+    if (same) {
+      const details: RepeatBlock = {
+        code: "REPEAT_ENTRY", kind: "DISPENSE",
+        items: [{ label: same.items.map((i) => i.description).join(", "), at: same.createdAt.toISOString(), detail: `Bill ${same.receiptNo} · ₹${same.totalAmount.toString()}`, invoiceId: same.id }],
+      };
+      throw new ApiError(409, `These medicines were billed to this patient ${minutesAgo(same.createdAt)} (${same.receiptNo}). This looks like the same bill generated again.`, details);
+    }
+  }
+
+  const tendered = (input.payments ?? []).reduce((s, p) => s + (p?.amount ?? 0), 0);
+  const invoice = await createInvoice(
+    actor,
+    {
+      patientId: input.patientId,
+      source: "PHARMACY",
+      admissionId: stay.id,
+      lines,
+      discountAmount: input.discountAmount,
+      payments: input.payments,
+      billDate: input.billDate,
+      notes: `Inpatient ${stay.ipNumber} - added from the stay sheet, billed without taking stock, ${tendered > 0 ? "paid" : "due"}`,
+      notify: false,
+    },
+    ctx
+  );
+  await logAudit(actor, {
+    action: "PHARMACY_BILLED_WITHOUT_STOCK", targetTable: "Invoice", targetId: invoice.id,
+    meta: { ipNumber: stay.ipNumber, receiptNo: invoice.receiptNo, lines: lines.length },
+    ...ctx,
+  });
+  await publishLive([TOPICS.PHARMACY, TOPICS.RECEPTION, TOPICS.IPD, TOPICS.ADMIN], EVENTS.INVOICE_RAISED);
+  return invoice;
+}
+
 export async function pharmacyRxQueue(status?: "SENT_TO_PHARMACY" | "DISPENSED"): Promise<{
   id: string; appointmentId: string | null; fileUrl: string | null; fileName: string | null; mimeType: string | null; title: string | null; doctorName: string | null;
   status: string; sentToPharmacyAt: string | null; dispensedAt: string | null; createdAt: string;

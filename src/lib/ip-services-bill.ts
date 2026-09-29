@@ -1,3 +1,4 @@
+import { owed, roundBill } from "@/lib/money-round";
 /**
  * THE SELF-PAY STAY BILL, SPLIT INTO WHAT CAN BE DISCOUNTED AND WHAT CANNOT.
  *
@@ -74,6 +75,12 @@ export interface IpServicesBillInput {
    * the deposit: that is `advance`, and it would otherwise come off twice.
    */
   paid?: { services?: number | string; lab?: number | string; pharmacy?: number | string };
+  /**
+   * What rounding each block's bills to the rupee added or took off (see
+   * lib/money-round). The lines are to the paisa and the bills are not; without
+   * this a bill rounded down leaves its 50 paise showing as due.
+   */
+  roundOff?: { services?: number | string; lab?: number | string; pharmacy?: number | string };
 }
 
 /** One block of the bill: what it came to, what has been paid, what is left. */
@@ -109,7 +116,9 @@ export interface IpServicesBill {
    */
   discountUnapplied: number;
   gst: number;
-  /** gross − discount + gst. The bill. */
+  /** The blocks' round-offs, summed - printed as its own line. */
+  roundOff: number;
+  /** gross − discount + gst + roundOff. The bill. */
   netBill: number;
   /** Everything already collected at every counter, excluding the deposit. */
   paidTotal: number;
@@ -124,13 +133,14 @@ export interface IpServicesBill {
   refundDue: number;
 }
 
-const block = (gross: number, discount: number, gst: number, paid: number): IpBillBlock => {
-  const net = r2(Math.max(0, gross - discount + gst));
+const block = (gross: number, discount: number, gst: number, paid: number, roundOff = 0): IpBillBlock => {
+  const net = r2(Math.max(0, gross - discount + gst + roundOff));
   // Never credit more than the block came to. An overpayment at the pharmacy
   // window is the pharmacy's to refund; it must not quietly pay down the bed.
   const applied = r2(Math.min(Math.max(0, paid), net));
-  const due = r2(Math.max(0, net - applied));
-  return { gross: r2(gross), discount: r2(discount), net, paid: applied, due, settled: due <= 0.01 };
+  // Under a rupee left is not a debt (lib/money-round).
+  const due = owed(r2(Math.max(0, net - applied)));
+  return { gross: r2(gross), discount: r2(discount), net, paid: applied, due, settled: due === 0 };
 };
 
 /**
@@ -155,9 +165,10 @@ export function ipServicesBill(input: IpServicesBillInput): IpServicesBill {
   const wanted = r2(Math.max(0, num(input.discount)));
   const discount = r2(Math.min(wanted, totals.SERVICES));
 
-  const services = block(totals.SERVICES, discount, gst, num(input.paid?.services));
-  const lab = block(totals.LAB, 0, 0, num(input.paid?.lab));
-  const pharmacy = block(totals.PHARMACY, 0, 0, num(input.paid?.pharmacy));
+  const ro = { services: num(input.roundOff?.services), lab: num(input.roundOff?.lab), pharmacy: num(input.roundOff?.pharmacy) };
+  const services = block(totals.SERVICES, discount, gst, num(input.paid?.services), ro.services);
+  const lab = block(totals.LAB, 0, 0, num(input.paid?.lab), ro.lab);
+  const pharmacy = block(totals.PHARMACY, 0, 0, num(input.paid?.pharmacy), ro.pharmacy);
 
   const gross = r2(totals.SERVICES + totals.LAB + totals.PHARMACY);
   const netBill = r2(services.net + lab.net + pharmacy.net);
@@ -173,12 +184,14 @@ export function ipServicesBill(input: IpServicesBillInput): IpServicesBill {
     discount,
     discountUnapplied: r2(wanted - discount),
     gst,
+    roundOff: r2(ro.services + ro.lab + ro.pharmacy),
     netBill,
     paidTotal,
     dueBeforeAdvance,
     advance,
     advanceApplied,
-    netPayable: r2(Math.max(0, dueBeforeAdvance - advanceApplied)),
+    // Whole rupees, and nothing under one (lib/money-round).
+    netPayable: owed(roundBill(Math.max(0, dueBeforeAdvance - advanceApplied))),
     refundDue: r2(Math.max(0, advance - advanceApplied)),
   };
 }

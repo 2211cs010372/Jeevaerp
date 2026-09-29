@@ -1,5 +1,6 @@
 "use client";
 
+import { roundBill } from "@/lib/money-round";
 /**
  * The money column - what is being charged, less any discount, and how it is
  * being settled.
@@ -62,7 +63,9 @@ export function BillAside({
   const [payValid, setPayValid] = useState(true);
 
   const subtotal = lines.reduce((s, l) => s + l.amount, 0);
-  const taxable = Math.max(0, subtotal - discount);
+  // Whole rupees - the same rounding the server bills with (lib/money-round),
+  // so the payment box asks for exactly what the bill will be.
+  const taxable = roundBill(Math.max(0, subtotal - discount));
   const billing = billNow !== false;
 
   // ONE place decides what the screen is settling for. The discount control and

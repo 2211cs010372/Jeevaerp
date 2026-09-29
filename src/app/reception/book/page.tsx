@@ -9,6 +9,7 @@ import { Spinner, SuccessCheck, Field } from "@/components/portal/ui/form-atoms"
 import { DiscountInput, PaymentSection, type Tender } from "@/components/portal/ui/bill-fields";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { roundBill } from "@/lib/money-round";
 import PortalDatePicker from "@/components/portal/ui/datepicker";
 import { isAfterHours, minutesOfDay, opFeeFor, prettyTime, type AfterHoursPolicy } from "@/lib/after-hours";
 import { DuplicatePatientDialog, PhoneOnFileHint } from "@/components/portal/duplicate-patient-dialog";
@@ -296,7 +297,9 @@ export default function BookAppointmentPage() {
   /** The doubled/emergency rate is in force for this visit's time. */
   const afterHours = policyFee.afterHours;
   const bookFee = feeEdit ?? policyFee.fee;
-  const bookTotal = Math.max(0, bookFee - bookDisc);
+  // Whole rupees - the same rounding the server bills with (lib/money-round),
+  // so the payment box asks for exactly what the bill will be.
+  const bookTotal = roundBill(Math.max(0, bookFee - bookDisc));
   /** Nothing is billable until a consultant (and therefore a fee) is named. */
   const canBill = bookFee > 0;
   /** True once the clinic day has closed, whatever visit is being booked. */

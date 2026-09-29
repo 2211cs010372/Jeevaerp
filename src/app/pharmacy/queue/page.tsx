@@ -6,6 +6,7 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { roundBill } from "@/lib/money-round";
 import { RepeatConfirmDialog } from "@/components/portal/repeat-confirm-dialog";
 import { repeatBlock, type RepeatBlock } from "@/lib/repeat-guard";
 import { useLive } from "@/lib/realtime/use-live";
@@ -132,7 +133,9 @@ export default function RxQueuePage() {
     const after = l.qty * l.mrp * (subtotal > 0 ? 1 - disc / subtotal : 1);
     return s + (after * l.gst) / 100;
   }, 0);
-  const total = subtotal - disc + gst;
+  // Whole rupees - the same rounding the server bills with (lib/money-round),
+  // so the payment box asks for exactly what the bill will be.
+  const total = roundBill(subtotal - disc + gst);
 
   // Short supply = giving less than the doctor prescribed. Two consequences:
   // a reason is required, and if an ANTIBIOTIC is the thing being cut, we refuse

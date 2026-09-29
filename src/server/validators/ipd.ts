@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { DISCHARGE_OUTCOMES } from "@/lib/admission-outcome";
+import { paymentsSchema } from "./labs";
 
 const payment = z.object({
   mode: z.enum(["CASH", "UPI", "CARD", "NETBANKING", "OTHER"]),
@@ -78,6 +79,42 @@ export const dischargeSchema = z.object({
 export const CHARGE_CATEGORIES = [
   "PROCEDURE", "DOCTOR_VISIT", "NURSING", "OXYGEN", "INVESTIGATION", "CONSUMABLE", "PHARMACY", "OTHER",
 ] as const;
+
+/**
+ * A new LAB or PHARMACY bill for something the stay was given and never billed
+ * - see addForgottenBill. `fromStock` decides whether the medicines come off
+ * the shelf; it is required so the desk has always chosen.
+ */
+/** "YYYY-MM-DD", a day within the stay - checked against the stay in addForgottenBill. */
+const forgottenBillDate = z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date").optional();
+
+export const forgottenBillSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("LAB"),
+    catalogIds: z.array(z.string().trim().min(1)).min(1, "Pick at least one test").max(60),
+    discountAmount: z.coerce.number().min(0).optional(),
+    payments: paymentsSchema.optional(),
+    confirmRepeat: z.boolean().optional(),
+    billDate: forgottenBillDate,
+  }),
+  z.object({
+    kind: z.literal("PHARMACY"),
+    items: z.array(z.object({
+      medicineId: z.string().trim().min(1),
+      qty: z.coerce.number().int().min(1).max(9999),
+    })).min(1, "Add at least one medicine").max(80),
+    fromStock: z.boolean(),
+    discountAmount: z.coerce.number().min(0).optional(),
+    payments: paymentsSchema.optional(),
+    confirmRepeat: z.boolean().optional(),
+    billDate: forgottenBillDate,
+  }),
+]);
+
+/** Forgotten OP pharmacy/lab bills to put onto a stay - see linkBillsToStay. */
+export const linkBillsSchema = z.object({
+  invoiceIds: z.array(z.string().trim().min(1)).min(1, "Pick at least one bill").max(200),
+});
 
 export const addChargeSchema = z.object({
   category: z.enum(CHARGE_CATEGORIES),

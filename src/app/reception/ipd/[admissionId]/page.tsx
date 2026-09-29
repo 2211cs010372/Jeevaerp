@@ -16,6 +16,7 @@ import { repeatBlock, type RepeatBlock } from "@/lib/repeat-guard";
 import { bedLabel } from "@/lib/beds";
 import { EditBillDialog, useBillEditing } from "@/components/portal/billing/edit-bill-dialog";
 import { PatientHistoryPanel } from "@/components/portal/ipd/patient-history-panel";
+import { ForgottenBillsPanel } from "@/components/portal/ipd/forgotten-bills-panel";
 
 /** One row of the hospital's published rate card. See prisma ServiceCharge. */
 interface ServiceCharge {
@@ -831,6 +832,11 @@ export default function AdmissionSheetPage() {
             </div>
           )}
         </section>
+
+        {/* FORGOTTEN BILLS - pharmacy/lab billed as OP while this patient was
+            in the bed (a stay entered late). Put back on the stay from here. */}
+        <ForgottenBillsPanel admissionId={a.id} ipNumber={a.ipNumber} admittedAt={a.admittedAt} dischargedAt={a.dischargedAt} reloadToken={historyToken}
+          onLinked={() => { void load(); loadHistory(); }} />
 
         {/* NURSING / OBSERVATION NOTES - shift handover text, not billed */}
         <section data-rise className="surface overflow-hidden">

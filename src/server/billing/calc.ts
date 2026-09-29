@@ -12,7 +12,13 @@
  *
  * The arithmetic is unchanged from the original. Do not "tidy" it: the rounding
  * order is load-bearing (see roundingIsPerLine below).
+ *
+ * ONE ADDITION (29 Sep 2026): the TOTAL is a whole number of rupees - see
+ * lib/money-round. Tax is still computed to the paisa on the taxable value; the
+ * difference is `roundOff`, printed as its own line.
  */
+
+import { roundBill, SETTLED_BELOW } from "@/lib/money-round";
 
 export interface CalcLine {
   description: string;
@@ -39,7 +45,10 @@ export interface InvoiceTotals<L extends CalcLine = CalcLine> {
   taxable: number;
   cgst: number;
   sgst: number;
+  /** Whole rupees: taxable + cgst + sgst + roundOff. */
   total: number;
+  /** What rounding the total to the rupee added (+) or took off (-). Within ±0.50. */
+  roundOff: number;
 }
 
 /** Money is rounded to paise at every step - never carried as a float tail. */
@@ -87,8 +96,9 @@ export function computeInvoiceTotals<L extends CalcLine>(
     sgst = r2(sgst + lineTax / 2);
   }
 
-  const total = r2(taxable + cgst + sgst);
-  return { items, subtotal, discount, taxable, cgst, sgst, total };
+  const exact = r2(taxable + cgst + sgst);
+  const total = roundBill(exact);
+  return { items, subtotal, discount, taxable, cgst, sgst, total, roundOff: r2(total - exact) };
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -164,6 +174,23 @@ export function sumPayments(payments: MoneyLine[]): number {
  *  · the legs together do not exceed the bill (a penny of float slack allowed).
  * Under-paying is fine - that just leaves a balance due.
  */
+/**
+ * Payments that overshoot a whole-rupee total by LESS than a rupee are trimmed
+ * to it, not refused. That overshoot is the paise the total no longer has - a
+ * screen still showing 102.50 for a bill that is now 102 (an open tab from
+ * before the rounding rule, or float noise on a boundary). Taken off the last
+ * tender, which is the one a desk types last. A real overpayment - a rupee or
+ * more - is left alone for assertPaymentsWithinTotal to refuse.
+ */
+export function fitTendersToTotal<T extends MoneyLine>(tenders: T[], total: number): T[] {
+  const over = r2(sumPayments(tenders) - total);
+  if (!tenders.length || over <= 0 || over >= SETTLED_BELOW) return tenders;
+  const last = tenders[tenders.length - 1];
+  const trimmed = r2(last.amount - over);
+  if (trimmed <= 0) return tenders;
+  return [...tenders.slice(0, -1), { ...last, amount: trimmed }];
+}
+
 export function assertPaymentsWithinTotal(total: number, payments: MoneyLine[]): void {
   for (const p of payments) {
     if (!(p.amount > 0)) throw new InvoiceMathError("Each payment must be more than ₹0");
@@ -206,7 +233,7 @@ export function invoiceStatusFrom(
   if (back > 0 && r2(back) >= gross && gross > 0) return "REFUNDED";
   const net = r2(gross - back);
   if (net <= 0) return "PENDING";
-  if (net >= total) return "PAID";
+  if (r2(total - net) < SETTLED_BELOW) return "PAID";
   return "PARTIALLY_PAID";
 }
 

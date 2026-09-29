@@ -1,3 +1,4 @@
+import { isSettled, owed } from "@/lib/money-round";
 /**
  * PATIENT MONEY vs INSURANCE MONEY, in one place.
  *
@@ -116,7 +117,9 @@ export function splitInvoice(inv: InvoiceMoney): InvoiceSplit {
   );
 
   const patientPayable = r2(Math.max(0, total - insuranceCovered));
-  const patientBalance = r2(Math.max(0, patientPayable - patientPaid));
+  // Under a rupee left is not a debt (lib/money-round) - every dues list,
+  // stay sheet and discharge check reads its balance from here.
+  const patientBalance = owed(r2(Math.max(0, patientPayable - patientPaid)));
   const insuranceReceivable = r2(Math.max(0, insuranceCovered - insurerPaid));
 
   return {
@@ -127,9 +130,8 @@ export function splitInvoice(inv: InvoiceMoney): InvoiceSplit {
     patientBalance,
     insurerPaid,
     insuranceReceivable,
-    // A rounding tail of a paisa is settled, not owed - the same threshold the
-    // dues lists have always used.
-    fullySettled: patientBalance <= 0.01 && insuranceReceivable <= 0.01,
+    // A rounding tail under a rupee is settled, not owed - see lib/money-round.
+    fullySettled: patientBalance <= 0.01 && isSettled(insuranceReceivable),
   };
 }
 

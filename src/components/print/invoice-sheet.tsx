@@ -691,7 +691,11 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
   // The final chargeable amount = subtotal + GST, then (for inpatients only) less
   // the admission deposit. Every other desk's bill is a straight subtotal + GST;
   // the advance credit belongs to the IP section alone.
-  const total = Number(inv.totalAmount);            // taxable + CGST + SGST
+  const total = Number(inv.totalAmount);            // taxable + CGST + SGST, to the rupee
+  // Bills are whole rupees (lib/money-round). What that added or took off
+  // prints as its own line so taxable + tax + round off = the total. Bills
+  // raised before the rule carry none and print as they always did.
+  const roundOff = Math.round((total - Number(inv.taxableAmount) - Number(inv.cgstAmount) - Number(inv.sgstAmount)) * 100) / 100;
   const isIpd = inv.source === "IPD";
   const advance = isIpd ? Number(inv.advanceAdjusted) : 0;
   const advanceRows = isIpd ? (inv.advanceLines ?? []) : [];
@@ -1032,6 +1036,9 @@ export function InvoiceDoc({ inv, embedded }: { inv: Invoice; embedded?: boolean
                     {gstApplies && Number(inv.discountAmount) > 0 && <Trow k="Taxable value" v={money(inv.taxableAmount)} />}
                     {gstApplies && <Trow k="CGST" v={money(inv.cgstAmount)} />}
                     {gstApplies && <Trow k="SGST" v={money(inv.sgstAmount)} />}
+                    {Math.abs(roundOff) >= 0.01 && (
+                      <Trow k="Round off" v={roundOff < 0 ? `− ${money(-roundOff)}` : money(roundOff)} />
+                    )}
                     {isIpd && advance > 0 ? (
                       <>
                         <Trow k="Total incl. GST" v={money(total)} />

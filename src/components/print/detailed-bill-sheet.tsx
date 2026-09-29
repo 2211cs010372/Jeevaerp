@@ -92,7 +92,7 @@ interface Data {
   insurer: string | null;
   policyNo: string | null;
   groups: BillGroup[];
-  gross: string; discount: string; gst: string; netBill: string; advance: string; netPayable: string;
+  gross: string; discount: string; gst: string; roundOff: string; netBill: string; advance: string; netPayable: string;
   // `draftTotal` and `draftUnpricedCount` are on the wire and deliberately not
   // read here. They split the Total into billed and not-yet-billed, which is
   // the hospital's own paperwork rather than anything the family or the
@@ -542,6 +542,9 @@ export function DetailedBillSheet() {
                   that might come off, which it never does. */}
                       <T k="Discount" v={money(b.discount)} />
                       {Number(b.gst) > 0 && <T k="Total GST" v={money(b.gst)} />}
+                      {/* The bills are whole rupees (lib/money-round); their round-offs,
+                          summed, are what closes lines-plus-tax onto what was billed. */}
+                      {Number(b.roundOff) !== 0 && <T k="Round Off" v={money(b.roundOff)} />}
                       <T k="Net Amount" v={money(b.netBill)} rule />
                       <T k="Advance Paid" v={money(b.advance)} />
                       {/* Money already taken at a counter: the pharmacy and lab

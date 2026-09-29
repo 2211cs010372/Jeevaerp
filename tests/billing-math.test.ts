@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { computeInvoiceTotals, InvoiceMathError, r2 } from "@/server/billing/calc";
+import { computeInvoiceTotals, fitTendersToTotal, invoiceStatusFrom, InvoiceMathError, r2 } from "@/server/billing/calc";
+import { owed, roundBill } from "@/lib/money-round";
 
 /**
  * These are the tests worth having.
@@ -55,7 +56,9 @@ describe("a real mixed bill - the one that catches bugs", () => {
     // tax = 1250×5% (62.50) + 100×12% (12) = 74.50 -> 37.25 each side
     expect(t.cgst).toBe(37.25);
     expect(t.sgst).toBe(37.25);
-    expect(t.total).toBe(2224.5);
+    // 2224.50 to the paisa; the bill is whole rupees and 50 paise goes down.
+    expect(t.total).toBe(2224);
+    expect(t.roundOff).toBe(-0.5);
   });
 
   it("the exempt lines contribute ZERO tax", () => {
@@ -100,6 +103,41 @@ describe("discounts - where money quietly goes missing", () => {
   });
 });
 
+describe("no paise on a bill - the owner's rule, 29 Sep 2026", () => {
+  it("rounds to the nearest rupee, and exactly 50 paise goes DOWN", () => {
+    expect(roundBill(102.4)).toBe(102);
+    expect(roundBill(102.5)).toBe(102);
+    expect(roundBill(102.51)).toBe(103);
+    expect(roundBill(102.6)).toBe(103);
+    expect(roundBill(102)).toBe(102);
+    // Float noise must not tip a boundary: 0.1 + 0.2 is 0.30000000000000004.
+    expect(roundBill(100 + 0.1 + 0.2 + 0.2)).toBe(100);
+  });
+
+  it("keeps the tax to the paisa and prints the difference as a round-off", () => {
+    const t = computeInvoiceTotals([{ description: "Syrup", qty: 1, unitPrice: 97.62, gstRatePct: 5 }]);
+    expect(t.taxable).toBe(97.62);
+    expect(r2(t.cgst + t.sgst)).toBe(4.88);
+    expect(t.total).toBe(102);                          // 102.50 -> 102
+    expect(r2(t.taxable + t.cgst + t.sgst + t.roundOff)).toBe(t.total);
+  });
+
+  it("treats a balance under one rupee as nothing owed", () => {
+    expect(owed(0.99)).toBe(0);
+    expect(owed(1)).toBe(1);
+    expect(invoiceStatusFrom(169.08, [{ amount: 169.07 }])).toBe("PAID");   // an old paise bill
+    expect(invoiceStatusFrom(102, [{ amount: 101 }])).toBe("PARTIALLY_PAID");
+  });
+
+  it("trims a payment that overshoots the rounded total by paise, and only by paise", () => {
+    // A screen still asking for 102.50 on a bill that is now 102.
+    expect(fitTendersToTotal([{ amount: 100 }, { amount: 2.5 }], 102)).toEqual([{ amount: 100 }, { amount: 2 }]);
+    // A rupee or more over is a real overpayment - left for the ceiling check to refuse.
+    expect(fitTendersToTotal([{ amount: 103 }], 102)).toEqual([{ amount: 103 }]);
+    expect(fitTendersToTotal([{ amount: 102 }], 102)).toEqual([{ amount: 102 }]);
+  });
+});
+
 describe("rounding - the bug you find six months in", () => {
   it("never leaks floating-point tails into the total", () => {
     // 0.1 + 0.2 === 0.30000000000000004 in JS. A bill must never print that.
@@ -107,7 +145,10 @@ describe("rounding - the bug you find six months in", () => {
       { description: "a", unitPrice: 0.1 },
       { description: "b", unitPrice: 0.2 },
     ]);
-    expect(t.total).toBe(0.3);
+    expect(t.taxable).toBe(0.3);
+    // ...and the bill itself is whole rupees: 30 paise rounds to nothing.
+    expect(t.total).toBe(0);
+    expect(t.roundOff).toBe(-0.3);
   });
 
   it("keeps totals to exactly 2 decimal places on an awkward rate", () => {
@@ -117,7 +158,9 @@ describe("rounding - the bug you find six months in", () => {
     ]);
     expect(t.cgst).toBe(59.94);
     expect(t.sgst).toBe(59.94);
-    expect(t.total).toBe(1118.88);
+    // 1118.88 to the paisa, billed as 1119 with a 12-paise round-off.
+    expect(t.total).toBe(1119);
+    expect(t.roundOff).toBe(0.12);
     // NOTE: `Number.isInteger(total * 100)` is the WRONG assertion - 1118.88 * 100
     // is 111887.99999999999 in JS, so it fails on a correct total. The float bug
     // crept into the test written to catch float bugs. The right invariant is:

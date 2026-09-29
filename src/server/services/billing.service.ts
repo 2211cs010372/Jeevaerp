@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { computeInvoiceTotals, assertRefundable, assertPaymentsWithinTotal, invoiceStatusFrom, netPaid, totalRefunded, refundable, r2, resolveBillDate, BillDateError, assertTotalCoversCollected, InvoiceMathError } from "@/server/billing/calc";
+import { computeInvoiceTotals, fitTendersToTotal, assertRefundable, assertPaymentsWithinTotal, invoiceStatusFrom, netPaid, totalRefunded, refundable, r2, resolveBillDate, BillDateError, assertTotalCoversCollected, InvoiceMathError } from "@/server/billing/calc";
 import { nextId } from "@/lib/ids";
 import { ApiError } from "@/lib/api";
 import { logAudit } from "./audit.service";
@@ -9,6 +9,7 @@ import { splitInvoice, allocateCoverage } from "@/lib/insurance-split";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import { isAdvanceAdjustment, advanceReceiptNoFromRef } from "@/server/billing/advances";
 import { minutesAgo, repeatWindowStart, type RepeatBlock } from "@/lib/repeat-guard";
+import { isSettled, owed } from "@/lib/money-round";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, PaymentMode } from "@prisma/client";
 import { buildAdminBillsWhere, COUNTER_MODES, type AdminBillsQuery } from "@/lib/admin-bills-query";
@@ -130,6 +131,12 @@ export async function createInvoice(
     discountAmount?: number;
     notes?: string;
     /**
+     * The date the sheet prints, when it is not today - a bill raised now for
+     * something given during a stay. Already validated by the caller (see
+     * resolveBillDate). Day close and GST still count the bill on createdAt.
+     */
+    billDate?: Date;
+    /**
      * How this bill gets settled. Defaults to SELF_PAY, so every existing caller
      * - the OP counter, the lab, the pharmacy - keeps raising ordinary counter
      * bills without knowing this parameter exists.
@@ -224,6 +231,7 @@ export async function createInvoice(
         prescriptionUploadId: input.prescriptionUploadId ?? null,
         admissionId: input.admissionId ?? null,
         payer: payer ?? "SELF_PAY",
+        billDate: input.billDate ?? null,
         // Only meaningful on an insurance bill. Cleared otherwise rather than
         // stored-and-ignored, so nothing downstream can print an insurer's name
         // across a bill the family paid in cash.
@@ -256,8 +264,10 @@ export async function createInvoice(
     // optional immediate payment - one tender, or a split (part cash, part UPI).
     // `payments` (plural) wins when given; otherwise fall back to the single
     // `payment`. Zero-amount legs are dropped so an unused split box adds nothing.
-    const tenders = (input.payments?.length ? input.payments : input.payment ? [input.payment] : [])
-      .filter((p) => p && p.amount > 0);
+    const tenders = fitTendersToTotal(
+      (input.payments?.length ? input.payments : input.payment ? [input.payment] : []).filter((p) => p && p.amount > 0),
+      total,
+    );
     if (tenders.length) {
       try {
         assertPaymentsWithinTotal(total, tenders);
@@ -274,7 +284,8 @@ export async function createInvoice(
         })),
       });
       const paid = tenders.reduce((s, p) => r2(s + p.amount), 0);
-      const status = paid >= total - 0.01 ? "PAID" : paid > 0 ? "PARTIALLY_PAID" : "PENDING";
+      // Under a rupee short is paid (lib/money-round).
+      const status = isSettled(r2(total - paid)) ? "PAID" : paid > 0 ? "PARTIALLY_PAID" : "PENDING";
       await tx.invoice.update({
         where: { id: invoice.id },
         data: { status, paidAt: status === "PAID" ? new Date() : null },
@@ -475,7 +486,8 @@ export async function getInvoice(invoiceId: string): Promise<InvoiceDTO> {
     amountPaid: s2(paid),
     advanceAdjusted: s2(advanceAdjusted),
     advanceLines,
-    balanceDue: s2(Math.max(0, r2(total - paid))),
+    // Under a rupee is not a balance (lib/money-round).
+    balanceDue: s2(owed(Math.max(0, r2(total - paid)))),
     payments: inv.payments.map((p: { mode: string; amount: { toString(): string }; reference: string | null; createdAt: Date }) => ({
       mode: p.mode, amount: p.amount.toString(), reference: p.reference, createdAt: p.createdAt.toISOString(),
     })),

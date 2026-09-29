@@ -146,6 +146,13 @@ export function InvoiceView({
             <T k="Taxable value" v={invoice.taxableAmount} />
             <T k="CGST" v={invoice.cgstAmount} />
             <T k="SGST" v={invoice.sgstAmount} />
+            {/* Bills are whole rupees (lib/money-round) - the same line the printed sheet carries. */}
+            {(() => {
+              const ro = Math.round((Number(invoice.totalAmount) - Number(invoice.taxableAmount) - Number(invoice.cgstAmount) - Number(invoice.sgstAmount)) * 100) / 100;
+              return Math.abs(ro) >= 0.01 ? (
+                <div className="flex justify-between"><span className="text-[var(--p-muted)]">Round off</span><span className="font-mono text-[var(--p-ink)]">{ro < 0 ? "−" : ""}₹{Math.abs(ro).toFixed(2)}</span></div>
+              ) : null;
+            })()}
             <div className="rule" />
             <div className="flex justify-between pt-1">
               <span className="text-[14px] font-semibold text-[var(--p-ink)]">Total</span>

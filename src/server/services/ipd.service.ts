@@ -9,7 +9,7 @@ import { notifyAdmitted, notifyDischarged, notifyAdvanceReceived } from "./notif
 // One rounding definition across the whole system - money must not be
 // rounded two different ways in two different files. `resolveChargeDate` is the
 // same idea for a date a desk typed: one rule, next to the bill-date one.
-import { r2 as round2, resolveChargeDate, ChargeDateError, wallClock } from "@/server/billing/calc";
+import { r2 as round2, resolveChargeDate, ChargeDateError, wallClock, resolveBillDate, BillDateError } from "@/server/billing/calc";
 import { getSettings } from "./admin.service";
 import { publishLive } from "@/server/realtime/publish";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
@@ -18,6 +18,10 @@ import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, PaymentMode, ChargeCategory } from "@prisma/client";
 import { bedLabel } from "@/lib/beds";
 import { minutesAgo, repeatWindowStart, type RepeatBlock } from "@/lib/repeat-guard";
+import { isSettled, owed, roundBill } from "@/lib/money-round";
+import { notAPatientPhone, phoneVariants } from "@/lib/phone";
+import { nameKey } from "@/lib/patient-duplicates";
+import { billMedicinesWithoutStock, dispense } from "./pharmacy.service";
 import { dateOnlyISO, parseLocalDate } from "@/lib/date";
 import { perUnitPrice } from "@/lib/pharmacy/pack";
 import { ipServicesBill, bucketOfSection, isDiscountable, type IpBillBucket } from "@/lib/ip-services-bill";
@@ -1055,7 +1059,7 @@ export async function counterBillsForAdmission(admissionId: string): Promise<Cou
     });
     const due = split.patientBalance;
     const paid = split.patientPaid;
-    const status: BillPaidStatus = due <= 0.01 ? "PAID" : paid > 0.01 ? "PART" : "DUE";
+    const status: BillPaidStatus = isSettled(due) ? "PAID" : paid > 0.01 ? "PART" : "DUE";
     return {
       id: i.id, receiptNo: i.receiptNo, source: i.source,
       total: split.total.toFixed(2), paid: paid.toFixed(2), due: due.toFixed(2),
@@ -1464,6 +1468,278 @@ export interface ChargeDTO {
   id: string; category: string; description: string;
   qty: number; unitPrice: string; gstRatePct: string; amount: string;
   addedBy: string; createdAt: string; fromPharmacy: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FORGOTTEN BILLS - OP pharmacy/lab bills raised while the patient was in a bed
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// A stay entered days after the patient was actually admitted (96 of 120 were,
+// by 29 Sep 2026) leaves every pharmacy and lab bill raised in between as an
+// OP bill: the counter looked for a live admission, found none, and billed the
+// person instead of the stay. Those bills are missing from the detailed bill
+// and the claim. The desk puts them back from the stay sheet - nothing about
+// the bill changes except which stay it belongs to: not its amount, its
+// receipt number, its payments, or who it says paid it.
+
+export interface UnlinkedBillDTO {
+  id: string; receiptNo: string; source: "PHARMACY" | "LAB"; status: string;
+  createdAt: string; billDate: string | null;
+  total: string; paid: string; due: string;
+  patient: { displayId: string; fullName: string };
+  /** On a record other than the stay's own - the desk must be sure it is them. */
+  otherRecord: boolean;
+  items: string[]; itemCount: number;
+}
+
+const LINKABLE = ["PHARMACY", "LAB"] as const;
+
+const unlinkedSelect = {
+  id: true, receiptNo: true, source: true, status: true, createdAt: true, billDate: true,
+  totalAmount: true, admissionId: true, patientId: true,
+  patient: { select: { displayId: true, fullName: true } },
+  admission: { select: { ipNumber: true } },
+  payments: { select: { amount: true } },
+  refunds: { select: { amount: true } },
+  items: { select: { description: true } },
+} as const;
+
+type UnlinkedRow = Prisma.InvoiceGetPayload<{ select: typeof unlinkedSelect }>;
+
+async function stayForLinking(admissionId: string) {
+  const adm = await prisma.admission.findUnique({
+    where: { id: admissionId },
+    select: { id: true, ipNumber: true, patientId: true, admittedAt: true, dischargedAt: true, patient: { select: { phone: true, fullName: true } } },
+  });
+  if (!adm) throw new ApiError(404, "Admission not found");
+  return { ...adm, until: adm.dischargedAt ?? new Date() };
+}
+
+/** Why a bill cannot go onto this stay, or null when it can. */
+function whyNotLinkable(b: UnlinkedRow, adm: Awaited<ReturnType<typeof stayForLinking>>): string | null {
+  if (!(LINKABLE as readonly string[]).includes(b.source)) return `${b.receiptNo} is a ${b.source.toLowerCase()} bill - only pharmacy and lab bills can be added here.`;
+  if (b.status === "CANCELLED") return `${b.receiptNo} is cancelled.`;
+  if (b.admissionId === adm.id) return `${b.receiptNo} is already on this stay.`;
+  if (b.admissionId) return `${b.receiptNo} is already on stay ${b.admission?.ipNumber ?? "another stay"}.`;
+  const inStay = (d: Date | null) => !!d && d >= adm.admittedAt && d <= adm.until;
+  if (!inStay(b.createdAt) && !inStay(b.billDate)) {
+    // Times, not just dates: the bill that most often lands here is the one
+    // raised the same afternoon, an hour after the patient went home.
+    const at = (d: Date) => d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+    const when = b.billDate ?? b.createdAt;
+    return when < adm.admittedAt
+      ? `${b.receiptNo} was raised ${at(when)}, before this stay began (${at(adm.admittedAt)}).`
+      : `${b.receiptNo} was raised ${at(when)}, after this stay ended (${at(adm.until)}).`;
+  }
+  return null;
+}
+
+function toUnlinkedDTO(b: UnlinkedRow, stayPatientId: string): UnlinkedBillDTO {
+  const paid = round2(b.payments.reduce((s, p) => s + Number(p.amount), 0) - b.refunds.reduce((s, r) => s + Number(r.amount), 0));
+  const total = Number(b.totalAmount);
+  return {
+    id: b.id, receiptNo: b.receiptNo, source: b.source as "PHARMACY" | "LAB", status: b.status,
+    createdAt: b.createdAt.toISOString(), billDate: b.billDate ? b.billDate.toISOString() : null,
+    total: total.toFixed(2), paid: paid.toFixed(2), due: owed(Math.max(0, round2(total - paid))).toFixed(2),
+    patient: { displayId: b.patient.displayId, fullName: b.patient.fullName },
+    otherRecord: b.patientId !== stayPatientId,
+    items: b.items.slice(0, 4).map((i) => i.description), itemCount: b.items.length,
+  };
+}
+
+/**
+ * The OP pharmacy and lab bills raised while this patient was in the bed, not
+ * yet on any stay. Searched on the stay's own record and on records with the
+ * same name on the same mobile - never on the hospital's own number, where the
+ * same name is often a different person. A bill on any other record (a second
+ * card with a different phone) is found by its receipt number instead, so the
+ * desk names it deliberately rather than the system guessing.
+ */
+export async function listUnlinkedStayBills(admissionId: string, receipt?: string): Promise<UnlinkedBillDTO[]> {
+  const adm = await stayForLinking(admissionId);
+
+  if (receipt?.trim()) {
+    const b = await prisma.invoice.findUnique({ where: { receiptNo: receipt.trim().toUpperCase() }, select: unlinkedSelect });
+    if (!b) throw new ApiError(404, `No bill ${receipt.trim().toUpperCase()} found.`);
+    const why = whyNotLinkable(b, adm);
+    if (why) throw new ApiError(400, why);
+    return [toUnlinkedDTO(b, adm.patientId)];
+  }
+
+  const records = [adm.patientId];
+  if (!notAPatientPhone(adm.patient.phone)) {
+    const key = nameKey(adm.patient.fullName);
+    const onPhone = await prisma.patient.findMany({
+      where: { phone: { in: phoneVariants(adm.patient.phone) }, mergedIntoId: null, deletedAt: null, NOT: { id: adm.patientId } },
+      select: { id: true, fullName: true },
+    });
+    records.push(...onPhone.filter((p) => nameKey(p.fullName) === key).map((p) => p.id));
+  }
+
+  const rows = await prisma.invoice.findMany({
+    where: {
+      patientId: { in: records }, source: { in: [...LINKABLE] }, status: { not: "CANCELLED" }, admissionId: null,
+      OR: [
+        { createdAt: { gte: adm.admittedAt, lte: adm.until } },
+        { billDate: { gte: adm.admittedAt, lte: adm.until } },
+      ],
+    },
+    orderBy: { createdAt: "asc" },
+    select: unlinkedSelect,
+  });
+  return rows.map((b) => toUnlinkedDTO(b, adm.patientId));
+}
+
+/**
+ * Put forgotten OP bills onto the stay. Every bill is re-checked here - the
+ * list the desk ticked may be minutes old - and it is all or nothing: if any
+ * one no longer qualifies, none move. The lab tests on those bills move to the
+ * stay with them, so the stay's investigations read complete too.
+ */
+export async function linkBillsToStay(
+  actor: AuthUser,
+  admissionId: string,
+  invoiceIds: string[],
+  ctx: { ipAddress?: string; userAgent?: string }
+): Promise<{ linked: number }> {
+  const adm = await stayForLinking(admissionId);
+  const ids = [...new Set(invoiceIds)];
+  const bills = await prisma.invoice.findMany({ where: { id: { in: ids } }, select: unlinkedSelect });
+  if (bills.length !== ids.length) throw new ApiError(404, "One of these bills no longer exists. Refresh and try again.");
+  for (const b of bills) {
+    const why = whyNotLinkable(b, adm);
+    if (why) throw new ApiError(400, why);
+  }
+
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const moved = await tx.invoice.updateMany({ where: { id: { in: ids }, admissionId: null }, data: { admissionId: adm.id } });
+    if (moved.count !== ids.length) throw new ApiError(409, "Some of these bills were just added to a stay. Refresh and try again.");
+    await tx.labTest.updateMany({
+      where: { admissionId: null, invoiceItems: { some: { invoiceId: { in: ids } } } },
+      data: { admissionId: adm.id },
+    });
+    for (const b of bills) {
+      await logAudit(actor, {
+        action: "INVOICE_LINKED_TO_STAY", targetTable: "Invoice", targetId: b.id,
+        meta: {
+          receiptNo: b.receiptNo, ipNumber: adm.ipNumber, admissionId: adm.id,
+          fromRecord: b.patient.displayId, otherRecord: b.patientId !== adm.patientId,
+        },
+        ...ctx,
+      }, tx);
+    }
+  });
+
+  await publishLive([TOPICS.IPD, TOPICS.RECEPTION, TOPICS.INSURANCE, TOPICS.ADMIN], EVENTS.ADMISSION_CORRECTED);
+  return { linked: ids.length };
+}
+
+type Tender = { mode: "CASH" | "UPI" | "CARD" | "NETBANKING" | "OTHER"; amount: number; reference?: string };
+
+/**
+ * A NEW BILL FOR SOMETHING THE STAY WAS GIVEN AND NEVER BILLED.
+ *
+ * The counters only bill a stay while the patient is still ADMITTED - after
+ * discharge a lab order or a dispense becomes an OP bill again. So a test or a
+ * strip of medicine the desk finds unbilled at settlement had no way onto the
+ * stay except as a line on the IPD bill. This raises it as its own LAB or
+ * PHARMACY invoice on the stay - its own receipt number, like every other
+ * counter bill - whether the patient is still in the bed or long discharged.
+ *
+ *   LAB       - bill lines from the catalogue. No test is ordered: the sample
+ *               was taken long ago, and a PENDING test would sit in the lab's
+ *               queue forever.
+ *   PHARMACY  - `fromStock` takes the medicines off the shelf exactly as the
+ *               counter does (FEFO, ledger rows); without it the bill is raised
+ *               at today's price and no stock moves.
+ *
+ * DATED IN THE STAY. The bill prints the day it belongs to (`billDate`, a day
+ * between admission and discharge - the discharge day unless the desk picks
+ * another), not the day somebody noticed it was missing. Day close and GST
+ * still count it on the day it was actually raised, as they do every bill.
+ */
+export async function addForgottenBill(
+  actor: AuthUser,
+  admissionId: string,
+  input:
+    | { kind: "LAB"; catalogIds: string[]; discountAmount?: number; payments?: Tender[]; confirmRepeat?: boolean; billDate?: string }
+    | { kind: "PHARMACY"; items: { medicineId: string; qty: number }[]; fromStock: boolean; discountAmount?: number; payments?: Tender[]; confirmRepeat?: boolean; billDate?: string },
+  ctx: { ipAddress?: string; userAgent?: string }
+): Promise<{ invoiceId: string; receiptNo: string; total: string }> {
+  const adm = await prisma.admission.findUnique({
+    where: { id: admissionId },
+    select: { id: true, ipNumber: true, patientId: true, admittedAt: true, dischargedAt: true },
+  });
+  if (!adm) throw new ApiError(404, "Admission not found");
+
+  // The stay's days in the hospital's own calendar - never the server's, which
+  // may be UTC and would move an evening admission to the day before.
+  const ist = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const firstDay = ist(adm.admittedAt), lastDay = ist(adm.dischargedAt ?? new Date());
+  const day = input.billDate?.trim() || (adm.dischargedAt ? lastDay : undefined);
+  let billDate: Date | undefined;
+  if (day) {
+    if (day < firstDay || day > lastDay) throw new ApiError(400, `Pick a bill date within the stay (${firstDay} to ${lastDay}).`);
+    try { billDate = resolveBillDate(day) ?? undefined; }
+    catch (e) { throw new ApiError(400, e instanceof BillDateError ? e.message : "That is not a real date"); }
+  }
+
+  if (input.kind === "PHARMACY") {
+    const common = { patientId: adm.patientId, stayId: adm.id, items: input.items, discountAmount: input.discountAmount, payments: input.payments, confirmRepeat: input.confirmRepeat, billDate };
+    const invoice = input.fromStock
+      ? (await dispense(actor, common, ctx)).invoice
+      : await billMedicinesWithoutStock(actor, common, ctx);
+    if (!invoice) throw new ApiError(500, "The bill was not raised.");
+    return { invoiceId: invoice.id, receiptNo: invoice.receiptNo, total: invoice.totalAmount };
+  }
+
+  const ids = [...new Set(input.catalogIds)];
+  const catalog = await prisma.labTestCatalog.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, name: true, code: true, price: true, gstRatePct: true },
+  });
+  if (!ids.length || catalog.length !== ids.length) throw new ApiError(400, "Pick the tests from the list.");
+  const lines = catalog.map((c) => ({
+    description: c.name, qty: 1, unitPrice: Number(c.price.toString()),
+    gstRatePct: Number(c.gstRatePct?.toString() ?? 0), hsnSac: c.code ?? undefined,
+  }));
+
+  // The same forgotten bill generated twice - same tests on this stay, minutes apart.
+  if (!input.confirmRepeat) {
+    const want = lines.map((l) => l.description).sort().join("|");
+    const recent = await prisma.invoice.findMany({
+      where: { admissionId: adm.id, source: "LAB", status: { not: "CANCELLED" }, createdAt: { gte: repeatWindowStart() } },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, receiptNo: true, createdAt: true, totalAmount: true, items: { select: { description: true } } },
+    });
+    const same = recent.find((r) => r.items.map((i) => i.description).sort().join("|") === want);
+    if (same) {
+      const details: RepeatBlock = {
+        code: "REPEAT_ENTRY", kind: "LAB_TEST",
+        items: [{ label: lines.map((l) => l.description).join(", "), at: same.createdAt.toISOString(), detail: `Bill ${same.receiptNo} · ₹${same.totalAmount.toString()}`, invoiceId: same.id }],
+      };
+      throw new ApiError(409, `These tests were billed to ${adm.ipNumber} ${minutesAgo(same.createdAt)} (${same.receiptNo}). This looks like the same bill generated again.`, details);
+    }
+  }
+
+  const tendered = (input.payments ?? []).reduce((s, p) => s + p.amount, 0);
+  const invoice = await createInvoice(
+    actor,
+    {
+      patientId: adm.patientId, source: "LAB", admissionId: adm.id, lines,
+      discountAmount: input.discountAmount, payments: input.payments, billDate,
+      notes: `Inpatient ${adm.ipNumber} - added from the stay sheet, ${tendered > 0 ? "paid" : "due"}`,
+      notify: false,
+    },
+    ctx
+  );
+  await logAudit(actor, {
+    action: "FORGOTTEN_BILL_ADDED", targetTable: "Invoice", targetId: invoice.id,
+    meta: { ipNumber: adm.ipNumber, receiptNo: invoice.receiptNo, source: "LAB", tests: lines.length },
+    ...ctx,
+  });
+  await publishLive([TOPICS.IPD, TOPICS.RECEPTION, TOPICS.INSURANCE, TOPICS.ADMIN], EVENTS.INVOICE_RAISED);
+  return { invoiceId: invoice.id, receiptNo: invoice.receiptNo, total: invoice.totalAmount };
 }
 
 /** Add a line to an inpatient's tab. */
@@ -2216,7 +2492,7 @@ export async function admissionHistory(admissionId: string): Promise<{
     bills: (invoices as Inv[]).map((i) => {
       const total = Number(i.totalAmount.toString());
       const paid = i.payments.reduce((s, p) => s + Number(p.amount.toString()), 0);
-      return { id: i.id, receiptNo: i.receiptNo, source: i.source, status: i.status, total: total.toFixed(2), paid: paid.toFixed(2), balance: Math.max(0, total - paid).toFixed(2), date: i.createdAt.toISOString().slice(0, 10), payer: i.payer };
+      return { id: i.id, receiptNo: i.receiptNo, source: i.source, status: i.status, total: total.toFixed(2), paid: paid.toFixed(2), balance: owed(Math.max(0, round2(total - paid))).toFixed(2), date: i.createdAt.toISOString().slice(0, 10), payer: i.payer };
     }),
     labs: (labs as Lab[]).map((t) => ({ id: t.id, testName: t.testName, status: t.status, reportReady: Boolean(t.reportFileUrl), reportUrl: t.reportFileUrl, date: (t.completedAt ?? t.createdAt).toISOString().slice(0, 10), forThisStay: t.admissionId === admissionId })),
     prescriptions: (rxs as Rx[]).map((r) => ({ id: r.id, title: r.title, fileUrl: r.fileUrl, status: r.status, forThisStay: r.admissionId === admissionId, date: r.createdAt.toISOString().slice(0, 10), items: r.items })),
@@ -2397,7 +2673,7 @@ export async function dischargeSummaryData(admissionId: string) {
           gst: (Number(ipdInvoice.cgstAmount) + Number(ipdInvoice.sgstAmount)).toFixed(2),
           total: total.toFixed(2),
           paid: paid.toFixed(2),
-          balance: Math.max(0, round2(total - paid)).toFixed(2),
+          balance: owed(Math.max(0, round2(total - paid))).toFixed(2),
         };
       })() : null,
     },
@@ -3340,6 +3616,13 @@ export interface DetailedBillDTO {
   gross: string;
   discount: string;
   gst: string;
+  /**
+   * What rounding each bill to the rupee added (+) or took off (-), summed - so
+   * Net Amount equals the bills as issued. See lib/money-round.
+   */
+  roundOff: string;
+  /** The same, per block of the IP Services bill. */
+  roundOffs: { services: string; lab: string; pharmacy: string };
   netBill: string;
   advance: string;
   netPayable: string;
@@ -3637,6 +3920,13 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   let counterGst = 0;
   // Paise the windows left uncollected on bills that read as PAID - see below.
   let paiseShort = 0;
+  // Each bill's round-off (its total less taxable + GST), by the block it prints in.
+  const roundOffBy = { SERVICES: 0, LAB: 0, PHARMACY: 0 };
+  type Money = { toString(): string };
+  const roundOffOf = (inv: { totalAmount: Money; taxableAmount: Money; cgstAmount: Money; sgstAmount: Money }) => {
+    const ro = round2(num(inv.totalAmount) - num(inv.taxableAmount) - num(inv.cgstAmount) - num(inv.sgstAmount));
+    return Math.abs(ro) >= 0.01 ? ro : 0;
+  };
   const sourceBills: BillSourceDTO[] = [];
   {
     const SECTION_OF: Record<string, string> = {
@@ -3649,6 +3939,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
       // family who settled the balance in cash was shown that cash as still
       // owed. Deposits are left out: `advance` below already has them.
       if (inv.source === "IPD") {
+        roundOffBy.SERVICES = round2(roundOffBy.SERVICES + roundOffOf(inv));
         counterPaid = round2(counterPaid + takenOnStayBill(
           inv.payments.map((p) => ({ amount: num(p.amount), reference: p.reference })),
           inv.refunds.map((r) => ({ amount: num(r.amount) })),
@@ -3669,11 +3960,13 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
       // and must not come back as a balance here either. Per bill, so three
       // such bills on one stay do not add up to a debt none of them has.
       const short = round2(total - paid);
-      if (short > 0 && short <= 0.01) paiseShort = round2(paiseShort + short);
+      if (short > 0 && isSettled(short)) paiseShort = round2(paiseShort + short);
+      const bucket = inv.source === "PHARMACY" ? "PHARMACY" : inv.source === "LAB" ? "LAB" : "SERVICES";
+      roundOffBy[bucket] = round2(roundOffBy[bucket] + roundOffOf(inv));
       // PART only where something was paid AND something is still owed - a
       // rounding-sized remainder must not print as a debt.
       const status: BillPaidStatus =
-        paid >= total - 0.01 ? "PAID" : paid > 0.01 ? "PART" : "DUE";
+        isSettled(round2(total - paid)) ? "PAID" : paid > 0.01 ? "PART" : "DUE";
       sourceBills.push({
         receiptNo: inv.receiptNo, source: inv.source,
         date: inv.createdAt.toISOString(),
@@ -3868,7 +4161,11 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   const inv = a.invoices.find((i) => i.source === "IPD");
   const discount = round2(num(inv?.discountAmount) + counterDiscount);
   const gst = round2(num(inv?.cgstAmount) + num(inv?.sgstAmount) + counterGst);
-  const netBill = round2(gross - discount + gst);
+  // The bills as issued are whole rupees; the lines and tax above are to the
+  // paisa. Their round-offs close the gap, or every rounded bill would leave
+  // up to 50 paise showing as owed (or as over-paid) on this sheet.
+  const roundOff = round2(roundOffBy.SERVICES + roundOffBy.LAB + roundOffBy.PHARMACY);
+  const netBill = round2(gross - discount + gst + roundOff);
   const advance = a.advances.reduce((s, x) => round2(s + num(x.amount)), 0);
   // A rounding-sized remainder is not a debt - the same paisa `sourceBills`
   // already reads as PAID. Taken off per counter bill above, and once more here
@@ -3956,11 +4253,14 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
     gross: m2(gross),
     discount: m2(discount),
     gst: m2(gst),
+    roundOff: m2(roundOff),
+    roundOffs: { services: m2(roundOffBy.SERVICES), lab: m2(roundOffBy.LAB), pharmacy: m2(roundOffBy.PHARMACY) },
     netBill: m2(netBill),
     advance: m2(advance),
     // Advance AND counter money both come off. Both are the stay's own money,
     // already in the drawer; the only difference is which window took it.
-    netPayable: m2(due > 0.01 ? due : 0),
+    // Whole rupees, and nothing at all under one (lib/money-round).
+    netPayable: m2(due > 0 ? owed(roundBill(due)) : 0),
     draftTotal: m2(draftTotal),
     draftUnpricedCount,
     counterPaid: m2(counterPaid),
@@ -4053,6 +4353,8 @@ export interface IpServicesMoneyDTO {
    *  quietly spread onto the medicines. See lib/ip-services-bill. */
   discountUnapplied: string;
   gst: string;
+  /** The services bill's round-off to the rupee - see lib/money-round. */
+  roundOff: string;
   netBill: string;
   paidTotal: string;
   dueBeforeAdvance: string;
@@ -4270,6 +4572,7 @@ export async function ipServicesBillData(admissionId: string): Promise<IpService
     gst: stayGst,
     advance: base.advance,
     paid: { services: paid.SERVICES },
+    roundOff: { services: base.roundOffs.services },
   });
 
   const whole = ipServicesBill({
@@ -4278,6 +4581,7 @@ export async function ipServicesBillData(admissionId: string): Promise<IpService
     gst: stayGst,
     advance: base.advance,
     paid: { services: paid.SERVICES, lab: paid.LAB, pharmacy: paid.PHARMACY },
+    roundOff: base.roundOffs,
   });
   const counterDue = round2(whole.lab.due + whole.pharmacy.due);
   // Identical, in every case, to the refund the three-block sheet printed.
@@ -4302,6 +4606,7 @@ export async function ipServicesBillData(admissionId: string): Promise<IpService
       discount: m2(money.discount),
       discountUnapplied: m2(money.discountUnapplied),
       gst: m2(money.gst),
+      roundOff: m2(money.roundOff),
       netBill: m2(money.netBill),
       paidTotal: m2(money.paidTotal),
       dueBeforeAdvance: m2(money.dueBeforeAdvance),
