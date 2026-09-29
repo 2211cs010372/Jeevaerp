@@ -11,6 +11,7 @@ import { publishLive } from "@/server/realtime/publish";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma } from "@prisma/client";
+import { minutesAgo, repeatWindowStart, type RepeatBlock } from "@/lib/repeat-guard";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -638,10 +639,94 @@ export async function dispense(
     shortSupplyReason?: string;
     payment?: { mode: "CASH" | "UPI" | "CARD" | "NETBANKING" | "OTHER"; amount: number; reference?: string };
     payments?: { mode: "CASH" | "UPI" | "CARD" | "NETBANKING" | "OTHER"; amount: number; reference?: string }[];
+    /** The counter has seen the "same medicines just billed" warning and means it. */
+    confirmRepeat?: boolean;
   },
   ctx: { ipAddress?: string; userAgent?: string }
 ) {
   if (!input.items.length) throw new ApiError(400, "Add at least one medicine");
+
+  // ── ONE CHIT, ONE BILL ──
+  //
+  // A chit from the queue that has already been dispensed AND billed is almost
+  // always the same sale submitted twice, so the counter is stopped and shown
+  // the bill that exists - whenever the first one was. Not a dead end: a
+  // top-up against the same chit is still a click away. A chit whose earlier
+  // attempt left no live bill (a failed sale, a cancelled bill) goes straight
+  // through.
+  if (input.prescriptionUploadId && !input.confirmRepeat) {
+    const done = await prisma.invoice.findFirst({
+      where: { prescriptionUploadId: input.prescriptionUploadId, status: { not: "CANCELLED" } },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, receiptNo: true, createdAt: true, totalAmount: true },
+    });
+    if (done) {
+      const details: RepeatBlock = {
+        code: "REPEAT_ENTRY", kind: "DISPENSE",
+        items: [{
+          label: "This chit",
+          at: done.createdAt.toISOString(),
+          detail: `Already dispensed · bill ${done.receiptNo} · ₹${done.totalAmount.toString()}`,
+          invoiceId: done.id,
+        }],
+      };
+      throw new ApiError(
+        409,
+        `This chit was already dispensed and billed on ${done.receiptNo} (${minutesAgo(done.createdAt)}). ` +
+          "Print that bill rather than generating it again.",
+        details
+      );
+    }
+  }
+
+  // ── THE SAME BASKET, BILLED AGAIN A MINUTE LATER ──
+  //
+  // A slow submit pressed twice, or a second pharmacist finishing a sale the
+  // first already rang up: identical bills minutes apart, each one taking the
+  // stock again. Checked BEFORE the transaction below, because that is where
+  // stock moves. Compared per medicine on total quantity - FEFO may split one
+  // line across two batches, and that is still the same sale. A different
+  // basket, or the same one later, is a real repeat and is never stopped.
+  if (!input.confirmRepeat) {
+    const want = new Map<string, number>();
+    for (const i of input.items) want.set(i.medicineId, (want.get(i.medicineId) ?? 0) + i.qty);
+    const recent = await prisma.invoice.findMany({
+      where: {
+        patientId: input.patientId, source: "PHARMACY", status: { not: "CANCELLED" },
+        createdAt: { gte: repeatWindowStart() },
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true, receiptNo: true, createdAt: true, totalAmount: true,
+        items: { select: { description: true, qty: true, batch: { select: { medicineId: true } } } },
+      },
+    });
+    const same = recent.find((inv) => {
+      const got = new Map<string, number>();
+      for (const it of inv.items) {
+        if (!it.batch) return false;
+        got.set(it.batch.medicineId, (got.get(it.batch.medicineId) ?? 0) + it.qty);
+      }
+      return got.size === want.size && [...want].every(([id, q]) => got.get(id) === q);
+    });
+    if (same) {
+      const details: RepeatBlock = {
+        code: "REPEAT_ENTRY", kind: "DISPENSE",
+        items: [{
+          label: same.items.map((it) => it.description).join(", "),
+          at: same.createdAt.toISOString(),
+          detail: `Bill ${same.receiptNo} · ₹${same.totalAmount.toString()}`,
+          invoiceId: same.id,
+        }],
+      };
+      throw new ApiError(
+        409,
+        `These exact medicines were billed to this patient ${minutesAgo(same.createdAt)} (${same.receiptNo}). ` +
+          "This looks like the same bill generated again.",
+        details
+      );
+    }
+  }
 
   // Resolve batches + build bill lines inside a transaction so stock can't race.
   const { lines, rxItems } = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {

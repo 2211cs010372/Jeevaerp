@@ -8,6 +8,8 @@ import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { DiscountInput, PaymentSection, type Tender } from "@/components/portal/ui/bill-fields";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { RepeatConfirmDialog } from "@/components/portal/repeat-confirm-dialog";
+import { repeatBlock, type RepeatBlock } from "@/lib/repeat-guard";
 
 interface Patient {
   id: string; displayId: string; fullName: string; firstName: string; middleName?: string | null; lastName: string | null;
@@ -19,7 +21,7 @@ interface Patient {
 }
 interface Appt { id: string; opNumber: string; visitDate: string; time: string; status: string; doctorName: string; department: string; price: string; }
 interface Rx { id: string; fileUrl: string; fileName: string; title: string | null; createdAt: string; appointmentId: string | null; }
-interface Invoice { id: string; receiptNo: string; source: string; status: string; totalAmount: string; amountPaid: string; createdAt: string; }
+interface Invoice { id: string; receiptNo: string; source: string; status: string; totalAmount: string; amountPaid: string; createdAt: string; billDate: string | null; }
 
 const BLOODS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 const LABEL: Record<string, string> = { BOOKED: "Booked", CHECKED_IN: "Checked-in", COMPLETED: "Completed", CANCELLED: "Cancelled" };
@@ -34,6 +36,8 @@ export default function PatientDetailPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** The server's "this bill was generated minutes ago" - see generateBill. */
+  const [repeat, setRepeat] = useState<{ block: RepeatBlock; message: string } | null>(null);
 
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -58,10 +62,13 @@ export default function PatientDetailPage() {
         api.get<{ patient: Patient }>(`/reception/patients/${displayId}`),
         api.get<{ appointments: Appt[] }>(`/reception/patients/${displayId}/appointments`),
         api.get<{ prescriptions: Rx[] }>(`/reception/patients/${displayId}/prescriptions`),
-        api.get<{ invoices: Invoice[] }>(`/billing/invoices`),
+        // THIS patient's bills, all of them, from the server. This used to be
+        // the hospital-wide recent list with a filter that kept everything -
+        // strangers' bills on the file, and this patient's older ones missing.
+        api.get<{ invoices: Invoice[] }>(`/reception/patients/${displayId}/invoices`),
       ]);
       setPatient(p.patient); setAppts(a.appointments); setRx(r.prescriptions);
-      setInvoices(inv.invoices.filter((x) => true)); // filtered client-side below by patient
+      setInvoices(inv.invoices);
       seed(p.patient);
     } catch (e) { setError(e instanceof ApiClientError ? e.message : "Couldn't load this patient."); }
     finally { setLoading(false); }
@@ -93,7 +100,8 @@ export default function PatientDetailPage() {
     finally { setSaving(false); }
   }
 
-  async function generateBill() {
+  /** @param confirmRepeat  pressed "generate again" in the "already generated" dialog. */
+  async function generateBill(confirmRepeat = false) {
     if (!patient || !billAmt) return;
     setBilling(true); setError(null);
     try {
@@ -105,15 +113,21 @@ export default function PatientDetailPage() {
         gstRatePct: Number(billGst) || 0,
         discountAmount: billDisc || undefined,
         payments: payNow && payments.length ? payments : undefined,
+        confirmRepeat: confirmRepeat || undefined,
       });
+      setRepeat(null);
       setBillOpen(false); setBillAmt(""); setBillDisc(0); setPayments([]); await load();
-    } catch (e) { setError(e instanceof ApiClientError ? e.message : "Could not generate the bill."); }
+    } catch (e) {
+      // The same bill a few minutes ago - nothing was raised.
+      const again = repeatBlock(e);
+      if (again) { setRepeat({ block: again, message: (e as Error).message }); return; }
+      setError(e instanceof ApiClientError ? e.message : "Could not generate the bill.");
+    }
     finally { setBilling(false); }
   }
 
   const fld = "w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm text-[var(--p-ink)] outline-none focus:border-[var(--p-teal)]";
   const set = (k: string) => (v: string | boolean) => setF((p) => ({ ...p, [k]: v }));
-  const myInvoices = invoices.filter((i) => true);
 
   if (loading) return <div className="flex items-center justify-center gap-2 py-20 text-[14px] text-[var(--p-muted)]"><Spinner /> Loading patient…</div>;
   if (!patient) return <div className="surface p-10 text-center text-[14px] text-[var(--p-muted)]">{error ?? "Patient not found."}</div>;
@@ -288,15 +302,27 @@ export default function PatientDetailPage() {
 
           <section data-rise className="surface overflow-hidden">
             <div className="flex items-center justify-between border-b border-[var(--p-border)] px-6 py-4">
-              <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Bills</h3><span className="badge">{myInvoices.length}</span>
+              <div>
+                <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Bills</h3>
+                <p className="text-[11px] text-[var(--p-muted)]">
+                  Every bill since registration · {new Date(patient.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                </p>
+              </div>
+              <span className="badge">{invoices.length}</span>
             </div>
-            {myInvoices.length === 0 ? <p className="px-6 py-8 text-center text-[13px] text-[var(--p-muted)]">No bills yet.</p> : (
-              <div className="max-h-56 divide-y divide-[var(--p-border)] overflow-y-auto overscroll-contain">
-                {myInvoices.map((i) => (
+            {invoices.length === 0 ? <p className="px-6 py-8 text-center text-[13px] text-[var(--p-muted)]">No bills yet.</p> : (
+              <div className="max-h-80 divide-y divide-[var(--p-border)] overflow-y-auto overscroll-contain">
+                {invoices.map((i) => (
                   <div key={i.id} className="flex items-center justify-between gap-2 px-6 py-3">
                     <div className="min-w-0">
-                      <div className="font-mono text-[13px] text-[var(--p-ink)]">{i.receiptNo}</div>
-                      <div className="text-[12px] text-[var(--p-muted)]">{i.source} · ₹{i.totalAmount}</div>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`font-mono text-[13px] ${i.status === "CANCELLED" ? "text-[var(--p-muted)] line-through" : "text-[var(--p-ink)]"}`}>{i.receiptNo}</span>
+                        {i.status === "CANCELLED" && <span className="rounded bg-[var(--p-bg)] px-1.5 py-0.5 text-[10px] font-bold uppercase text-[var(--p-muted)]">Cancelled</span>}
+                        {(i.status === "PENDING" || i.status === "PARTIALLY_PAID") && <span className="rounded bg-[var(--p-amber-soft)] px-1.5 py-0.5 text-[10px] font-bold uppercase text-[#8a6414]">Due</span>}
+                      </div>
+                      <div className="text-[12px] text-[var(--p-muted)]">
+                        {i.source} · ₹{i.totalAmount} · {new Date(i.billDate ?? i.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                      </div>
                     </div>
                     <a href={`/print/invoice/${i.id}`} target="_blank" rel="noopener noreferrer"
                       className="rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">Print</a>
@@ -334,10 +360,17 @@ export default function PatientDetailPage() {
             </div>
             <div className="flex justify-end gap-3 border-t border-[var(--p-border)] p-5">
               <button onClick={() => setBillOpen(false)} className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm text-[var(--p-text)]">Cancel</button>
-              <PrimaryButton onClick={generateBill} disabled={billing || !billAmt || (payNow && !payValid)}>{billing ? <><Spinner /> Billing…</> : <><Icon name="receipt" size={15} /> Generate</>}</PrimaryButton>
+              <PrimaryButton onClick={() => generateBill()} disabled={billing || !billAmt || (payNow && !payValid)}>{billing ? <><Spinner /> Billing…</> : <><Icon name="receipt" size={15} /> Generate</>}</PrimaryButton>
             </div>
           </div>
         </div>
+      )}
+      {repeat && (
+        <RepeatConfirmDialog
+          block={repeat.block} message={repeat.message} busy={billing}
+          onConfirm={() => { void generateBill(true); }}
+          onClose={() => setRepeat(null)}
+        />
       )}
     </PortalScroll>
   );

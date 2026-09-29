@@ -94,6 +94,38 @@ export function formatPhone(input: string | null | undefined): string {
 }
 
 /**
+ * NUMBERS THAT ARE NOT A PATIENT'S.
+ *
+ * Counters with a walk-in who had no mobile typed whatever got past the
+ * validator - most often the hospital's OWN number (HOSPITAL.phone in
+ * lib/data.ts). By 29 Sep 2026, 179 records carried 91000 05195: 154 different
+ * people, none of them reachable on it, each report and reminder going to the
+ * front desk. The other three are the same trick, typo'd or borrowed.
+ *
+ * Keep this list in step with HOSPITAL.phone. It is not imported from there:
+ * lib/data.ts is the whole public site's copy, and this module ships in every
+ * portal bundle.
+ */
+const NOT_A_PATIENT = new Set(["9100005195", "9100008158", "9000005195", "9100005185"]);
+
+/**
+ * Why a number cannot go on a NEW patient record, or null when it can.
+ * Checked on registration only - an existing record carrying one of these can
+ * still be opened and edited; it just can't be copied onto anybody else.
+ */
+export function notAPatientPhone(input: string | null | undefined): string | null {
+  const ten = toBare10(input);
+  if (NOT_A_PATIENT.has(ten)) {
+    return "That is the hospital's own number, not the patient's. Take the patient's mobile - or, if they have none, a relative's or attendant's.";
+  }
+  // 9999999999, 9000000000, 8888888888 - a finger held down, not a phone.
+  if (/^[6-9](\d)\1{8}$/.test(ten) || ten === "9876543210") {
+    return "That doesn't look like a real mobile. Take the patient's number - or a relative's or attendant's if they have none.";
+  }
+  return null;
+}
+
+/**
  * Every stored form a number could plausibly have, for WHERE … IN lookups.
  *
  * Needed because rows written before the +91 migration - and any written by a

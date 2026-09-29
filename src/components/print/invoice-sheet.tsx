@@ -502,6 +502,44 @@ export function InvoiceSheet({ source = "staff" }: { source?: "staff" | "portal"
       .catch((e) => setError(e instanceof ApiClientError ? e.message : "Couldn't load the bill."));
   }, [invoiceId, source]);
 
+  // ── ?print=1: OPEN THE PRINT DIALOG ONCE THE BILL IS ON THE PAGE ──
+  //
+  // A counter that has just raised a bill wants paper, not a preview. Its
+  // "Print bill" button opens this sheet with ?print=1, so one click still ends
+  // in the print dialog - but with THIS sheet in it, not the screen the button
+  // was on. Waits for the fonts and the logo, or the first print of the
+  // morning comes out in a fallback face with a blank where the logo goes.
+  // Read from location, not useSearchParams: that would need a Suspense
+  // boundary around every print route for one flag.
+  const printed = useRef(false);
+  useEffect(() => {
+    if (!inv || printed.current) return;
+    if (new URLSearchParams(window.location.search).get("print") !== "1") return;
+    // `printed` is set only when the dialog actually opens: a cancelled run
+    // (React re-running the effect) must leave the next run free to print.
+    let cancelled = false;
+    // An e-invoiced bill draws its signed QR a moment AFTER the sheet, from a
+    // dynamically loaded library - and a tax invoice printed without it is not
+    // the tax invoice. So when the bill carries one, wait for that image to be
+    // on the page (up to 5 s) before waiting for images to finish loading.
+    const qrOnPage = () => !inv.eInvoice?.signedQrCode || !!document.querySelector('img[alt="Signed e-invoice QR code"]');
+    const waitForQr = new Promise<void>((done) => {
+      const started = Date.now();
+      const tick = () => (qrOnPage() || Date.now() - started > 5000 ? done() : setTimeout(tick, 100));
+      tick();
+    });
+    waitForQr.then(() => {
+      const images = [...document.images].filter((img) => !img.complete)
+        .map((img) => new Promise<void>((done) => { img.addEventListener("load", () => done()); img.addEventListener("error", () => done()); }));
+      return Promise.all([document.fonts.ready, ...images]);
+    }).then(() => setTimeout(() => {
+      if (cancelled || printed.current) return;
+      printed.current = true;
+      window.print();
+    }, 150));
+    return () => { cancelled = true; };
+  }, [inv]);
+
   if (error) return <div className="p-10 text-center text-[14px] text-[#8a3b2e]">{error}</div>;
   if (!inv) return <div className="p-10 text-center text-[14px] text-[#5a6a66]">Preparing the bill…</div>;
   return <InvoiceDoc inv={inv} />;

@@ -1,14 +1,18 @@
 "use client";
 
 /**
- * The printable GST invoice for a lab bill.
+ * The on-screen confirmation of a lab bill, shown the moment it is raised.
  *
  * Lifted out of the billing screen so the order screen can show the SAME
  * document when it bills in one action. Two renderings of one receipt is how a
  * hospital ends up with two receipts that disagree - one carrying the GST note,
  * one not - and the disagreement is only ever discovered by an auditor.
+ *
+ * It is NOT what gets printed. "Print bill" opens /print/invoice/<id>, the one
+ * shared sheet every counter prints from - see components/print/invoice-sheet.
  */
 
+import { useEffect } from "react";
 import { Icon } from "@/components/portal/ui/icons";
 
 export interface LabInvoice {
@@ -37,6 +41,24 @@ export function InvoiceView({
 }) {
   const h = invoice.hospital;
   const exempt = Number(invoice.cgstAmount) === 0 && Number(invoice.sgstAmount) === 0;
+  // The bill sheet, told to open the print dialog as soon as it has loaded.
+  const printHref = `/print/invoice/${invoice.id}?print=1`;
+
+  // CTRL+P ON THIS SCREEN PRINTS THE BILL, NOT THE SCREEN. A desk that has
+  // printed with the keyboard for years will keep doing it, and the browser's
+  // own print of this page is the portal's top bar and a screen card - the
+  // sheet a patient was being handed until 29 Sep 2026. A keypress is a user
+  // gesture, so the new tab is not caught by the popup blocker.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        window.open(printHref, "_blank", "noopener,noreferrer");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [printHref]);
   const discPctNum = Number(invoice.subtotal) > 0 ? (Number(invoice.discountAmount) / Number(invoice.subtotal)) * 100 : 0;
   const discPct = discPctNum % 1 === 0 ? discPctNum.toFixed(0) : discPctNum.toFixed(1);
 
@@ -48,9 +70,15 @@ export function InvoiceView({
         <button onClick={onNew} className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-teal)]">
           <Icon name="plus" size={14} /> {newLabel}
         </button>
-        <button onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-teal)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--p-teal-deep)]">
-          <Icon name="file" size={14} /> Print / Save PDF
-        </button>
+        {/* THE PRINTED BILL IS THE HOSPITAL'S SHEET, NOT THIS SCREEN.
+            This used to call window.print() on the portal page, so the desk
+            printed the sidebar, the header and a screen-styled card instead of
+            the bill every other counter hands over. It now opens the same
+            Bill-of-Supply sheet (InvoiceSheet) as reception's other bills. */}
+        <a href={printHref} target="_blank" rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-teal)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--p-teal-deep)]">
+          <Icon name="printer" size={14} /> Print bill
+        </a>
       </div>
 
       <div className="surface overflow-hidden bg-white">

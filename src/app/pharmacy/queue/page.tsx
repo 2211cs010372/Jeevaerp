@@ -6,6 +6,8 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
+import { RepeatConfirmDialog } from "@/components/portal/repeat-confirm-dialog";
+import { repeatBlock, type RepeatBlock } from "@/lib/repeat-guard";
 import { useLive } from "@/lib/realtime/use-live";
 import { TOPICS } from "@/lib/realtime/topics";
 import { DispenseScratchpad, perDayFromDosage, type PadLine } from "@/components/portal/pharmacy/scratchpad";
@@ -37,6 +39,8 @@ export default function RxQueuePage() {
   const [queue, setQueue] = useState<Rx[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** The server's "this chit / these medicines were already billed" - see submit. */
+  const [repeat, setRepeat] = useState<{ block: RepeatBlock; message: string } | null>(null);
 
   // dispensing panel
   const [active, setActive] = useState<Rx | null>(null);
@@ -138,7 +142,8 @@ export default function RxQueuePage() {
   const abxShort = shortLines.some((l) => l.courseCritical);
   const blockedReason = isShort && shortReason.trim().length < 3;
 
-  async function submit() {
+  /** @param confirmRepeat  pressed "dispense again" in the "already billed" dialog. */
+  async function submit(confirmRepeat = false) {
     if (!active || !lines.length) return;
     setBusy(true); setError(null);
     try {
@@ -149,12 +154,20 @@ export default function RxQueuePage() {
         discountAmount: disc || undefined,
         shortSupplyReason: isShort ? shortReason.trim() || undefined : undefined,
         payments: payNow && payments.length ? payments : undefined,
+        confirmRepeat: confirmRepeat || undefined,
       });
+      setRepeat(null);
       if (res.chargedToRoom) setToRoom({ ipNumber: res.ipNumber ?? "" });
       else if (res.invoice) setDone({ id: res.invoice.id, receiptNo: res.invoice.receiptNo, total: res.invoice.totalAmount });
       setLines([]); setDisc(0); setPayments([]); setPayValid(true);
       await load();
-    } catch (e) { setError(e instanceof ApiClientError ? e.message : "Could not dispense."); }
+    } catch (e) {
+      // Already billed - nothing was dispensed and no stock moved.
+      const again = repeatBlock(e);
+      if (again) { setRepeat({ block: again, message: (e as Error).message }); return; }
+      setRepeat(null);
+      setError(e instanceof ApiClientError ? e.message : "Could not dispense.");
+    }
     finally { setBusy(false); }
   }
 
@@ -493,7 +506,7 @@ export default function RxQueuePage() {
                         ? <span className="font-semibold text-[var(--p-rose)]">An antibiotic course is being cut short - reconsider.</span>
                         : "Batches are picked automatically by earliest expiry (FEFO)."}
                   </p>
-                  <PrimaryButton onClick={submit} disabled={busy || lines.length === 0 || blockedReason || (payNow && !payValid)}>
+                  <PrimaryButton onClick={() => submit()} disabled={busy || lines.length === 0 || blockedReason || (payNow && !payValid)}>
                     {busy ? <><Spinner /> Dispensing…</> : <><Icon name="pill" size={15} /> Dispense &amp; bill ₹{total.toFixed(2)}</>}
                   </PrimaryButton>
                 </div>
@@ -501,6 +514,13 @@ export default function RxQueuePage() {
             )}
           </div>
         </div>
+      )}
+      {repeat && (
+        <RepeatConfirmDialog
+          block={repeat.block} message={repeat.message} busy={busy}
+          onConfirm={() => { void submit(true); }}
+          onClose={() => setRepeat(null)}
+        />
       )}
     </PortalScroll>
   );

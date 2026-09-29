@@ -26,6 +26,12 @@ import { ReferrerSelect, useDoctorRoster } from "@/components/portal/labs/referr
 import { api, ApiClientError } from "@/lib/api-client";
 import { formatAge } from "@/lib/age";
 import { formatPhone } from "@/lib/phone";
+import { DuplicatePatientDialog, type FiledPatient } from "@/components/portal/duplicate-patient-dialog";
+import { phoneOnFile, type PhoneOnFile } from "@/lib/patient-duplicates";
+import { RepeatConfirmDialog } from "@/components/portal/repeat-confirm-dialog";
+import { repeatBlock, type RepeatBlock } from "@/lib/repeat-guard";
+
+type SubmitOpts = { patientId?: string; sharedPhoneReason?: string; confirmRepeat?: boolean };
 
 interface OrderResult {
   patient: { id: string; displayId: string; fullName: string; phone: string; age: number | null; dob: string | null; gender: string | null; isNew: boolean };
@@ -46,6 +52,10 @@ export default function OrderTestsPage() {
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [result, setResult] = useState<OrderResult | null>(null);
+  /** The server's "this mobile is already on file" - see submit. */
+  const [dupe, setDupe] = useState<PhoneOnFile | null>(null);
+  /** The server's "ordered minutes ago", and the submit it refused. */
+  const [repeat, setRepeat] = useState<{ block: RepeatBlock; message: string; opts: SubmitOpts } | null>(null);
 
   useEffect(() => {
     api.get<{ catalog: CatalogItem[] }>("/labs/catalog")
@@ -63,20 +73,50 @@ export default function OrderTestsPage() {
   const inpatient = choice?.kind === "existing" ? choice.admission : undefined;
   const canSubmit = !!choice && picked.size > 0 && !busy;
 
-  async function submit() {
+  /**
+   * @param opts  set only from the dialogs: the existing record to order
+   *              against instead, why this walk-in is a different person from
+   *              those already on the number, or that an order matching one
+   *              minutes old really is a new one.
+   */
+  async function submit(opts: SubmitOpts = {}) {
     if (!choice || picked.size === 0) return;
     setError(null); setBusy(true);
     try {
       // No `bill` - ever. See the note at the top.
       const r = await api.post<OrderResult>("/labs/walk-in", {
-        ...(choice.kind === "existing" ? { patientId: choice.patient.id } : { newPatient: draftPayload(choice.draft) }),
+        ...(opts.patientId
+          ? { patientId: opts.patientId }
+          : choice.kind === "existing"
+            ? { patientId: choice.patient.id }
+            : { newPatient: { ...draftPayload(choice.draft), sharedPhoneReason: opts.sharedPhoneReason } }),
         catalogIds: [...picked],
         referringDoctorId: referrerId || undefined,
+        confirmRepeat: opts.confirmRepeat || undefined,
       });
+      setDupe(null); setRepeat(null);
       setResult(r);
     } catch (e) {
+      // The mobile is already on file, or these tests were ordered minutes
+      // ago: either way nothing was registered or ordered.
+      const onFile = phoneOnFile(e);
+      if (onFile) { setDupe(onFile); return; }
+      const again = repeatBlock(e);
+      if (again) { setRepeat({ block: again, message: (e as Error).message, opts }); return; }
+      setDupe(null); setRepeat(null);
       setError(e instanceof ApiClientError ? e.message : "Could not place the order.");
     } finally { setBusy(false); }
+  }
+
+  /**
+   * The walk-in was on file after all. The order goes straight through against
+   * their record - the tests are picked and nothing else on this screen depends
+   * on who the patient is, so there is nothing for the bench to re-check.
+   */
+  function pickFiled(p: FiledPatient) {
+    setDupe(null);
+    setChoice({ kind: "existing", patient: p, ...(p.admission ? { admission: { ...p.admission } } : {}) });
+    void submit({ patientId: p.id });
   }
 
   function reset() {
@@ -177,7 +217,7 @@ export default function OrderTestsPage() {
             </div>
             {error && <div className="border-t border-[var(--p-border)] bg-[var(--p-rose-soft)] px-5 py-3 text-[12px] leading-relaxed text-[var(--p-rose)]">{error}</div>}
             <div className="border-t border-[var(--p-border)] p-5">
-              <PrimaryButton onClick={submit} disabled={!canSubmit} full>
+              <PrimaryButton onClick={() => submit()} disabled={!canSubmit} full>
                 {busy ? <><Spinner /> Ordering…</> : (
                   <>
                     <Icon name={inpatient ? "bed" : "flask"} size={15} />
@@ -194,6 +234,22 @@ export default function OrderTestsPage() {
           </div>
         </aside>
       </div>
+
+      {dupe && choice?.kind === "new" && (
+        <DuplicatePatientDialog
+          onFile={dupe} phone={choice.draft.phone} newName={draftName(choice.draft)} busy={busy}
+          onUse={pickFiled}
+          onDifferentPerson={(reason) => submit({ sharedPhoneReason: reason })}
+          onClose={() => setDupe(null)}
+        />
+      )}
+      {repeat && (
+        <RepeatConfirmDialog
+          block={repeat.block} message={repeat.message} busy={busy}
+          onConfirm={() => { void submit({ ...repeat.opts, confirmRepeat: true }); }}
+          onClose={() => setRepeat(null)}
+        />
+      )}
     </PortalScroll>
   );
 }

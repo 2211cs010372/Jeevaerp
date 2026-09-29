@@ -11,6 +11,9 @@ import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
 import PortalDatePicker from "@/components/portal/ui/datepicker";
 import { isAfterHours, minutesOfDay, opFeeFor, prettyTime, type AfterHoursPolicy } from "@/lib/after-hours";
+import { DuplicatePatientDialog, PhoneOnFileHint } from "@/components/portal/duplicate-patient-dialog";
+import { notAPatientPhone } from "@/lib/phone";
+import { phoneOnFile, type PhoneOnFile } from "@/lib/patient-duplicates";
 
 interface Patient { id: string; displayId: string; fullName: string; age: number | null; phone: string; gender?: string | null; bloodGroup?: string | null; }
 interface Doctor { id: string; name: string; specialization: string; department: string; fee: string; qualification: string | null; experienceYears: number | null; age: number | null; languages: string | null; photoUrl: string | null; bio: string | null; }
@@ -94,6 +97,8 @@ export default function BookAppointmentPage() {
   const [creating, setCreating] = useState(false);
   const [npError, setNpError] = useState<string | null>(null);
   const [npFieldErr, setNpFieldErr] = useState<{ firstName?: string; phone?: string; age?: string }>({});
+  /** The server's "this mobile is already on file" - see createPatient. */
+  const [dupe, setDupe] = useState<PhoneOnFile | null>(null);
 
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [doctorId, setDoctorId] = useState("");
@@ -227,11 +232,16 @@ export default function BookAppointmentPage() {
     } finally { setBooking(false); }
   }
 
-  /** Register a brand-new patient inline, then carry them straight into step 2. */
-  async function createPatient() {
+  /**
+   * Register a brand-new patient inline, then carry them straight into step 2.
+   * A number already on file comes back as a 409 and opens the duplicate
+   * dialog; `reason` is what the desk typed there for a different person.
+   */
+  async function createPatient(reason?: string) {
     const e: typeof npFieldErr = {};
     if (np.firstName.trim().length < 1) e.firstName = "First name is required";
     if (!/^\d{10}$/.test(np.phone)) e.phone = "Must be a 10-digit mobile number";
+    else if (notAPatientPhone(np.phone)) e.phone = "Not the patient's number - see below";
     if (np.age && (Number(np.age) < 0 || Number(np.age) > 120)) e.age = "Enter a valid age";
     setNpFieldErr(e);
     if (Object.keys(e).length) return;
@@ -241,12 +251,24 @@ export default function BookAppointmentPage() {
         firstName: np.firstName.trim(), lastName: np.lastName.trim() || undefined,
         phone: np.phone, age: np.age ? Number(np.age) : undefined,
         gender: np.gender, bloodGroup: np.blood, city: np.city.trim() || undefined,
+        sharedPhoneReason: reason,
       });
+      setDupe(null);
       setPatient(created);
       setNp({ ...emptyNp }); setNpFieldErr({}); setPatientMode("existing");
     } catch (err) {
+      const onFile = phoneOnFile(err);
+      if (onFile) { setDupe(onFile); return; }
+      setDupe(null);
       setNpError(err instanceof ApiClientError ? err.message : "Could not register. Please try again.");
     } finally { setCreating(false); }
+  }
+
+  /** The patient was already on file - book them, don't register them again. */
+  function pickFiled(p: Patient) {
+    setDupe(null);
+    setPatient(p);
+    setNp({ ...emptyNp }); setNpFieldErr({}); setNpError(null); setPatientMode("existing");
   }
 
   function reset() {
@@ -446,6 +468,17 @@ export default function BookAppointmentPage() {
                         </Field>
                       </div>
 
+                      <PhoneOnFileHint phone={np.phone} name={`${np.firstName} ${np.lastName}`}
+                        onUse={pickFiled} useLabel="Book for this record" className="mt-4" />
+                      {dupe && (
+                        <DuplicatePatientDialog
+                          onFile={dupe} phone={np.phone} newName={`${np.firstName} ${np.lastName}`.trim()} busy={creating}
+                          onUse={pickFiled}
+                          onDifferentPerson={(reason) => createPatient(reason)}
+                          onClose={() => setDupe(null)}
+                        />
+                      )}
+
                       {npError && (
                         <div className="mt-4 flex items-start gap-2 rounded-lg border border-[var(--p-rose)]/25 bg-[var(--p-rose-soft)] px-4 py-3 text-[14px] text-[var(--p-rose)]">
                           <Icon name="alert" size={15} /> <span>{npError}</span>
@@ -453,7 +486,7 @@ export default function BookAppointmentPage() {
                       )}
 
                       <div className="mt-4 flex flex-wrap items-center gap-3">
-                        <PrimaryButton onClick={createPatient} disabled={creating}>
+                        <PrimaryButton onClick={() => createPatient()} disabled={creating}>
                           {creating ? <><Spinner /> Registering…</> : <><Icon name="plus" size={15} /> Register &amp; continue</>}
                         </PrimaryButton>
                         <p className="text-[12px] text-[var(--p-muted)]">Only first name &amp; phone are required - add fuller details later from the patient file.</p>

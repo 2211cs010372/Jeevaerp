@@ -12,6 +12,11 @@ import { AdmissionBanner, useAdmission } from "@/components/portal/reception/adm
 import { InpatientPicker } from "@/components/portal/reception/inpatient-picker";
 
 import { MobileScanModal } from "@/components/portal/ui/mobile-scan-modal";
+import { DuplicatePatientDialog, PhoneOnFileHint, type FiledPatient } from "@/components/portal/duplicate-patient-dialog";
+import { notAPatientPhone } from "@/lib/phone";
+import { phoneOnFile, type PhoneOnFile } from "@/lib/patient-duplicates";
+import { RepeatConfirmDialog } from "@/components/portal/repeat-confirm-dialog";
+import { repeatBlock, type RepeatBlock } from "@/lib/repeat-guard";
 
 interface Patient { id: string; displayId: string; fullName: string; phone: string; }
 interface Med {
@@ -65,6 +70,10 @@ export default function DispensePage() {
   const [directAddress, setDirectAddress] = useState("");
   const [directBusy, setDirectBusy] = useState(false);
   const [directError, setDirectError] = useState<string | null>(null);
+  /** The server's "this mobile is already on file" - see registerDirect. */
+  const [dupe, setDupe] = useState<PhoneOnFile | null>(null);
+  /** The server's "same medicines just billed" - see submit. */
+  const [repeat, setRepeat] = useState<{ block: RepeatBlock; message: string } | null>(null);
   const [showMobileScanModal, setShowMobileScanModal] = useState(false);
   const [scanBusy, setScanBusy] = useState(false);
 
@@ -134,38 +143,51 @@ export default function DispensePage() {
     return () => clearTimeout(t);
   }, [q, patient, patientTab]);
 
-  async function handleDirectSaleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const name = directName.trim();
-    const phone = directPhone.trim();
-    const address = directAddress.trim();
-
-    if (!name) { setDirectError("Customer name is required."); return; }
-    if (!/^\d{10}$/.test(phone)) { setDirectError("Enter a valid 10-digit mobile number."); return; }
-
+  // THE DIRECT SALE NO LONGER DECIDES WHO THE CUSTOMER IS ON ITS OWN.
+  //
+  // It used to look the number up and compare `p.phone === phone` - a stored
+  // "+919959951687" against a typed "9959951687", which is never equal - so
+  // every direct sale minted a fresh Jeeva ID, 84 of them by 29 Sep 2026. It
+  // now just registers, and the server refuses when the number is on file; the
+  // counter then picks the right record in the dialog. Never silently: one
+  // family phone is often several patients, and guessing bills the wrong one.
+  async function registerDirect(reason?: string) {
     setDirectBusy(true); setDirectError(null);
     try {
-      // Check if a patient with this phone already exists
-      const existing = await api.get<{ patients: Patient[] }>(`/reception/patients?q=${encodeURIComponent(phone)}&limit=5`);
-      const matched = existing.patients.find((p) => p.phone === phone);
-      if (matched) {
-        setPatient(matched);
-        setDirectBusy(false);
-        return;
-      }
-
-      // Create a quick walk-in patient record for this direct pill sale
       const res = await api.post<{ patient: Patient }>("/reception/patients", {
-        firstName: name,
-        phone,
-        address: address || undefined,
+        firstName: directName.trim(),
+        phone: directPhone.trim(),
+        address: directAddress.trim() || undefined,
+        sharedPhoneReason: reason,
       });
+      setDupe(null);
       setPatient(res.patient);
     } catch (err) {
+      const onFile = phoneOnFile(err);
+      if (onFile) { setDupe(onFile); return; }
+      setDupe(null);
       setDirectError(err instanceof ApiClientError ? err.message : "Failed to register walk-in customer.");
     } finally {
       setDirectBusy(false);
     }
+  }
+
+  async function handleDirectSaleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const name = directName.trim();
+    const phone = directPhone.trim();
+
+    if (!name) { setDirectError("Customer name is required."); return; }
+    if (!/^\d{10}$/.test(phone)) { setDirectError("Enter a valid 10-digit mobile number."); return; }
+    const why = notAPatientPhone(phone);
+    if (why) { setDirectError(why); return; }
+    await registerDirect();
+  }
+
+  /** An existing record picked from the hint or the dialog - no new ID. */
+  function pickFiled(p: FiledPatient) {
+    setDupe(null); setDirectError(null);
+    setPatient(p);
   }
 
   function add(m: Med) {
@@ -192,7 +214,8 @@ export default function DispensePage() {
   const gst = lines.reduce((s, l) => s + (l.qty * l.mrp * (subtotal > 0 ? 1 - disc / subtotal : 1) * l.gst) / 100, 0);
   const total = subtotal - disc + gst;
 
-  async function submit() {
+  /** @param confirmRepeat  pressed "Dispense again" in the "same medicines just billed" dialog. */
+  async function submit(confirmRepeat = false) {
     if (!patient || !lines.length) return;
     setBusy(true); setError(null);
     try {
@@ -204,10 +227,18 @@ export default function DispensePage() {
         // whether or not the patient is in a bed; unticking "collect now" is
         // what leaves the bill on the stay for reception.
         payments: payNow && payments.length ? payments : undefined,
+        confirmRepeat: confirmRepeat || undefined,
       });
+      setRepeat(null);
       if (res.chargedToRoom) setToRoom({ ipNumber: res.ipNumber ?? "", invoiceId: res.invoice?.id, total: res.invoice?.totalAmount });
       else if (res.invoice) setDone({ id: res.invoice.id, receiptNo: res.invoice.receiptNo, total: res.invoice.totalAmount });
-    } catch (e) { setError(e instanceof ApiClientError ? e.message : "Could not dispense."); }
+    } catch (e) {
+      // Identical to a bill minutes ago - nothing was dispensed, no stock moved.
+      const again = repeatBlock(e);
+      if (again) { setRepeat({ block: again, message: (e as Error).message }); return; }
+      setRepeat(null);
+      setError(e instanceof ApiClientError ? e.message : "Could not dispense.");
+    }
     finally { setBusy(false); }
   }
 
@@ -440,6 +471,15 @@ export default function DispensePage() {
                         className="mt-1 w-full rounded-lg border border-[var(--p-border)] px-3 py-2 text-sm outline-none focus:border-[var(--p-blue)]"
                       />
                     </div>
+                    <PhoneOnFileHint phone={directPhone} name={directName} onUse={pickFiled} useLabel="Sell to this record" />
+                    {dupe && (
+                      <DuplicatePatientDialog
+                        onFile={dupe} phone={directPhone} newName={directName.trim()} busy={directBusy}
+                        onUse={pickFiled}
+                        onDifferentPerson={(reason) => registerDirect(reason)}
+                        onClose={() => setDupe(null)}
+                      />
+                    )}
                     {directError && (
                       <div className="rounded-lg bg-[var(--p-rose-soft)] p-2.5 text-[12px] text-[var(--p-rose)] font-medium">
                         {directError}
@@ -623,7 +663,7 @@ export default function DispensePage() {
                   skipped because a ward dispense could not carry one; leaving
                   that guard in place would let a half-filled split payment
                   through on exactly the bills that now accept money. */}
-              <PrimaryButton onClick={submit} disabled={!patient || lines.length === 0 || busy || checkingAdm || (payNow && !payValid)} full>
+              <PrimaryButton onClick={() => submit()} disabled={!patient || lines.length === 0 || busy || checkingAdm || (payNow && !payValid)} full>
                 {busy ? <><Spinner /> Dispensing…</>
                   : isInpatient && !payNow ? <><Icon name="bed" size={15} /> Dispense &amp; charge to room</>
                   : <><Icon name="pill" size={15} /> Dispense &amp; bill</>}
@@ -641,6 +681,13 @@ export default function DispensePage() {
         title="Rx Mobile QR Scanner"
         subtitle="Scan doctor's prescription chit with smartphone camera to auto-extract items"
       />
+      {repeat && (
+        <RepeatConfirmDialog
+          block={repeat.block} message={repeat.message} busy={busy}
+          onConfirm={() => submit(true)}
+          onClose={() => setRepeat(null)}
+        />
+      )}
     </PortalScroll>
   );
 }

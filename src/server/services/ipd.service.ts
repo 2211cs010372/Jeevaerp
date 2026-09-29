@@ -17,6 +17,7 @@ import { mergeAdvice } from "@/lib/advised-lab";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, PaymentMode, ChargeCategory } from "@prisma/client";
 import { bedLabel } from "@/lib/beds";
+import { minutesAgo, repeatWindowStart, type RepeatBlock } from "@/lib/repeat-guard";
 import { dateOnlyISO, parseLocalDate } from "@/lib/date";
 import { perUnitPrice } from "@/lib/pharmacy/pack";
 import { ipServicesBill, bucketOfSection, isDiscountable, type IpBillBucket } from "@/lib/ip-services-bill";
@@ -1471,6 +1472,8 @@ export async function addAdmissionCharge(
   input: {
     admissionId: string; category: string; description: string;
     qty: number; unitPrice: number; gstRatePct?: number;
+    /** The desk has seen the "this charge was just added" warning and means it. */
+    confirmRepeat?: boolean;
   },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<void> {
@@ -1481,6 +1484,41 @@ export async function addAdmissionCharge(
   if (!adm) throw new ApiError(404, "Admission not found");
   if (input.qty < 1) throw new ApiError(400, "Quantity must be at least 1");
   if (input.unitPrice < 0) throw new ApiError(400, "Price can't be negative");
+
+  // ── THE SAME LINE, TWICE IN A MINUTE ──
+  //
+  // "Doctor Consultation" put on JMH2026IP00070 twice a minute apart, "Dressing"
+  // on JMH2026IP00096 twice in the same minute - a save pressed again, and the
+  // detailed bill charges both. Only a SHORT window: the same doctor's evening
+  // round is a second, real visit, and a day-long rule would refuse it.
+  if (!input.confirmRepeat) {
+    const same = await prisma.admissionCharge.findFirst({
+      where: {
+        admissionId: input.admissionId,
+        category: input.category as ChargeCategory,
+        description: { equals: input.description.trim(), mode: "insensitive" },
+        createdAt: { gte: repeatWindowStart() },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { description: true, qty: true, unitPrice: true, createdAt: true },
+    });
+    if (same) {
+      const details: RepeatBlock = {
+        code: "REPEAT_ENTRY", kind: "STAY_CHARGE",
+        items: [{
+          label: same.description,
+          at: same.createdAt.toISOString(),
+          detail: `${same.qty} × ₹${same.unitPrice.toString()} · on ${adm.ipNumber}`,
+        }],
+      };
+      throw new ApiError(
+        409,
+        `"${same.description}" was added to ${adm.ipNumber} ${minutesAgo(same.createdAt)}. ` +
+          "Adding it again bills it twice.",
+        details
+      );
+    }
+  }
 
   // A CLOSED STAY IS NO LONGER A REFUSAL. The insurance desk answering a TPA
   // query weeks later has to be able to put a line on the bill; what it must not

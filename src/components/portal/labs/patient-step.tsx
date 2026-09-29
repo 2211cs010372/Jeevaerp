@@ -32,7 +32,8 @@ import { Icon } from "@/components/portal/ui/icons";
 import { Req, Spinner } from "@/components/portal/ui/form-atoms";
 import { api } from "@/lib/api-client";
 import { InpatientPicker } from "@/components/portal/reception/inpatient-picker";
-import { formatPhone, isIndianMobile, toBare10 } from "@/lib/phone";
+import { formatPhone, isIndianMobile, notAPatientPhone, toBare10 } from "@/lib/phone";
+import { PhoneOnFileHint } from "@/components/portal/duplicate-patient-dialog";
 import { AGE_MAX, ageInRange, agePayload, formatAge, type AgeUnit } from "@/lib/age";
 import { AgeUnitSwitch } from "@/components/portal/ui/age-unit-switch";
 
@@ -77,9 +78,13 @@ export const draftName = (d: PatientDraft) =>
 export const ageValid = (d: PatientDraft) =>
   !d.age.trim() || ageInRange(Number(d.age), d.ageUnit);
 
-/** Name and a reachable mobile. Everything else on a patient record can wait. */
+/**
+ * Name and a reachable mobile. Everything else on a patient record can wait.
+ * The hospital's own number is not reachable - 170 lab walk-ins were filed on
+ * it before the server started refusing it.
+ */
 export const draftValid = (d: PatientDraft) =>
-  d.firstName.trim().length > 0 && isIndianMobile(d.phone) && ageValid(d);
+  d.firstName.trim().length > 0 && isIndianMobile(d.phone) && !notAPatientPhone(d.phone) && ageValid(d);
 
 /**
  * The draft in the shape `POST /labs/walk-in` wants.
@@ -136,8 +141,6 @@ export function PatientStep({
   const [recent, setRecent] = useState<LabPatient[]>([]);
   const [searching, setSearching] = useState(false);
   const [draft, setDraft] = useState<PatientDraft>(EMPTY_DRAFT);
-  /** Existing records on the number being typed into the NEW form - see below. */
-  const [dupes, setDupes] = useState<LabPatient[]>([]);
 
   const chosen = value?.kind === "existing" ? value.patient : null;
   const ward = value?.kind === "existing" ? value.admission : undefined;
@@ -165,29 +168,8 @@ export function PatientStep({
     return () => { active = false; clearTimeout(t); };
   }, [query, chosen]);
 
-  // ── the duplicate a busy counter creates without noticing ──
-  //
-  // The same person walks in three times in a year and gets typed in fresh each
-  // time, because looking them up is a deliberate act and typing is not. Their
-  // results then live under three Jeeva IDs and no screen shows a history.
-  // Searching the number AS IT IS TYPED costs nothing and catches it at the one
-  // moment somebody can still choose the existing record.
-  useEffect(() => {
-    if (mode !== "new" || !isIndianMobile(draft.phone)) { setDupes([]); return; }
-    let active = true;
-    const t = setTimeout(async () => {
-      try {
-        const { patients } = await api.get<{ patients: LabPatient[] }>(
-          `/reception/patients?q=${encodeURIComponent(toBare10(draft.phone))}&limit=3`
-        );
-        if (active) setDupes(patients);
-      } catch { if (active) setDupes([]); }
-    }, 350);
-    return () => { active = false; clearTimeout(t); };
-  }, [draft.phone, mode]);
-
-  function pick(p: LabPatient) {
-    onChange({ kind: "existing", patient: p });
+  function pick(p: LabPatient, admission?: AdmissionContext) {
+    onChange({ kind: "existing", patient: p, ...(admission ? { admission } : {}) });
     setQuery("");
   }
 
@@ -200,7 +182,6 @@ export function PatientStep({
   function clear() {
     onChange(null);
     setQuery("");
-    setDupes([]);
   }
 
   // ── chosen: an existing record ──
@@ -404,26 +385,18 @@ export function PatientStep({
               </div>
             </div>
 
-            {dupes.length > 0 && (
-              <div className="mt-4 rounded-lg border border-[var(--p-amber)]/30 bg-[var(--p-amber-soft)] p-3">
-                <p className="flex items-center gap-1.5 text-[12px] font-semibold text-[#8a6414]">
-                  <Icon name="alert" size={13} /> This mobile is already on file. Use the existing record so the results stay together.
-                </p>
-                <div className="mt-2 space-y-1.5">
-                  {dupes.map((p) => (
-                    <button
-                      key={p.id} onClick={() => { setMode("find"); pick(p); }}
-                      className="flex w-full items-center justify-between rounded-lg border border-[var(--p-border)] bg-white p-2.5 text-left transition-colors hover:border-[var(--p-teal)]"
-                    >
-                      <span className="text-[13px] text-[var(--p-ink)]">
-                        {p.fullName} <span className="tabular text-[11px] text-[var(--p-muted)]">{p.displayId}</span>
-                      </span>
-                      <span className="text-[12px] font-semibold text-[var(--p-teal)]">Use this record</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+            {/* ── the duplicate a busy counter creates without noticing ──
+                The same person walks in three times in a year and gets typed in
+                fresh each time, because looking them up is a deliberate act and
+                typing is not. Searching the number AS IT IS TYPED catches it at
+                the one moment somebody can still choose the existing record.
+                This used to be the only guard, and it could be ignored - the
+                lab made half of all duplicate records past it. The server now
+                refuses too, and the order screen opens the same dialog. */}
+            <PhoneOnFileHint
+              phone={draft.phone} name={draftName(draft)} className="mt-4"
+              onUse={(p) => { setMode("find"); pick(p, p.admission ? { ...p.admission } : undefined); }}
+            />
 
             <p className="mt-4 text-[11px] leading-relaxed text-[var(--p-muted)]">
               A Jeeva ID is issued when the tests are ordered. Age and sex are optional here but they change

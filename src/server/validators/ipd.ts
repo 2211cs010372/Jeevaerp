@@ -85,6 +85,8 @@ export const addChargeSchema = z.object({
   qty: z.coerce.number().int().min(1).max(999),
   unitPrice: z.coerce.number().min(0),
   gstRatePct: z.coerce.number().min(0).max(28).optional(),
+  /** Set after the "this charge was just added" warning - see addAdmissionCharge. */
+  confirmRepeat: z.boolean().optional(),
 });
 
 /**

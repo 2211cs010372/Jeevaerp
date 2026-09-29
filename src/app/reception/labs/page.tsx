@@ -24,7 +24,7 @@ import { PrimaryButton } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
-import { PatientStep, draftPayload, type LabPatient, type PatientChoice } from "@/components/portal/labs/patient-step";
+import { PatientStep, draftName, draftPayload, type LabPatient, type PatientChoice } from "@/components/portal/labs/patient-step";
 import { TestPicker, type CatalogItem } from "@/components/portal/labs/test-picker";
 import { ReferrerSelect, useDoctorRoster } from "@/components/portal/labs/referrer-select";
 import { BillAside, type Settlement } from "@/components/portal/labs/bill-aside";
@@ -32,6 +32,10 @@ import { InvoiceView, type LabInvoice } from "@/components/portal/labs/invoice-v
 import { useAdmission } from "@/components/portal/reception/admission-banner";
 import { api, ApiClientError } from "@/lib/api-client";
 import { formatPhone } from "@/lib/phone";
+import { DuplicatePatientDialog, type FiledPatient } from "@/components/portal/duplicate-patient-dialog";
+import { phoneOnFile, type PhoneOnFile } from "@/lib/patient-duplicates";
+import { RepeatConfirmDialog } from "@/components/portal/repeat-confirm-dialog";
+import { repeatBlock, type RepeatBlock } from "@/lib/repeat-guard";
 import { useLive } from "@/lib/realtime/use-live";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 
@@ -101,6 +105,10 @@ export default function ReceptionLabBillingPage() {
   const [settlement, setSettlement] = useState<Settlement>(EMPTY_SETTLEMENT);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The server's "this mobile is already on file" - see generate. */
+  const [dupe, setDupe] = useState<PhoneOnFile | null>(null);
+  /** The server's "ordered minutes ago", and the submit it refused. */
+  const [repeat, setRepeat] = useState<{ block: RepeatBlock; message: string; opts: { sharedPhoneReason?: string } } | null>(null);
   const [result, setResult] = useState<WalkInResult | null>(null);
 
   useEffect(() => {
@@ -200,7 +208,11 @@ export default function ReceptionLabBillingPage() {
     finally { setBusy(false); }
   }
 
-  async function generate() {
+  /**
+   * @param reason  typed in the duplicate dialog - this walk-in is a different
+   *                person from those already on the number.
+   */
+  async function generate(opts: { sharedPhoneReason?: string; confirmRepeat?: boolean } = {}) {
     if (!choice || lines.length === 0) return;
     setError(null); setBusy(true);
     try {
@@ -211,7 +223,9 @@ export default function ReceptionLabBillingPage() {
         .map((a) => ({ advisedLabId: a.id, catalogId: a.catalogId! }));
 
       const r = await api.post<WalkInResult>("/labs/walk-in", {
-        ...(choice.kind === "existing" ? { patientId: choice.patient.id } : { newPatient: draftPayload(choice.draft) }),
+        ...(choice.kind === "existing"
+          ? { patientId: choice.patient.id }
+          : { newPatient: { ...draftPayload(choice.draft), sharedPhoneReason: opts.sharedPhoneReason } }),
         catalogIds: [...pickedCatalog],
         labTestIds: [...pickedTests],
         appointmentId: !stay && visitId ? visitId : undefined,
@@ -219,15 +233,35 @@ export default function ReceptionLabBillingPage() {
         // visit behind it needs one named.
         referringDoctorId: visitId ? undefined : (referrerId || undefined),
         fromAdvised: fromAdvised.length ? fromAdvised : undefined,
+        confirmRepeat: opts.confirmRepeat || undefined,
         bill: {
           discountAmount: settlement.discountAmount || undefined,
           payments: settlement.payments.length ? settlement.payments : undefined,
         },
       });
+      setDupe(null); setRepeat(null);
       setResult(r);
     } catch (e) {
+      // The mobile is already on file, or these tests were ordered minutes
+      // ago: either way nothing was registered, ordered or billed.
+      const onFile = phoneOnFile(e);
+      if (onFile) { setDupe(onFile); return; }
+      const again = repeatBlock(e);
+      if (again) { setRepeat({ block: again, message: (e as Error).message, opts }); return; }
+      setDupe(null); setRepeat(null);
       setError(e instanceof ApiClientError ? e.message : "Could not generate the bill.");
     } finally { setBusy(false); }
+  }
+
+  /**
+   * The walk-in was on file after all. Switch the bill to their record but do
+   * NOT raise it yet: choosing an existing patient loads their unbilled tests,
+   * visits and advised labs, and the desk has to see those before money is
+   * taken - otherwise this morning's test goes out on a second receipt.
+   */
+  function pickFiled(p: FiledPatient) {
+    setDupe(null);
+    setChoice({ kind: "existing", patient: p, ...(p.admission ? { admission: { ...p.admission } } : {}) });
   }
 
   function reset() {
@@ -438,13 +472,31 @@ export default function ReceptionLabBillingPage() {
                   : undefined
             }
             action={
-              <PrimaryButton onClick={generate} disabled={!canSubmit} full>
+              <PrimaryButton onClick={() => generate()} disabled={!canSubmit} full>
                 {busy ? <><Spinner /> Generating…</> : <><Icon name="receipt" size={15} /> Generate lab bill</>}
               </PrimaryButton>
             }
           />
         </aside>
       </div>
+
+      {dupe && choice?.kind === "new" && (
+        <DuplicatePatientDialog
+          onFile={dupe} phone={choice.draft.phone} newName={draftName(choice.draft)} busy={busy}
+          onUse={pickFiled}
+          onDifferentPerson={(reason) => generate({ sharedPhoneReason: reason })}
+          onClose={() => setDupe(null)}
+        />
+      )}
+      {/* The test is usually already on this screen, under the tests on file -
+          ticking that one bills the lab's order instead of ordering it again. */}
+      {repeat && (
+        <RepeatConfirmDialog
+          block={repeat.block} message={repeat.message} busy={busy}
+          onConfirm={() => { void generate({ ...repeat.opts, confirmRepeat: true }); }}
+          onClose={() => setRepeat(null)}
+        />
+      )}
     </PortalScroll>
   );
 }

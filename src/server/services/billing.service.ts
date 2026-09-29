@@ -8,6 +8,7 @@ import { publishLive } from "@/server/realtime/publish";
 import { splitInvoice, allocateCoverage } from "@/lib/insurance-split";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import { isAdvanceAdjustment, advanceReceiptNoFromRef } from "@/server/billing/advances";
+import { minutesAgo, repeatWindowStart, type RepeatBlock } from "@/lib/repeat-guard";
 import type { AuthUser } from "@/lib/auth/types";
 import type { Prisma, PaymentMode } from "@prisma/client";
 import { buildAdminBillsWhere, COUNTER_MODES, type AdminBillsQuery } from "@/lib/admin-bills-query";
@@ -1021,6 +1022,68 @@ export async function listInvoices(source?: InvoiceSourceT, limit = 50, onDate?:
     // somebody corrected its date.
     orderBy: { createdAt: "desc" },
     take: limit,
+    select: INVOICE_LIST_SELECT,
+  });
+  return rows.map(toInvoiceListRow);
+}
+
+/**
+ * A HAND-WRITTEN DESK BILL, GENERATED TWICE.
+ *
+ * Reception's "Generate bill" on the patient file takes a description and an
+ * amount and raises a bill - and a slow response pressed again raises a second
+ * one. The same description at the same amount for the same patient within
+ * REPEAT_WINDOW_MIN is refused with the bill that exists (RepeatBlock), before
+ * anything is written; a different charge, or the same one later, goes through.
+ */
+export async function assertNotJustBilled(input: {
+  patientId: string; source: InvoiceSourceT; description: string; unitPrice: number;
+}): Promise<void> {
+  const same = await prisma.invoice.findFirst({
+    where: {
+      patientId: input.patientId, source: input.source, status: { not: "CANCELLED" },
+      createdAt: { gte: repeatWindowStart() },
+      items: { some: { description: input.description.trim(), unitPrice: input.unitPrice } },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, receiptNo: true, createdAt: true, totalAmount: true },
+  });
+  if (!same) return;
+  const details: RepeatBlock = {
+    code: "REPEAT_ENTRY", kind: "CONSULTATION",
+    items: [{
+      label: input.description.trim(),
+      at: same.createdAt.toISOString(),
+      detail: `Bill ${same.receiptNo} · ₹${same.totalAmount.toString()}`,
+      invoiceId: same.id,
+    }],
+  };
+  throw new ApiError(
+    409,
+    `"${input.description.trim()}" was billed to this patient ${minutesAgo(same.createdAt)} (${same.receiptNo}). ` +
+      "This looks like the same bill generated again.",
+    details
+  );
+}
+
+/**
+ * EVERY BILL ONE PATIENT HAS EVER HAD - and nobody else's.
+ *
+ * The reception patient file used to borrow listInvoices() above: the hospital's
+ * fifty most recent bills, every patient's, "filtered" with `(x) => true`. So a
+ * file showed strangers' bills and stopped showing this patient's own the day
+ * fifty newer ones were raised anywhere in the building.
+ *
+ * Scoped by patientId in the query and never capped: a patient's history is the
+ * whole of it, from registration to today - including bills a duplicate record
+ * carried before it was merged into this one. Cancelled bills are listed too,
+ * because a file that hides a cancelled receipt is a file that can't explain
+ * the gap in the receipt numbers.
+ */
+export async function listPatientInvoices(patientId: string): Promise<InvoiceListRow[]> {
+  const rows = await prisma.invoice.findMany({
+    where: { patientId },
+    orderBy: { createdAt: "desc" },
     select: INVOICE_LIST_SELECT,
   });
   return rows.map(toInvoiceListRow);

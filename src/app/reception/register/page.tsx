@@ -9,6 +9,9 @@ import { AgeUnitSwitch } from "@/components/portal/ui/age-unit-switch";
 import { api, ApiClientError } from "@/lib/api-client";
 import { AGE_MAX, ageFromDob, ageInRange, ageYears, dobFromAge, type AgeUnit } from "@/lib/age";
 import { localDateISO } from "@/lib/date";
+import { DuplicatePatientDialog, PhoneOnFileHint, type FiledPatient } from "@/components/portal/duplicate-patient-dialog";
+import { notAPatientPhone } from "@/lib/phone";
+import { phoneOnFile, type PhoneOnFile } from "@/lib/patient-duplicates";
 
 const BLOODS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 
@@ -64,6 +67,26 @@ export default function RegisterPage() {
    * patient here makes the retry resume from step two instead of redoing step one.
    */
   const [pendingPatient, setPendingPatient] = useState<Registered | null>(null);
+  /**
+   * The server's "this mobile is already on file", and which button raised it -
+   * a different-person resubmit has to finish the same way (casualty or not).
+   */
+  const [dupe, setDupe] = useState<{ onFile: PhoneOnFile; emergency: boolean } | null>(null);
+  /** The patient was on file already: nothing was registered, their ID was used. */
+  const [reused, setReused] = useState(false);
+  /**
+   * An existing record picked in casualty mode, waiting for "yes, this one".
+   * Picking is one tap on a list of everyone sharing the phone; opening an
+   * emergency OP on the wrong family member is a clinical record in the wrong
+   * file. So the pick only proposes - the OP is issued on the confirmation.
+   */
+  const [casualtyPick, setCasualtyPick] = useState<FiledPatient | null>(null);
+
+  /** Casualty mode asks first; any other pick goes straight through. */
+  const choose = (p: FiledPatient, emergency: boolean) => {
+    if (emergency) { setDupe(null); setCasualtyPick(p); return; }
+    void pickFiled(p, false);
+  };
 
   const set = (k: keyof typeof empty) => (v: string | boolean) => {
     setF((p) => ({ ...p, [k]: v }));
@@ -125,6 +148,7 @@ export default function RegisterPage() {
     const e: Errs = {};
     if (f.firstName.trim().length < 1) e.firstName = "First name is required";
     if (!/^\d{10}$/.test(f.phone)) e.phone = "Must be a 10-digit mobile number";
+    else if (notAPatientPhone(f.phone)) e.phone = "Not the patient's number - see below";
     if (f.age && !ageInRange(Number(f.age), f.ageUnit)) {
       e.age = `Enter an age up to ${AGE_MAX[f.ageUnit]} ${AGE_UNIT_WORD[f.ageUnit]}`;
     }
@@ -133,7 +157,11 @@ export default function RegisterPage() {
     return Object.keys(e).length === 0;
   }
 
-  async function submit(isEmergency = false) {
+  /**
+   * @param reason  typed in the duplicate dialog - this is a different person
+   *                from the ones already on the number.
+   */
+  async function submit(isEmergency = false, reason?: string) {
     setFormError(null);
     // A half-finished emergency registration resumes at the OP step. Retrying
     // the whole form would mint a second UHID for a patient already on file.
@@ -159,13 +187,29 @@ export default function RegisterPage() {
         emergencyContactPhone: f.emergencyPhone || undefined, allergies: f.allergies || undefined, govtIdNumber: f.govtId || undefined,
         referredByName: f.referredByName || undefined, referralSource: f.referralSource || undefined,
         isVip: f.isVip, remarks: f.remarks || undefined,
+        sharedPhoneReason: reason,
       });
 
+      setDupe(null);
       if (isEmergency) { await issueEmergencyOp(patient); return; }
       setIssued(patient);
     } catch (err) {
+      const onFile = phoneOnFile(err);
+      if (onFile) { setDupe({ onFile, emergency: isEmergency }); return; }
+      setDupe(null);
       setFormError(err instanceof ApiClientError ? err.message : "Could not register. Please try again.");
     } finally { setLoading(false); }
+  }
+
+  /**
+   * The patient is already on file. Nothing is registered: a casualty case goes
+   * straight on to its emergency OP against the existing ID, anybody else lands
+   * on the same "done" card with their existing ID to book or open.
+   */
+  async function pickFiled(p: FiledPatient, emergency: boolean) {
+    setDupe(null); setFormError(null); setReused(true);
+    if (emergency) { await issueEmergencyOp(p); return; }
+    setIssued(p);
   }
 
   /**
@@ -194,7 +238,7 @@ export default function RegisterPage() {
   }
 
   function registerAnother() {
-    setIssued(null); setEmergencyAppt(null); setPendingPatient(null);
+    setIssued(null); setEmergencyAppt(null); setPendingPatient(null); setDupe(null); setReused(false);
     setF({ ...empty }); setErrors({}); setFormError(null);
   }
 
@@ -213,11 +257,17 @@ export default function RegisterPage() {
               {emergencyAppt ? "Emergency OP" : "OP"}
             </span>
           </div>
-          <h3 className="mt-2 font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">{issued.firstName} is registered</h3>
+          <h3 className="mt-2 font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">
+            {issued.firstName} is {reused ? "already registered" : "registered"}
+          </h3>
           <p className="mt-1 text-[14px] text-[var(--p-muted)]">
-            {emergencyAppt
-              ? "Jeeva ID issued and the casualty OP is open - they are already marked as arrived."
-              : "Their permanent Jeeva ID has been issued and saved."}
+            {reused
+              ? emergencyAppt
+                ? "No new ID - the casualty OP is open on their existing Jeeva ID, and they are marked as arrived."
+                : "No new ID was issued. This is their existing Jeeva ID - their history stays in one file."
+              : emergencyAppt
+                ? "Jeeva ID issued and the casualty OP is open - they are already marked as arrived."
+                : "Their permanent Jeeva ID has been issued and saved."}
           </p>
           <div className="mt-4 flex flex-col gap-2 rounded-xl bg-[var(--p-teal-soft)] px-6 py-3">
             <span className="font-mono text-base font-semibold text-[var(--p-teal-deep)]">UHID: {issued.displayId}</span>
@@ -307,6 +357,47 @@ export default function RegisterPage() {
           </div>
         )}
 
+        {casualtyPick && (
+          <div className="modal-veil" role="dialog" aria-modal="true"
+            onClick={(e) => { if (e.target === e.currentTarget && !loading) setCasualtyPick(null); }}>
+            <div className="surface w-full max-w-sm bg-white">
+              <div className="border-b border-[#dc2626]/20 bg-[#dc2626]/[0.06] px-5 py-4">
+                <h3 className="flex items-center gap-2 text-[15px] font-semibold text-[#a3160f]">
+                  <Icon name="alert" size={16} /> Issue emergency OP?
+                </h3>
+                <p className="mt-0.5 text-[12px] text-[var(--p-text)]">Check it is the right person - this number is shared.</p>
+              </div>
+              <div className="px-5 py-4">
+                <p className="text-[15px] font-semibold text-[var(--p-ink)]">{casualtyPick.fullName}</p>
+                <p className="font-mono text-[12px] text-[var(--p-muted)]">
+                  {casualtyPick.displayId}{casualtyPick.age != null && ` · ${casualtyPick.age}y`}{casualtyPick.gender && ` · ${casualtyPick.gender}`}
+                </p>
+              </div>
+              <div className="flex justify-end gap-2 border-t border-[var(--p-border)] bg-[var(--p-bg)] px-5 py-3">
+                <button type="button" onClick={() => setCasualtyPick(null)} disabled={loading}
+                  className="rounded-lg px-4 py-2 text-[13px] font-medium text-[var(--p-muted)] hover:text-[var(--p-ink)]">
+                  Not this person
+                </button>
+                <button type="button" disabled={loading}
+                  onClick={() => { const p = casualtyPick; setCasualtyPick(null); void pickFiled(p, true); }}
+                  className="inline-flex items-center gap-2 rounded-lg bg-[#dc2626] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[#b91c1c] disabled:opacity-50">
+                  {loading ? <><Spinner /> Issuing…</> : <>Yes - issue emergency OP</>}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {dupe && (
+          <DuplicatePatientDialog
+            onFile={dupe.onFile} phone={f.phone} busy={loading}
+            newName={[f.firstName, f.middleName, f.lastName].map((s) => s.trim()).filter(Boolean).join(" ")}
+            onUse={(p) => choose(p, dupe.emergency)}
+            onDifferentPerson={(reason) => submit(dupe.emergency, reason)}
+            onClose={() => setDupe(null)}
+          />
+        )}
+
         <Sec>Name</Sec>
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="First name" icon="users" required error={errors.firstName}><input className={cls(errors.firstName)} value={f.firstName} onChange={(e) => set("firstName")(e.target.value)} placeholder="Divya" autoFocus /></Field>
@@ -334,6 +425,12 @@ export default function RegisterPage() {
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Phone" icon="clock" required error={errors.phone}><input className={cls(errors.phone)} value={f.phone} onChange={(e) => set("phone")(e.target.value.replace(/\D/g, "").slice(0, 10))} inputMode="numeric" placeholder="9000012345" /></Field>
           <Field label="Alternate phone"><input className={cls(false)} value={f.altPhone} onChange={(e) => set("altPhone")(e.target.value.replace(/\D/g, "").slice(0, 10))} inputMode="numeric" placeholder="-" /></Field>
+          {/* Asked the moment the number is complete, not after the whole form
+              is filled - the cheapest point to stop a second Jeeva ID. */}
+          <PhoneOnFileHint phone={f.phone} name={[f.firstName, f.middleName, f.lastName].join(" ")}
+            onUse={(p) => choose(p, emergencyMode)}
+            useLabel={emergencyMode ? "Emergency OP on this record" : "Use this record"}
+            className="sm:col-span-2" />
           <Field label="Email" error={errors.email} span><input className={cls(errors.email)} value={f.email} onChange={(e) => set("email")(e.target.value)} placeholder="name@example.com" /></Field>
           <Field label="Address" span><input className={cls(false)} value={f.address} onChange={(e) => set("address")(e.target.value)} placeholder="House no, area" /></Field>
           <Field label="City"><input className={cls(false)} value={f.city} onChange={(e) => set("city")(e.target.value)} placeholder="Hanamkonda" /></Field>

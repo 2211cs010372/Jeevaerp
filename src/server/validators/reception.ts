@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isIndianMobile, toE164 } from "@/lib/phone";
+import { isIndianMobile, notAPatientPhone, toE164 } from "@/lib/phone";
 
 /**
  * Every mobile is normalised to its STORAGE form here, at the edge, so no
@@ -12,6 +12,30 @@ const phone10 = z
   .trim()
   .refine(isIndianMobile, "Enter a valid 10-digit mobile number")
   .transform(toE164);
+
+/**
+ * The mobile a NEW record is created with. Same as phone10, but the hospital's
+ * own number and held-down-key numbers are refused - see notAPatientPhone.
+ * Editing a record that already carries one is not blocked here; that record
+ * exists, and refusing every save on it would stop the desk fixing it.
+ */
+export const newPatientPhone = z
+  .string()
+  .trim()
+  .refine(isIndianMobile, "Enter a valid 10-digit mobile number")
+  .superRefine((v, ctx) => {
+    const why = notAPatientPhone(v);
+    if (why) ctx.addIssue({ code: z.ZodIssueCode.custom, message: why });
+  })
+  .transform(toE164);
+
+/**
+ * Said when a different person is registered on a number that already has a
+ * record - "son, uses his father's phone". Families share one mobile, so this
+ * is allowed, but never silently: the server refuses without it and keeps it
+ * in the audit trail. See registerPatient.
+ */
+export const sharedPhoneReason = z.string().trim().max(200).optional().or(z.literal(""));
 
 const optStr = (max: number) => z.string().trim().max(max).optional().or(z.literal(""));
 
@@ -28,7 +52,8 @@ export const registerPatientSchema = z.object({
   bloodGroup: z.enum(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]).optional(),
   maritalStatus: z.enum(["SINGLE", "MARRIED", "DIVORCED", "WIDOWED", "OTHER"]).optional(),
   // contact
-  phone: phone10,
+  phone: newPatientPhone,
+  sharedPhoneReason,
   alternatePhone: z.string().trim().regex(/^\d{10}$/, "Enter 10 digits").optional().or(z.literal("")),
   email: z.string().trim().email("Invalid email").optional().or(z.literal("")),
   address: optStr(300),
@@ -146,8 +171,16 @@ export const bookAppointmentSchema = z.object({
 
 export type BookAppointmentInput = z.infer<typeof bookAppointmentSchema>;
 
-/** Everything on registerPatientSchema, but all optional (partial update). */
-export const updatePatientSchema = registerPatientSchema.partial();
+/**
+ * Everything on registerPatientSchema, but all optional (partial update). The
+ * phone is the plain rule: the edit form sends it back unchanged, and a record
+ * that already holds the hospital's number must still be editable - including
+ * to put the right number on it. updatePatient refuses a CHANGE to one.
+ */
+export const updatePatientSchema = registerPatientSchema
+  .omit({ sharedPhoneReason: true })
+  .partial()
+  .extend({ phone: phone10.optional() });
 
 /** A patient editing their OWN contact details. */
 export const updateOwnContactSchema = z.object({

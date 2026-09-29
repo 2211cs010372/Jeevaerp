@@ -5,6 +5,8 @@ import { logAudit } from "./audit.service";
 import type { AuthUser } from "@/lib/auth/types";
 import type { RegisterPatientInput } from "@/server/validators/reception";
 import type { Prisma } from "@prisma/client";
+import { notAPatientPhone, phoneVariants, toBare10 } from "@/lib/phone";
+import { nameKey, type PhoneMatch, type PhoneOnFile } from "@/lib/patient-duplicates";
 
 /**
  * Patient shape returned to reception. Referral fields (referredByName /
@@ -46,10 +48,60 @@ function toPatientDTO(p: {
 
 const nn = (v: string | undefined) => (v && v.trim() ? v.trim() : null);
 
+/** How many of the records on one number the 409 lists. The rest are counted. */
+const MATCHES_SHOWN = 8;
+
+/**
+ * Everybody already registered on this mobile, the ones in a bed first.
+ *
+ * Every stored shape of the number is matched - phoneVariants - because a
+ * record that only failed to match on "+91" is exactly the duplicate this
+ * exists to stop.
+ */
+async function recordsOnPhone(tx: Prisma.TransactionClient, phone: string): Promise<PhoneMatch[]> {
+  const rows = await tx.patient.findMany({
+    where: { phone: { in: phoneVariants(phone) }, mergedIntoId: null, deletedAt: null },
+    orderBy: { createdAt: "desc" },
+    select: {
+      ...patientSelect,
+      admissions: {
+        where: { status: "ADMITTED" },
+        take: 1,
+        select: { id: true, ipNumber: true, bed: { select: { bedNo: true, ward: { select: { name: true } } } } },
+      },
+    },
+  });
+  return rows
+    .map((r): PhoneMatch => {
+      const a = r.admissions[0];
+      return {
+        ...toPatientDTO(r),
+        admission: a ? { admissionId: a.id, ipNumber: a.ipNumber, ward: a.bed.ward.name, bedNo: a.bed.bedNo } : null,
+      };
+    })
+    .sort((x, y) => Number(!!y.admission) - Number(!!x.admission));
+}
+
 /**
  * Register a patient. UHID + row created in one transaction so an ID is never
  * burned on failure. fullName is denormalized from the name parts for search.
  * Referral is stored as a snapshot string (admin-only), never a live FK.
+ *
+ * ONE PERSON, ONE JEEVA ID. Every desk that creates a patient ends here, and by
+ * 29 Sep 2026 the desks had made 414 extra records on 151 numbers - a
+ * pharmacy lookup that never matched, a lab form that only hinted, a register
+ * page that never looked. A split record is how a stay's medicines went
+ * missing from its IP bill and how a claim reached the insurer under two UHIDs.
+ * So before a new ID is issued:
+ *
+ *   · same mobile, same name   -> refused outright. It is the same patient;
+ *                                  use their record.
+ *   · same mobile, other name  -> refused until the desk says why this is a
+ *                                  different person (families share a phone),
+ *                                  and that reason goes into the audit trail.
+ *
+ * Both come back as a 409 carrying the records on file (PhoneOnFile), which
+ * every counter shows in the same dialog.
  */
 export async function registerPatient(
   actor: AuthUser,
@@ -58,8 +110,32 @@ export async function registerPatient(
 ): Promise<PatientDTO> {
   const fullName = [input.firstName, input.middleName, input.lastName]
     .map((x) => (x ? x.trim() : "")).filter(Boolean).join(" ");
+  const reason = nn(input.sharedPhoneReason);
 
   const patient = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const onFile = await recordsOnPhone(tx, input.phone);
+    if (onFile.length > 0) {
+      const key = nameKey(fullName);
+      const same = onFile.find((m) => nameKey(m.fullName) === key);
+      if (same || !reason || reason.length < 3) {
+        const details: PhoneOnFile = {
+          code: "PHONE_ON_FILE",
+          sameName: !!same,
+          total: onFile.length,
+          // The same-name record leads the list - it is the answer.
+          matches: (same ? [same, ...onFile.filter((m) => m.id !== same.id)] : onFile).slice(0, MATCHES_SHOWN),
+        };
+        throw new ApiError(
+          409,
+          same
+            ? `${same.fullName} is already registered on this number as ${same.displayId}. Use that record.`
+            : `This mobile already has ${onFile.length} patient record${onFile.length === 1 ? "" : "s"}. ` +
+              "Use theirs, or say why this is a different person.",
+          details
+        );
+      }
+    }
+
     const displayId = await nextId("PATIENT", { tx });
 
     const created = await tx.patient.create({
@@ -101,7 +177,17 @@ export async function registerPatient(
 
     await logAudit(
       actor,
-      { action: "PATIENT_REGISTERED", targetTable: "Patient", targetId: created.id, meta: { displayId: created.displayId }, ...ctx },
+      {
+        action: "PATIENT_REGISTERED", targetTable: "Patient", targetId: created.id,
+        meta: {
+          displayId: created.displayId,
+          // Who else is on this number, and what the desk said about it.
+          ...(onFile.length > 0
+            ? { sharedPhoneWith: onFile.map((m) => m.displayId).slice(0, 20), sharedPhoneReason: reason }
+            : {}),
+        },
+        ...ctx,
+      },
       tx
     );
     return created;
@@ -167,9 +253,16 @@ export async function updatePatient(
 ): Promise<PatientDTO> {
   const existing = await prisma.patient.findUnique({
     where: { displayId },
-    select: { id: true, firstName: true, middleName: true, lastName: true, mergedIntoId: true, deletedAt: true },
+    select: { id: true, firstName: true, middleName: true, lastName: true, phone: true, mergedIntoId: true, deletedAt: true },
   });
   if (!existing || existing.mergedIntoId || existing.deletedAt) throw new ApiError(404, "Patient not found");
+
+  // A record already on the hospital's number can be saved as it is - that is
+  // how the desk gets in to correct it. Moving a record ONTO one cannot.
+  if (input.phone !== undefined && toBare10(input.phone) !== toBare10(existing.phone)) {
+    const why = notAPatientPhone(input.phone);
+    if (why) throw new ApiError(400, why);
+  }
 
   const firstName = input.firstName?.trim() || existing.firstName;
   const middleName = input.middleName !== undefined ? nn(input.middleName) : existing.middleName;
@@ -242,10 +335,16 @@ export async function updateOwnContact(
 export async function findDuplicates(): Promise<{
   groups: {
     phone: string;
+    /**
+     * The hospital's own number, or another that is nobody's (notAPatientPhone).
+     * The records on it are DIFFERENT people who had no phone to give - never
+     * merge them; correct each one's number when they next come in.
+     */
+    placeholder: boolean;
     patients: {
       id: string; displayId: string; fullName: string; age: number | null;
       gender: string | null; createdAt: string;
-      visits: number; bills: number; admitted: boolean;
+      visits: number; bills: number; admitted: boolean; ipNumber: string | null;
     }[];
   }[];
 }> {
@@ -255,7 +354,7 @@ export async function findDuplicates(): Promise<{
       id: true, displayId: true, fullName: true, phone: true,
       age: true, gender: true, createdAt: true,
       _count: { select: { appointments: true, invoices: true } },
-      admissions: { where: { status: "ADMITTED" }, select: { id: true } },
+      admissions: { where: { status: "ADMITTED" }, select: { ipNumber: true } },
     },
   });
 
@@ -263,21 +362,25 @@ export async function findDuplicates(): Promise<{
     id: string; displayId: string; fullName: string; phone: string;
     age: number | null; gender: string | null; createdAt: Date;
     _count: { appointments: number; invoices: number };
-    admissions: { id: string }[];
+    admissions: { ipNumber: string }[];
   };
 
+  // Grouped on the bare ten digits, so a row written before the +91 migration
+  // lands in the same group as its twin instead of hiding in one of its own.
   const byPhone = new Map<string, Row[]>();
   for (const r of rows as Row[]) {
-    if (!r.phone) continue;
-    if (!byPhone.has(r.phone)) byPhone.set(r.phone, []);
-    byPhone.get(r.phone)!.push(r);
+    const key = toBare10(r.phone);
+    if (!key) continue;
+    if (!byPhone.has(key)) byPhone.set(key, []);
+    byPhone.get(key)!.push(r);
   }
 
   return {
     groups: [...byPhone.entries()]
       .filter(([, list]) => list.length > 1)
       .map(([phone, list]) => ({
-        phone,
+        phone: `+91${phone}`,
+        placeholder: notAPatientPhone(phone) !== null,
         patients: list
           // Oldest first - the original record is almost always the one to keep,
           // because it's the one with the longest history behind it.
@@ -289,8 +392,11 @@ export async function findDuplicates(): Promise<{
             visits: p._count.appointments,
             bills: p._count.invoices,
             admitted: p.admissions.length > 0,
+            ipNumber: p.admissions[0]?.ipNumber ?? null,
           })),
-      })),
+      }))
+      // Real duplicates first; the placeholder crowds go to the bottom.
+      .sort((a, b) => Number(a.placeholder) - Number(b.placeholder)),
   };
 }
 
@@ -331,13 +437,23 @@ export async function mergePatients(
     if (!merge || merge.mergedIntoId || merge.deletedAt) throw new ApiError(404, "The record you're merging doesn't exist");
 
     // An admitted patient is physically in a bed. Moving their identity out from
-    // under a live admission is how a ward ends up treating the wrong file.
+    // under a live admission is how a ward ends up treating the wrong file - so
+    // the record being folded AWAY may not have one.
+    //
+    // The record being KEPT may. Its admission never moves; the duplicate's
+    // visits and bills move onto it, which is what the ward needs to see. This
+    // used to refuse both ways, and so the one moment a duplicate matters most
+    // - the patient is upstairs and half their history is on the other card -
+    // was the one moment it could not be fixed.
     const liveAdmission = await tx.admission.findFirst({
-      where: { patientId: { in: [keep.id, merge.id] }, status: "ADMITTED" },
+      where: { patientId: merge.id, status: "ADMITTED" },
       select: { ipNumber: true },
     });
     if (liveAdmission) {
-      throw new ApiError(409, `Can't merge while ${liveAdmission.ipNumber} is still admitted. Discharge first.`);
+      throw new ApiError(
+        409,
+        `${merge.displayId} is in a bed right now (${liveAdmission.ipNumber}). Keep that record and merge the other one into it.`
+      );
     }
 
     const [visits, bills, tests, prescriptions, admissions] = await Promise.all([

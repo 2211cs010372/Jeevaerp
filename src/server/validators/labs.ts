@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { isIndianMobile, toE164 } from "@/lib/phone";
+import { newPatientPhone, sharedPhoneReason } from "./reception";
+
+/** Set after the "ordered minutes ago" warning - see orderTests. */
+const confirmRepeat = z.boolean().optional();
 
 /** One measured line. `value` stays a string so "Negative" and "<0.5" survive. */
 export const saveLabResultsSchema = z.object({
@@ -45,6 +48,8 @@ export const orderTestsSchema = z.object({
       catalogId: z.string().trim().min(1),
     }))
     .optional(),
+  /** Set after the "ordered minutes ago" warning - see orderTests. */
+  confirmRepeat,
 });
 
 /**
@@ -106,11 +111,9 @@ export const billLabTestsSchema = z.object({
 export const quickPatientSchema = z.object({
   firstName: z.string().trim().min(1, "Enter the patient's name").max(80),
   lastName: z.string().trim().max(80).optional().or(z.literal("")),
-  phone: z
-    .string()
-    .trim()
-    .refine(isIndianMobile, "Enter a valid 10-digit mobile number")
-    .transform(toE164),
+  phone: newPatientPhone,
+  /** A different person on a number already on file - see registerPatient. */
+  sharedPhoneReason,
   age: z.coerce.number().int().min(0).max(120).optional(),
   /**
    * Only ever sent for a baby, and derived on the form from the months or days
@@ -143,6 +146,8 @@ export const walkInSchema = z
     newPatient: quickPatientSchema.optional(),
     /** Catalog entries to order now. */
     catalogIds: z.array(z.string().trim().min(1)).default([]),
+    /** Set after the "ordered minutes ago" warning - see orderTests. */
+    confirmRepeat,
     /** The doctor on the chit they walked in with, if they walked in with one. */
     referringDoctorId: z.string().trim().min(1).optional(),
     /** Tests already ordered and still unbilled, to include on this bill. */
@@ -188,6 +193,8 @@ export const billConsultationSchema = z.object({
   discountAmount: z.coerce.number().min(0).optional(),
   payment: paymentSchema.optional(),
   payments: paymentsSchema.optional(),
+  /** Set after the "this bill was generated minutes ago" warning - see assertNotJustBilled. */
+  confirmRepeat,
 });
 
 export const recordPaymentSchema = z

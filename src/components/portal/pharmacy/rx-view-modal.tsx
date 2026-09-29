@@ -5,6 +5,8 @@ import { PrimaryButton, Pill } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
 import { MobileScanModal } from "@/components/portal/ui/mobile-scan-modal";
 import { api } from "@/lib/api-client";
+import { RepeatConfirmDialog } from "@/components/portal/repeat-confirm-dialog";
+import { repeatBlock, type RepeatBlock } from "@/lib/repeat-guard";
 import { type PadLine } from "@/components/portal/pharmacy/scratchpad";
 
 export interface RxItemData {
@@ -63,6 +65,8 @@ export function RxViewModal({
   const [lines, setLines] = useState<PadLine[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The server's "this chit / these medicines were already billed". */
+  const [repeat, setRepeat] = useState<{ block: RepeatBlock; message: string } | null>(null);
 
   if (!open || !rx) return null;
 
@@ -74,7 +78,7 @@ export function RxViewModal({
   };
   const handleRotate = () => setRotation((r) => (r + 90) % 360);
 
-  const handleDispenseSubmit = async () => {
+  const handleDispenseSubmit = async (confirmRepeat = false) => {
     if (!rx || !lines.length) return;
     setBusy(true);
     setError(null);
@@ -83,10 +87,15 @@ export function RxViewModal({
         patientId: rx.patient.id,
         prescriptionUploadId: rx.id,
         items: lines.map((l) => ({ medicineId: l.medicineId, qty: l.qty })),
+        confirmRepeat: confirmRepeat || undefined,
       });
+      setRepeat(null);
       if (onDispenseSuccess) onDispenseSuccess();
       onClose();
     } catch (err: any) {
+      // Already billed - nothing was dispensed and no stock moved.
+      const again = repeatBlock(err);
+      if (again) { setRepeat({ block: again, message: err.message }); return; }
       setError(err?.message || "Could not complete dispensing.");
     } finally {
       setBusy(false);
@@ -286,7 +295,7 @@ export function RxViewModal({
               {allowDispense && (
                 <div className="mt-auto border-t border-[var(--p-border)] pt-4">
                   {error && <div className="mb-3 text-[12.5px] font-medium text-rose-600">{error}</div>}
-                  <PrimaryButton onClick={handleDispenseSubmit} disabled={busy} full>
+                  <PrimaryButton onClick={() => handleDispenseSubmit()} disabled={busy} full>
                     {busy ? "Processing..." : "Dispense & Bill"}
                   </PrimaryButton>
                 </div>
@@ -305,6 +314,13 @@ export function RxViewModal({
         title="Rx Mobile Scanner"
         subtitle="Scan paper prescription with smartphone camera"
       />
+      {repeat && (
+        <RepeatConfirmDialog
+          block={repeat.block} message={repeat.message} busy={busy}
+          onConfirm={() => { void handleDispenseSubmit(true); }}
+          onClose={() => setRepeat(null)}
+        />
+      )}
     </>
   );
 }

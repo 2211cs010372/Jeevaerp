@@ -11,6 +11,8 @@ import { CorrectStayDialog, type StayLeg } from "@/components/portal/ipd/correct
 import { CorrectChargeDialog, chargeDateLabel } from "@/components/portal/ipd/correct-charge-dialog";
 import { ConvertToSelfPayDialog } from "@/components/portal/ipd/convert-to-self-pay-dialog";
 import { api, ApiClientError } from "@/lib/api-client";
+import { RepeatConfirmDialog } from "@/components/portal/repeat-confirm-dialog";
+import { repeatBlock, type RepeatBlock } from "@/lib/repeat-guard";
 import { bedLabel } from "@/lib/beds";
 import { EditBillDialog, useBillEditing } from "@/components/portal/billing/edit-bill-dialog";
 import { PatientHistoryPanel } from "@/components/portal/ipd/patient-history-panel";
@@ -100,6 +102,8 @@ export default function AdmissionSheetPage() {
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  /** The server's "already on the bill" refusal, and how to go ahead anyway. */
+  const [repeat, setRepeat] = useState<{ block: RepeatBlock; message: string; retry: () => void } | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [undoOpen, setUndoOpen] = useState(false);
@@ -274,15 +278,23 @@ export default function AdmissionSheetPage() {
 
   const labPickTotal = useMemo(() => labCatalog.filter((c) => labPick.has(c.id)).reduce((s, c) => s + Number(c.price), 0), [labCatalog, labPick]);
 
-  async function orderLabs() {
+  /** @param confirmRepeat  pressed "order again" in the "just ordered" dialog. */
+  async function orderLabs(confirmRepeat = false) {
     if (!sheet || labPick.size === 0) return;
     setBusy(true); setErr(null);
     try {
-      await api.post("/labs/tests/order", { patientId: sheet.admission.patient.id, catalogIds: [...labPick] });
+      await api.post("/labs/tests/order", { patientId: sheet.admission.patient.id, catalogIds: [...labPick], confirmRepeat: confirmRepeat || undefined });
+      setRepeat(null);
       setFlash(`${labPick.size} test${labPick.size === 1 ? "" : "s"} ordered - charged to the room and queued for the lab.`);
       setLabsOpen(false); setLabPick(new Set()); setLabQuery("");
       await load(); loadHistory();
-    } catch (e) { setErr(e instanceof ApiClientError ? e.message : "Could not order the tests."); }
+    } catch (e) {
+      // Ordered minutes ago - nothing was ordered; the dialog shows that bill.
+      const again = repeatBlock(e);
+      if (again) { setRepeat({ block: again, message: (e as Error).message, retry: () => { void orderLabs(true); } }); return; }
+      setRepeat(null);
+      setErr(e instanceof ApiClientError ? e.message : "Could not order the tests.");
+    }
     finally { setBusy(false); }
   }
 
@@ -300,18 +312,27 @@ export default function AdmissionSheetPage() {
 
   const lineTotal = useMemo(() => (Number(qty || 0) * Number(price || 0)).toFixed(2), [qty, price]);
 
-  async function addCharge() {
+  /** @param confirmRepeat  pressed "Add it again" in the "just added" dialog. */
+  async function addCharge(confirmRepeat = false) {
     if (!desc.trim() || !price) return;
     setBusy(true); setErr(null);
     try {
       await api.post(`/ipd/admissions/${admissionId}/charges`, {
         category: cat, description: desc.trim(),
         qty: Number(qty || 1), unitPrice: Number(price), gstRatePct: Number(gst || 0),
+        confirmRepeat: confirmRepeat || undefined,
       });
+      setRepeat(null);
       setFlash(`₹${money(lineTotal)} added to the tab.`);
       setDesc(""); setQty("1"); setPrice(""); setGst("0");
       await load();
-    } catch (e) { setErr(e instanceof ApiClientError ? e.message : "Could not add the charge."); }
+    } catch (e) {
+      // The same line went on minutes ago - nothing was added.
+      const again = repeatBlock(e);
+      if (again) { setRepeat({ block: again, message: (e as Error).message, retry: () => { void addCharge(true); } }); return; }
+      setRepeat(null);
+      setErr(e instanceof ApiClientError ? e.message : "Could not add the charge.");
+    }
     finally { setBusy(false); }
   }
 
@@ -798,7 +819,7 @@ export default function AdmissionSheetPage() {
                 </div>
                 <Field label="GST %"><input className={fld} value={gst} inputMode="decimal" onChange={(e) => setGst(e.target.value.replace(/[^\d.]/g, ""))} /></Field>
                 <div className="flex items-end sm:col-span-2">
-                  <button onClick={addCharge} disabled={busy || !desc.trim() || !price}
+                  <button onClick={() => addCharge()} disabled={busy || !desc.trim() || !price}
                     className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">
                     {busy ? <Spinner /> : <Icon name="plus" size={14} />} Add ₹{money(lineTotal)}
                   </button>
@@ -1141,7 +1162,7 @@ export default function AdmissionSheetPage() {
               <span className="text-[13px] text-[var(--p-muted)]">{labPick.size} selected · <span className="font-mono font-semibold text-[var(--p-ink)]">₹{money(labPickTotal)}</span></span>
               <div className="flex gap-2">
                 <button onClick={() => setLabsOpen(false)} className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm text-[var(--p-text)]">Cancel</button>
-                <button onClick={orderLabs} disabled={busy || labPick.size === 0}
+                <button onClick={() => orderLabs()} disabled={busy || labPick.size === 0}
                   className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">
                   {busy ? <><Spinner /> Ordering…</> : <><Icon name="flask" size={15} /> Order &amp; charge room</>}
                 </button>
@@ -1363,6 +1384,13 @@ export default function AdmissionSheetPage() {
           accent="teal"
           onClose={() => setEditingChargeId(null)}
           onSaved={(msg) => { setEditingChargeId(null); setFlash(msg); load(); loadHistory(); }}
+        />
+      )}
+      {repeat && (
+        <RepeatConfirmDialog
+          block={repeat.block} message={repeat.message} busy={busy}
+          onConfirm={() => repeat.retry()}
+          onClose={() => setRepeat(null)}
         />
       )}
     </PortalScroll>

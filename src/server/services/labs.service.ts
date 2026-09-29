@@ -10,6 +10,7 @@ import { notifyLabReportReady } from "./notify.service";
 import { collectionByMode, type ModeTotal } from "./reports.service";
 import { publishLive } from "@/server/realtime/publish";
 import { dateOnlyISO, parseLocalDate } from "@/lib/date";
+import { minutesAgo, repeatWindowStart, type RepeatBlock } from "@/lib/repeat-guard";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import { linkAdvisedLabs } from "./prescriptions.service";
 import { isInHouseReferrer } from "@/lib/labs/referrer";
@@ -359,6 +360,11 @@ export async function orderTests(
      * the due.
      */
     skipStayBill?: boolean;
+    /**
+     * The desk has seen "these tests were ordered minutes ago" and this really
+     * is a second, separate order. See the regenerated-bill check below.
+     */
+    confirmRepeat?: boolean;
   },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<LabTestDTO[] & { chargedToRoom?: boolean }> {
@@ -375,6 +381,45 @@ export async function orderTests(
     select: { id: true, name: true, price: true },
   });
   if (catalog.length !== input.catalogIds.length) throw new ApiError(400, "One or more tests are unavailable");
+
+  // ── THE SAME ORDER, SUBMITTED TWICE ──
+  //
+  // A test can be repeated whenever the doctor needs it - that is never
+  // refused (the owner's rule). What is refused is one order becoming two: 26
+  // lab bills on the live data were exact copies of a bill the same person had
+  // raised 0.5-8 minutes earlier, because the screen looked like it had failed.
+  // So only a test ordered for this patient in the last REPEAT_WINDOW_MIN is
+  // caught, before anything is written; the desk is shown the bill it is
+  // already on and can go ahead with one more click if it really is separate.
+  const earlier = input.confirmRepeat ? [] : await prisma.labTest.findMany({
+    where: { patientId: input.patientId, catalogId: { in: input.catalogIds }, createdAt: { gte: repeatWindowStart() } },
+    orderBy: { createdAt: "asc" },
+    select: {
+      testName: true, status: true, createdAt: true,
+      invoiceItems: { select: { invoice: { select: { id: true, receiptNo: true, status: true } } } },
+    },
+  });
+  if (earlier.length > 0) {
+    const details: RepeatBlock = {
+      code: "REPEAT_ENTRY", kind: "LAB_TEST",
+      items: earlier.map((t) => {
+        const bill = t.invoiceItems.map((i) => i.invoice).find((i) => i.status !== "CANCELLED");
+        return {
+          label: t.testName,
+          at: t.createdAt.toISOString(),
+          detail: `${t.status === "COMPLETED" ? "Result ready" : "Pending"} · ${bill ? `on bill ${bill.receiptNo}` : "not billed yet"}`,
+          invoiceId: bill?.id ?? null,
+        };
+      }),
+    };
+    const names = [...new Set(earlier.map((t) => t.testName))];
+    throw new ApiError(
+      409,
+      `${names.join(", ")} ${names.length === 1 ? "was" : "were"} ordered for this patient ${minutesAgo(earlier[earlier.length - 1].createdAt)}. ` +
+        "This looks like the same order submitted again.",
+      details
+    );
+  }
 
   // Is this patient in a bed? That single fact decides where the money goes.
   const admission = await prisma.admission.findFirst({
@@ -429,7 +474,11 @@ export async function orderTests(
     await logAudit(actor, {
       action: admission ? "LAB_TESTS_ORDERED_IP" : "LAB_TESTS_ORDERED",
       targetTable: "LabTest", targetId: ids[0],
-      meta: { count: ids.length, orderGroupId, patientId: input.patientId, ipNumber: admission?.ipNumber ?? null },
+      meta: {
+        count: ids.length, orderGroupId, patientId: input.patientId, ipNumber: admission?.ipNumber ?? null,
+        // Ordered again within minutes of the same tests, after the warning.
+        ...(input.confirmRepeat ? { confirmedRepeat: true } : {}),
+      },
       ...ctx,
     }, tx);
     return { ids, byCatalog };
@@ -1314,8 +1363,12 @@ export async function walkInOrder(
     newPatient?: {
       firstName: string; lastName?: string; phone: string;
       age?: number; dob?: string; gender?: "MALE" | "FEMALE" | "OTHER";
+      /** Why this is a different person from those already on the number. */
+      sharedPhoneReason?: string;
     };
     catalogIds: string[];
+    /** Seen the "ordered minutes ago" warning and it really is a new order - see orderTests. */
+    confirmRepeat?: boolean;
     labTestIds: string[];
     /** The doctor on the chit they walked in with, when they walked in with one. */
     referringDoctorId?: string;
@@ -1347,6 +1400,9 @@ export async function walkInOrder(
         // Set only when the counter typed months or days - see lib/age.
         dob: input.newPatient.dob,
         gender: input.newPatient.gender,
+        // A number already on file is refused here, before anything is
+        // ordered - the counter picks the existing record and resubmits.
+        sharedPhoneReason: input.newPatient.sharedPhoneReason,
         isVip: false,
       },
       ctx
@@ -1383,6 +1439,7 @@ export async function walkInOrder(
         patientId: patient.id, catalogIds: input.catalogIds, referringDoctorId: input.referringDoctorId,
         appointmentId: input.appointmentId, fromAdvised: input.fromAdvised,
         skipStayBill: !!input.bill,
+        confirmRepeat: input.confirmRepeat,
       },
       ctx,
     );

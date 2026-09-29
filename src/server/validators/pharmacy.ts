@@ -83,6 +83,8 @@ export const dispenseSchema = z.object({
     amount: z.coerce.number().min(0.01),
     reference: z.string().trim().max(80).optional(),
   })).min(1).max(4).optional(),
+  /** Set after the "same medicines just billed" warning - see dispense(). */
+  confirmRepeat: z.boolean().optional(),
 });
 
 export const medicineSchema = z.object({
