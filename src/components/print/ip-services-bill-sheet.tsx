@@ -514,7 +514,7 @@ export function IpServicesBillSheet() {
                   <div className="min-w-0 flex-1">
                     <div className="flex gap-2 text-[9.5px]">
                       <span className="w-[92px] shrink-0 font-semibold">Rupees in words</span>
-                      <span>: <span className="font-semibold uppercase">{amountInWords(m.netPayable)}</span></span>
+                      <span>: <span className="font-semibold uppercase">{amountInWords(m.netBill)}</span></span>
                     </div>
                     <div className="mt-6">
                       <div className="w-[190px] border-b border-[#333]" />
@@ -524,15 +524,27 @@ export function IpServicesBillSheet() {
 
                   <table className="w-[250px] text-[10px]">
                     <tbody>
-                      <T k="Gross Amount" v={money(m.gross)} />
-                      {Number(m.discount) > 0 && <T k="Discount (services)" v={money(m.discount)} />}
+                     
+
+
+                      <T k="Total Amount" v={money(m.gross)} />
+                      <T k="Advance Paid" v={money(m.advance)} />
+                      <T k="Discount" v={money(m.discount)} />
+                      <T k="Balance Due" v={money(m.netPayable)} strong />
+
+                      {/* NO "…of which not yet billed" SPLIT. The Total is the
+                  Total. Carving out the part no counter had invoiced yet
+                  described the hospital's paperwork, not the family's debt -
+                  and a caveat sitting inside the money block reads as a figure
+                  that might come off, which it never does. */}
                       {Number(m.gst) > 0 && <T k="Total GST" v={money(m.gst)} />}
-                      {/* Bills are whole rupees (lib/money-round); this squares the paise. */}
+                      {/* The bills are whole rupees (lib/money-round); their round-offs,
+                          summed, are what closes lines-plus-tax onto what was billed. */}
                       {Number(m.roundOff) !== 0 && <T k="Round Off" v={money(m.roundOff)} />}
-                      <T k="Net Amount" v={money(m.netBill)} rule />
-                      {Number(m.paidTotal) > 0 && <T k="Already Paid" v={money(m.paidTotal)} />}
-                      {Number(m.advanceApplied) > 0 && <T k="Advance Paid" v={money(m.advanceApplied)} />}
-                      <T k="Balance Payable" v={money(m.netPayable)} rule strong />
+                      <T k="Net Amount" v={money(m.netBill)} rule strong />
+
+                      {/* {Number(m.paidTotal) > 0 && <T k="Already Paid" v={money(m.paidTotal)} />}
+                      {Number(m.advanceApplied) > 0 && <T k="Advance Paid" v={money(m.advanceApplied)} />} */}
                       {/* A deposit left over is HANDED BACK, and it prints as its
                     own line rather than as a negative balance - a family
                     reading "-2,000.00" at the foot of a bill does not read
@@ -543,12 +555,12 @@ export function IpServicesBillSheet() {
                 </div>
 
                 <div className="keep-together mt-6 flex items-end justify-between gap-8">
-                 
+
                   <div className="text-[9px]">
                     <div className="flex gap-2"><span className="w-[82px] font-semibold">Bill date &amp; Time</span><span>: {dt(b.billedAt)}</span></div>
                     <div className="flex gap-2"><span className="w-[82px] font-semibold">Print Date &amp; Time</span><span>: {dt(new Date().toISOString())}</span></div>
                   </div>
-                
+
                 </div>
 
                 <div className="mt-4 border-t border-[#333] pt-1 text-center text-[8.5px] text-[#57655f]">

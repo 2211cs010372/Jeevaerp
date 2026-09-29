@@ -542,19 +542,22 @@ export function DetailedBillSheet() {
 
                   <table className="w-[250px] text-[10.5px]">
                     <tbody>
-                      <T k="Total" v={money(b.gross)} />
+                      <T k="Total Amount" v={money(b.gross)} />
+                      <T k="Advance Paid" v={money(b.advance)} />
+                      <T k="Discount" v={money(b.discount)} />
+                      <T k="Balance Due" v={money(b.netPayable)} strong />
+
                       {/* NO "…of which not yet billed" SPLIT. The Total is the
                   Total. Carving out the part no counter had invoiced yet
                   described the hospital's paperwork, not the family's debt -
                   and a caveat sitting inside the money block reads as a figure
                   that might come off, which it never does. */}
-                      <T k="Discount" v={money(b.discount)} />
                       {Number(b.gst) > 0 && <T k="Total GST" v={money(b.gst)} />}
                       {/* The bills are whole rupees (lib/money-round); their round-offs,
                           summed, are what closes lines-plus-tax onto what was billed. */}
                       {Number(b.roundOff) !== 0 && <T k="Round Off" v={money(b.roundOff)} />}
-                      <T k="Net Amount" v={money(b.netBill)} rule />
-                      {/* <T k="Advance Paid" v={money(b.advance)} /> */}
+                      <T k="Net Amount" v={money(b.netBill)} rule strong />
+
                       {/* Money already taken at a counter: the pharmacy and lab
                   windows on the bills listed above, and the discharge desk on
                   the stay's own bill. Without this row the sheet adds those

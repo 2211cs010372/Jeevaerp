@@ -4160,7 +4160,10 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   const gross = groups.reduce((s, g) => round2(s + Number(g.total)), 0);
   const inv = a.invoices.find((i) => i.source === "IPD");
   const discount = round2(num(inv?.discountAmount) + counterDiscount);
-  const gst = round2(num(inv?.cgstAmount) + num(inv?.sgstAmount) + counterGst);
+  // GST is NOT applied on the IPD detailed bill - the hospital does not show
+  // tax on this document. The counter invoices (pharmacy, lab) still carry
+  // their own GST; it is simply excluded from this sheet's totals.
+  const gst = 0;
   // The bills as issued are whole rupees; the lines and tax above are to the
   // paisa. Their round-offs close the gap, or every rounded bill would leave
   // up to 50 paise showing as owed (or as over-paid) on this sheet.
