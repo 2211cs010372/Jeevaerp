@@ -105,6 +105,14 @@ interface Data {
   sourceBills: BillSource[];
 }
 
+/**
+ * THE RUPEE SIGN, SIZED TO THE DIGITS. Neither font on this sheet (DM Mono for
+ * money, Instrument Sans for text) carries a ₹, so the browser borrowed one from
+ * a system font and drew it visibly taller and heavier than the figure beside
+ * it. Its own span pins it to the digits' size - see .rs in the sheet CSS.
+ */
+const Rs = () => <span className="rs">₹</span>;
+
 const money = (v: string | number) =>
   Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const GENDER: Record<string, string> = { MALE: "MALE", FEMALE: "FEMALE", OTHER: "OTHER" };
@@ -190,7 +198,7 @@ function BillRow({ l, withDate, indent }: { l: BillLine; withDate?: boolean; ind
           weight the pharmacy invoice now sets its items in, and the two
           documents are read side by side for the same stay. */}
       <td className={`py-[3px] pr-1 font-semibold ${indent ? "pl-3" : ""}`}>
-        {withDate && l.date && <span className="font-mono text-[8.5px]">{dt(l.date)} - </span>}
+        {withDate && l.date && <span className="font-mono text-[10.5px]">{dt(l.date)} - </span>}
         {l.description}
         {/* NO PER-LINE STATUS MARKERS AT ALL - neither paid/due nor
             billed/not-yet-billed.
@@ -216,7 +224,7 @@ function BillRow({ l, withDate, indent }: { l: BillLine; withDate?: boolean; ind
       {/* An unpriced draft prints a dash, never 0.00 - a zero in a money column
           reads as "free", which is a different claim from "not priced yet". */}
       <td className="py-[3px] pr-1 text-right font-mono font-medium">{l.draft && !l.priced ? "—" : money(l.rate)}</td>
-      <td className="py-[3px] text-right font-mono font-medium">{l.draft && !l.priced ? "—" : `₹${money(l.amount)}`}</td>
+      <td className="py-[3px] text-right font-mono font-medium">{l.draft && !l.priced ? "—" : <><Rs />{money(l.amount)}</>}</td>
     </tr>
   );
 }
@@ -371,7 +379,7 @@ export function DetailedBillSheet() {
                 {/* ── DOCTOR INFORMATION ── who treated, under what letters. An
             assessor checks the specialisation against the diagnosis. */}
                 <div className="keep-together mt-1.5 border border-[#333]">
-                  <div className="border-b border-[#333] bg-[#eef2f1] px-1.5 py-[3px] text-[9.5px] font-bold uppercase">
+                  <div className="border-b border-[#333] bg-[#eef2f1] px-1.5 py-[3px] text-[11.5px] font-bold uppercase">
                     Doctor Information
                   </div>
                   <div className="grid grid-cols-2 gap-x-4 p-1.5">
@@ -384,11 +392,11 @@ export function DetailedBillSheet() {
                   </div>
                 </div>
 
-                <div className="mt-1.5 text-[9.5px] font-bold uppercase">Payment Information</div>
+                <div className="mt-1.5 text-[11.5px] font-bold uppercase">Payment Information</div>
 
                 {/* ── THE LINES ── its own thead, which repeats too, so a continuation
             page carries the column headings rather than nine bare numbers. */}
-                <table className="mt-1 w-full border-collapse text-[9.5px]">
+                <table className="mt-1 w-full border-collapse text-[10.5px]">
                   <thead>
                     {/* FOUR COLUMNS. Date, issue number, HSN code and batch each
                 had one of their own; between them they took a third of the
@@ -400,7 +408,7 @@ export function DetailedBillSheet() {
                       <Th w="60%">Service Type</Th>
                       <Th w="10%" right>Quantity</Th>
                       <Th w="13%" right>Rate</Th>
-                      <Th w="17%" right>Amount(₹)</Th>
+                      <Th w="17%" right>Amount(<Rs />)</Th>
                     </tr>
                   </thead>
                   <tbody>
@@ -416,8 +424,8 @@ export function DetailedBillSheet() {
                     them, and on a bill that breaks across pages the heading is
                     the part that stays with the section. */}
                         <tr className="border-t border-[#333]">
-                          <td colSpan={3} className="pb-[3px] pt-2 text-[9.5px] font-bold uppercase">{g.title}</td>
-                          <td className="pb-[3px] pt-2 text-right font-mono text-[9.5px] font-bold">₹{money(g.total)}</td>
+                          <td colSpan={3} className="pb-[3px] pt-2 text-[11.5px] font-semibold uppercase">{g.title}</td>
+                          <td className="pb-[3px] pt-2 text-right font-mono text-[11.5px] font-semibold"><Rs />{money(g.total)}</td>
                         </tr>
 
                         {g.byDate
@@ -429,7 +437,7 @@ export function DetailedBillSheet() {
                             <Fragment key={`${g.title}-${day}`}>
                               {day && (
                                 <tr>
-                                  <td colSpan={4} className="pb-[2px] pt-[5px] font-mono text-[9px] font-semibold">{day}</td>
+                                  <td colSpan={4} className="pb-[2px] pt-[5px] font-mono text-[11.5px] font-semibold">{day}</td>
                                 </tr>
                               )}
                               {lines.map((l, i) => <BillRow key={`${g.title}-${day}-${i}`} l={l} indent />)}
@@ -462,23 +470,23 @@ export function DetailedBillSheet() {
             totals block, where it settles what is owed today. */}
                 {b.sourceBills.length > 0 && (
                   <div className="keep-together mt-3">
-                    <div className="text-[9.5px] font-bold uppercase">Bills included in this statement</div>
-                    <table className="mt-1 w-full border-collapse text-[9.5px]">
+                    <div className="text-[11.5px] font-semibold uppercase">Bills included in this statement</div>
+                    <table className="mt-1 w-full border-collapse text-[10.5px]">
                       <thead>
-                        <tr className="border-b border-t border-[#333]">
+                        <tr className="border-b border-t text-[11.5px] border-[#333]">
                           <Th w="32%">Invoice No</Th>
                           <Th w="26%">Date &amp; time</Th>
                           <Th w="22%">Counter</Th>
-                          <Th w="20%" right>Amount(₹)</Th>
+                          <Th w="20%" right>Amount(<Rs />)</Th>
                         </tr>
                       </thead>
                       <tbody>
                         {b.sourceBills.map((x) => (
                           <tr key={x.receiptNo}>
-                            <td className="py-[3px] pr-1 font-mono text-[8.5px]">{x.receiptNo}</td>
-                            <td className="py-[3px] pr-1 font-mono text-[8.5px]">{dt(x.date)}</td>
+                            <td className="py-[3px] pr-1 font-mono text-[10.5px]">{x.receiptNo}</td>
+                            <td className="py-[3px] pr-1 font-mono text-[10.5px]">{dt(x.date)}</td>
                             <td className="py-[3px] pr-1">{SOURCE_LABEL[x.source] ?? x.source}</td>
-                            <td className="py-[3px] text-right font-mono">₹{money(x.total)}</td>
+                            <td className="py-[3px] text-right font-mono"><Rs />{money(x.total)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -492,25 +500,25 @@ export function DetailedBillSheet() {
             a family can check and one they have to take on trust. */}
                 {b.payments.length > 0 && (
                   <div className="keep-together mt-3">
-                    <div className="text-[9.5px] font-bold uppercase">Payment Details</div>
-                    <table className="mt-1 w-full border-collapse text-[9.5px]">
+                    <div className="text-[11.5px] font-bold uppercase">Payment Details</div>
+                    <table className="mt-1 w-full border-collapse text-[10.5px]">
                       <thead>
                         <tr className="border-b border-t border-[#333]">
                           <Th w="8%">S.NO</Th>
                           <Th w="30%">Invoice No</Th>
                           <Th w="26%">Date &amp; time</Th>
                           <Th w="20%">Payment Mode</Th>
-                          <Th w="16%" right>Amount(₹)</Th>
+                          <Th w="16%" right>Amount(<Rs />)</Th>
                         </tr>
                       </thead>
                       <tbody>
                         {b.payments.map((p, i) => (
                           <tr key={`${p.invoiceNo}-${i}`}>
-                            <td className="py-[3px] pr-1 font-mono text-[8.5px]">{i + 1}</td>
-                            <td className="py-[3px] pr-1 font-mono text-[8.5px]">{p.invoiceNo}</td>
-                            <td className="py-[3px] pr-1 font-mono text-[8.5px]">{dt(p.date)}</td>
+                            <td className="py-[3px] pr-1 font-mono text-[10.5px]">{i + 1}</td>
+                            <td className="py-[3px] pr-1 font-mono text-[10.5px]">{p.invoiceNo}</td>
+                            <td className="py-[3px] pr-1 font-mono text-[10.5px]">{dt(p.date)}</td>
                             <td className="py-[3px] pr-1">{MODE_LABEL[p.mode] ?? p.mode}</td>
-                            <td className="py-[3px] text-right font-mono">₹{money(p.amount)}</td>
+                            <td className="py-[3px] text-right font-mono"><Rs />{money(p.amount)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -522,17 +530,17 @@ export function DetailedBillSheet() {
             goes first. */}
                 <div className="keep-together mt-4 flex items-start justify-between gap-8">
                   <div className="min-w-0 flex-1">
-                    <div className="flex gap-2 text-[9.5px]">
+                    <div className="flex gap-2 text-[10.5px]">
                       <span className="w-[92px] shrink-0 font-semibold">Rupees in words</span>
-                      <span>: <span className="font-semibold uppercase">{amountInWords(b.netPayable)}</span></span>
+                      <span>: <span className="font-semibold uppercase">{amountInWords(b.netBill)}</span></span>
                     </div>
                     <div className="mt-6">
                       <div className="w-[190px] border-b border-[#333]" />
-                      <div className="mt-1 text-[9px] font-bold">Patient/Attendant Signatory</div>
+                      <div className="mt-1 text-[10.5px] font-bold">Patient/Attendant Signatory</div>
                     </div>
                   </div>
 
-                  <table className="w-[250px] text-[10px]">
+                  <table className="w-[250px] text-[10.5px]">
                     <tbody>
                       <T k="Total" v={money(b.gross)} />
                       {/* NO "…of which not yet billed" SPLIT. The Total is the
@@ -546,15 +554,17 @@ export function DetailedBillSheet() {
                           summed, are what closes lines-plus-tax onto what was billed. */}
                       {Number(b.roundOff) !== 0 && <T k="Round Off" v={money(b.roundOff)} />}
                       <T k="Net Amount" v={money(b.netBill)} rule />
-                      <T k="Advance Paid" v={money(b.advance)} />
+                      {/* <T k="Advance Paid" v={money(b.advance)} /> */}
                       {/* Money already taken at a counter: the pharmacy and lab
                   windows on the bills listed above, and the discharge desk on
                   the stay's own bill. Without this row the sheet adds those
                   bills into its total and then asks for them a second time. */}
-                      {Number(b.counterPaid) > 0 && (
+                      {/* {Number(b.counterPaid) > 0 && (
                         <T k="Paid at Counter" v={money(b.counterPaid)} />
-                      )}
-                      <T k="Balance Amount" v={money(b.netPayable)} rule strong />
+                      )} */}
+
+                      {/* Balance amount */}
+                      {/* <T k="Balance Amount" v={money(b.netPayable)} rule strong /> */}
                     </tbody>
                   </table>
                 </div>
@@ -563,9 +573,9 @@ export function DetailedBillSheet() {
                 <div className="keep-together mt-6 flex items-end justify-between gap-8">
                   <div>
                     <svg ref={ipBar} />
-                    <div className="text-[8.5px] font-semibold">( IP No )</div>
+                    <div className="text-[10.5px] font-semibold">( IP No )</div>
                   </div>
-                  <div className="text-[9px]">
+                  <div className="text-[10.5px]">
                     <div className="flex gap-2"><span className="w-[82px] font-semibold">Bill date &amp; Time</span><span>: {dt(b.billedAt)}</span></div>
                     <div className="flex gap-2"><span className="w-[82px] font-semibold">Print Date &amp; Time</span><span>: {dt(new Date().toISOString())}</span></div>
                   </div>
@@ -611,7 +621,7 @@ export function DetailedBillSheet() {
  */
 function F({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
   return (
-    <div className="flex gap-1 py-[1.5px] text-[9.5px] leading-tight">
+    <div className="flex gap-1 py-[1.5px] text-[10.5px] leading-tight">
       <span className="w-[104px] shrink-0 font-semibold">{k}</span>
       <span className="shrink-0">:</span>
       <span className={strong ? "font-bold" : "font-semibold"}>{v}</span>
@@ -631,7 +641,7 @@ function T({ k, v, rule, strong }: { k: string; v: string; rule?: boolean; stron
 
 function Th({ children, w, right }: { children?: React.ReactNode; w: string; right?: boolean }) {
   return (
-    <th style={{ width: w }} className={`py-[3px] pr-1 text-[9px] font-bold ${right ? "text-right" : "text-left"}`}>
+    <th style={{ width: w }} className={`py-[3px] pr-1 text-[11.5px] font-bold ${right ? "text-right" : "text-left"}`}>
       {children}
     </th>
   );
@@ -675,10 +685,19 @@ const CSS = (onStationery: boolean) => `
        laid out like the paper. Measurements match STATIONERY_PRINT_CSS. */
     padding: ${onStationery ? "40mm 13mm 46mm" : "10mm 10mm"};
     font-family: var(--font-sans, "Instrument Sans"), "Noto Sans Telugu", "Nirmala UI", Arial, sans-serif;
-    font-size: 9.7px;
+    font-size: 10.5px;
     line-height: 1.4;
   }
   #print-sheet .rule-strong { border-bottom: 2px solid var(--pr-primary); }
+  /* ₹ from a font that has it, scaled to the height of the amount's digits and
+     at the digits' weight, so "₹1,186.50" reads as one figure. */
+  #print-sheet .rs {
+    font-family: "Noto Sans", "Segoe UI", Arial, sans-serif;
+    font-size: 0.86em;
+    font-weight: inherit;
+    line-height: 1;
+    margin-right: 0.08em;
+  }
   /* The document wrapper is a table only so its header can repeat; it must not
      look like one. */
   #print-sheet table.doc { width: 100%; border-collapse: collapse; }
