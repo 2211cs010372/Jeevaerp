@@ -256,15 +256,12 @@ export async function pendingWork(): Promise<{ items: PendingWorkDTO[]; count: n
   // insurer for any of that money yet, which is the expensive version of the
   // same mistake.
   //
-  // Bounded to 90 days. Older than that the claim window has usually closed with
-  // the insurer anyway, and an unbounded list would grow into a screen nobody
-  // reads - which is the same as having no list.
-  const cutoff = new Date(now - 90 * 24 * 3_600_000);
+  // Every closed stay, however old (owner, 1 Oct 2026: no data limits - old
+  // stays are being keyed in from offline records).
   const closed = await prisma.admission.findMany({
     where: {
       payerType: "INSURANCE",
       status: { not: "ADMITTED" },
-      dischargedAt: { gte: cutoff },
     },
     orderBy: { dischargedAt: "desc" },
     select: {
@@ -423,17 +420,13 @@ export async function insuranceStays(opts?: {
   /** Which stays to return. Defaults to INSURANCE - see the note above. */
   payer?: "INSURANCE" | "SELF_PAY" | "ALL";
 }): Promise<{ stays: StayDTO[] }> {
-  const cutoff = new Date(Date.now() - 90 * 24 * 3_600_000);
   const payer = opts?.payer ?? "INSURANCE";
   const rows = await prisma.admission.findMany({
-    where: {
-      ...(payer === "ALL" ? {} : { payerType: payer }),
-      // Still in a bed, or discharged inside the claim window. Older than that
-      // the claim has usually closed, and an unbounded list is one nobody reads.
-      OR: [{ status: "ADMITTED" }, { dischargedAt: { gte: cutoff } }],
-    },
+    // EVERY STAY, however long ago it closed. This used to stop at 90 days after
+    // discharge, which hid the old stays now being keyed in from offline records
+    // (owner, 1 Oct 2026: no data limits).
+    where: payer === "ALL" ? {} : { payerType: payer },
     orderBy: [{ status: "asc" }, { admittedAt: "desc" }],
-    take: 200,
     select: {
       id: true, ipNumber: true, status: true, admittedAt: true, dischargedAt: true,
       payerType: true,
@@ -513,7 +506,7 @@ export async function listClaims(filter: { status?: string; q?: string }): Promi
       { patient: { displayId: { contains: q, mode: "insensitive" } } },
     ];
   }
-  const rows = await prisma.insuranceClaim.findMany({ where, orderBy: { createdAt: "desc" }, take: 200, select: listSelect });
+  const rows = await prisma.insuranceClaim.findMany({ where, orderBy: { createdAt: "desc" }, select: listSelect });
   return rows.map(toListDTO);
 }
 
@@ -1047,11 +1040,7 @@ export async function settlementBoard(): Promise<{
   /** What is waiting to be moved onto patients, across the whole list. */
   patientPaysTotal: string;
 }> {
-  // A year back. Claims genuinely sit for months, so 90 days (as the "to raise"
-  // list uses) would drop exactly the old refusals this screen exists to find -
-  // but unbounded turns into a screen nobody scrolls, which is the same as no
-  // screen at all.
-  const cutoff = new Date(Date.now() - 365 * 24 * 3_600_000);
+  // Every claim, however old (owner, 1 Oct 2026: no data limits).
 
   // `InsuranceClaim.admissionId` is a bare column with no Prisma relation behind
   // it, so the stay cannot be joined in - it is fetched and stitched, the same
@@ -1061,7 +1050,7 @@ export async function settlementBoard(): Promise<{
   // one indexed table instead of scanning a year of admissions to find the few
   // that carry a claim.
   const claims = await prisma.insuranceClaim.findMany({
-    where: { admissionId: { not: null }, createdAt: { gte: cutoff } },
+    where: { admissionId: { not: null } },
     orderBy: { createdAt: "desc" },
     select: {
       id: true, claimNo: true, stage: true, status: true, admissionId: true,
@@ -1519,7 +1508,6 @@ export async function stayBills(admissionId: string): Promise<{
       // Newest first - on this list the relevant bill is the recent one, which
       // is the opposite of the claim list where the story reads forwards.
       orderBy: { createdAt: "desc" },
-      take: 60,
       select: billSelect,
     }),
   ]);

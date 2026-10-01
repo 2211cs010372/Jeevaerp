@@ -354,7 +354,7 @@ export interface StaffSessionDTO {
 }
 
 /** Recent sign-in sessions for the admin activity view. */
-export async function listStaffSessions(limit = 100): Promise<StaffSessionDTO[]> {
+export async function listStaffSessions(limit?: number): Promise<StaffSessionDTO[]> {
   const rows = await prisma.staffSession.findMany({
     orderBy: { loginAt: "desc" }, take: limit,
     select: { id: true, method: true, ipAddress: true, loginAt: true, logoutAt: true, user: { select: { name: true, role: true } } },

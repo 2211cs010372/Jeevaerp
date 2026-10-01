@@ -167,7 +167,6 @@ export async function doctorToday(actor: AuthUser, viewAsDoctorId?: string): Pro
       OR: [{ appointment: { doctorId: doc.id } }, { admission: { doctorId: doc.id } }],
     },
     orderBy: { completedAt: "desc" },
-    take: 10,
     select: {
       id: true, testName: true, reportFileUrl: true, completedAt: true, admissionId: true, impression: true,
       patient: { select: { displayId: true, fullName: true } },
@@ -290,7 +289,7 @@ export async function doctorPatientChart(actor: AuthUser, displayId: string) {
   const [visits, labs, scans] = await Promise.all([
     prisma.appointment.findMany({
       where: { patientId: patient.id },
-      orderBy: { visitDate: "desc" }, take: 20,
+      orderBy: { visitDate: "desc" },
       select: {
         opNumber: true, visitDate: true, status: true,
         doctor: { select: { name: true, department: true } },
@@ -298,12 +297,12 @@ export async function doctorPatientChart(actor: AuthUser, displayId: string) {
     }),
     prisma.labTest.findMany({
       where: { OR: [{ patientId: patient.id }, { appointment: { patientId: patient.id } }] },
-      orderBy: { createdAt: "desc" }, take: 30,
+      orderBy: { createdAt: "desc" },
       select: { id: true, testName: true, status: true, reportFileUrl: true, createdAt: true, completedAt: true },
     }),
     prisma.prescriptionUpload.findMany({
       where: { patientId: patient.id },
-      orderBy: { createdAt: "desc" }, take: 20,
+      orderBy: { createdAt: "desc" },
       select: {
         id: true, appointmentId: true, fileUrl: true, fileName: true, title: true, doctorName: true,
         status: true, createdAt: true,

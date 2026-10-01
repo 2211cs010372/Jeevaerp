@@ -121,20 +121,21 @@ export function parsePack(label: string | null | undefined): PackSpec {
 
   // ── DISTRIBUTOR "NxM" FORMAT ──────────────────────────────────────────────
   //
-  // Indian pharma invoices commonly print "1×5", "1x10", "1X5" meaning "one
-  // strip of 5 tablets" or "one strip of 10 tablets". The second number is what
-  // matters — it is the count of dispensing units in the pack:
+  // Invoices print the pack as two numbers joined by x, X, × or *. The size is
+  // how many tablets are in ONE pack (one strip) - one pack is qty 1:
   //
-  //   1×5   →  5 units per pack   (same as "5T" or "5S")
-  //   1×10  → 10 units per pack   (same as "10T" or "10S")
-  //   2×15  → 15 units per pack   (the first number is how many strips, not the size)
+  //   1x5, 1*5, 5x1, 5*1  ->  5   the side that is not 1, whichever order
+  //   10x10               -> 10   both above 1: the second number is the strip,
+  //   10*2                ->  2   the first is how many strips sit in the box
+  //   1x1                 ->  1
   //
-  // Without this, "1×5" fell through to the main regex which read "1" as the
-  // size and "×5" as an unrecognised suffix — yielding packSize=1, which makes
-  // the per-unit price equal the per-pack price and overcharges by 5x.
-  const nxm = raw.replace(/\s+/g, "").match(/^(\d{1,3})\s*[×xX*]\s*(\d{1,4})$/);
+  // Owner's rule, 1 Oct 2026. Taking only the second number read "5x1" and
+  // "15*1" as a pack of one, so the per-tablet price came out at the whole
+  // strip's MRP.
+  const nxm = raw.replace(/\s+/g, "").match(/^(\d{1,4})[×✕xX*](\d{1,4})(?:T|TAB|TABS|C|CAP|CAPS|['`’,]?S)?$/i);
   if (nxm) {
-    const nxmSize = Number(nxm[2]);
+    const first = Number(nxm[1]), second = Number(nxm[2]);
+    const nxmSize = second > 1 ? second : first;
     if (Number.isInteger(nxmSize) && nxmSize >= 1 && nxmSize <= 5000) {
       return { size: nxmSize, unit: "unit", known: true };
     }

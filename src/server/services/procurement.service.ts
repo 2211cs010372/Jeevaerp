@@ -66,7 +66,6 @@ export async function listSuppliers(opts?: { includeInactive?: boolean; query?: 
         : {}),
     },
     orderBy: [{ active: "desc" }, { name: "asc" }],
-    take: 200,
     select: {
       id: true, name: true, contactPerson: true, phone: true, email: true, address: true,
       gstin: true, drugLicenseNo: true, paymentTermDays: true, active: true, notes: true,
@@ -140,15 +139,15 @@ export async function supplierDetail(id: string) {
       id: true, name: true, contactPerson: true, phone: true, email: true, address: true,
       gstin: true, drugLicenseNo: true, paymentTermDays: true, active: true, notes: true,
       purchaseOrders: {
-        orderBy: { createdAt: "desc" }, take: 20,
+        orderBy: { createdAt: "desc" },
         select: { id: true, poNumber: true, status: true, totalAmount: true, expectedDate: true, createdAt: true },
       },
       goodsReceipts: {
-        orderBy: { createdAt: "desc" }, take: 20,
+        orderBy: { createdAt: "desc" },
         select: { id: true, grnNumber: true, invoiceNo: true, receivedValue: true, invoiceAmount: true, createdAt: true },
       },
       purchaseReturns: {
-        orderBy: { createdAt: "desc" }, take: 20,
+        orderBy: { createdAt: "desc" },
         select: { id: true, returnNo: true, status: true, claimValue: true, creditedAmount: true, createdAt: true },
       },
     },
@@ -587,7 +586,6 @@ export async function listPurchaseOrders(filter?: { status?: string; supplierId?
       ...(filter?.query ? { poNumber: { contains: filter.query, mode: "insensitive" as const } } : {}),
     },
     orderBy: { createdAt: "desc" },
-    take: 100,
     select: {
       id: true, poNumber: true, status: true, expectedDate: true, totalAmount: true, createdAt: true, sentAt: true,
       supplier: { select: { id: true, name: true } },
@@ -1105,7 +1103,6 @@ export async function listGoodsReceipts(filter?: { supplierId?: string; query?: 
         : {}),
     },
     orderBy: { createdAt: "desc" },
-    take: 100,
     select: {
       id: true, grnNumber: true, invoiceNo: true, invoiceDate: true, invoiceAmount: true,
       receivedValue: true, receivedTax: true, createdAt: true,
@@ -1372,7 +1369,6 @@ export async function listPurchaseReturns(filter?: { status?: string; supplierId
       ...(filter?.supplierId ? { supplierId: filter.supplierId } : {}),
     },
     orderBy: { createdAt: "desc" },
-    take: 100,
     select: {
       id: true, returnNo: true, status: true, reason: true, claimValue: true, creditedAmount: true,
       creditNoteNo: true, createdAt: true, sentAt: true, settledAt: true,

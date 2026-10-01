@@ -171,27 +171,14 @@ export default function BillingPage() {
     finally { setBusy(false); }
   }
 
-  /**
-   * How wide a window to ask the server for.
-   *
-   * A BOOLEAN, NOT `tab`, and that is the point of it. Every other tab filters
-   * the list this already holds, so making the fetch depend on `tab` would
-   * re-query - and blank the screen - each time the desk moved between Today,
-   * Balance due and With insurer. Only crossing into or out of "All bills"
-   * changes what has to be fetched, and only that flips this.
-   */
-  const wide = tab === "ALL";
-
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [r, d] = await Promise.all([
-        // The day filter is a QUERY, not a pass over what we already have: the
-        // list is capped at the most recent hundred bills, so any day further
-        // back than that came back empty when filtered client-side.
+        // The day filter is a QUERY, not a pass over what we already have. The
+        // undated list is every bill - the server no longer caps it.
         api.get<{ invoices: Inv[] }>(
           onDate ? `/reception/billing?date=${onDate}`
-            : wide ? "/reception/billing?limit=500"
             : "/reception/billing"),
         api.get<{ ipdByPatient: IpdDue[] }>("/reception/dues"),
       ]);
@@ -202,7 +189,7 @@ export default function BillingPage() {
     catch (e) { setErr(e instanceof ApiClientError ? e.message : "Couldn't load bills."); }
     finally { setLoading(false); }
     /**
-     * ── `onDate` AND `wide` ARE REAL DEPENDENCIES, NOT DECORATION ──
+     * ── `onDate` IS A REAL DEPENDENCY, NOT DECORATION ──
      *
      * This list was `[]`, and an empty dependency list on a callback that reads
      * `onDate` is a stale closure: `load` kept the value `onDate` had on the
@@ -221,7 +208,7 @@ export default function BillingPage() {
      * The pharmacy counter's copy of this screen already carries the note; this
      * one was left behind when that was fixed.
      */
-  }, [onDate, wide]);
+  }, [onDate]);
   useEffect(() => { load(); }, [load]);
 
   // Every till in the hospital raises bills against this list - the pharmacy

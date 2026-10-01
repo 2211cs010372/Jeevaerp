@@ -159,7 +159,7 @@ export function PatientStep({
     const t = setTimeout(async () => {
       try {
         const { patients } = await api.get<{ patients: LabPatient[] }>(
-          `/reception/patients?q=${encodeURIComponent(query)}&limit=6`
+          `/reception/patients?q=${encodeURIComponent(query)}`
         );
         if (active) setResults(patients);
       } catch { if (active) setResults([]); }
@@ -282,7 +282,7 @@ export function PatientStep({
               {searching && <Spinner size={14} />}
             </div>
             {(query ? results : recent).length > 0 ? (
-              <div className="mt-3 space-y-2">
+              <div className="mt-3 max-h-96 space-y-2 overflow-y-auto">
                 {(query ? results : recent).map((p) => (
                   <button
                     key={p.id} onClick={() => pick(p)}

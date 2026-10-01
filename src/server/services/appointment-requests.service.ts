@@ -259,7 +259,7 @@ export async function listCallbackRequests(opts: { status?: string; limit?: numb
   const rows = await prisma.appointmentRequest.findMany({
     where: where as Prisma.AppointmentRequestWhereInput,
     orderBy: [{ status: "asc" }, { createdAt: "asc" }],
-    take: opts.limit ?? 200,
+    take: opts.limit,
     select: requestSelect,
   });
 

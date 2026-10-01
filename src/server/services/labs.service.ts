@@ -136,7 +136,6 @@ export async function listLabTests(status?: "PENDING" | "COMPLETED"): Promise<La
   const rows: TestRow[] = await prisma.labTest.findMany({
     where: status ? { status } : {},
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
-    take: 100,
     select: testSelect,
   });
   return rows.map(toTestDTO);
@@ -191,11 +190,10 @@ export interface LabOrderDTO {
  */
 export async function listLabOrders(status?: "PENDING" | "COMPLETED"): Promise<LabOrderDTO[]> {
   // Which orders, cheaply. Ids only - the wide row select runs once the set is
-  // known, and only for orders that made the cut.
+  // known. No cap: every order is listed (owner, 1 Oct 2026).
   const hits: { id: string; orderGroupId: string | null }[] = await prisma.labTest.findMany({
     where: status ? { status } : {},
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
-    take: 400,
     select: { id: true, orderGroupId: true },
   });
 
@@ -208,7 +206,6 @@ export async function listLabOrders(status?: "PENDING" | "COMPLETED"): Promise<L
     if (grouped.has(key) || solo.has(key)) continue;
     (h.orderGroupId ? grouped : solo).add(key);
     keys.push(key);
-    if (keys.length >= 100) break;
   }
   if (keys.length === 0) return [];
 
@@ -1545,11 +1542,11 @@ export async function patientLabHistory(displayId: string): Promise<{
     }),
     prisma.labTest.findMany({
       where: { OR: [{ patientId: patient.id }, { appointment: { patientId: patient.id } }] },
-      orderBy: { createdAt: "desc" }, take: 50, select: testSelect,
+      orderBy: { createdAt: "desc" }, select: testSelect,
     }),
     prisma.invoice.findMany({
       where: { patientId: patient.id, source: "LAB" },
-      orderBy: { createdAt: "desc" }, take: 20,
+      orderBy: { createdAt: "desc" },
       select: { receiptNo: true, totalAmount: true, status: true, createdAt: true },
     }),
   ]);

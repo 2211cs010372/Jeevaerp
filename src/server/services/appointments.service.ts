@@ -403,7 +403,7 @@ export async function todaysAppointments(): Promise<AppointmentDTO[]> {
 }
 
 /** ADMIN-ONLY appointment history - INCLUDES referral snapshot. */
-export async function adminAppointmentHistory(limit = 100): Promise<AdminAppointmentDTO[]> {
+export async function adminAppointmentHistory(limit?: number): Promise<AdminAppointmentDTO[]> {
   const MODE_ORDER = ["CASH", "UPI", "CARD", "NETBANKING", "OTHER"];
   const rows = await prisma.appointment.findMany({
     orderBy: { createdAt: "desc" }, take: limit,

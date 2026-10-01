@@ -197,7 +197,7 @@ export async function registerPatient(
 }
 
 /** Search by name / UHID / phone. Merged + soft-deleted hidden. Newest first. */
-export async function searchPatients(q: string, limit: number): Promise<PatientDTO[]> {
+export async function searchPatients(q: string, limit?: number): Promise<PatientDTO[]> {
   const base = { mergedIntoId: null, deletedAt: null };
   // A phone typed or pasted with spaces, dashes or a country code must still
   // find the row. Numbers are stored as "+919848012345", so a raw `contains`

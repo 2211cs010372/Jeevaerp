@@ -8,6 +8,6 @@ export const dynamic = "force-dynamic";
 /** Full appointment history WITH referral attribution - ADMIN ONLY. */
 export const GET = handler(async (req) => {
   await requireRole(req, "ADMIN");
-  const appointments = await adminAppointmentHistory(100);
+  const appointments = await adminAppointmentHistory();
   return NextResponse.json({ appointments });
 });

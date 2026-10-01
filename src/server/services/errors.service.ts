@@ -149,7 +149,7 @@ export async function listErrors(opts: { includeResolved?: boolean; limit?: numb
   const rows = await prisma.errorLog.findMany({
     where: opts.includeResolved ? {} : { resolvedAt: null },
     orderBy: { lastSeenAt: "desc" },
-    take: opts.limit ?? 100,
+    take: opts.limit,
   });
   return rows.map((r) => ({
     id: r.id,

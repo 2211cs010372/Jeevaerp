@@ -118,7 +118,7 @@ export function CommandBar({ portal = "reception" }: { portal?: string }) {
             .slice(0, 7));
           setResults([]);
         } else {
-          const r = await api.get<{ patients: Patient[] }>(`/reception/patients?q=${encodeURIComponent(s)}&limit=6`);
+          const r = await api.get<{ patients: Patient[] }>(`/reception/patients?q=${encodeURIComponent(s)}`);
           setResults(r.patients); setMeds([]);
         }
         setCursor(0);

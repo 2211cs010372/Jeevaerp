@@ -138,7 +138,7 @@ export default function DispensePage() {
   useEffect(() => {
     if (patient || !q.trim() || patientTab !== "search") { setResults([]); return; }
     const t = setTimeout(() => {
-      api.get<{ patients: Patient[] }>(`/reception/patients?q=${encodeURIComponent(q)}&limit=6`)
+      api.get<{ patients: Patient[] }>(`/reception/patients?q=${encodeURIComponent(q)}`)
         .then((r) => setResults(r.patients)).catch(() => setResults([]));
     }, 250);
     return () => clearTimeout(t);
@@ -414,7 +414,7 @@ export default function DispensePage() {
                       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name or JMH2026OP00123…" className="w-full text-sm outline-none" />
                     </div>
                     {results.length > 0 && (
-                      <div className="mt-3 space-y-2">
+                      <div className="mt-3 max-h-96 space-y-2 overflow-y-auto">
                         {results.map((p) => (
                           <button key={p.id} onClick={() => { setPatient(p); setQ(""); }} className="surface-hover flex w-full items-center justify-between rounded-lg border border-[var(--p-border)] p-3 text-left">
                             <div><div className="text-[13px] font-medium text-[var(--p-ink)]">{p.fullName}</div><div className="text-[11px] text-[var(--p-muted)]"><span className="tabular">{p.displayId}</span> · {p.phone}</div></div>

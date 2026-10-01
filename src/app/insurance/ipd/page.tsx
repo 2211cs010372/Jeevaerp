@@ -192,7 +192,7 @@ export default function BedBoardPage() {
     if (patient || !pq.trim()) { setPResults([]); return; }
     const t = setTimeout(async () => {
       try {
-        const { patients } = await api.get<{ patients: Patient[] }>(`/reception/patients?q=${encodeURIComponent(pq)}&limit=6`);
+        const { patients } = await api.get<{ patients: Patient[] }>(`/reception/patients?q=${encodeURIComponent(pq)}`);
         setPResults(patients);
       } catch { setPResults([]); }
     }, 250);
@@ -486,7 +486,7 @@ export default function BedBoardPage() {
                         <input value={pq} onChange={(e) => setPq(e.target.value)} placeholder="Patient ID, name or phone…" className="w-full bg-transparent text-sm outline-none" />
                       </div>
                       {pResults.length > 0 && (
-                        <div className="mt-1.5 divide-y divide-[var(--p-border)] rounded-lg border border-[var(--p-border)]">
+                        <div className="mt-1.5 max-h-72 divide-y divide-[var(--p-border)] overflow-y-auto rounded-lg border border-[var(--p-border)]">
                           {pResults.map((p) => (
                             <button key={p.id} onClick={() => { setPatient(p); setPq(""); }}
                               className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-[var(--p-bg)]">

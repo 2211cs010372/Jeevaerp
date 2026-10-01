@@ -3,7 +3,7 @@ import { ApiError } from "@/lib/api";
 import { nextId } from "@/lib/ids";
 import { logAudit } from "./audit.service";
 import { splitInvoice } from "@/lib/insurance-split";
-import { createInvoice, updateInvoice, recordPayment, getInvoice, syncStayCoverage, type PaymentModeT } from "./billing.service";
+import { createInvoice, updateInvoice, recordPayment, recordPayments, getInvoice, syncStayCoverage, type PaymentModeT } from "./billing.service";
 import { ADVANCE_REF_PREFIX, advancePaymentRef, applyAdvances, heldAsOf, isAdvanceAdjustment, takenOnStayBill } from "@/server/billing/advances";
 import { notifyAdmitted, notifyDischarged, notifyAdvanceReceived } from "./notify.service";
 // One rounding definition across the whole system - money must not be
@@ -726,7 +726,7 @@ export async function currentInpatients(filters?: InpatientFilters): Promise<Inp
  *  EXPIRED still produced a bill somebody may need to re-print, and filtering on
  *  DISCHARGED would have made those stays unreachable from the desk the moment
  *  they left the live list - the bill would exist with no screen that could find it. */
-export async function recentDischarges(limit = 25): Promise<{
+export async function recentDischarges(limit?: number): Promise<{
   id: string; ipNumber: string; admittedAt: string; dischargedAt: string; days: number;
   ward: string; bedNo: string; outcome: string;
   /** Who settled this stay. A stay an insurer refused has already been flipped
@@ -928,13 +928,20 @@ async function reissueIpdInvoice(
         // The lines it was RAISED with. Nursing is withdrawn for new stays, so
         // whether this rebuild carries one is not a question about today - it
         // is a question about what this bill already said.
-        select: { id: true, discountAmount: true, source: true, items: { select: { description: true } } },
+        select: { id: true, discountAmount: true, source: true, createdAt: true, items: { select: { description: true } } },
       },
     },
   });
   if (!adm?.dischargedAt) return;
   const inv = adm.invoices[0];
   if (!inv) return;
+
+  // THE BILL IS DATED THE DAY THE STAY ENDED. A stay keyed in weeks late, or
+  // whose discharge is corrected back, otherwise kept printing the day somebody
+  // typed it in - an inpatient bill for 06-10 Aug dated 30 Sep. Null when the
+  // two already agree, so an ordinary same-day discharge carries no override.
+  const ist = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const dischargeDay = ist(adm.dischargedAt);
 
   const stays = await prisma.bedStay.findMany({
     where: { admissionId },
@@ -964,6 +971,7 @@ async function reissueIpdInvoice(
       // as collected lowers the payment rather than refusing (owner, 1 Oct 2026 -
       // old offline stays are keyed in after the fact). See planPaymentTrim.
       trimPaymentsToTotal: true,
+      billDate: dischargeDay === ist(inv.createdAt) ? null : dischargeDay,
     },
     ctx,
   );
@@ -1660,6 +1668,12 @@ type Tender = { mode: "CASH" | "UPI" | "CARD" | "NETBANKING" | "OTHER"; amount: 
  *               counter does (FEFO, ledger rows); without it the bill is raised
  *               at today's price and no stock moves.
  *
+ *   SERVICE   - hospital services off the rate card (procedures, rounds,
+ *               oxygen...). Unlike the other two these are NOT a separate
+ *               invoice: they land on the stay as ordinary IP charges, exactly
+ *               as "Add to the tab" puts them, and print on the services bill.
+ *               See addForgottenServices.
+ *
  * DATED IN THE STAY. The bill prints the day it belongs to (`billDate`, a day
  * between admission and discharge - the discharge day unless the desk picks
  * another), not the day somebody noticed it was missing. Day close and GST
@@ -1670,12 +1684,13 @@ export async function addForgottenBill(
   admissionId: string,
   input:
     | { kind: "LAB"; catalogIds: string[]; discountAmount?: number; payments?: Tender[]; confirmRepeat?: boolean; billDate?: string }
-    | { kind: "PHARMACY"; items: { medicineId: string; qty: number }[]; fromStock: boolean; discountAmount?: number; payments?: Tender[]; confirmRepeat?: boolean; billDate?: string },
+    | { kind: "PHARMACY"; items: { medicineId: string; qty: number }[]; fromStock: boolean; discountAmount?: number; payments?: Tender[]; confirmRepeat?: boolean; billDate?: string }
+    | { kind: "SERVICE"; lines: ForgottenServiceLine[]; payments?: Tender[]; confirmRepeat?: boolean; billDate?: string },
   ctx: { ipAddress?: string; userAgent?: string }
-): Promise<{ invoiceId: string; receiptNo: string; total: string }> {
+): Promise<{ invoiceId: string | null; receiptNo: string | null; total: string; onTab?: boolean }> {
   const adm = await prisma.admission.findUnique({
     where: { id: admissionId },
-    select: { id: true, ipNumber: true, patientId: true, admittedAt: true, dischargedAt: true },
+    select: { id: true, ipNumber: true, patientId: true, admittedAt: true, dischargedAt: true, status: true },
   });
   if (!adm) throw new ApiError(404, "Admission not found");
 
@@ -1690,6 +1705,8 @@ export async function addForgottenBill(
     try { billDate = resolveBillDate(day) ?? undefined; }
     catch (e) { throw new ApiError(400, e instanceof BillDateError ? e.message : "That is not a real date"); }
   }
+
+  if (input.kind === "SERVICE") return addForgottenServices(actor, adm, input, day, ctx);
 
   if (input.kind === "PHARMACY") {
     const common = { patientId: adm.patientId, stayId: adm.id, items: input.items, discountAmount: input.discountAmount, payments: input.payments, confirmRepeat: input.confirmRepeat, billDate };
@@ -1747,6 +1764,150 @@ export async function addForgottenBill(
   });
   await publishLive([TOPICS.IPD, TOPICS.RECEPTION, TOPICS.INSURANCE, TOPICS.ADMIN], EVENTS.INVOICE_RAISED);
   return { invoiceId: invoice.id, receiptNo: invoice.receiptNo, total: invoice.totalAmount };
+}
+
+/** One rate-card service the desk found unbilled on a stay. */
+export interface ForgottenServiceLine {
+  category: string; description: string; qty: number; unitPrice: number; gstRatePct?: number;
+}
+
+/**
+ * FORGOTTEN SERVICES - IP charges added after the fact, from the same dialog
+ * as forgotten lab and pharmacy bills (owner, 1 Oct 2026).
+ *
+ * They go on the stay as ordinary charges, the way "Add to the tab" puts them,
+ * so they print on the services bill and roll into the IPD invoice. The only
+ * differences from the tab are the two a late entry needs:
+ *
+ *   - DATED IN THE STAY. Each line is dated midday on the day picked (the
+ *     discharge day by default), clamped inside the admission, so the printed
+ *     tab shows when the service was given rather than when it was keyed in.
+ *     On a stay still in the bed with no day picked, it is simply now.
+ *   - WORKS ON A CLOSED STAY. The charges land and the IPD invoice is
+ *     re-issued in the same breath; if the re-issue refuses, every line is
+ *     taken back off (see withInvoiceInStep).
+ *
+ * PAID BY DEFAULT on a closed stay, like the other forgotten bills: the
+ * tendered money is recorded on the re-issued IPD invoice, capped at what the
+ * invoice still has due. A stay still in the bed has no invoice yet - its tab
+ * is settled at discharge - so there is nothing to pay against and any tender
+ * is refused rather than silently dropped.
+ */
+async function addForgottenServices(
+  actor: AuthUser,
+  adm: { id: string; ipNumber: string; admittedAt: Date; dischargedAt: Date | null; status: string },
+  input: { lines: ForgottenServiceLine[]; payments?: Tender[]; confirmRepeat?: boolean },
+  day: string | undefined,
+  ctx: { ipAddress?: string; userAgent?: string },
+): Promise<{ invoiceId: string | null; receiptNo: string | null; total: string; onTab?: boolean }> {
+  const lines = input.lines
+    .map((l) => ({ ...l, description: l.description.trim() }))
+    .filter((l) => l.description && l.qty >= 1 && l.unitPrice >= 0);
+  if (!lines.length) throw new ApiError(400, "Add at least one service.");
+
+  const closed = isClosed(adm.status as AdmissionStatusValue);
+  const tenders = (input.payments ?? []).filter((t) => t.amount > 0);
+  if (tenders.length && !closed) {
+    throw new ApiError(400, "This patient is still admitted - these services go on the tab and are paid at discharge.");
+  }
+
+  // Midday on the picked day, in the hospital's calendar, kept inside the stay:
+  // an admission at 6pm must not get a noon charge on its first day.
+  let chargedAt: Date | undefined;
+  if (day) {
+    const noon = new Date(`${day}T12:00:00+05:30`);
+    const end = adm.dischargedAt ?? new Date();
+    chargedAt = new Date(Math.min(Math.max(noon.getTime(), adm.admittedAt.getTime()), end.getTime()));
+  }
+
+  // The same services entered twice - same description on this stay, minutes apart.
+  if (!input.confirmRepeat) {
+    const recent = await prisma.admissionCharge.findMany({
+      where: { admissionId: adm.id, createdAt: { gte: repeatWindowStart() } },
+      select: { description: true, qty: true, unitPrice: true, createdAt: true },
+    });
+    const dupes = lines.flatMap((l) => {
+      const hit = recent.find((r) => r.description.toLowerCase() === l.description.toLowerCase());
+      return hit ? [hit] : [];
+    });
+    if (dupes.length) {
+      const details: RepeatBlock = {
+        code: "REPEAT_ENTRY", kind: "STAY_CHARGE",
+        items: dupes.map((d) => ({
+          label: d.description, at: d.createdAt.toISOString(),
+          detail: `${d.qty} × ₹${d.unitPrice.toString()} · on ${adm.ipNumber}`,
+        })),
+      };
+      throw new ApiError(409, `"${dupes[0].description}" was added to ${adm.ipNumber} ${minutesAgo(dupes[0].createdAt)}. Adding it again bills it twice.`, details);
+    }
+  }
+
+  const created = await withInvoiceInStep(
+    actor, adm.id, closed, ctx,
+    () => prisma.$transaction(lines.map((l) => prisma.admissionCharge.create({
+      data: {
+        admissionId: adm.id,
+        category: l.category as ChargeCategory,
+        description: l.description,
+        qty: l.qty,
+        unitPrice: l.unitPrice.toFixed(2),
+        gstRatePct: (l.gstRatePct ?? 0).toFixed(2),
+        addedById: actor.id,
+        ...(chargedAt ? { createdAt: chargedAt } : {}),
+      },
+      select: { id: true },
+    }))),
+    (rows) => prisma.admissionCharge.deleteMany({ where: { id: { in: rows.map((r) => r.id) } } }).then(() => undefined),
+  );
+
+  const total = lines.reduce((sum, l) => round2(sum + round2(l.qty * l.unitPrice * (1 + (l.gstRatePct ?? 0) / 100))), 0);
+
+  const inv = closed
+    ? await prisma.invoice.findFirst({
+        where: { admissionId: adm.id, source: "IPD", status: { not: "CANCELLED" } },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, receiptNo: true, totalAmount: true, payments: { select: { amount: true } }, refunds: { select: { amount: true } } },
+      })
+    : null;
+
+  let collected = 0;
+  if (tenders.length) {
+    if (!inv) throw new ApiError(400, "The services were added, but this stay has no IPD bill to take the payment on. Collect it at Billing.");
+    const paid = round2(
+      inv.payments.reduce((sum, x) => round2(sum + Number(x.amount.toString())), 0)
+      - inv.refunds.reduce((sum, x) => round2(sum + Number(x.amount.toString())), 0),
+    );
+    let room = round2(Number(inv.totalAmount.toString()) - paid);
+    // Never more than the bill now has due - the rounding rule can leave the
+    // re-issued total a few paise off the dialog's own sum.
+    const fitted: Tender[] = [];
+    for (const t of tenders) {
+      if (room <= 0.01) break;
+      const amt = round2(Math.min(t.amount, room));
+      fitted.push({ ...t, amount: amt });
+      room = round2(room - amt);
+    }
+    if (fitted.length) {
+      await recordPayments(actor, { invoiceId: inv.id, payments: fitted }, ctx);
+      collected = fitted.reduce((sum, t) => round2(sum + t.amount), 0);
+    }
+  }
+
+  await logAudit(actor, {
+    action: "FORGOTTEN_BILL_ADDED", targetTable: "Admission", targetId: adm.id,
+    meta: {
+      ipNumber: adm.ipNumber, source: "SERVICE", afterDischarge: closed,
+      chargeIds: created.map((c) => c.id),
+      lines: lines.map((l) => ({ description: l.description, qty: l.qty, unitPrice: l.unitPrice })),
+      total: total.toFixed(2), collected: collected.toFixed(2),
+      ...(chargedAt ? { chargedAt: chargedAt.toISOString() } : {}),
+      ...(inv ? { receiptNo: inv.receiptNo } : {}),
+    },
+    ...ctx,
+  });
+  await publishLive([TOPICS.IPD, TOPICS.RECEPTION, TOPICS.INSURANCE, TOPICS.ADMIN], EVENTS.INVOICE_RAISED);
+
+  return { invoiceId: inv?.id ?? null, receiptNo: inv?.receiptNo ?? null, total: total.toFixed(2), onTab: true };
 }
 
 /** Add a line to an inpatient's tab. */
@@ -2479,30 +2640,37 @@ export async function admissionHistory(admissionId: string): Promise<{
 
   const [invoices, labs, rxs] = await Promise.all([
     prisma.invoice.findMany({
-      where: { patientId, status: { not: "CANCELLED" } }, orderBy: { createdAt: "desc" }, take: 50,
-      select: { id: true, receiptNo: true, source: true, status: true, totalAmount: true, createdAt: true, payer: true, payments: { select: { amount: true } } },
+      where: { patientId, status: { not: "CANCELLED" } }, orderBy: { createdAt: "desc" },
+      select: { id: true, receiptNo: true, source: true, status: true, totalAmount: true, createdAt: true, billDate: true, payer: true, payments: { select: { amount: true } } },
     }),
     prisma.labTest.findMany({
-      where: { patientId }, orderBy: { createdAt: "desc" }, take: 50,
-      select: { id: true, testName: true, status: true, reportFileUrl: true, createdAt: true, completedAt: true, admissionId: true },
+      where: { patientId }, orderBy: { createdAt: "desc" },
+      select: { id: true, testName: true, status: true, reportFileUrl: true, createdAt: true, orderedAt: true, completedAt: true, admissionId: true },
     }),
     prisma.prescriptionUpload.findMany({
-      where: { patientId }, orderBy: { createdAt: "desc" }, take: 50,
+      where: { patientId }, orderBy: { createdAt: "desc" },
       select: { id: true, title: true, fileUrl: true, status: true, admissionId: true, createdAt: true, items: { select: { medicineName: true, qty: true, dosage: true }, orderBy: { id: "asc" } } },
     }),
   ]);
 
-  type Inv = { id: string; receiptNo: string; source: string; status: string; totalAmount: { toString(): string }; createdAt: Date; payer: string; payments: { amount: { toString(): string } }[] };
-  type Lab = { id: string; testName: string; status: string; reportFileUrl: string | null; createdAt: Date; completedAt: Date | null; admissionId: string | null };
+  type Inv = { id: string; receiptNo: string; source: string; status: string; totalAmount: { toString(): string }; createdAt: Date; billDate: Date | null; payer: string; payments: { amount: { toString(): string } }[] };
+  type Lab = { id: string; testName: string; status: string; reportFileUrl: string | null; createdAt: Date; orderedAt: Date | null; completedAt: Date | null; admissionId: string | null };
+
+  // THE DATE THE RECORD SAYS, not the day it was keyed in. Old stays are being
+  // entered from offline bills, and a bill re-dated to 06 Aug that the history
+  // still listed under 01 Oct read as a second, different visit. The hospital's
+  // calendar, not the server's - a UTC slice moves an evening bill a day back.
+  const istDay = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
   type Rx = { id: string; title: string | null; fileUrl: string | null; status: string; admissionId: string | null; createdAt: Date; items: { medicineName: string; qty: number; dosage: string | null }[] };
 
   return {
     bills: (invoices as Inv[]).map((i) => {
       const total = Number(i.totalAmount.toString());
       const paid = i.payments.reduce((s, p) => s + Number(p.amount.toString()), 0);
-      return { id: i.id, receiptNo: i.receiptNo, source: i.source, status: i.status, total: total.toFixed(2), paid: paid.toFixed(2), balance: owed(Math.max(0, round2(total - paid))).toFixed(2), date: i.createdAt.toISOString().slice(0, 10), payer: i.payer };
-    }),
-    labs: (labs as Lab[]).map((t) => ({ id: t.id, testName: t.testName, status: t.status, reportReady: Boolean(t.reportFileUrl), reportUrl: t.reportFileUrl, date: (t.completedAt ?? t.createdAt).toISOString().slice(0, 10), forThisStay: t.admissionId === admissionId })),
+      return { id: i.id, receiptNo: i.receiptNo, source: i.source, status: i.status, total: total.toFixed(2), paid: paid.toFixed(2), balance: owed(Math.max(0, round2(total - paid))).toFixed(2), date: istDay(i.billDate ?? i.createdAt), payer: i.payer };
+    }).sort((a, b) => b.date.localeCompare(a.date)),
+    labs: (labs as Lab[]).map((t) => ({ id: t.id, testName: t.testName, status: t.status, reportReady: Boolean(t.reportFileUrl), reportUrl: t.reportFileUrl, date: istDay(t.orderedAt ?? t.completedAt ?? t.createdAt), forThisStay: t.admissionId === admissionId }))
+      .sort((a, b) => b.date.localeCompare(a.date)),
     prescriptions: (rxs as Rx[]).map((r) => ({ id: r.id, title: r.title, fileUrl: r.fileUrl, status: r.status, forThisStay: r.admissionId === admissionId, date: r.createdAt.toISOString().slice(0, 10), items: r.items })),
   };
 }

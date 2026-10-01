@@ -22,6 +22,6 @@ export const GET = handler(async (req) => {
     return NextResponse.json({ advised: await advisedLabsForAppointment(appointmentId) });
   }
 
-  const limit = Math.min(Number(url.searchParams.get("limit")) || 50, 200);
+  const limit = Number(url.searchParams.get("limit")) || undefined;
   return NextResponse.json(await outstandingAdvisedLabs(limit));
 });

@@ -79,7 +79,7 @@ export async function listMasters(
     case "category": {
       const rows = await prisma.medicineCategory.findMany({
         where: { ...inactive, ...like("name") },
-        orderBy: [{ active: "desc" }, { name: "asc" }], take: 300,
+        orderBy: [{ active: "desc" }, { name: "asc" }],
         select: { id: true, name: true, description: true, active: true, _count: { select: count } },
       });
       return rows.map((r) => ({
@@ -90,7 +90,7 @@ export async function listMasters(
     case "generic": {
       const rows = await prisma.generic.findMany({
         where: { ...inactive, ...like("name") },
-        orderBy: [{ active: "desc" }, { name: "asc" }], take: 300,
+        orderBy: [{ active: "desc" }, { name: "asc" }],
         select: { id: true, name: true, strength: true, description: true, active: true, _count: { select: count } },
       });
       return rows.map((r) => ({
@@ -103,7 +103,7 @@ export async function listMasters(
     case "manufacturer": {
       const rows = await prisma.manufacturer.findMany({
         where: { ...inactive, ...like("name") },
-        orderBy: [{ active: "desc" }, { name: "asc" }], take: 300,
+        orderBy: [{ active: "desc" }, { name: "asc" }],
         select: { id: true, name: true, shortCode: true, address: true, phone: true, active: true, _count: { select: count } },
       });
       return rows.map((r) => ({
@@ -116,7 +116,7 @@ export async function listMasters(
     case "dosageForm": {
       const rows = await prisma.dosageForm.findMany({
         where: { ...inactive, ...like("name") },
-        orderBy: [{ active: "desc" }, { name: "asc" }], take: 300,
+        orderBy: [{ active: "desc" }, { name: "asc" }],
         select: { id: true, name: true, active: true, _count: { select: count } },
       });
       return rows.map((r) => ({
@@ -127,7 +127,7 @@ export async function listMasters(
     case "unit": {
       const rows = await prisma.unitOfMeasure.findMany({
         where: { ...inactive, ...like("name") },
-        orderBy: [{ active: "desc" }, { name: "asc" }], take: 300,
+        orderBy: [{ active: "desc" }, { name: "asc" }],
         select: { id: true, name: true, symbol: true, active: true, _count: { select: count } },
       });
       return rows.map((r) => ({
@@ -138,7 +138,7 @@ export async function listMasters(
     case "tax": {
       const rows = await prisma.taxRate.findMany({
         where: { ...inactive, ...like("name") },
-        orderBy: [{ active: "desc" }, { ratePct: "asc" }], take: 300,
+        orderBy: [{ active: "desc" }, { ratePct: "asc" }],
         select: { id: true, name: true, ratePct: true, active: true, _count: { select: { medicines: true, hsnCodes: true } } },
       });
       return rows.map((r) => ({
@@ -151,7 +151,7 @@ export async function listMasters(
     case "hsn": {
       const rows = await prisma.hsnCode.findMany({
         where: { ...inactive, ...like("code") },
-        orderBy: [{ active: "desc" }, { code: "asc" }], take: 300,
+        orderBy: [{ active: "desc" }, { code: "asc" }],
         select: {
           id: true, code: true, description: true, active: true,
           defaultTaxRateId: true, defaultTaxRate: { select: { name: true, ratePct: true } },
@@ -169,7 +169,7 @@ export async function listMasters(
     case "schedule": {
       const rows = await prisma.drugSchedule.findMany({
         where: { ...inactive, ...like("code") },
-        orderBy: [{ active: "desc" }, { code: "asc" }], take: 300,
+        orderBy: [{ active: "desc" }, { code: "asc" }],
         select: {
           id: true, code: true, description: true, requiresPrescription: true,
           retentionYears: true, active: true, _count: { select: count },

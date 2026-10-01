@@ -110,7 +110,8 @@ export const sendOpdSheetSchema = z.object({
 
 export const patientSearchSchema = z.object({
   q: z.string().trim().max(80).optional().default(""),
-  limit: z.coerce.number().int().min(1).max(50).optional().default(20),
+  // No default and no ceiling: every match comes back (owner, 1 Oct 2026).
+  limit: z.coerce.number().int().min(1).optional(),
 });
 
 /**

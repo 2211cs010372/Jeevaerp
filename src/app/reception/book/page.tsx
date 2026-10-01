@@ -155,7 +155,7 @@ export default function BookAppointmentPage() {
     if (patient || !query.trim()) { setResults([]); return; }
     let active = true; setSearching(true);
     const t = setTimeout(async () => {
-      try { const { patients } = await api.get<{ patients: Patient[] }>(`/reception/patients?q=${encodeURIComponent(query)}&limit=6`); if (active) setResults(patients); }
+      try { const { patients } = await api.get<{ patients: Patient[] }>(`/reception/patients?q=${encodeURIComponent(query)}`); if (active) setResults(patients); }
       catch { if (active) setResults([]); } finally { if (active) setSearching(false); }
     }, 250);
     return () => { active = false; clearTimeout(t); };
@@ -430,7 +430,7 @@ export default function BookAppointmentPage() {
                         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name or JMH2026OP00123…" className="w-full bg-transparent text-sm text-[var(--p-ink)] outline-none" autoFocus />
                         {searching && <Spinner size={14} />}
                       </div>
-                      {query && results.length > 0 && <div className="mt-3 space-y-2">{results.map((p) => <PRow key={p.id} p={p} onPick={() => { setPatient(p); setQuery(""); }} />)}</div>}
+                      {query && results.length > 0 && <div className="mt-3 max-h-96 space-y-2 overflow-y-auto">{results.map((p) => <PRow key={p.id} p={p} onPick={() => { setPatient(p); setQuery(""); }} />)}</div>}
                       {query && !searching && results.length === 0 && (
                         <p className="mt-3 flex flex-wrap items-center gap-1.5 text-[13px] text-[var(--p-muted)]">
                           No patient found.

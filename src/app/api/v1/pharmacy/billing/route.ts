@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { handler } from "@/lib/api";
 import { requireRole } from "@/lib/auth/guard";
-import { billsLimit, BILLS_PAGE_MAX, listInvoices } from "@/server/services/billing.service";
+import { billsLimit, listInvoices } from "@/server/services/billing.service";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +24,6 @@ export const GET = handler(async (req) => {
   // parameter in the reception route. Clamped, so an edited URL cannot ask this
   // counter to read the whole invoice table into memory.
   const limit = billsLimit(req.nextUrl.searchParams.get("limit"));
-  const invoices = await listInvoices("PHARMACY", date ? BILLS_PAGE_MAX : limit, date);
+  const invoices = await listInvoices("PHARMACY", date ? undefined : limit, date);
   return NextResponse.json({ invoices });
 });

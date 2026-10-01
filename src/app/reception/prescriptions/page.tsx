@@ -259,7 +259,7 @@ export default function UploadPrescriptionPage() {
     if (patient || !query.trim()) { setResults([]); return; }
     const t = setTimeout(async () => {
       try {
-        const { patients } = await api.get<{ patients: Patient[] }>(`/reception/patients?q=${encodeURIComponent(query)}&limit=6`);
+        const { patients } = await api.get<{ patients: Patient[] }>(`/reception/patients?q=${encodeURIComponent(query)}`);
         setResults(patients);
       } catch { setResults([]); }
     }, 250);
@@ -774,7 +774,7 @@ export default function UploadPrescriptionPage() {
                     <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name, phone or JMH2026OP00123…" className="w-full text-sm outline-none" autoFocus />
                   </div>
                   {(results.length ? results : recent).length > 0 && (
-                    <div className="mt-3 space-y-2">
+                    <div className="mt-3 max-h-96 space-y-2 overflow-y-auto">
                       {!results.length && <p className="text-[12px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Recent</p>}
                       {(results.length ? results : recent).map((p) => (
                         <button key={p.id} onClick={() => { setPatient(p); setQuery(""); }} className="surface-hover flex w-full items-center justify-between rounded-lg border border-[var(--p-border)] p-3 text-left">
@@ -1284,4 +1284,4 @@ export default function UploadPrescriptionPage() {
       />
     </PortalScroll>
   );
-}
+}

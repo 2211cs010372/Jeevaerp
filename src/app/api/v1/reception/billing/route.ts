@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { handler } from "@/lib/api";
 import { requireRole } from "@/lib/auth/guard";
-import { billsLimit, BILLS_PAGE_MAX, listInvoices } from "@/server/services/billing.service";
+import { billsLimit, listInvoices } from "@/server/services/billing.service";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +38,6 @@ export const GET = handler(async (req) => {
   // reached through the day filter, which is a query and has the whole table
   // behind it.
   const limit = billsLimit(req.nextUrl.searchParams.get("limit"));
-  const invoices = await listInvoices(source as never, date ? BILLS_PAGE_MAX : limit, date, "PHARMACY");
+  const invoices = await listInvoices(source as never, date ? undefined : limit, date, "PHARMACY");
   return NextResponse.json({ invoices });
 });

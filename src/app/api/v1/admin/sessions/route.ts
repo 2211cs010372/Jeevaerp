@@ -8,5 +8,5 @@ export const dynamic = "force-dynamic";
 /** Recent staff sign-in sessions - login/logout times and duration. Admin only. */
 export const GET = handler(async (req) => {
   await requireRole(req, "ADMIN");
-  return NextResponse.json({ sessions: await listStaffSessions(150) });
+  return NextResponse.json({ sessions: await listStaffSessions() });
 });

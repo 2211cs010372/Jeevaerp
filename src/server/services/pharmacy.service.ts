@@ -104,7 +104,6 @@ export async function listMedicines(query?: string): Promise<MedicineDTO[]> {
         : {}),
     },
     orderBy: { name: "asc" },
-    take: 200,
     select: {
       id: true, name: true, genericName: true, manufacturer: true, hsnCode: true,
       defaultPack: true, defaultPackSize: true,
@@ -1092,7 +1091,6 @@ export async function pharmacyRxQueue(status?: "SENT_TO_PHARMACY" | "DISPENSED")
   const rows = await prisma.prescriptionUpload.findMany({
     where: { status: status ?? "SENT_TO_PHARMACY" },
     orderBy: { sentToPharmacyAt: "desc" },
-    take: 60,
     select: {
       id: true, appointmentId: true, fileUrl: true, fileName: true, mimeType: true, title: true, doctorName: true,
       status: true, sentToPharmacyAt: true, dispensedAt: true, createdAt: true,
@@ -1375,7 +1373,7 @@ export async function stockAlerts(): Promise<{
   const [batches, meds] = await Promise.all([
     prisma.stockBatch.findMany({
       where: { quantity: { gt: 0 }, expiryDate: { lt: horizon } },
-      orderBy: { expiryDate: "asc" }, take: 50,
+      orderBy: { expiryDate: "asc" },
       select: { id: true, batchNo: true, expiryDate: true, quantity: true, medicine: { select: { name: true } } },
     }),
     prisma.medicine.findMany({

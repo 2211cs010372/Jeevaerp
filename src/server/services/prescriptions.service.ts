@@ -345,7 +345,7 @@ export async function advisedLabsForAppointment(appointmentId: string): Promise<
  * the person who happens to reopen that visit; the reason a test gets missed is
  * that nobody goes looking. Reception sees this on the prescriptions screen.
  */
-export async function outstandingAdvisedLabs(limit = 50): Promise<{
+export async function outstandingAdvisedLabs(limit?: number): Promise<{
   rows: {
     id: string; testName: string; catalogId: string | null; price: string | null;
     advisedAt: string;
@@ -608,7 +608,6 @@ export async function recentCompletedVisits(displayId: string): Promise<{
   const rows = await prisma.appointment.findMany({
     where: { patientId: patient.id, status: "COMPLETED" },
     orderBy: { visitDate: "desc" },
-    take: 6,
     select: {
       id: true, opNumber: true, visitDate: true,
       doctor: { select: { name: true, department: true } },

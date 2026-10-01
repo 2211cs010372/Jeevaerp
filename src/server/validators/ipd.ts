@@ -109,6 +109,21 @@ export const forgottenBillSchema = z.discriminatedUnion("kind", [
     confirmRepeat: z.boolean().optional(),
     billDate: forgottenBillDate,
   }),
+  // Rate-card services, landing on the stay as IP charges - see addForgottenServices.
+  z.object({
+    kind: z.literal("SERVICE"),
+    lines: z.array(z.object({
+      // PHARMACY is not a service: medicines go through the Pharmacy tab.
+      category: z.enum(CHARGE_CATEGORIES).refine((c) => c !== "PHARMACY", "Medicines go through the Pharmacy tab"),
+      description: z.string().trim().min(2).max(160),
+      qty: z.coerce.number().int().min(1).max(999),
+      unitPrice: z.coerce.number().min(0),
+      gstRatePct: z.coerce.number().min(0).max(28).optional(),
+    })).min(1, "Add at least one service").max(60),
+    payments: paymentsSchema.optional(),
+    confirmRepeat: z.boolean().optional(),
+    billDate: forgottenBillDate,
+  }),
 ]);
 
 /** Forgotten OP pharmacy/lab bills to put onto a stay - see linkBillsToStay. */

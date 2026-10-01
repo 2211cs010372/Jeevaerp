@@ -112,7 +112,7 @@ export default function PatientsPage() {
     let active = true; setLoading(true);
     const t = setTimeout(async () => {
       try {
-        const { patients } = await api.get<{ patients: PatientRow[] }>(`/reception/patients?q=${encodeURIComponent(q)}&limit=30`);
+        const { patients } = await api.get<{ patients: PatientRow[] }>(`/reception/patients?q=${encodeURIComponent(q)}`);
         if (active) setRows(patients);
       } catch { if (active) setRows([]); } finally { if (active) setLoading(false); }
     }, 250);
@@ -222,17 +222,12 @@ export default function PatientsPage() {
                 </p>
                 <div className="flex flex-wrap gap-1.5">
                   {/* Newest first - the ones most likely to be back soon. */}
-                  {[...g.patients].reverse().slice(0, 12).map((p) => (
+                  {[...g.patients].reverse().map((p) => (
                     <Link key={p.id} href={`/patients/${p.displayId}`}
                       className="rounded-full border border-[var(--p-border)] px-2.5 py-1 text-[11.5px] text-[var(--p-text)] transition-colors hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
                       {p.fullName} <span className="font-mono text-[10.5px] text-[var(--p-muted)]">{p.displayId}</span>
                     </Link>
                   ))}
-                  {g.patients.length > 12 && (
-                    <span className="px-1 py-1 text-[11.5px] text-[var(--p-muted)]">
-                      +{g.patients.length - 12} more - search the number below
-                    </span>
-                  )}
                 </div>
               </div>
             ))}

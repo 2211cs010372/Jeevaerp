@@ -121,7 +121,6 @@ export async function getPatientLabTests(patientId: string): Promise<PatientLabT
     // patientLabHistory, which has always used this same pair.
     where: { OR: [{ patientId }, { appointment: { patientId } }] },
     orderBy: { createdAt: "desc" },
-    take: 50,
     select: {
       id: true, testName: true, status: true, reportFileUrl: true, createdAt: true, completedAt: true,
       appointment: { select: { doctor: { select: { name: true } } } },
@@ -158,7 +157,6 @@ export async function getPatientBills(patientId: string): Promise<PatientBillDTO
   const rows = await prisma.invoice.findMany({
     where: { patientId, status: { not: "CANCELLED" } },
     orderBy: { createdAt: "desc" },
-    take: 50,
     select: {
       id: true, receiptNo: true, source: true, status: true, totalAmount: true, createdAt: true,
       payments: { select: { amount: true } },

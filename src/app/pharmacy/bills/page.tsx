@@ -168,22 +168,14 @@ export default function PharmacyBillsPage() {
    * picking a day has to re-fetch, and that only happens if `load` changes when
    * the day does.
    */
-  /**
-   * How wide a window to ask the server for - a boolean rather than `tab`, so
-   * moving between Today, Balance due and With insurer (all of which filter the
-   * list already in hand) does not re-query. Only "All bills" needs more.
-   */
-  const wide = tab === "ALL";
-
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
       const [r, d] = await Promise.all([
         api.get<{ invoices: Inv[] }>(
           onDate ? `/pharmacy/billing?date=${onDate}`
-            // "All bills" asks for the wide window; every other tab filters the
-            // working queue this already holds. See `wide` above.
-            : wide ? "/pharmacy/billing?limit=500"
+            // Every bill - the server no longer caps this list, so every tab
+            // filters the same complete set.
             : "/pharmacy/billing"),
         api.get<{ ipdByPatient: IpdDue[] }>("/pharmacy/dues"),
       ]);
@@ -196,7 +188,7 @@ export default function PharmacyBillsPage() {
     } finally {
       if (!quiet) setLoading(false);
     }
-  }, [onDate, wide]);
+  }, [onDate]);
   useEffect(() => { load(); }, [load]);
 
   /**

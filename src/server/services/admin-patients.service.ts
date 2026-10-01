@@ -252,7 +252,6 @@ export async function getAdminPatientDetail(displayId: string): Promise<AdminPat
     prisma.appointment.findMany({
       where: { patientId: p.id },
       orderBy: { visitDate: "desc" },
-      take: 50,
       select: {
         id: true, opNumber: true, visitDate: true, timeAtBooking: true, status: true,
         doctor: { select: { name: true, department: true } },
@@ -271,7 +270,6 @@ export async function getAdminPatientDetail(displayId: string): Promise<AdminPat
     prisma.labTest.findMany({
       where: { patientId: p.id },
       orderBy: { createdAt: "desc" },
-      take: 50,
       select: { id: true, status: true, createdAt: true, catalog: { select: { name: true } } },
     }),
     prisma.admission.count({ where: { patientId: p.id } }),

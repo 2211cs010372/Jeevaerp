@@ -67,7 +67,7 @@ export async function adminOverview(): Promise<{
     prisma.bed.count(),
     prisma.admission.count({ where: { status: "ADMITTED" } }),
     prisma.medicine.findMany({ select: { reorderThreshold: true, batches: { select: { quantity: true } } } }),
-    prisma.appointment.findMany({ where: { visitDate: today, status: { not: "CANCELLED" } }, orderBy: { timeAtBooking: "asc" }, take: 12, select: { timeAtBooking: true, status: true, patient: { select: { fullName: true } }, doctor: { select: { name: true, department: true } } } }),
+    prisma.appointment.findMany({ where: { visitDate: today, status: { not: "CANCELLED" } }, orderBy: { timeAtBooking: "asc" }, select: { timeAtBooking: true, status: true, patient: { select: { fullName: true } }, doctor: { select: { name: true, department: true } } } }),
     prisma.invoice.findMany({ where: { status: { not: "CANCELLED" } }, orderBy: { createdAt: "desc" }, take: 8, select: { receiptNo: true, createdAt: true, totalAmount: true, status: true, subtotal: true, discountAmount: true } }),
     prisma.invoice.findMany({ where: { status: { not: "CANCELLED" }, OR: [{ appointmentId: { not: null } }, { admissionId: { not: null } }] }, select: { totalAmount: true, appointment: { select: { doctor: { select: { name: true, department: true } } } }, admission: { select: { doctor: { select: { name: true, department: true } } } } } }),
   ]);

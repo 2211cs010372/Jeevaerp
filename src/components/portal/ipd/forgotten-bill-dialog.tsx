@@ -19,6 +19,13 @@
  * payment section opens ticked at the full amount. That payment is recorded
  * now, so it counts in today's day close under whoever raises the bill.
  *
+ * SERVICE is the third kind (owner, 1 Oct 2026): rate-card services the stay
+ * was given and nobody put on the tab. They do not get a receipt of their own -
+ * they land on the stay as ordinary IP charges, dated on the day picked, and
+ * the IPD bill is re-issued to include them (see addForgottenServices). On a
+ * closed stay the payment is recorded on that IPD bill; a stay still in the bed
+ * settles its tab at discharge, so no payment is taken here.
+ *
  * Totals are worked out with the same function the server uses
  * (computeInvoiceTotals), so what the payment section asks for is what the
  * bill comes to.
@@ -36,6 +43,11 @@ import { computeInvoiceTotals, type CalcLine } from "@/server/billing/calc";
 interface Med { id: string; name: string; unit: string; inStock: number; unitMrp: string | null; gstRatePct: string }
 interface Test { id: string; name: string; code: string | null; price: string; gstRatePct: string }
 interface MedLine { med: Med; qty: number }
+/** One row of the published rate card - see /ipd/services. */
+interface Service { id: string; name: string; group: string; category: string; price: string; gstRatePct: string; perDay: boolean }
+/** A service on its way to the tab. Rate and qty stay editable, as on the tab itself. */
+interface SvcLine { key: string; name: string; category: string; qty: number; price: number; gstRatePct: number }
+type Kind = "PHARMACY" | "LAB" | "SERVICE";
 
 const money = (v: number) => v.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 /** "YYYY-MM-DD" of an instant in the hospital's calendar. */
@@ -54,9 +66,11 @@ export function ForgottenBillDialog({
   onCreated: () => void;
   onClose: () => void;
 }) {
-  const [kind, setKind] = useState<"PHARMACY" | "LAB">("PHARMACY");
+  const [kind, setKind] = useState<Kind>("PHARMACY");
   const [meds, setMeds] = useState<Med[]>([]);
   const [tests, setTests] = useState<Test[]>([]);
+  const [services, setServices] = useState<Service[]>([]);
+  const [svcLines, setSvcLines] = useState<SvcLine[]>([]);
   const [q, setQ] = useState("");
   const [medLines, setMedLines] = useState<MedLine[]>([]);
   const [testIds, setTestIds] = useState<Set<string>>(new Set());
@@ -72,11 +86,12 @@ export function ForgottenBillDialog({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [repeat, setRepeat] = useState<{ block: RepeatBlock; message: string } | null>(null);
-  const [done, setDone] = useState<{ invoiceId: string; receiptNo: string; total: string } | null>(null);
+  const [done, setDone] = useState<{ invoiceId: string | null; receiptNo: string | null; total: string; onTab?: boolean } | null>(null);
 
   useEffect(() => {
     api.get<{ medicines: Med[] }>("/pharmacy/medicines").then((r) => setMeds(r.medicines)).catch(() => setMeds([]));
     api.get<{ catalog: Test[] }>("/labs/catalog").then((r) => setTests(r.catalog)).catch(() => setTests([]));
+    api.get<{ services: Service[] }>("/ipd/services").then((r) => setServices(r.services)).catch(() => setServices([]));
   }, []);
 
   useEffect(() => {
@@ -88,10 +103,17 @@ export function ForgottenBillDialog({
   const s = q.trim().toLowerCase();
   const medHits = s ? meds.filter((m) => m.name.toLowerCase().includes(s)).slice(0, 8) : [];
   const testHits = s ? tests.filter((t) => t.name.toLowerCase().includes(s) || (t.code ?? "").toLowerCase().includes(s)).slice(0, 10) : [];
+  const svcHits = s ? services.filter((x) => x.name.toLowerCase().includes(s)).slice(0, 10) : [];
+  /** A stay still in the bed: services go on the tab and are paid at discharge. */
+  const open = !dischargedAt;
+  /** Days of the stay so far - a per-day service defaults to it, as on the tab. */
+  const stayDays = Math.max(1, Math.ceil(((dischargedAt ? new Date(dischargedAt) : new Date()).getTime() - new Date(admittedAt).getTime()) / 86_400_000));
 
   const calcLines: CalcLine[] = kind === "PHARMACY"
     ? medLines.map((l) => ({ description: l.med.name, qty: l.qty, unitPrice: Number(l.med.unitMrp ?? 0), gstRatePct: Number(l.med.gstRatePct) }))
-    : tests.filter((t) => testIds.has(t.id)).map((t) => ({ description: t.name, qty: 1, unitPrice: Number(t.price), gstRatePct: Number(t.gstRatePct) }));
+    : kind === "SERVICE"
+      ? svcLines.map((l) => ({ description: l.name, qty: l.qty, unitPrice: l.price, gstRatePct: l.gstRatePct }))
+      : tests.filter((t) => testIds.has(t.id)).map((t) => ({ description: t.name, qty: 1, unitPrice: Number(t.price), gstRatePct: Number(t.gstRatePct) }));
   // null while the bill cannot be raised: nothing picked, or a discount above the subtotal.
   let totals: ReturnType<typeof computeInvoiceTotals> | null = null;
   try { totals = calcLines.length ? computeInvoiceTotals(calcLines, disc) : null; } catch { totals = null; }
@@ -100,27 +122,51 @@ export function ForgottenBillDialog({
   const short = kind === "PHARMACY" && fromStock ? medLines.filter((l) => l.qty > l.med.inStock) : [];
   const unpriced = kind === "PHARMACY" ? medLines.filter((l) => !l.med.unitMrp) : [];
   const dateOk = billDate >= firstDay && billDate <= lastDay;
-  const canSubmit = !busy && !!totals && dateOk && short.length === 0 && unpriced.length === 0 && (!payNow || payValid);
+  const svcBad = kind === "SERVICE" && svcLines.some((l) => l.name.trim().length < 2);
+  // No payment on a stay still in the bed - see addForgottenServices.
+  const takesPayment = !(kind === "SERVICE" && open);
+  const canSubmit = !busy && !!totals && dateOk && short.length === 0 && unpriced.length === 0 && !svcBad
+    && (!takesPayment || !payNow || payValid);
 
   function addMed(m: Med) {
     setMedLines((p) => (p.some((l) => l.med.id === m.id) ? p : [...p, { med: m, qty: 1 }]));
     setQ("");
   }
-  function switchKind(k: "PHARMACY" | "LAB") { setKind(k); setQ(""); setDisc(0); setErr(null); }
+  function addService(x: Service) {
+    setSvcLines((p) => [...p, {
+      key: `${x.id}-${Date.now()}`, name: x.name, category: x.category,
+      qty: x.perDay ? stayDays : 1, price: Number(x.price), gstRatePct: Number(x.gstRatePct),
+    }]);
+    setQ("");
+  }
+  /** Something not on the rate card - typed in, priced by hand, as the tab allows. */
+  function addCustomService(name: string) {
+    setSvcLines((p) => [...p, { key: `custom-${Date.now()}`, name, category: "OTHER", qty: 1, price: 0, gstRatePct: 0 }]);
+    setQ("");
+  }
+  function setSvc(key: string, patch: Partial<SvcLine>) {
+    setSvcLines((p) => p.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  }
+  function switchKind(k: Kind) { setKind(k); setQ(""); setDisc(0); setErr(null); }
 
   async function submit(confirmRepeat = false) {
     setBusy(true); setErr(null);
     try {
       const common = {
         discountAmount: disc || undefined,
-        payments: payNow && payments.length ? payments : undefined,
+        payments: takesPayment && payNow && payments.length ? payments : undefined,
         confirmRepeat: confirmRepeat || undefined,
         billDate,
       };
       const body = kind === "PHARMACY"
         ? { kind, fromStock, items: medLines.map((l) => ({ medicineId: l.med.id, qty: l.qty })), ...common }
-        : { kind, catalogIds: [...testIds], ...common };
-      const r = await api.post<{ invoiceId: string; receiptNo: string; total: string }>(`/ipd/admissions/${admissionId}/forgotten-bill`, body);
+        : kind === "SERVICE"
+          // A service has no discount of its own - it is a line on the IPD bill,
+          // which carries the stay's discount.
+          ? { kind, lines: svcLines.map((l) => ({ category: l.category, description: l.name.trim(), qty: l.qty, unitPrice: l.price, gstRatePct: l.gstRatePct })),
+              payments: common.payments, confirmRepeat: common.confirmRepeat, billDate }
+          : { kind, catalogIds: [...testIds], ...common };
+      const r = await api.post<{ invoiceId: string | null; receiptNo: string | null; total: string; onTab?: boolean }>(`/ipd/admissions/${admissionId}/forgotten-bill`, body);
       setRepeat(null);
       setDone(r);
       onCreated();
@@ -139,20 +185,34 @@ export function ForgottenBillDialog({
         <div className="shrink-0 border-b border-[var(--p-border)] px-5 py-4">
           <h3 id="fb-title" className="text-[15px] font-semibold text-[var(--p-ink)]">Add a forgotten bill · {ipNumber}</h3>
           <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">
-            For something given during this stay that was never billed. It gets its own receipt and shows on the detailed bill.
+            {kind === "SERVICE"
+              ? "For a hospital service given during this stay that never went on the tab. It is added as an IP charge and shows on the services bill."
+              : "For something given during this stay that was never billed. It gets its own receipt and shows on the detailed bill."}
           </p>
         </div>
 
         {done ? (
           <div className="flex flex-col items-center gap-3 px-6 py-10 text-center">
             <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--p-teal-soft)] text-[var(--p-teal-deep)]"><Icon name="check" size={22} /></span>
-            <p className="text-[15px] font-semibold text-[var(--p-ink)]">Bill {done.receiptNo} added to {ipNumber}</p>
-            <p className="text-[13px] text-[var(--p-muted)]">₹{money(Number(done.total))}</p>
+            <p className="text-[15px] font-semibold text-[var(--p-ink)]">
+              {done.onTab ? `Services added to ${ipNumber}` : `Bill ${done.receiptNo} added to ${ipNumber}`}
+            </p>
+            <p className="text-[13px] text-[var(--p-muted)]">
+              ₹{money(Number(done.total))}
+              {done.onTab && (done.receiptNo ? ` · IPD bill ${done.receiptNo} re-issued` : " · on the tab, settled at discharge")}
+            </p>
             <div className="mt-2 flex gap-2">
-              <a href={`/print/invoice/${done.invoiceId}?print=1`} target="_blank" rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-teal)] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[var(--p-teal-deep)]">
-                <Icon name="printer" size={14} /> Print bill
-              </a>
+              {done.onTab ? (
+                <a href={`/print/services-bill/${admissionId}`} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-teal)] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[var(--p-teal-deep)]">
+                  <Icon name="printer" size={14} /> Services bill
+                </a>
+              ) : (
+                <a href={`/print/invoice/${done.invoiceId}?print=1`} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-teal)] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[var(--p-teal-deep)]">
+                  <Icon name="printer" size={14} /> Print bill
+                </a>
+              )}
               <button type="button" onClick={onClose}
                 className="rounded-lg border border-[var(--p-border)] px-4 py-2 text-[13px] font-medium text-[var(--p-text)]">Done</button>
             </div>
@@ -161,10 +221,10 @@ export function ForgottenBillDialog({
           <>
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
               <div className="inline-flex rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] p-1">
-                {(["PHARMACY", "LAB"] as const).map((k) => (
+                {(["PHARMACY", "LAB", "SERVICE"] as const).map((k) => (
                   <button key={k} type="button" onClick={() => switchKind(k)}
                     className={`inline-flex items-center gap-1.5 rounded-md px-4 py-1.5 text-[13px] font-semibold ${kind === k ? "bg-white text-[var(--p-ink)] shadow-sm" : "text-[var(--p-muted)]"}`}>
-                    <Icon name={k === "PHARMACY" ? "pill" : "flask"} size={14} /> {k === "PHARMACY" ? "Pharmacy" : "Lab"}
+                    <Icon name={k === "PHARMACY" ? "pill" : k === "LAB" ? "flask" : "receipt"} size={14} /> {k === "PHARMACY" ? "Pharmacy" : k === "LAB" ? "Lab" : "Service"}
                   </button>
                 ))}
               </div>
@@ -173,7 +233,7 @@ export function ForgottenBillDialog({
                 <div className="flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-3 py-2">
                   <Icon name="search" size={15} />
                   <input value={q} onChange={(e) => setQ(e.target.value)} autoFocus
-                    placeholder={kind === "PHARMACY" ? "Search a medicine…" : "Search a test…"} className="w-full text-sm outline-none" />
+                    placeholder={kind === "PHARMACY" ? "Search a medicine…" : kind === "LAB" ? "Search a test…" : "Search the rate card - procedure, round, oxygen…"} className="w-full text-sm outline-none" />
                 </div>
                 {kind === "PHARMACY" && medHits.length > 0 && (
                   <div className="mt-1.5 divide-y divide-[var(--p-border)] rounded-lg border border-[var(--p-border)]">
@@ -186,6 +246,21 @@ export function ForgottenBillDialog({
                         </span>
                       </button>
                     ))}
+                  </div>
+                )}
+                {kind === "SERVICE" && s && (
+                  <div className="mt-1.5 max-h-72 divide-y divide-[var(--p-border)] overflow-y-auto rounded-lg border border-[var(--p-border)]">
+                    {svcHits.map((x) => (
+                      <button key={x.id} type="button" onClick={() => addService(x)}
+                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-[var(--p-bg)]">
+                        <span className="text-[13px] text-[var(--p-ink)]">{x.name}</span>
+                        <span className="shrink-0 font-mono text-[12px] text-[var(--p-muted)]">₹{Number(x.price).toLocaleString("en-IN")}{x.perDay ? " / day" : ""}</span>
+                      </button>
+                    ))}
+                    <button type="button" onClick={() => addCustomService(q.trim())}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-[var(--p-teal)] hover:bg-[var(--p-bg)]">
+                      <Icon name="plus" size={14} /> Add &ldquo;{q.trim()}&rdquo; as a service not on the rate card
+                    </button>
                   </div>
                 )}
                 {kind === "LAB" && testHits.length > 0 && (
@@ -241,6 +316,31 @@ export function ForgottenBillDialog({
                     ))}
                   </div>
                 </>
+              ) : kind === "SERVICE" ? (
+                svcLines.length > 0 && (
+                  <div className="divide-y divide-[var(--p-border)] rounded-lg border border-[var(--p-border)]">
+                    {svcLines.map((l) => (
+                      <div key={l.key} className="flex items-center gap-2 px-3 py-2">
+                        <input value={l.name} onChange={(e) => setSvc(l.key, { name: e.target.value })} aria-label="Service"
+                          className={`min-w-0 flex-1 rounded-lg border px-2 py-1 text-[13px] outline-none focus:border-[var(--p-teal)] ${l.name.trim().length < 2 ? "border-[var(--p-rose)]" : "border-transparent hover:border-[var(--p-border)]"}`} />
+                        <input value={l.qty} inputMode="numeric" aria-label="Qty"
+                          onChange={(e) => setSvc(l.key, { qty: Math.max(1, Number(e.target.value.replace(/\D/g, "")) || 1) })}
+                          className="w-14 rounded-lg border border-[var(--p-border)] px-2 py-1 text-center font-mono text-[13px] outline-none focus:border-[var(--p-teal)]" />
+                        <span className="text-[12px] text-[var(--p-muted)]">×</span>
+                        <input value={l.price} inputMode="decimal" aria-label="Rate"
+                          onChange={(e) => setSvc(l.key, { price: Math.max(0, Number(e.target.value.replace(/[^\d.]/g, "")) || 0) })}
+                          className="w-24 rounded-lg border border-[var(--p-border)] px-2 py-1 text-right font-mono text-[13px] outline-none focus:border-[var(--p-teal)]" />
+                        <span className="w-24 text-right font-mono text-[13px] text-[var(--p-ink)]">₹{money(l.qty * l.price)}</span>
+                        <button type="button" onClick={() => setSvcLines((p) => p.filter((x) => x.key !== l.key))} aria-label="Remove"
+                          className="text-[var(--p-muted)] hover:text-[var(--p-rose)]"><Icon name="x" size={14} /></button>
+                      </div>
+                    ))}
+                    <p className="px-3 py-2 text-[11.5px] text-[var(--p-muted)]">
+                      Added to the stay as IP charges, dated on the bill date below
+                      {open ? " - settled with the rest of the tab at discharge." : " - the IPD bill is re-issued to include them."}
+                    </p>
+                  </div>
+                )
               ) : testIds.size > 0 && (
                 <div className="divide-y divide-[var(--p-border)] rounded-lg border border-[var(--p-border)]">
                   {tests.filter((t) => testIds.has(t.id)).map((t) => (
@@ -268,11 +368,14 @@ export function ForgottenBillDialog({
                       className={`rounded-lg border px-3 py-1.5 text-[13px] outline-none ${dateOk ? "border-[var(--p-border)] focus:border-[var(--p-teal)]" : "border-[var(--p-rose)]"}`} />
                   </label>
                   {!dateOk && <p className="text-[12px] text-[var(--p-rose)]">Pick a day between {firstDay} and {lastDay}.</p>}
-                  <DiscountInput key={kind} subtotal={subtotal} accent="teal" onChange={(d) => setDisc(d.amount)} />
+                  {kind !== "SERVICE" && <DiscountInput key={kind} subtotal={subtotal} accent="teal" onChange={(d) => setDisc(d.amount)} />}
                   <div className="flex justify-between text-[14px]">
                     <span className="font-semibold text-[var(--p-ink)]">Bill total</span>
                     <span className="font-mono font-semibold text-[var(--p-ink)]">₹{money(totals?.total ?? 0)}</span>
                   </div>
+                  {!takesPayment ? (
+                    <p className="text-[12px] text-[var(--p-muted)]">This patient is still admitted - these go on the running tab and are paid with it at discharge.</p>
+                  ) : (<>
                   <label className="flex items-center gap-2 text-[13px] text-[var(--p-text)]">
                     <input type="checkbox" checked={payNow} onChange={(e) => setPayNow(e.target.checked)} className="h-4 w-4 accent-[var(--p-teal)]" />
                     Collect payment now
@@ -283,6 +386,7 @@ export function ForgottenBillDialog({
                       <p className="text-[11.5px] text-[var(--p-muted)]">The bill comes out Paid. The payment is recorded now, so it counts in today&apos;s day close under your name.</p>
                     </>
                   ) : <p className="text-[12px] text-[var(--p-muted)]">Left unpaid, it shows as due on this stay until it is collected at Billing.</p>}
+                  </>)}
                 </div>
               )}
 
@@ -294,7 +398,7 @@ export function ForgottenBillDialog({
                 className="rounded-lg px-4 py-2 text-[13px] font-medium text-[var(--p-muted)] hover:text-[var(--p-ink)]">Cancel</button>
               <button type="button" onClick={() => void submit()} disabled={!canSubmit}
                 className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-teal)] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[var(--p-teal-deep)] disabled:opacity-45">
-                {busy ? <><Spinner /> Raising…</> : <><Icon name="receipt" size={14} /> Raise bill{totals ? ` · ₹${money(totals.total)}` : ""}</>}
+                {busy ? <><Spinner /> {kind === "SERVICE" ? "Adding…" : "Raising…"}</> : <><Icon name="receipt" size={14} /> {kind === "SERVICE" ? "Add to stay" : "Raise bill"}{totals ? ` · ₹${money(totals.total)}` : ""}</>}
               </button>
             </div>
           </>

@@ -9,6 +9,6 @@ export const dynamic = "force-dynamic";
 export const GET = handler(async (req) => {
   await requireRole(req, "ADMIN");
   const q = new URL(req.url).searchParams.get("q") ?? "";
-  const patients = await searchPatients(q, 8);
+  const patients = await searchPatients(q);
   return NextResponse.json({ patients });
 });

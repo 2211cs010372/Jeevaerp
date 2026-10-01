@@ -118,6 +118,22 @@ describe("reading a pack label", () => {
     expect(parsePack("30")).toEqual({ size: 30, unit: "unit", known: true });
   });
 
+  it("reads a distributor NxM pack as the tablets in one strip, either way round", () => {
+    // Owner's rule (1 Oct 2026): 1x5 = 1*5 = 5x1 = 5*1 = 5.
+    for (const label of ["1x5", "1*5", "5x1", "5*1", "1X5", "1×5", "5 × 1", "1 * 5"]) {
+      expect(parsePack(label), label).toEqual({ size: 5, unit: "unit", known: true });
+    }
+    // Both above 1: the second is the strip, the first is strips in the box.
+    expect(parsePack("10x10").size).toBe(10);
+    expect(parsePack("10×10").size).toBe(10);
+    expect(parsePack("10*2").size).toBe(2);
+    expect(parsePack("15*1").size).toBe(15);
+    expect(parsePack("1*10").size).toBe(10);
+    expect(parsePack("1*1").size).toBe(1);
+    expect(parsePack("1x10T").size).toBe(10);
+    expect(parsePack("1x10'S").size).toBe(10);
+  });
+
   it("survives the whitespace and noise OCR leaves", () => {
     expect(parsePack(" 15 T ").size).toBe(15);
   });

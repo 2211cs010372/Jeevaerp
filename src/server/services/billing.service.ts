@@ -915,27 +915,18 @@ export async function cancelInvoice(
 }
 
 /** Recent invoices for the billing list (filterable by source). */
-/** The working queue a bill screen gets when it has not asked for anything wider. */
-export const BILLS_PAGE = 100;
-/** The most any one request may pull, whatever the URL says. */
-export const BILLS_PAGE_MAX = 500;
-
 /**
- * HOW MANY BILLS A LIST REQUEST MAY HAVE.
+ * HOW MANY BILLS A LIST REQUEST MAY HAVE - all of them, unless it asks for fewer.
  *
- * A hundred is the working queue and is what nearly every load of these screens
- * wants. The tab labelled "All bills" asks for more, and asks for it in the
- * query string - so this is the point where a query string stops being trusted.
- * Anything unreadable falls back to the working queue rather than to zero: a
- * junk `?limit=` should give the desk its usual screen, not an empty one.
- *
- * Clamped hard at 500. Without a ceiling, `?limit=99999999` is one typed URL
- * between a curious desk and reading the whole invoice table into memory.
+ * These screens used to get the latest hundred, five hundred at most, and the
+ * desk could not find a bill older than about a week. Owner's rule (1 Oct
+ * 2026): no data limits anywhere, every bill is fetched. A readable positive
+ * `?limit=` still narrows it; anything else means "everything".
  */
-export function billsLimit(raw: string | null | undefined): number {
+export function billsLimit(raw: string | null | undefined): number | undefined {
   const n = Math.floor(Number(raw));
-  if (!Number.isFinite(n) || n < 1) return BILLS_PAGE;
-  return Math.min(n, BILLS_PAGE_MAX);
+  if (!Number.isFinite(n) || n < 1) return undefined;
+  return n;
 }
 
 /**
@@ -1051,7 +1042,7 @@ function toInvoiceListRow(i: {
  * bills at its own window, so a medicine receipt on the front desk's queue is a
  * row nobody there is meant to act on.
  */
-export async function listInvoices(source?: InvoiceSourceT, limit = 50, onDate?: string, excludeSource?: InvoiceSourceT): Promise<InvoiceListRow[]> {
+export async function listInvoices(source?: InvoiceSourceT, limit?: number, onDate?: string, excludeSource?: InvoiceSourceT): Promise<InvoiceListRow[]> {
   const onEffectiveDay = invoiceDayWhere(onDate);
 
   const rows = await prisma.invoice.findMany({

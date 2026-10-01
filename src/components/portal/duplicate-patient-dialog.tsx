@@ -195,7 +195,7 @@ export function usePhoneOnFile(phone: string): FiledPatient[] {
     const t = setTimeout(async () => {
       try {
         const { patients } = await api.get<{ patients: FiledPatient[] }>(
-          `/reception/patients?q=${encodeURIComponent(ten)}&limit=8`
+          `/reception/patients?q=${encodeURIComponent(ten)}`
         );
         if (active) setFound(patients.filter((p) => toBare10(p.phone) === ten));
       } catch { if (active) setFound([]); }
