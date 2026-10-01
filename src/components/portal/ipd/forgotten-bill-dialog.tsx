@@ -26,6 +26,15 @@
  * closed stay the payment is recorded on that IPD bill; a stay still in the bed
  * settles its tab at discharge, so no payment is taken here.
  *
+ * ADVANCE records a deposit the family paid during the stay and nobody
+ * entered: its own ADV slip, dated on the day picked (so it counts in that
+ * day's close - the owner's choice). On a closed stay it comes straight off the
+ * IPD bill, as discharge does with every deposit (see addForgottenAdvance).
+ *
+ * OLD STAYS (discharged before OLD_STAY_DISCHARGED_BEFORE) never get a due:
+ * the payment cannot be unticked, and the desk picks whether the money counts
+ * on the bill's own day or today (see settleOldStayBill).
+ *
  * Totals are worked out with the same function the server uses
  * (computeInvoiceTotals), so what the payment section asks for is what the
  * bill comes to.
@@ -39,6 +48,7 @@ import { RepeatConfirmDialog } from "@/components/portal/repeat-confirm-dialog";
 import { api, ApiClientError } from "@/lib/api-client";
 import { repeatBlock, type RepeatBlock } from "@/lib/repeat-guard";
 import { computeInvoiceTotals, type CalcLine } from "@/server/billing/calc";
+import { isOldStay, OLD_STAY_DISCHARGED_BEFORE } from "@/lib/old-stays";
 
 interface Med { id: string; name: string; unit: string; inStock: number; unitMrp: string | null; gstRatePct: string }
 interface Test { id: string; name: string; code: string | null; price: string; gstRatePct: string }
@@ -47,18 +57,23 @@ interface MedLine { med: Med; qty: number }
 interface Service { id: string; name: string; group: string; category: string; price: string; gstRatePct: string; perDay: boolean }
 /** A service on its way to the tab. Rate and qty stay editable, as on the tab itself. */
 interface SvcLine { key: string; name: string; category: string; qty: number; price: number; gstRatePct: number }
-type Kind = "PHARMACY" | "LAB" | "SERVICE";
+type Kind = "PHARMACY" | "LAB" | "SERVICE" | "ADVANCE";
+const ADV_MODES = [["CASH", "Cash"], ["UPI", "UPI"], ["CARD", "Card"], ["NETBANKING", "Net banking"], ["OTHER", "Other"]] as const;
 
 const money = (v: number) => v.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 /** "YYYY-MM-DD" of an instant in the hospital's calendar. */
 const istDay = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 const fld = "w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm outline-none focus:border-[var(--p-teal)]";
 
+const ALL_KINDS: Kind[] = ["PHARMACY", "LAB", "SERVICE", "ADVANCE"];
+
 export function ForgottenBillDialog({
-  admissionId, ipNumber, admittedAt, dischargedAt, onCreated, onClose,
+  admissionId, ipNumber, admittedAt, dischargedAt, onCreated, onClose, kinds = ALL_KINDS,
 }: {
   admissionId: string;
   ipNumber: string;
+  /** The kinds this desk may raise. The pharmacy counter passes ["PHARMACY"]. */
+  kinds?: Kind[];
   /** The stay's bounds - the bill date must fall between them. */
   admittedAt: string;
   dischargedAt: string | null;
@@ -66,11 +81,14 @@ export function ForgottenBillDialog({
   onCreated: () => void;
   onClose: () => void;
 }) {
-  const [kind, setKind] = useState<Kind>("PHARMACY");
+  const [kind, setKind] = useState<Kind>(kinds[0] ?? "PHARMACY");
   const [meds, setMeds] = useState<Med[]>([]);
   const [tests, setTests] = useState<Test[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [svcLines, setSvcLines] = useState<SvcLine[]>([]);
+  const [advAmount, setAdvAmount] = useState("");
+  const [advMode, setAdvMode] = useState<(typeof ADV_MODES)[number][0]>("CASH");
+  const [advRef, setAdvRef] = useState("");
   const [q, setQ] = useState("");
   const [medLines, setMedLines] = useState<MedLine[]>([]);
   const [testIds, setTestIds] = useState<Set<string>>(new Set());
@@ -81,17 +99,23 @@ export function ForgottenBillDialog({
   const [billDate, setBillDate] = useState(lastDay);
   // Raised = paid, unless the desk unticks it (the owner's rule).
   const [payNow, setPayNow] = useState(true);
+  /** Old stay: settled offline at the time, so always paid - only the day it counts is a choice. */
+  const old = isOldStay(dischargedAt);
+  const [paidOn, setPaidOn] = useState<"BILL_DATE" | "TODAY">("BILL_DATE");
   const [payments, setPayments] = useState<Tender[]>([]);
   const [payValid, setPayValid] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [repeat, setRepeat] = useState<{ block: RepeatBlock; message: string } | null>(null);
-  const [done, setDone] = useState<{ invoiceId: string | null; receiptNo: string | null; total: string; onTab?: boolean } | null>(null);
+  const [done, setDone] = useState<{ invoiceId: string | null; receiptNo: string | null; total: string; onTab?: boolean; advanceId?: string } | null>(null);
 
   useEffect(() => {
-    api.get<{ medicines: Med[] }>("/pharmacy/medicines").then((r) => setMeds(r.medicines)).catch(() => setMeds([]));
-    api.get<{ catalog: Test[] }>("/labs/catalog").then((r) => setTests(r.catalog)).catch(() => setTests([]));
-    api.get<{ services: Service[] }>("/ipd/services").then((r) => setServices(r.services)).catch(() => setServices([]));
+    // Only what this desk can use - the pharmacy counter cannot read the lab
+    // catalogue or the rate card, and has no reason to.
+    if (kinds.includes("PHARMACY")) api.get<{ medicines: Med[] }>("/pharmacy/medicines").then((r) => setMeds(r.medicines)).catch(() => setMeds([]));
+    if (kinds.includes("LAB")) api.get<{ catalog: Test[] }>("/labs/catalog").then((r) => setTests(r.catalog)).catch(() => setTests([]));
+    if (kinds.includes("SERVICE")) api.get<{ services: Service[] }>("/ipd/services").then((r) => setServices(r.services)).catch(() => setServices([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -123,10 +147,13 @@ export function ForgottenBillDialog({
   const unpriced = kind === "PHARMACY" ? medLines.filter((l) => !l.med.unitMrp) : [];
   const dateOk = billDate >= firstDay && billDate <= lastDay;
   const svcBad = kind === "SERVICE" && svcLines.some((l) => l.name.trim().length < 2);
+  const advValue = Number(advAmount) || 0;
   // No payment on a stay still in the bed - see addForgottenServices.
   const takesPayment = !(kind === "SERVICE" && open);
-  const canSubmit = !busy && !!totals && dateOk && short.length === 0 && unpriced.length === 0 && !svcBad
-    && (!takesPayment || !payNow || payValid);
+  const canSubmit = kind === "ADVANCE"
+    ? !busy && dateOk && advValue > 0
+    : !busy && !!totals && dateOk && short.length === 0 && unpriced.length === 0 && !svcBad
+      && (!takesPayment || !(payNow || old) || payValid);
 
   function addMed(m: Med) {
     setMedLines((p) => (p.some((l) => l.med.id === m.id) ? p : [...p, { med: m, qty: 1 }]));
@@ -154,9 +181,10 @@ export function ForgottenBillDialog({
     try {
       const common = {
         discountAmount: disc || undefined,
-        payments: takesPayment && payNow && payments.length ? payments : undefined,
+        payments: takesPayment && (payNow || old) && payments.length ? payments : undefined,
         confirmRepeat: confirmRepeat || undefined,
         billDate,
+        ...(old ? { paidOn } : {}),
       };
       const body = kind === "PHARMACY"
         ? { kind, fromStock, items: medLines.map((l) => ({ medicineId: l.med.id, qty: l.qty })), ...common }
@@ -164,9 +192,11 @@ export function ForgottenBillDialog({
           // A service has no discount of its own - it is a line on the IPD bill,
           // which carries the stay's discount.
           ? { kind, lines: svcLines.map((l) => ({ category: l.category, description: l.name.trim(), qty: l.qty, unitPrice: l.price, gstRatePct: l.gstRatePct })),
-              payments: common.payments, confirmRepeat: common.confirmRepeat, billDate }
-          : { kind, catalogIds: [...testIds], ...common };
-      const r = await api.post<{ invoiceId: string | null; receiptNo: string | null; total: string; onTab?: boolean }>(`/ipd/admissions/${admissionId}/forgotten-bill`, body);
+              payments: common.payments, confirmRepeat: common.confirmRepeat, billDate, ...(old ? { paidOn } : {}) }
+          : kind === "ADVANCE"
+            ? { kind, amount: advValue, mode: advMode, reference: advRef.trim() || undefined, billDate }
+            : { kind, catalogIds: [...testIds], ...common };
+      const r = await api.post<{ invoiceId: string | null; receiptNo: string | null; total: string; onTab?: boolean; advanceId?: string }>(`/ipd/admissions/${admissionId}/forgotten-bill`, body);
       setRepeat(null);
       setDone(r);
       onCreated();
@@ -187,7 +217,9 @@ export function ForgottenBillDialog({
           <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">
             {kind === "SERVICE"
               ? "For a hospital service given during this stay that never went on the tab. It is added as an IP charge and shows on the services bill."
-              : "For something given during this stay that was never billed. It gets its own receipt and shows on the detailed bill."}
+              : kind === "ADVANCE"
+                ? "For a deposit the family paid during this stay that was never entered. It gets its own advance slip, dated on the day you pick."
+                : "For something given during this stay that was never billed. It gets its own receipt and shows on the detailed bill."}
           </p>
         </div>
 
@@ -195,14 +227,21 @@ export function ForgottenBillDialog({
           <div className="flex flex-col items-center gap-3 px-6 py-10 text-center">
             <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--p-teal-soft)] text-[var(--p-teal-deep)]"><Icon name="check" size={22} /></span>
             <p className="text-[15px] font-semibold text-[var(--p-ink)]">
-              {done.onTab ? `Services added to ${ipNumber}` : `Bill ${done.receiptNo} added to ${ipNumber}`}
+              {done.advanceId ? `Advance ${done.receiptNo} added to ${ipNumber}`
+                : done.onTab ? `Services added to ${ipNumber}` : `Bill ${done.receiptNo} added to ${ipNumber}`}
             </p>
             <p className="text-[13px] text-[var(--p-muted)]">
               ₹{money(Number(done.total))}
+              {done.advanceId && (done.invoiceId ? " · adjusted against the IPD bill" : " · comes off the bill at discharge")}
               {done.onTab && (done.receiptNo ? ` · IPD bill ${done.receiptNo} re-issued` : " · on the tab, settled at discharge")}
             </p>
             <div className="mt-2 flex gap-2">
-              {done.onTab ? (
+              {done.advanceId ? (
+                <a href={`/print/advance/${done.advanceId}`} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-teal)] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[var(--p-teal-deep)]">
+                  <Icon name="printer" size={14} /> Advance slip
+                </a>
+              ) : done.onTab ? (
                 <a href={`/print/services-bill/${admissionId}`} target="_blank" rel="noopener noreferrer"
                   className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-teal)] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[var(--p-teal-deep)]">
                   <Icon name="printer" size={14} /> Services bill
@@ -220,15 +259,54 @@ export function ForgottenBillDialog({
         ) : (
           <>
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
+              {kinds.length > 1 && (
               <div className="inline-flex rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] p-1">
-                {(["PHARMACY", "LAB", "SERVICE"] as const).map((k) => (
+                {kinds.map((k) => (
                   <button key={k} type="button" onClick={() => switchKind(k)}
                     className={`inline-flex items-center gap-1.5 rounded-md px-4 py-1.5 text-[13px] font-semibold ${kind === k ? "bg-white text-[var(--p-ink)] shadow-sm" : "text-[var(--p-muted)]"}`}>
-                    <Icon name={k === "PHARMACY" ? "pill" : k === "LAB" ? "flask" : "receipt"} size={14} /> {k === "PHARMACY" ? "Pharmacy" : k === "LAB" ? "Lab" : "Service"}
+                    <Icon name={k === "PHARMACY" ? "pill" : k === "LAB" ? "flask" : k === "SERVICE" ? "receipt" : "rupee"} size={14} />
+                    {k === "PHARMACY" ? "Pharmacy" : k === "LAB" ? "Lab" : k === "SERVICE" ? "Service" : "Advance"}
                   </button>
                 ))}
               </div>
+              )}
 
+              {kind === "ADVANCE" ? (
+                <div className="space-y-3 rounded-lg border border-[var(--p-border)] p-4">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block text-[13px] text-[var(--p-text)]">
+                      <span className="font-medium">Amount (₹)</span>
+                      <input value={advAmount} inputMode="decimal" autoFocus placeholder="e.g. 20000"
+                        onChange={(e) => setAdvAmount(e.target.value.replace(/[^\d.]/g, ""))}
+                        className={`mt-1 ${fld} font-mono`} />
+                    </label>
+                    <label className="block text-[13px] text-[var(--p-text)]">
+                      <span className="font-medium">Paid by</span>
+                      <select value={advMode} onChange={(e) => setAdvMode(e.target.value as typeof advMode)} className={`mt-1 ${fld}`}>
+                        {ADV_MODES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                  <label className="block text-[13px] text-[var(--p-text)]">
+                    <span className="font-medium">Reference <span className="font-normal text-[var(--p-muted)]">(UPI / card ref, or the paper slip number)</span></span>
+                    <input value={advRef} onChange={(e) => setAdvRef(e.target.value)} maxLength={80} className={`mt-1 ${fld}`} />
+                  </label>
+                  <label className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-[var(--p-text)]">
+                    <span>
+                      <span className="font-medium">Taken on</span>
+                      <span className="block text-[11.5px] text-[var(--p-muted)]">The day in the stay it was paid - printed on the slip and counted in that day&apos;s close.</span>
+                    </span>
+                    <input type="date" value={billDate} min={firstDay} max={lastDay} onChange={(e) => setBillDate(e.target.value)}
+                      className={`rounded-lg border px-3 py-1.5 text-[13px] outline-none ${dateOk ? "border-[var(--p-border)] focus:border-[var(--p-teal)]" : "border-[var(--p-rose)]"}`} />
+                  </label>
+                  {!dateOk && <p className="text-[12px] text-[var(--p-rose)]">Pick a day between {firstDay} and {lastDay}.</p>}
+                  <p className="text-[11.5px] text-[var(--p-muted)]">
+                    {open
+                      ? "Held against the stay and taken off the bill at discharge, like any advance."
+                      : "This stay is discharged, so the advance comes straight off the IPD bill. Anything beyond what the bill still owes stays as refundable."}
+                  </p>
+                </div>
+              ) : (<>
               <div className="relative">
                 <div className="flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-3 py-2">
                   <Icon name="search" size={15} />
@@ -375,6 +453,26 @@ export function ForgottenBillDialog({
                   </div>
                   {!takesPayment ? (
                     <p className="text-[12px] text-[var(--p-muted)]">This patient is still admitted - these go on the running tab and are paid with it at discharge.</p>
+                  ) : old ? (
+                    <div className="space-y-3">
+                      <p className="rounded-lg bg-[var(--p-blue-soft)] px-3 py-2 text-[12px] leading-relaxed text-[var(--p-blue-deep)]">
+                        <b>Old stay</b> - discharged before {OLD_STAY_DISCHARGED_BEFORE.split("-").reverse().join("-")}, settled offline.
+                        This is recorded as paid in full, so the stay is left with no due.
+                      </p>
+                      <PaymentSection total={totals?.total ?? 0} accent="teal" onChange={(r) => { setPayments(r.payments); setPayValid(r.valid); }} />
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {([["BILL_DATE", "Paid on the bill date", `Counts in ${billDate.split("-").reverse().join("-")}'s day close - the day it belongs to.`],
+                           ["TODAY", "Paid today", "Counts in today's day close under your name."]] as const).map(([v, title, sub]) => (
+                          <label key={v} className={`flex cursor-pointer gap-2.5 rounded-lg border px-3 py-2.5 ${paidOn === v ? "border-[var(--p-teal)] bg-[var(--p-teal-soft)]/40" : "border-[var(--p-border)]"}`}>
+                            <input type="radio" name="fb-paid-on" checked={paidOn === v} onChange={() => setPaidOn(v)} className="mt-0.5 h-4 w-4 accent-[var(--p-teal)]" />
+                            <span>
+                              <span className="block text-[13px] font-semibold text-[var(--p-ink)]">{title}</span>
+                              <span className="block text-[11.5px] leading-snug text-[var(--p-muted)]">{sub}</span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
                   ) : (<>
                   <label className="flex items-center gap-2 text-[13px] text-[var(--p-text)]">
                     <input type="checkbox" checked={payNow} onChange={(e) => setPayNow(e.target.checked)} className="h-4 w-4 accent-[var(--p-teal)]" />
@@ -390,6 +488,8 @@ export function ForgottenBillDialog({
                 </div>
               )}
 
+              </>)}
+
               {err && <p className="rounded-lg bg-[var(--p-rose-soft)] px-3 py-2 text-[12.5px] text-[var(--p-rose)]">{err}</p>}
             </div>
 
@@ -398,7 +498,10 @@ export function ForgottenBillDialog({
                 className="rounded-lg px-4 py-2 text-[13px] font-medium text-[var(--p-muted)] hover:text-[var(--p-ink)]">Cancel</button>
               <button type="button" onClick={() => void submit()} disabled={!canSubmit}
                 className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-teal)] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[var(--p-teal-deep)] disabled:opacity-45">
-                {busy ? <><Spinner /> {kind === "SERVICE" ? "Adding…" : "Raising…"}</> : <><Icon name="receipt" size={14} /> {kind === "SERVICE" ? "Add to stay" : "Raise bill"}{totals ? ` · ₹${money(totals.total)}` : ""}</>}
+                {busy ? <><Spinner /> {kind === "SERVICE" || kind === "ADVANCE" ? "Adding…" : "Raising…"}</>
+                  : kind === "ADVANCE"
+                    ? <><Icon name="rupee" size={14} /> Add advance{advValue > 0 ? ` · ₹${money(advValue)}` : ""}</>
+                    : <><Icon name="receipt" size={14} /> {kind === "SERVICE" ? "Add to stay" : "Raise bill"}{totals ? ` · ₹${money(totals.total)}` : ""}</>}
               </button>
             </div>
           </>

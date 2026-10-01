@@ -278,6 +278,7 @@ export const PORTALS: Record<string, PortalMeta> = {
       { label: "Prescriptions", href: "/queue", icon: "file" },
       { label: "Dispense", href: "/dispense", icon: "pill" },
       { label: "Bills", href: "/bills", icon: "receipt" },
+      { label: "Forgotten IP bills", href: "/stay-bills", icon: "bed" },
       { label: "Stock", href: "/stock", icon: "grid" },
       { label: "Alerts", href: "/alerts", icon: "alert" },
       { label: "Reorder", href: "/reorder", icon: "trend" },
@@ -301,6 +302,11 @@ export const PORTALS: Record<string, PortalMeta> = {
             // charge them", which is the question a patient comes back with -
             // and which used to be answerable only from reception's screen.
             label: "Bills", href: "/bills", icon: "receipt",
+          },
+          {
+            // Medicine a stay was given and never billed - raised onto the
+            // stay from here, even after discharge (see addForgottenBill).
+            label: "Forgotten IP bills", href: "/stay-bills", icon: "bed",
           },
           {
             // An inpatient's medicine leaves unpaid by design. Without a number

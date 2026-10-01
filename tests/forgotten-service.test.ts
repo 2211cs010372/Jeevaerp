@@ -29,6 +29,17 @@ describe("what a forgotten service request may carry", () => {
     expect(() => forgottenBillSchema.parse({ kind: "SERVICE", lines: [{ ...line, category: "PHARMACY" }] })).toThrow();
   });
 
+  it("takes a forgotten advance with its mode and the day it was paid", () => {
+    const r = forgottenBillSchema.parse({ kind: "ADVANCE", amount: "20000", mode: "UPI", reference: "UPI 4471", billDate: "2026-08-07" });
+    expect(r.kind).toBe("ADVANCE");
+    if (r.kind === "ADVANCE") expect(r.amount).toBe(20000);
+  });
+
+  it("refuses an advance of nothing, or paid in a way the drawer does not know", () => {
+    expect(() => forgottenBillSchema.parse({ kind: "ADVANCE", amount: 0, mode: "CASH" })).toThrow();
+    expect(() => forgottenBillSchema.parse({ kind: "ADVANCE", amount: 500, mode: "INSURANCE" })).toThrow();
+  });
+
   it("refuses a nameless or free line", () => {
     expect(() => forgottenBillSchema.parse({ kind: "SERVICE", lines: [{ ...line, description: " " }] })).toThrow();
     expect(() => forgottenBillSchema.parse({ kind: "SERVICE", lines: [{ ...line, qty: 0 }] })).toThrow();

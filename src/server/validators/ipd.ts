@@ -96,6 +96,8 @@ export const forgottenBillSchema = z.discriminatedUnion("kind", [
     payments: paymentsSchema.optional(),
     confirmRepeat: z.boolean().optional(),
     billDate: forgottenBillDate,
+    /** Old stays only: when the money counts - see settleOldStayBill. */
+    paidOn: z.enum(["BILL_DATE", "TODAY"]).optional(),
   }),
   z.object({
     kind: z.literal("PHARMACY"),
@@ -108,6 +110,8 @@ export const forgottenBillSchema = z.discriminatedUnion("kind", [
     payments: paymentsSchema.optional(),
     confirmRepeat: z.boolean().optional(),
     billDate: forgottenBillDate,
+    /** Old stays only: when the money counts - see settleOldStayBill. */
+    paidOn: z.enum(["BILL_DATE", "TODAY"]).optional(),
   }),
   // Rate-card services, landing on the stay as IP charges - see addForgottenServices.
   z.object({
@@ -122,6 +126,16 @@ export const forgottenBillSchema = z.discriminatedUnion("kind", [
     })).min(1, "Add at least one service").max(60),
     payments: paymentsSchema.optional(),
     confirmRepeat: z.boolean().optional(),
+    billDate: forgottenBillDate,
+    /** Old stays only: when the money counts - see settleOldStayBill. */
+    paidOn: z.enum(["BILL_DATE", "TODAY"]).optional(),
+  }),
+  // A deposit taken during the stay and never entered - see addForgottenAdvance.
+  z.object({
+    kind: z.literal("ADVANCE"),
+    amount: z.coerce.number().positive("An advance must be more than ₹0"),
+    mode: z.enum(["CASH", "UPI", "CARD", "NETBANKING", "OTHER"]),
+    reference: z.string().trim().max(80).optional(),
     billDate: forgottenBillDate,
   }),
 ]);

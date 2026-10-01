@@ -24,6 +24,7 @@ import { nameKey } from "@/lib/patient-duplicates";
 import { billMedicinesWithoutStock, dispense } from "./pharmacy.service";
 import { dateOnlyISO, parseLocalDate } from "@/lib/date";
 import { perUnitPrice } from "@/lib/pharmacy/pack";
+import { isOldStay, OLD_STAY_DISCHARGED_BEFORE } from "@/lib/old-stays";
 import { ipServicesBill, bucketOfSection, isDiscountable, type IpBillBucket } from "@/lib/ip-services-bill";
 import {
   CLOSED_STATUS_LIST, isClosed, OUTCOME_LABEL,
@@ -1673,6 +1674,10 @@ type Tender = { mode: "CASH" | "UPI" | "CARD" | "NETBANKING" | "OTHER"; amount: 
  *               invoice: they land on the stay as ordinary IP charges, exactly
  *               as "Add to the tab" puts them, and print on the services bill.
  *               See addForgottenServices.
+ *   ADVANCE   - a deposit the family paid during the stay that was never
+ *               entered. It gets its own ADV slip, dated on the day picked;
+ *               on a closed stay it is adjusted against the IPD bill the way
+ *               discharge adjusts every deposit. See addForgottenAdvance.
  *
  * DATED IN THE STAY. The bill prints the day it belongs to (`billDate`, a day
  * between admission and discharge - the discharge day unless the desk picks
@@ -1683,11 +1688,12 @@ export async function addForgottenBill(
   actor: AuthUser,
   admissionId: string,
   input:
-    | { kind: "LAB"; catalogIds: string[]; discountAmount?: number; payments?: Tender[]; confirmRepeat?: boolean; billDate?: string }
-    | { kind: "PHARMACY"; items: { medicineId: string; qty: number }[]; fromStock: boolean; discountAmount?: number; payments?: Tender[]; confirmRepeat?: boolean; billDate?: string }
-    | { kind: "SERVICE"; lines: ForgottenServiceLine[]; payments?: Tender[]; confirmRepeat?: boolean; billDate?: string },
+    | { kind: "LAB"; catalogIds: string[]; discountAmount?: number; payments?: Tender[]; confirmRepeat?: boolean; billDate?: string; paidOn?: PaidOn }
+    | { kind: "PHARMACY"; items: { medicineId: string; qty: number }[]; fromStock: boolean; discountAmount?: number; payments?: Tender[]; confirmRepeat?: boolean; billDate?: string; paidOn?: PaidOn }
+    | { kind: "SERVICE"; lines: ForgottenServiceLine[]; payments?: Tender[]; confirmRepeat?: boolean; billDate?: string; paidOn?: PaidOn }
+    | { kind: "ADVANCE"; amount: number; mode: Tender["mode"]; reference?: string; billDate?: string },
   ctx: { ipAddress?: string; userAgent?: string }
-): Promise<{ invoiceId: string | null; receiptNo: string | null; total: string; onTab?: boolean }> {
+): Promise<{ invoiceId: string | null; receiptNo: string | null; total: string; onTab?: boolean; advanceId?: string }> {
   const adm = await prisma.admission.findUnique({
     where: { id: admissionId },
     select: { id: true, ipNumber: true, patientId: true, admittedAt: true, dischargedAt: true, status: true },
@@ -1706,7 +1712,14 @@ export async function addForgottenBill(
     catch (e) { throw new ApiError(400, e instanceof BillDateError ? e.message : "That is not a real date"); }
   }
 
-  if (input.kind === "SERVICE") return addForgottenServices(actor, adm, input, day, ctx);
+  // OLD STAY: discharged in the offline-record period, so nothing added here may
+  // leave a due - see settleOldStayBill.
+  const old = isOldStay(adm.dischargedAt);
+  const paidOn: PaidOn = input.kind !== "ADVANCE" && input.paidOn === "BILL_DATE" ? "BILL_DATE" : "TODAY";
+  const lastMode = (p?: Tender[]) => (p && p.length ? p[p.length - 1].mode : "CASH");
+
+  if (input.kind === "SERVICE") return addForgottenServices(actor, adm, input, day, ctx, { old, paidOn });
+  if (input.kind === "ADVANCE") return addForgottenAdvance(actor, adm, input, day, ctx);
 
   if (input.kind === "PHARMACY") {
     const common = { patientId: adm.patientId, stayId: adm.id, items: input.items, discountAmount: input.discountAmount, payments: input.payments, confirmRepeat: input.confirmRepeat, billDate };
@@ -1714,6 +1727,7 @@ export async function addForgottenBill(
       ? (await dispense(actor, common, ctx)).invoice
       : await billMedicinesWithoutStock(actor, common, ctx);
     if (!invoice) throw new ApiError(500, "The bill was not raised.");
+    if (old) await settleOldStayBill(actor, invoice.id, { ipNumber: adm.ipNumber, paidOn, paidAt: billDate, mode: lastMode(input.payments), before: new Set() }, ctx);
     return { invoiceId: invoice.id, receiptNo: invoice.receiptNo, total: invoice.totalAmount };
   }
 
@@ -1757,6 +1771,7 @@ export async function addForgottenBill(
     },
     ctx
   );
+  if (old) await settleOldStayBill(actor, invoice.id, { ipNumber: adm.ipNumber, paidOn, paidAt: billDate, mode: lastMode(input.payments), before: new Set() }, ctx);
   await logAudit(actor, {
     action: "FORGOTTEN_BILL_ADDED", targetTable: "Invoice", targetId: invoice.id,
     meta: { ipNumber: adm.ipNumber, receiptNo: invoice.receiptNo, source: "LAB", tests: lines.length },
@@ -1764,6 +1779,71 @@ export async function addForgottenBill(
   });
   await publishLive([TOPICS.IPD, TOPICS.RECEPTION, TOPICS.INSURANCE, TOPICS.ADMIN], EVENTS.INVOICE_RAISED);
   return { invoiceId: invoice.id, receiptNo: invoice.receiptNo, total: invoice.totalAmount };
+}
+
+/** When the money for a forgotten bill on an old stay counts as received. */
+export type PaidOn = "BILL_DATE" | "TODAY";
+
+/**
+ * NO DUE ON AN OLD STAY (owner, 1 Oct 2026).
+ *
+ * A stay discharged before OLD_STAY_DISCHARGED_BEFORE was settled offline at
+ * the time; the records are only being keyed in now. So whatever a forgotten
+ * bill on it comes to is recorded as PAID IN FULL: anything the desk's tenders
+ * left uncovered is topped up in the last tender's mode, and the bill's balance
+ * comes out at zero.
+ *
+ * The desk picks WHEN that money counts, per bill:
+ *   TODAY      - the payments stand as recorded, in today's day close.
+ *   BILL_DATE  - this bill's new payments are re-dated to the bill's own day
+ *                in the stay, so they land in that old day's close instead.
+ *
+ * `before` is the set of payment ids the invoice already had, so only the
+ * payments this one action created are re-dated - never an older one.
+ */
+async function settleOldStayBill(
+  actor: AuthUser,
+  invoiceId: string,
+  opts: { ipNumber: string; paidOn: PaidOn; paidAt?: Date; mode: Tender["mode"]; before: Set<string> },
+  ctx: { ipAddress?: string; userAgent?: string },
+): Promise<void> {
+  const inv = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    select: { totalAmount: true, receiptNo: true, payments: { select: { amount: true } }, refunds: { select: { amount: true } } },
+  });
+  if (!inv) return;
+  const paid = round2(
+    inv.payments.reduce((sum, x) => round2(sum + Number(x.amount.toString())), 0)
+    - inv.refunds.reduce((sum, x) => round2(sum + Number(x.amount.toString())), 0),
+  );
+  const topUp = round2(Number(inv.totalAmount.toString()) - paid);
+  if (topUp > 0.009) {
+    await recordPayments(actor, {
+      invoiceId,
+      payments: [{ mode: opts.mode, amount: topUp, reference: `Old stay ${opts.ipNumber} - settled offline` }],
+    }, ctx);
+  }
+
+  let redated = 0;
+  if (opts.paidOn === "BILL_DATE" && opts.paidAt) {
+    const now = await prisma.payment.findMany({ where: { invoiceId }, select: { id: true } });
+    const fresh = now.map((x) => x.id).filter((id) => !opts.before.has(id));
+    if (fresh.length) {
+      await prisma.payment.updateMany({ where: { id: { in: fresh } }, data: { createdAt: opts.paidAt } });
+      await prisma.invoice.update({ where: { id: invoiceId }, data: { paidAt: opts.paidAt } });
+      redated = fresh.length;
+    }
+  }
+
+  await logAudit(actor, {
+    action: "OLD_STAY_BILL_SETTLED", targetTable: "Invoice", targetId: invoiceId,
+    meta: {
+      ipNumber: opts.ipNumber, receiptNo: inv.receiptNo, cutoff: OLD_STAY_DISCHARGED_BEFORE,
+      toppedUp: topUp > 0.009 ? topUp.toFixed(2) : "0.00", paidOn: opts.paidOn,
+      ...(redated ? { paymentsRedated: redated, paidAt: opts.paidAt!.toISOString() } : {}),
+    },
+    ...ctx,
+  });
 }
 
 /** One rate-card service the desk found unbilled on a stay. */
@@ -1799,6 +1879,7 @@ async function addForgottenServices(
   input: { lines: ForgottenServiceLine[]; payments?: Tender[]; confirmRepeat?: boolean },
   day: string | undefined,
   ctx: { ipAddress?: string; userAgent?: string },
+  settle: { old: boolean; paidOn: PaidOn } = { old: false, paidOn: "TODAY" },
 ): Promise<{ invoiceId: string | null; receiptNo: string | null; total: string; onTab?: boolean }> {
   const lines = input.lines
     .map((l) => ({ ...l, description: l.description.trim() }))
@@ -1870,6 +1951,9 @@ async function addForgottenServices(
       })
     : null;
 
+  // Which payments the IPD bill had before this - only the new ones get re-dated.
+  const before = new Set(inv ? (await prisma.payment.findMany({ where: { invoiceId: inv.id }, select: { id: true } })).map((x) => x.id) : []);
+
   let collected = 0;
   if (tenders.length) {
     if (!inv) throw new ApiError(400, "The services were added, but this stay has no IPD bill to take the payment on. Collect it at Billing.");
@@ -1893,6 +1977,14 @@ async function addForgottenServices(
     }
   }
 
+  // An old stay's IPD bill is left with no due at all - see settleOldStayBill.
+  if (settle.old && inv) {
+    await settleOldStayBill(actor, inv.id, {
+      ipNumber: adm.ipNumber, paidOn: settle.paidOn, paidAt: chargedAt,
+      mode: tenders.length ? tenders[tenders.length - 1].mode : "CASH", before,
+    }, ctx);
+  }
+
   await logAudit(actor, {
     action: "FORGOTTEN_BILL_ADDED", targetTable: "Admission", targetId: adm.id,
     meta: {
@@ -1908,6 +2000,100 @@ async function addForgottenServices(
   await publishLive([TOPICS.IPD, TOPICS.RECEPTION, TOPICS.INSURANCE, TOPICS.ADMIN], EVENTS.INVOICE_RAISED);
 
   return { invoiceId: inv?.id ?? null, receiptNo: inv?.receiptNo ?? null, total: total.toFixed(2), onTab: true };
+}
+
+/**
+ * A FORGOTTEN ADVANCE - a deposit taken during the stay and never entered
+ * (owner, 1 Oct 2026). The ordinary addAdvance refuses a discharged stay; this
+ * is how the old offline stays get their deposits in.
+ *
+ * DATED ON THE DAY PICKED, and deliberately so: the owner chose the original
+ * day over today. `createdAt` is the only date a deposit has, so the slip, the
+ * IP bill and the day close all read that day - which means a closed day's
+ * cash total grows by this amount. The audit entry records both the day it is
+ * dated and that it was entered late.
+ *
+ * ON A CLOSED STAY it is adjusted against the IPD bill straight away, exactly
+ * as discharge adjusts every deposit: a payment stamped with this slip's
+ * reference (which the day close skips, so the money is never counted twice),
+ * capped at what the bill still has due. Anything beyond that stays on the
+ * stay as refundable, as an over-sized deposit always has.
+ */
+async function addForgottenAdvance(
+  actor: AuthUser,
+  adm: { id: string; ipNumber: string; admittedAt: Date; dischargedAt: Date | null; status: string },
+  input: { amount: number; mode: Tender["mode"]; reference?: string },
+  day: string | undefined,
+  ctx: { ipAddress?: string; userAgent?: string },
+): Promise<{ invoiceId: string | null; receiptNo: string | null; total: string; onTab?: boolean; advanceId?: string }> {
+  const amount = round2(input.amount);
+  if (!(amount > 0)) throw new ApiError(400, "An advance must be more than ₹0");
+
+  // Midday on the picked day, kept inside the stay - the same rule as services.
+  let takenAt: Date | undefined;
+  if (day) {
+    const noon = new Date(`${day}T12:00:00+05:30`);
+    const end = adm.dischargedAt ?? new Date();
+    takenAt = new Date(Math.min(Math.max(noon.getTime(), adm.admittedAt.getTime()), end.getTime()));
+  }
+
+  const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const receiptNo = await nextId("ADV", { tx });
+    return tx.admissionAdvance.create({
+      data: {
+        admissionId: adm.id, receiptNo,
+        mode: input.mode as PaymentMode,
+        amount,
+        reference: input.reference?.trim() || null,
+        receivedById: actor.id,
+        ...(takenAt ? { createdAt: takenAt } : {}),
+      },
+      select: { id: true, receiptNo: true },
+    });
+  });
+
+  const closed = isClosed(adm.status as AdmissionStatusValue);
+  let applied = 0;
+  let inv: { id: string; receiptNo: string } | null = null;
+  if (closed) {
+    const bill = await prisma.invoice.findFirst({
+      where: { admissionId: adm.id, source: "IPD", status: { not: "CANCELLED" } },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, receiptNo: true, totalAmount: true, payments: { select: { amount: true } }, refunds: { select: { amount: true } } },
+    });
+    if (bill) {
+      inv = { id: bill.id, receiptNo: bill.receiptNo };
+      const paid = round2(
+        bill.payments.reduce((sum, x) => round2(sum + Number(x.amount.toString())), 0)
+        - bill.refunds.reduce((sum, x) => round2(sum + Number(x.amount.toString())), 0),
+      );
+      const due = round2(Number(bill.totalAmount.toString()) - paid);
+      applied = round2(Math.min(amount, Math.max(0, due)));
+      if (applied > 0.01) {
+        await recordPayment(actor, {
+          invoiceId: bill.id, mode: input.mode as PaymentModeT, amount: applied,
+          reference: advancePaymentRef(adm.ipNumber, created.receiptNo),
+        }, ctx);
+      } else applied = 0;
+    }
+  }
+
+  await logAudit(actor, {
+    action: "IPD_ADVANCE_TAKEN", targetTable: "Admission", targetId: adm.id,
+    meta: {
+      ipNumber: adm.ipNumber, receiptNo: created.receiptNo, amount, mode: input.mode,
+      forgotten: true, afterDischarge: closed,
+      ...(takenAt ? { datedOn: takenAt.toISOString() } : {}),
+      ...(inv ? { appliedTo: inv.receiptNo, applied: applied.toFixed(2) } : {}),
+    },
+    ...ctx,
+  });
+  await publishLive([TOPICS.IPD, TOPICS.RECEPTION, TOPICS.INSURANCE, TOPICS.ADMIN], EVENTS.INVOICE_RAISED);
+
+  return {
+    invoiceId: inv?.id ?? null, receiptNo: created.receiptNo ?? null,
+    total: amount.toFixed(2), advanceId: created.id,
+  };
 }
 
 /** Add a line to an inpatient's tab. */
