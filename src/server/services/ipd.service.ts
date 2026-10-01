@@ -894,10 +894,13 @@ export function buildIpdInvoiceLines(
  * It deliberately delegates to `updateInvoice` rather than writing the invoice
  * itself, because every rule worth having already lives there: a cancelled bill
  * stays cancelled, a bill carrying a live IRN is the government's copy and is
- * refused, the total may not fall below money already collected, and the whole
- * edit is gated behind `billEditingEnabled` for the front desk and the insurance
+ * refused, and the whole edit is gated behind `billEditingEnabled` for the front desk and the insurance
  * room. Re-implementing any of that here would mean two answers to "may this
  * bill change", which is one more than a tax document can survive.
+ *
+ * The one rule it bends: a total below money already collected does not refuse
+ * here. The recorded payment is lowered to the corrected total instead
+ * (trimPaymentsToTotal / planPaymentTrim), so a stay's dates always save.
  *
  * A stay with no IPD invoice yet (discharged before invoicing, or a stay still
  * running) is a no-op, not an error - the charge edit itself is still valid.
@@ -957,6 +960,10 @@ async function reissueIpdInvoice(
       // The discount was a decision taken at discharge about this stay. A
       // corrected line is not a reason to quietly withdraw it.
       discountAmount: Number(inv.discountAmount.toString()),
+      // A stay's dates and charges always save: a total below what was recorded
+      // as collected lowers the payment rather than refusing (owner, 1 Oct 2026 -
+      // old offline stays are keyed in after the fact). See planPaymentTrim.
+      trimPaymentsToTotal: true,
     },
     ctx,
   );
@@ -968,12 +975,12 @@ async function reissueIpdInvoice(
  * `updateInvoice` runs its own transaction, so the charge write and the invoice
  * rewrite cannot share one. That leaves a window where the charge has moved and
  * the invoice has not - which is precisely the divergence this whole path exists
- * to prevent, and it is reached by the most ordinary refusal there is: a
- * correction that would drop the bill below money already collected.
+ * to prevent, and it is reached whenever the re-issue refuses: a cancelled
+ * bill, a live IRN, a desk with bill editing switched off.
  *
  * So the charge change is undone when the re-issue refuses. The desk gets the
- * invoice's own message - "refund the difference first, then edit" - and the
- * stay is exactly as it was before they pressed the button.
+ * invoice's own message and the stay is exactly as it was before they pressed
+ * the button.
  *
  * A stay that is still ADMITTED has no invoice yet and skips all of this: its
  * charges are a running tab, and nothing downstream is stale until discharge
@@ -2078,9 +2085,10 @@ export async function removeAdmissionCharge(
  *   A DISCHARGED stay re-issues its invoice, through the same path a repriced
  *   line uses - so the tax document and the claim bill never disagree about a
  *   stay. Every rule worth having lives in `updateInvoice`: a cancelled bill
- *   stays cancelled, a filed IRN is refused, the total may not drop below money
- *   already collected, and the whole edit is gated on `billEditingEnabled`. If
- *   the re-issue refuses, the stay goes back exactly as it was.
+ *   stays cancelled, a filed IRN is refused, and the whole edit is gated on
+ *   `billEditingEnabled`. A total below money already collected lowers the
+ *   recorded payment rather than refusing. If the re-issue refuses, the stay
+ *   goes back exactly as it was.
  *
  *   The change WRITES ITSELF ONTO THE STAY, with the old figures and the new
  *   ones. "The bill was changed after the treatment" is the first thing an

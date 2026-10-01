@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { computeInvoiceTotals, fitTendersToTotal, assertRefundable, assertPaymentsWithinTotal, invoiceStatusFrom, netPaid, totalRefunded, refundable, r2, resolveBillDate, BillDateError, assertTotalCoversCollected, InvoiceMathError } from "@/server/billing/calc";
+import { computeInvoiceTotals, fitTendersToTotal, assertRefundable, assertPaymentsWithinTotal, invoiceStatusFrom, netPaid, totalRefunded, refundable, r2, resolveBillDate, BillDateError, assertTotalCoversCollected, InvoiceMathError, planPaymentTrim } from "@/server/billing/calc";
 import { nextId } from "@/lib/ids";
 import { ApiError } from "@/lib/api";
 import { logAudit } from "./audit.service";
@@ -606,6 +606,12 @@ export async function updateInvoice(
     invoiceId: string; lines: BillLineInput[]; discountAmount?: number; notes?: string;
     /** "YYYY-MM-DD" to correct the printed date, null to clear it, absent to leave it. */
     billDate?: string | null;
+    /**
+     * INTERNAL - an IPD stay re-issue only, never from an API body. Instead of
+     * refusing a total below what was collected, lower the recorded payments to
+     * it. See planPaymentTrim.
+     */
+    trimPaymentsToTotal?: boolean;
   },
   ctx: { ipAddress?: string; userAgent?: string }
 ): Promise<InvoiceDTO> {
@@ -618,7 +624,7 @@ export async function updateInvoice(
       where: { id: input.invoiceId },
       select: {
         id: true, status: true, totalAmount: true,
-        payments: { select: { amount: true } },
+        payments: { select: { id: true, amount: true, reference: true, createdAt: true } },
         refunds: { select: { amount: true } },
         eInvoice: { select: { status: true } },
       },
@@ -658,10 +664,10 @@ export async function updateInvoice(
     // Above the floor there is no problem: the total goes up, the balance
     // reappears, the status drops back to PARTIALLY_PAID and the desk collects
     // the difference.
-    const collected = netPaid(
-      inv.payments.map((p: { amount: { toString(): string } }) => ({ amount: Number(p.amount.toString()) })),
-      inv.refunds.map((r: { amount: { toString(): string } }) => ({ amount: Number(r.amount.toString()) })),
-    );
+    // `let`, because an IPD re-issue may lower these below - see trimPaymentsToTotal.
+    let paymentLines = inv.payments.map((p) => ({ amount: Number(p.amount.toString()) }));
+    const refundLines = inv.refunds.map((r: { amount: { toString(): string } }) => ({ amount: Number(r.amount.toString()) }));
+    let collected = netPaid(paymentLines, refundLines);
 
     // ── RECOMPUTE, THROUGH THE ONE FUNCTION THAT DOES THIS ──
     //
@@ -684,6 +690,41 @@ export async function updateInvoice(
 
     // The floor, checked now that there is a new total to check it against. The
     // rule and its wording live in billing/calc, where they are tested.
+    //
+    // EXCEPT on an IPD stay re-issue, where the owner's rule is that the stay's
+    // dates always save and the recorded payment comes down to the corrected
+    // total instead (planPaymentTrim says why and which rows give way). Every
+    // row it touches goes in the audit log with its old figure - that entry is
+    // the only place the earlier amount survives.
+    if (input.trimPaymentsToTotal && r2(total) < r2(collected) - 0.01) {
+      const plan = planPaymentTrim(
+        inv.payments.map((p) => ({
+          id: p.id, amount: Number(p.amount.toString()),
+          isAdvance: isAdvanceAdjustment(p.reference), createdAt: p.createdAt,
+        })),
+        r2(collected - total),
+      );
+      for (const step of plan) {
+        if (step.to <= 0) await tx.payment.delete({ where: { id: step.id } });
+        else await tx.payment.update({ where: { id: step.id }, data: { amount: s2(step.to) } });
+      }
+      await logAudit(actor, {
+        action: "PAYMENT_REDUCED_ON_STAY_CORRECTION",
+        targetTable: "Invoice", targetId: inv.id,
+        meta: {
+          oldTotal: inv.totalAmount.toString(), newTotal: s2(total),
+          collectedBefore: s2(collected),
+          payments: plan.map((s) => ({ id: s.id, from: s2(s.from), to: s2(s.to) })),
+        },
+        ...ctx,
+      }, tx);
+      const changed = new Map(plan.map((s) => [s.id, s.to]));
+      paymentLines = inv.payments
+        .map((p) => ({ amount: changed.has(p.id) ? changed.get(p.id)! : Number(p.amount.toString()) }))
+        .filter((p) => p.amount > 0);
+      collected = netPaid(paymentLines, refundLines);
+    }
+
     try {
       assertTotalCoversCollected(total, collected);
     } catch (e) {
@@ -700,11 +741,7 @@ export async function updateInvoice(
     //
     // Derived by the same function every other money path uses, so a bill edited
     // here and a bill paid at the counter cannot disagree about what PAID means.
-    const status = invoiceStatusFrom(
-      total,
-      inv.payments.map((p: { amount: { toString(): string } }) => ({ amount: Number(p.amount.toString()) })),
-      inv.refunds.map((r: { amount: { toString(): string } }) => ({ amount: Number(r.amount.toString()) })),
-    );
+    const status = invoiceStatusFrom(total, paymentLines, refundLines);
 
     // ── WHAT THE LINES POINT AT SURVIVES THE REWRITE ──
     //

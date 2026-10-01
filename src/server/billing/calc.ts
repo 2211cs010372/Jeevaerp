@@ -397,3 +397,39 @@ export function assertTotalCoversCollected(newTotal: number, collected: number):
     );
   }
 }
+
+/**
+ * LOWERING THE RECORDED PAYMENTS TO A CORRECTED IPD TOTAL.
+ *
+ * Only for an inpatient bill re-issued from its stay (see reissueIpdInvoice).
+ * Old stays are being keyed in from offline bills, and the discharge box
+ * pre-fills the full total - so a stay entered with the wrong dates first comes
+ * out "collected" on figures that never existed. Correcting the dates then hit
+ * the floor above and the stay could not be fixed at all. The owner's rule
+ * (1 Oct 2026): the dates always save, and the recorded payment comes down to
+ * the corrected total.
+ *
+ * Which rows give way: the desk's own payments first, latest first - that is
+ * where the pre-filled discharge figure sits - and advance adjustments last,
+ * because each of those mirrors a deposit slip the family is holding.
+ *
+ * Returns only the rows that change. `amount` 0 means the row goes entirely.
+ */
+export function planPaymentTrim(
+  payments: { id: string; amount: number; isAdvance: boolean; createdAt: Date }[],
+  excess: number,
+): { id: string; from: number; to: number }[] {
+  let left = r2(excess);
+  if (left <= 0.01) return [];
+  const order = [...payments].sort((a, b) =>
+    a.isAdvance !== b.isAdvance ? (a.isAdvance ? 1 : -1) : b.createdAt.getTime() - a.createdAt.getTime());
+  const plan: { id: string; from: number; to: number }[] = [];
+  for (const p of order) {
+    if (left <= 0.01) break;
+    const cut = Math.min(p.amount, left);
+    if (cut <= 0) continue;
+    plan.push({ id: p.id, from: r2(p.amount), to: r2(p.amount - cut) });
+    left = r2(left - cut);
+  }
+  return plan;
+}

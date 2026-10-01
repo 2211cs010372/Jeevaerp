@@ -119,6 +119,27 @@ export function parsePack(label: string | null | undefined): PackSpec {
   const raw = (label ?? "").trim();
   if (!raw) return { size: 1, unit: "unit", known: false };
 
+  // ── DISTRIBUTOR "NxM" FORMAT ──────────────────────────────────────────────
+  //
+  // Indian pharma invoices commonly print "1×5", "1x10", "1X5" meaning "one
+  // strip of 5 tablets" or "one strip of 10 tablets". The second number is what
+  // matters — it is the count of dispensing units in the pack:
+  //
+  //   1×5   →  5 units per pack   (same as "5T" or "5S")
+  //   1×10  → 10 units per pack   (same as "10T" or "10S")
+  //   2×15  → 15 units per pack   (the first number is how many strips, not the size)
+  //
+  // Without this, "1×5" fell through to the main regex which read "1" as the
+  // size and "×5" as an unrecognised suffix — yielding packSize=1, which makes
+  // the per-unit price equal the per-pack price and overcharges by 5x.
+  const nxm = raw.replace(/\s+/g, "").match(/^(\d{1,3})\s*[×xX*]\s*(\d{1,4})$/);
+  if (nxm) {
+    const nxmSize = Number(nxm[2]);
+    if (Number.isInteger(nxmSize) && nxmSize >= 1 && nxmSize <= 5000) {
+      return { size: nxmSize, unit: "unit", known: true };
+    }
+  }
+
   // Strip the noise OCR leaves around the join: "1225ML", "15 T", "10-S".
   //
   // A FRACTION IS ALLOWED, because a measure can be one: "2.5ML" and "6.5GR" are

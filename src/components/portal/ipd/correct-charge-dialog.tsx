@@ -142,8 +142,8 @@ export function CorrectChargeDialog({
           (repriced && discharged ? ". The discharge bill has been re-issued to match." : "."),
       );
     } catch (e) {
-      // The 403 from a switched-off desk and the "refund the difference first"
-      // refusal both arrive here already worded for the reader, as does "this
+      // The 403 from a switched-off desk and the IRN / cancelled-bill
+      // refusals arrive here already worded for the reader, as does "this
       // patient was admitted on…". Do not replace them with something generic.
       setError(e instanceof ApiClientError ? e.message : "Could not save the correction.");
     } finally { setBusy(false); }
@@ -177,8 +177,8 @@ export function CorrectChargeDialog({
         {discharged && (
           <div className="border-b border-[var(--p-border)] bg-[var(--p-amber-soft)] px-6 py-3 text-[12px] leading-relaxed text-[#8a6414]">
             <strong>This stay is discharged and its bill is issued.</strong> Changing the qty, rate or GST
-            re-issues that invoice on the new figures, keeping its receipt number; a correction that would
-            take the total below money already collected is refused - refund the difference first.
+            re-issues that invoice on the new figures, keeping its receipt number; if the new total is less
+            than the money recorded as collected, the recorded payment is lowered to the new total.
             Changing only the date re-issues nothing.
           </div>
         )}

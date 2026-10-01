@@ -236,8 +236,8 @@ export function CorrectStayDialog({
           : "Stay corrected. The running tab is on the new figures."
       );
     } catch (e) {
-      // The 403 from a switched-off desk and the "refund the difference first"
-      // refusal both arrive here already worded for the reader. Do not replace
+      // The 403 from a switched-off desk and the IRN / cancelled-bill
+      // refusals arrive here already worded for the reader. Do not replace
       // them with something generic.
       setError(e instanceof ApiClientError ? e.message : "Could not save the correction.");
     } finally { setBusy(false); }
@@ -273,8 +273,8 @@ export function CorrectStayDialog({
           <div className="border-b border-[var(--p-border)] bg-[var(--p-amber-soft)] px-6 py-3 text-[12px] leading-relaxed text-[#8a6414]">
             <strong>This stay is discharged and its bill is issued.</strong> Saving re-issues that invoice on
             the new figures, keeping its receipt number — so the claim bill and the tax invoice never
-            disagree. A correction that would take the total below money already collected is refused;
-            refund the difference first.
+            disagree. If the new total is less than the money recorded as collected, the recorded payment is
+            lowered to the new total.
           </div>
         )}
 
