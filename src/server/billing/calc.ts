@@ -303,6 +303,24 @@ export function resolveBillDate(
   return d;
 }
 
+/**
+ * THE DATE A BILL ACTUALLY HAS - the corrected one where a desk set one, the
+ * raised one otherwise.
+ *
+ * Every document that prints a bill's date asks this same question, and before
+ * this it was asked in each of them separately: the invoice sheet and the bills
+ * lists read `billDate ?? createdAt`, while the stay's two big sheets - the IP
+ * bill and the IP Services bill - read `createdAt` alone. So a bill re-dated at
+ * the counter printed its new date on its own copy and its old one inside the
+ * stay bill that folded it in, and the desk read that as the edit not having
+ * saved (owner, 2 Oct 2026).
+ *
+ * One function, taking the two columns, so a reader cannot pick the wrong one.
+ */
+export function effectiveBillDate(bill: { billDate: Date | null; createdAt: Date }): Date {
+  return bill.billDate ?? bill.createdAt;
+}
+
 export class ChargeDateError extends Error {}
 
 /** dd-mm-yyyy, h:mm AM/PM - how the ward's own printed tab writes an instant. */

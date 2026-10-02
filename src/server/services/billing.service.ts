@@ -544,7 +544,7 @@ export async function getInvoice(invoiceId: string): Promise<InvoiceDTO> {
  */
 const EDIT_GATED_ROLES = new Set(["RECEPTIONIST", "INSURANCE_DESK"]);
 
-async function assertMayEditBills(actor: AuthUser): Promise<void> {
+export async function assertMayEditBills(actor: AuthUser): Promise<void> {
   if (!EDIT_GATED_ROLES.has(actor.role)) return;
   // Read the column directly rather than through admin.service's getSettings().
   // admin.service imports pharmacy.service which imports this file, so pulling
@@ -624,6 +624,9 @@ export async function updateInvoice(
       where: { id: input.invoiceId },
       select: {
         id: true, status: true, totalAmount: true,
+        // The day it was raised, and the correction it is carrying now - the two
+        // a CLEARED correction moves the money between. See the block below.
+        createdAt: true, billDate: true,
         payments: { select: { id: true, amount: true, reference: true, createdAt: true } },
         refunds: { select: { amount: true } },
         eInvoice: { select: { status: true } },
@@ -743,6 +746,57 @@ export async function updateInvoice(
     // here and a bill paid at the counter cannot disagree about what PAID means.
     const status = invoiceStatusFrom(total, paymentLines, refundLines);
 
+    // ── A RE-DATED BILL TAKES ITS MONEY WITH IT (owner, 2 Oct 2026) ──
+    //
+    // `billDate` started life as a PRINTED date only: the sheet moved, the
+    // Payment rows did not, and the day close, the collection report and the GST
+    // return all went on counting the money under the day it was typed. That was
+    // deliberate and it is now wrong for this hospital. A bill moved to the day
+    // the treatment actually happened was still showing the day it was keyed in
+    // everywhere the money appeared - including the stay's Payment Details table,
+    // which is where the desk kept seeing it - and the owner's rule is that the
+    // corrected date IS the bill's date, with the collection on it.
+    //
+    // So every payment on the bill moves to the new date, and a settled bill's
+    // `paidAt` with them. CONSEQUENCE, stated plainly: a closed day's takings
+    // change. Money leaves the day it was keyed in and lands on the day the bill
+    // now carries, so a day close printed before the edit will not match one
+    // printed after it. That is the trade the owner asked for.
+    //
+    // THE OLD TIMESTAMPS SURVIVE ONLY IN THE AUDIT LOG, below - nothing else
+    // records them, which is why they go in with the row ids.
+    //
+    // CLEARING a correction moves it back, to the day the bill was raised: the
+    // dialog's "Back to …" button means this bill was never on another day, and
+    // leaving its money on the date somebody has just withdrawn would be the
+    // same split the other way round.
+    //
+    // ONLY WHERE THERE WAS A CORRECTION TO CLEAR. The dialog sends `billDate:
+    // null` on every save where the box was not touched, so a routine line
+    // correction on a never-re-dated bill arrives here as a clear - and pulling
+    // its payments back to the raise instant would move money nobody asked to
+    // move. `undefined` - no date field at all - touches nothing either.
+    const moveTo =
+      billDate === undefined ? null
+      : billDate ? billDate
+      : inv.billDate ? inv.createdAt
+      : null;
+    const redated: { id: string; from: string }[] = [];
+    if (moveTo) {
+      for (const p of inv.payments) {
+        if (p.createdAt.getTime() === moveTo.getTime()) continue;
+        await tx.payment.update({ where: { id: p.id }, data: { createdAt: moveTo } });
+        redated.push({ id: p.id, from: p.createdAt.toISOString() });
+      }
+    }
+
+    // Settled, and re-dated, means it was settled on the new date. Cleared
+    // entirely where the bill has stopped being settled - see below.
+    const paidAtPatch =
+      status !== "PAID" ? { paidAt: null }
+      : moveTo ? { paidAt: moveTo }
+      : {};
+
     // ── WHAT THE LINES POINT AT SURVIVES THE REWRITE ──
     //
     // A pharmacy line carries the batch it was dispensed from and a lab line the
@@ -773,10 +827,11 @@ export async function updateInvoice(
         subtotal: s2(subtotal), discountAmount: s2(discount), taxableAmount: s2(taxable),
         cgstAmount: s2(cgst), sgstAmount: s2(sgst), totalAmount: s2(total),
         status,
-        // paidAt belongs to the moment the bill was settled, not to this edit.
-        // Cleared only where the bill has stopped being settled - a re-opened
-        // bill carrying the date it was "paid" is a contradiction on its face.
-        ...(status === "PAID" ? {} : { paidAt: null }),
+        // paidAt belongs to the moment the bill was settled - which a re-date
+        // moves, like every other date on the bill. Cleared where the bill has
+        // stopped being settled: a re-opened bill carrying the date it was
+        // "paid" is a contradiction on its face. See paidAtPatch.
+        ...paidAtPatch,
         notes: input.notes?.trim() || null,
         // `undefined` is Prisma's "leave this column alone", which is exactly
         // what a caller that did not send a date means. `createdAt` is never
@@ -819,6 +874,12 @@ export async function updateInvoice(
         collected: s2(collected),
         status,
         ...(billDate === undefined ? {} : { billDate: billDate ? billDate.toISOString() : null }),
+        // The ONLY record that these payments were ever stamped with another
+        // day. Written per row, with the id, so a day close that no longer adds
+        // up can be traced back to the edit that moved the money.
+        ...(redated.length
+          ? { paymentsRedated: redated, paymentsRedatedTo: moveTo!.toISOString() }
+          : {}),
       },
       ...ctx,
     }, tx);
@@ -955,9 +1016,11 @@ export function billsLimit(raw: string | null | undefined): number | undefined {
  * under the 28th, because the filter was still looking at the day it was typed.
  * The desk read that as "the date did not save" and re-dated it again.
  *
- * This is a LOOKUP, not an accounting question. Money still belongs to the day
- * it was taken - the till and the day close both count `createdAt` and neither
- * goes through here - so re-dating a bill still never moves cash between days.
+ * This is a LOOKUP, and it is no longer the only reader that follows a
+ * correction. The till and the day close count Payment.createdAt, and since the
+ * owner's 2 Oct 2026 rule those payments are re-dated along with the bill (see
+ * updateInvoice) - so a re-dated bill and its money now move together, and this
+ * filter and the day close agree about which day they belong to.
  */
 export function invoiceDayWhere(onDate?: string):
   | Record<string, never>

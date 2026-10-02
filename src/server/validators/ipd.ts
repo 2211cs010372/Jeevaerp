@@ -234,3 +234,21 @@ export const advanceSchema = z.object({
   mode: z.enum(["CASH", "UPI", "CARD", "NETBANKING", "OTHER"]),
   reference: z.string().trim().max(80).optional(),
 });
+
+/**
+ * Correcting a deposit slip that was already written.
+ *
+ * Every field the slip prints, because a desk that has to re-type the amount to
+ * fix the date would rather leave the date wrong. `takenAt` is an absolute
+ * instant, like a ward charge's date and unlike a bill's: the slip prints the
+ * time beside the day, so "the deposit at 9pm" has to be expressible. The stay
+ * window and the no-future rule are enforced in the service, where the stay's
+ * own dates are known. An empty `reference` CLEARS the one that is there - a UPI
+ * ref typed onto a cash deposit has to be removable.
+ */
+export const advanceEditSchema = z.object({
+  amount: z.coerce.number().positive("An advance must be more than ₹0"),
+  mode: z.enum(["CASH", "UPI", "CARD", "NETBANKING", "OTHER"]),
+  reference: z.string().trim().max(80).optional().nullable(),
+  takenAt: z.string().trim().min(1).optional(),
+});

@@ -3,13 +3,13 @@ import { ApiError } from "@/lib/api";
 import { nextId } from "@/lib/ids";
 import { logAudit } from "./audit.service";
 import { splitInvoice } from "@/lib/insurance-split";
-import { createInvoice, updateInvoice, recordPayment, recordPayments, getInvoice, syncStayCoverage, type PaymentModeT } from "./billing.service";
-import { ADVANCE_REF_PREFIX, advancePaymentRef, applyAdvances, heldAsOf, isAdvanceAdjustment, takenOnStayBill } from "@/server/billing/advances";
+import { assertMayEditBills, createInvoice, updateInvoice, recordPayment, recordPayments, getInvoice, syncStayCoverage, type PaymentModeT } from "./billing.service";
+import { ADVANCE_REF_PREFIX, advancePaymentRef, advanceReceiptNoFromRef, applyAdvances, heldAsOf, isAdvanceAdjustment, planAdvanceApplication, takenOnStayBill } from "@/server/billing/advances";
 import { notifyAdmitted, notifyDischarged, notifyAdvanceReceived } from "./notify.service";
 // One rounding definition across the whole system - money must not be
 // rounded two different ways in two different files. `resolveChargeDate` is the
 // same idea for a date a desk typed: one rule, next to the bill-date one.
-import { r2 as round2, resolveChargeDate, ChargeDateError, wallClock, resolveBillDate, BillDateError } from "@/server/billing/calc";
+import { r2 as round2, resolveChargeDate, ChargeDateError, wallClock, resolveBillDate, BillDateError, effectiveBillDate, invoiceStatusFrom } from "@/server/billing/calc";
 import { getSettings } from "./admin.service";
 import { publishLive } from "@/server/realtime/publish";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
@@ -3170,8 +3170,10 @@ export async function admissionSheet(admissionId: string): Promise<{
   uncoveredDays: number;
   /** Deposit already held. Comes off the discharge bill. */
   advanceTotal: string;
-  /** Each deposit slip, so a lost receipt can be reprinted from the stay. */
-  advances: { id: string; receiptNo: string | null; amount: string; mode: string; takenAt: string }[];
+  /** Each deposit slip, so a lost receipt can be reprinted - or corrected -
+   *  from the stay. `reference` is here for the edit dialog: a desk fixing the
+   *  date must not have to re-type the UPI ref to keep it. */
+  advances: { id: string; receiptNo: string | null; amount: string; mode: string; reference: string | null; takenAt: string }[];
   /** Pharmacy and lab bills raised against this stay that are still unpaid.
    *  They are separate documents, so this running sheet is the only place
    *  the ward sees them together - and the reminder that stops a discharge
@@ -3300,11 +3302,12 @@ export async function admissionSheet(admissionId: string): Promise<{
   const advanceRows = await prisma.admissionAdvance.findMany({
     where: { admissionId },
     orderBy: { createdAt: "asc" },
-    select: { id: true, receiptNo: true, amount: true, mode: true, createdAt: true },
+    select: { id: true, receiptNo: true, amount: true, mode: true, reference: true, createdAt: true },
   });
-  type AdvRow = { id: string; receiptNo: string | null; amount: { toString(): string }; mode: string; createdAt: Date };
+  type AdvRow = { id: string; receiptNo: string | null; amount: { toString(): string }; mode: string; reference: string | null; createdAt: Date };
   const advances = (advanceRows as AdvRow[]).map((x) => ({
     id: x.id, receiptNo: x.receiptNo, amount: x.amount.toString(), mode: x.mode,
+    reference: x.reference,
     takenAt: x.createdAt.toISOString(),
   }));
   const advanceTotal = advances.reduce((sum, x) => sum + Number(x.amount), 0);
@@ -3712,6 +3715,173 @@ export async function addAdvance(
       amount: created.amount.toString(),
       mode: created.mode,
     },
+  };
+}
+
+/**
+ * CORRECT A DEPOSIT SLIP - its date, its mode, its reference and its amount
+ * (owner, 2 Oct 2026).
+ *
+ * The advance receipt is a bill as far as the family is concerned: same
+ * letterhead, same counter, real money handed over. It was the one such document
+ * with no way to fix a typo - a ₹20,000 deposit keyed in as ₹2,000, or taken on
+ * the 14th and entered on the 16th, could only be left wrong or deleted out of
+ * the database by hand.
+ *
+ * THE DATE IS `createdAt`, NOT A SECOND COLUMN. A deposit has one date and
+ * every reader uses it: the slip, the stay sheet, the IP bill's Payment Details
+ * and the day close. Giving it an Invoice-style `billDate` would mean the slip
+ * said the 14th while the day close still counted the 16th - and the rule the
+ * owner asked for is the opposite of that. So the correction moves the money
+ * too: a closed day's cash total changes by this amount, the same trade
+ * addForgottenAdvance already makes, and the audit entry carries the old date so
+ * a day close that no longer matches can be traced to this edit.
+ *
+ * ON A DISCHARGED STAY THE BILL FOLLOWS THE SLIP. The deposit is already a
+ * payment on the stay's invoice, so a corrected amount is re-applied through
+ * planAdvanceApplication: capped at what the bill has room for, with the rest
+ * left refundable. Without that, lowering a deposit would leave the stay bill
+ * reading as settled on money nobody holds.
+ *
+ * GATED ON THE SAME SWITCH AS BILL EDITING. This corrects a money document the
+ * patient is holding; a desk that may not edit a bill may not edit one of these
+ * either.
+ */
+export async function updateAdvance(
+  actor: AuthUser,
+  input: {
+    advanceId: string;
+    amount: number;
+    mode: string;
+    reference?: string | null;
+    /** An absolute ISO instant - when the money was actually taken. */
+    takenAt?: string;
+  },
+  ctx: { ipAddress?: string; userAgent?: string },
+): Promise<{ ipNumber: string; totalAdvance: string; appliedToBill: string | null }> {
+  await assertMayEditBills(actor);
+
+  const amount = round2(input.amount);
+  if (!(amount > 0)) throw new ApiError(400, "An advance must be more than ₹0");
+
+  const adv = await prisma.admissionAdvance.findUnique({
+    where: { id: input.advanceId },
+    select: {
+      id: true, receiptNo: true, amount: true, mode: true, reference: true, createdAt: true,
+      admission: { select: { id: true, ipNumber: true, admittedAt: true, dischargedAt: true } },
+    },
+  });
+  if (!adv) throw new ApiError(404, "That deposit receipt was not found");
+  const adm = adv.admission;
+
+  // ── WHEN THE MONEY WAS TAKEN ──
+  //
+  // Inside the stay, never in the future - the same window a ward charge is
+  // held to, for the same reason: a deposit dated before the admission or after
+  // the discharge is not a correction, it is a slip on the wrong stay.
+  let takenAt = adv.createdAt;
+  if (input.takenAt) {
+    try {
+      takenAt = resolveChargeDate(input.takenAt, { admittedAt: adm.admittedAt, dischargedAt: adm.dischargedAt })!;
+    } catch (e) {
+      throw new ApiError(400, e instanceof ChargeDateError ? e.message : "That is not a real date and time");
+    }
+  }
+
+  const num = (d: { toString(): string } | null | undefined) => (d == null ? 0 : Number(d.toString()));
+  const mode = input.mode as PaymentMode;
+  const ref = input.reference?.trim() || null;
+
+  // ── THE STAY'S OWN BILL, AND THIS DEPOSIT'S ADJUSTMENT ON IT ──
+  //
+  // Matched on the stamped reference rather than on amount: `advancePaymentRef`
+  // writes this slip's number into it, which is the only thing tying one Payment
+  // row to one deposit. See the KNOWN LIMIT note in billing/advances.
+  const bill = await prisma.invoice.findFirst({
+    where: { admissionId: adm.id, source: "IPD", status: { not: "CANCELLED" } },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true, receiptNo: true, totalAmount: true,
+      payments: { select: { id: true, amount: true, reference: true } },
+      refunds: { select: { amount: true } },
+    },
+  });
+
+  const mine = bill?.payments.filter(
+    (p) => isAdvanceAdjustment(p.reference) && advanceReceiptNoFromRef(p.reference) === adv.receiptNo,
+  ) ?? [];
+  const otherPaid = bill
+    ? round2(
+        bill.payments
+          .filter((p) => !mine.some((m) => m.id === p.id))
+          .reduce((s, p) => round2(s + num(p.amount)), 0)
+        - bill.refunds.reduce((s, r) => round2(s + num(r.amount)), 0),
+      )
+    : 0;
+  const plan = bill
+    ? planAdvanceApplication({ amount, billTotal: num(bill.totalAmount), otherPaid })
+    : { apply: 0, unapplied: amount };
+
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    await tx.admissionAdvance.update({
+      where: { id: adv.id },
+      data: { amount, mode, reference: ref, createdAt: takenAt },
+    });
+
+    if (!bill) return;
+
+    // ONE row carries the adjustment afterwards, whatever it looked like before.
+    // A pre-receipt deposit can have none and a re-applied one can have several;
+    // collapsing them keeps the printed bill's "Less: Advance" line tied to one
+    // slip and one figure.
+    const keep = mine[0];
+    for (const extra of mine.slice(1)) await tx.payment.delete({ where: { id: extra.id } });
+
+    if (plan.apply > 0.009) {
+      const data = {
+        mode, amount: plan.apply, createdAt: takenAt,
+        reference: advancePaymentRef(adm.ipNumber, adv.receiptNo),
+      };
+      if (keep) await tx.payment.update({ where: { id: keep.id }, data });
+      else await tx.payment.create({ data: { ...data, invoiceId: bill.id, receivedById: actor.id } });
+    } else if (keep) {
+      // The corrected deposit no longer reaches the bill at all.
+      await tx.payment.delete({ where: { id: keep.id } });
+    }
+
+    // The bill's status is derived from its payments, so a deposit that moved
+    // has to re-derive it - a stay bill left saying PAID on money that is no
+    // longer recorded simply stops being chased.
+    const after = await tx.payment.findMany({ where: { invoiceId: bill.id }, select: { amount: true } });
+    const refunds = bill.refunds.map((r) => ({ amount: num(r.amount) }));
+    const status = invoiceStatusFrom(num(bill.totalAmount), after.map((p) => ({ amount: num(p.amount) })), refunds);
+    await tx.invoice.update({ where: { id: bill.id }, data: { status } });
+  });
+
+  const all = await prisma.admissionAdvance.findMany({
+    where: { admissionId: adm.id },
+    select: { amount: true },
+  });
+  const total = all.reduce((s, x) => round2(s + num(x.amount)), 0);
+
+  await logAudit(actor, {
+    action: "IPD_ADVANCE_EDITED", targetTable: "AdmissionAdvance", targetId: adv.id,
+    // The before-figures live nowhere else once the row is rewritten, and the
+    // old date is what a day close printed before this edit was counting.
+    meta: {
+      ipNumber: adm.ipNumber, receiptNo: adv.receiptNo,
+      from: { amount: num(adv.amount).toFixed(2), mode: String(adv.mode), reference: adv.reference, takenAt: adv.createdAt.toISOString() },
+      to: { amount: amount.toFixed(2), mode: String(mode), reference: ref, takenAt: takenAt.toISOString() },
+      ...(bill ? { bill: bill.receiptNo, applied: plan.apply.toFixed(2), unapplied: plan.unapplied.toFixed(2) } : {}),
+    },
+    ...ctx,
+  });
+  await publishLive([TOPICS.IPD, TOPICS.RECEPTION, TOPICS.INSURANCE, TOPICS.ADMIN], EVENTS.INVOICE_RAISED);
+
+  return {
+    ipNumber: adm.ipNumber,
+    totalAdvance: total.toFixed(2),
+    appliedToBill: bill ? plan.apply.toFixed(2) : null,
   };
 }
 
@@ -4131,6 +4301,12 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
         orderBy: { createdAt: "desc" },
         select: {
           receiptNo: true, source: true, createdAt: true, payer: true,
+          // THE DATE THIS BILL SHOWS, where a desk corrected it. Every date on
+          // this sheet - the header, the included-bills list, each folded-in
+          // line - reads it through effectiveBillDate, so a bill re-dated at
+          // the counter cannot print one day on its own copy and another inside
+          // the stay bill.
+          billDate: true,
           discountAmount: true, cgstAmount: true, sgstAmount: true,
           // With the lines, fixes what a counter bill's discount came to - see
           // counterDiscount below.
@@ -4331,7 +4507,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
         isSettled(round2(total - paid)) ? "PAID" : paid > 0.01 ? "PART" : "DUE";
       sourceBills.push({
         receiptNo: inv.receiptNo, source: inv.source,
-        date: inv.createdAt.toISOString(),
+        date: effectiveBillDate(inv).toISOString(),
         total: m2(total), paid: m2(paid), status,
       });
 
@@ -4340,7 +4516,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
         bySection.set(section, [
           ...(bySection.get(section) ?? []),
           {
-            date: inv.createdAt.toISOString(),
+            date: effectiveBillDate(inv).toISOString(),
             // The receipt number doubles as the issue number, so an assessor
             // querying one line can be pointed at the document it came from.
             issueNo: inv.receiptNo,
@@ -4557,20 +4733,29 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
       amount: m2(num(x.amount)),
       at: x.createdAt.getTime(),
     })),
-    ...a.invoices.flatMap((i) =>
-      i.payments
+    ...a.invoices.flatMap((i) => {
+      // ON THE BILL'S OWN DATE, where a desk corrected it.
+      //
+      // updateInvoice now re-dates the Payment rows with the bill, so for an
+      // edit made from 2 Oct 2026 on these two are the same instant. The
+      // fallback is for the bills re-dated BEFORE that rule existed: their
+      // money still carries the day it was keyed in, and this table was the
+      // place the desk kept meeting it - a bill moved to the 15th, listing its
+      // collection on the 30th, under a header that says the 15th.
+      const on = i.billDate;
+      return i.payments
         // The deposit, carried onto the stay's invoice at discharge, is already
         // the row above with its own slip number. Listed again it made the
         // column add up to more than was ever received.
         .filter((p) => !isAdvanceAdjustment(p.reference))
         .map((p) => ({
           invoiceNo: i.receiptNo,
-          date: p.createdAt.toISOString(),
+          date: (on ?? p.createdAt).toISOString(),
           mode: String(p.mode),
           amount: m2(num(p.amount)),
-          at: p.createdAt.getTime(),
-        }))
-    ),
+          at: (on ?? p.createdAt).getTime(),
+        }));
+    }),
   ]
     .sort((x, y) => x.at - y.at)
     // `at` was only ever a sort key; it is not part of the printed row.
@@ -4592,7 +4777,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
     // document an insurer keeps would be a lie with a number on it.
     provisional: !inv,
     billNo: inv?.receiptNo ?? `${a.ipNumber}-P`,
-    billedAt: (inv?.createdAt ?? new Date()).toISOString(),
+    billedAt: (inv ? effectiveBillDate(inv) : new Date()).toISOString(),
     patient: a.patient,
     admission: {
       ipNumber: a.ipNumber,
@@ -4771,6 +4956,9 @@ export async function ipServicesBillData(admissionId: string): Promise<IpService
           orderBy: { createdAt: "desc" },
           select: {
             source: true, payer: true, receiptNo: true,
+            // The corrected date, for the payment rows below - the same rule the
+            // IP bill follows. See the note on `on` there.
+            billDate: true,
             discountAmount: true, cgstAmount: true, sgstAmount: true,
             payments: { select: { amount: true, mode: true, reference: true, createdAt: true } },
             refunds: { select: { amount: true } },
@@ -4898,17 +5086,21 @@ export async function ipServicesBillData(admissionId: string): Promise<IpService
     // the one discrepancy on a bill nobody accepts an explanation for.
     ...stay.invoices
       .filter((i) => isServices(BUCKET_OF_SOURCE[String(i.source)] ?? "SERVICES"))
-      .flatMap((i) =>
-        i.payments
+      .flatMap((i) => {
+        // The bill's corrected date where it has one, exactly as the IP bill
+        // lists it - the two sheets print the same stay and must not disagree
+        // about the day a rupee came in.
+        const on = i.billDate;
+        return i.payments
           .filter((p) => !p.reference?.startsWith(ADVANCE_REF_PREFIX))
           .map((p) => ({
             invoiceNo: i.receiptNo,
-            date: p.createdAt.toISOString(),
+            date: (on ?? p.createdAt).toISOString(),
             mode: String(p.mode),
             amount: m2(num(p.amount)),
-            at: p.createdAt.getTime(),
-          }))
-      ),
+            at: (on ?? p.createdAt).getTime(),
+          }));
+      }),
   ]
     .sort((x, y) => x.at - y.at)
     .map(({ at: _at, ...row }) => row);

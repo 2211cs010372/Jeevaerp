@@ -10,6 +10,7 @@ import { DischargeSummaryForm } from "@/components/portal/ipd/discharge-summary-
 import { CorrectStayDialog, type StayLeg } from "@/components/portal/ipd/correct-stay-dialog";
 import { ConvertToSelfPayDialog } from "@/components/portal/ipd/convert-to-self-pay-dialog";
 import { CorrectChargeDialog, chargeDateLabel } from "@/components/portal/ipd/correct-charge-dialog";
+import { EditAdvanceDialog } from "@/components/portal/ipd/edit-advance-dialog";
 import { api, ApiClientError } from "@/lib/api-client";
 import { RepeatConfirmDialog } from "@/components/portal/repeat-confirm-dialog";
 import { repeatBlock, type RepeatBlock } from "@/lib/repeat-guard";
@@ -117,7 +118,7 @@ interface StayClaims {
 
 interface Med { id: string; name: string; unit: string; inStock: number; }
 /** One deposit slip. `receiptNo` is what the family quotes at discharge. */
-interface Advance { id: string; receiptNo: string; amount: string; mode: string; }
+interface Advance { id: string; receiptNo: string; amount: string; mode: string; reference: string | null; }
 
 const CATEGORIES = [
   { k: "PROCEDURE", label: "Procedure" },
@@ -177,6 +178,8 @@ export default function AdmissionSheetPage() {
   const [rejectOpen, setRejectOpen] = useState(false);
   /** The tab line whose date is being corrected - see CorrectChargeDialog. */
   const [editingChargeId, setEditingChargeId] = useState<string | null>(null);
+  /** The deposit slip being corrected - see EditAdvanceDialog. */
+  const [editingAdvanceId, setEditingAdvanceId] = useState<string | null>(null);
   /** The final claim being raised off this stay, prefilled from it. */
   const [raising, setRaising] = useState<ClaimPrefill | null>(null);
   /** Only for the datalist behind the claim form's insurer box - fetched when
@@ -541,6 +544,7 @@ export default function AdmissionSheetPage() {
   /** Read off the sheet rather than copied into state, so a reload behind the
    *  open dialog cannot leave it showing a line that has since changed. */
   const editingCharge = sheet.charges.find((c) => c.id === editingChargeId) ?? null;
+  const editingAdvance = sheet.advances.find((x) => x.id === editingAdvanceId) ?? null;
 
   // ── IS A FINAL CLAIM STILL OWED ON THIS STAY? ──
   //
@@ -1684,8 +1688,16 @@ export default function AdmissionSheetPage() {
                           <span className="font-mono">{adv.receiptNo ?? "Not numbered"}</span>
                           {" · "}₹{money(adv.amount)}{" · "}{adv.mode}
                         </span>
-                        <a href={`/print/advance/${adv.id}`} target="_blank" rel="noopener noreferrer"
-                          className="shrink-0 font-semibold text-[var(--p-teal)] hover:underline">Print</a>
+                        <span className="flex shrink-0 items-center gap-2">
+                          {/* Correcting the slip, not reissuing it - the receipt
+                              number and the family's copy stay as they are. */}
+                          {canEdit && (
+                            <button onClick={() => setEditingAdvanceId(adv.id)}
+                              className="font-semibold text-[var(--p-muted)] hover:text-[var(--p-ink)] hover:underline">Edit</button>
+                          )}
+                          <a href={`/print/advance/${adv.id}`} target="_blank" rel="noopener noreferrer"
+                            className="font-semibold text-[var(--p-teal)] hover:underline">Print</a>
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -2088,6 +2100,20 @@ export default function AdmissionSheetPage() {
           accent="teal"
           onClose={() => setEditingChargeId(null)}
           onSaved={(msg) => { setEditingChargeId(null); setFlash(msg); load(); loadHistory(); }}
+        />
+      )}
+
+      {/* One deposit slip. A corrected deposit on a discharged stay re-adjusts
+          the IPD invoice, which is one of the documents this desk reads. */}
+      {editingAdvance && (
+        <EditAdvanceDialog
+          advance={editingAdvance}
+          admittedAt={a.admittedAt}
+          dischargedAt={a.dischargedAt}
+          discharged={discharged}
+          accent="teal"
+          onClose={() => setEditingAdvanceId(null)}
+          onSaved={(msg) => { setEditingAdvanceId(null); setFlash(msg); load(); loadHistory(); }}
         />
       )}
       {repeat && (

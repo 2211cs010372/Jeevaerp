@@ -300,10 +300,11 @@ export function EditBillDialog({
                   </p>
                 ) : dateMoved ? (
                   <p className="mt-2 text-[11.5px] leading-relaxed text-[var(--p-muted)]">
-                    The printed bill will show this date and time. The day&apos;s collection and the GST return still
-                    count it on{" "}
-                    {formatDateTimeAmPm(inv.createdAt)},
-                    when it was actually raised — so re-dating a bill never moves money between days.
+                    The bill will show this date and time everywhere — its own copy, the stay bill it is
+                    folded into, and the day&apos;s collection.{" "}
+                    <strong>The money moves with it:</strong> what was collected on this bill counts in
+                    the new day&apos;s total instead of {formatDateTimeAmPm(inv.createdAt)}&apos;s, when it was
+                    keyed in. A day close printed before this edit will no longer match.
                   </p>
                 ) : (
                   <p className="mt-2 text-[11.5px] leading-relaxed text-[var(--p-muted)]">

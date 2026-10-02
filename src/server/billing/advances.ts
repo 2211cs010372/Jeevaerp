@@ -177,6 +177,38 @@ export function takenOnStayBill(
   return Math.max(0, r2(taken - back));
 }
 
+/**
+ * WHAT ONE DEPOSIT'S ADJUSTMENT MUST COME TO AFTER THE DEPOSIT IS CORRECTED.
+ *
+ * A deposit on a DISCHARGED stay is already sitting on the stay's bill as a
+ * payment (see applyAdvances). Correct the slip from ₹20,000 to ₹10,000 and
+ * that payment is now a claim that ₹20,000 was held - the bill reads as settled
+ * on money the hospital does not have. So the adjustment is recomputed from the
+ * corrected figure, against what the bill still has room for.
+ *
+ * `otherPaid` is every rupee on that bill EXCEPT this deposit's own adjustment,
+ * net of refunds. Passed in rather than derived here so this stays arithmetic:
+ * the caller is the one that knows which Payment row belongs to which slip.
+ *
+ * CAPPED AT THE BILL, never above it, exactly as the discharge caps it: a
+ * ₹50,000 deposit on a ₹30,000 bill applies ₹30,000 and the remaining ₹20,000
+ * stays refundable - which is what `unapplied` says, and what the refund
+ * counter hands back.
+ */
+export function planAdvanceApplication(opts: {
+  /** The deposit's corrected amount. */
+  amount: number;
+  /** The stay bill's total. Zero when the stay has no bill yet. */
+  billTotal: number;
+  /** Net money on that bill that is not this deposit. */
+  otherPaid: number;
+}): { apply: number; unapplied: number } {
+  const amount = r2(Math.max(0, opts.amount));
+  const room = r2(Math.max(0, opts.billTotal - Math.max(0, opts.otherPaid)));
+  const apply = r2(Math.min(amount, room));
+  return { apply, unapplied: r2(amount - apply) };
+}
+
 export function applyAdvances(
   deposits: AdvanceDeposit[],
   outstanding: number,
