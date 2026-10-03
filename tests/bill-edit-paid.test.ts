@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   assertTotalCoversCollected, invoiceStatusFrom, InvoiceMathError, computeInvoiceTotals,
+  billTrimsPaymentOnShortfall,
 } from "@/server/billing/calc";
 
 /**
@@ -130,5 +131,40 @@ describe("a settled bill stays editable - the desk must be able to reach its dat
   it("tolerates a rounding crumb on a bill settled to the exact rupee", () => {
     const total = predict([{ unitPrice: 333.33, gstRatePct: 5 }]);
     expect(() => assertTotalCoversCollected(total, total + 0.01)).not.toThrow();
+  });
+});
+
+/**
+ * WHICH BILLS LET A TEST COME OFF BELOW THE MONEY COLLECTED.
+ *
+ * The floor above is the OP/walk-in rule. A lab or pharmacy bill that hangs off
+ * a stay is a running-tab line instead: the desk takes a wrong test off it the
+ * way it takes any tab line off, and the recorded payment drops to match rather
+ * than the edit being refused (owner, 3 Oct 2026). One predicate decides it, so
+ * the server that enforces it and the dialog that warns about it cannot drift.
+ */
+describe("a stay's lab/pharmacy bill trims instead of refusing", () => {
+  it("trims a lab bill that belongs to a stay", () => {
+    expect(billTrimsPaymentOnShortfall({ source: "LAB", admissionId: "adm1" })).toBe(true);
+  });
+
+  it("trims a pharmacy bill that belongs to a stay", () => {
+    expect(billTrimsPaymentOnShortfall({ source: "PHARMACY", admissionId: "adm1" })).toBe(true);
+  });
+
+  it("does NOT trim an OP lab bill with no stay - the floor still holds there", () => {
+    expect(billTrimsPaymentOnShortfall({ source: "LAB", admissionId: null })).toBe(false);
+  });
+
+  it("does NOT trim a walk-in pharmacy bill", () => {
+    expect(billTrimsPaymentOnShortfall({ source: "PHARMACY", admissionId: null })).toBe(false);
+  });
+
+  it("does NOT trim the stay's own IPD invoice through this door - it has its own re-issue path", () => {
+    expect(billTrimsPaymentOnShortfall({ source: "IPD", admissionId: "adm1" })).toBe(false);
+  });
+
+  it("does NOT trim a consultation bill attached to a stay", () => {
+    expect(billTrimsPaymentOnShortfall({ source: "CONSULTATION", admissionId: "adm1" })).toBe(false);
   });
 });

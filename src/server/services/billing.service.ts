@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { computeInvoiceTotals, fitTendersToTotal, assertRefundable, assertPaymentsWithinTotal, invoiceStatusFrom, netPaid, totalRefunded, refundable, r2, resolveBillDate, BillDateError, assertTotalCoversCollected, InvoiceMathError, planPaymentTrim } from "@/server/billing/calc";
+import { computeInvoiceTotals, fitTendersToTotal, assertRefundable, assertPaymentsWithinTotal, invoiceStatusFrom, netPaid, totalRefunded, refundable, r2, resolveBillDate, BillDateError, assertTotalCoversCollected, billTrimsPaymentOnShortfall, InvoiceMathError, planPaymentTrim } from "@/server/billing/calc";
 import { nextId } from "@/lib/ids";
 import { ApiError } from "@/lib/api";
 import { logAudit } from "./audit.service";
@@ -56,6 +56,10 @@ export interface InvoiceDTO {
   id: string;
   receiptNo: string;
   source: string;
+  /** The stay this bill belongs to, or null for an OP/walk-in bill. A lab or
+   *  pharmacy bill with one is on a running tab, where a test may be taken off
+   *  even after collection - see updateInvoice's trim path. */
+  admissionId: string | null;
   status: string;
   /** When the row was actually written. What the day close and GST returns count. */
   createdAt: string;
@@ -421,6 +425,11 @@ export async function getInvoice(invoiceId: string): Promise<InvoiceDTO> {
     select: {
       id: true, receiptNo: true, source: true, status: true, createdAt: true, billDate: true,
       payer: true, payerName: true,
+      // Whether this bill belongs to a stay. The edit dialog reads it to know a
+      // lab or pharmacy line can be removed even from a collected bill - on a
+      // stay the recorded payment is lowered to the new total instead of the
+      // edit being refused (owner, 3 Oct 2026). See updateInvoice.
+      admissionId: true,
       subtotal: true, discountAmount: true, taxableAmount: true,
       cgstAmount: true, sgstAmount: true, totalAmount: true,
       buyerGstin: true, buyerLegalName: true, buyerAddress: true, buyerStateCode: true,
@@ -467,6 +476,7 @@ export async function getInvoice(invoiceId: string): Promise<InvoiceDTO> {
     id: inv.id,
     receiptNo: inv.receiptNo,
     source: inv.source,
+    admissionId: inv.admissionId,
     status: inv.status,
     createdAt: inv.createdAt.toISOString(),
     billDate: inv.billDate ? inv.billDate.toISOString() : null,
@@ -627,6 +637,9 @@ export async function updateInvoice(
         // The day it was raised, and the correction it is carrying now - the two
         // a CLEARED correction moves the money between. See the block below.
         createdAt: true, billDate: true,
+        // Whether this bill is on a stay's running tab. A LAB or PHARMACY bill
+        // that is decides the floor below - see trimToTotal.
+        source: true, admissionId: true,
         payments: { select: { id: true, amount: true, reference: true, createdAt: true } },
         refunds: { select: { amount: true } },
         eInvoice: { select: { status: true } },
@@ -634,6 +647,30 @@ export async function updateInvoice(
     });
     if (!inv) throw new ApiError(404, "Invoice not found");
     if (inv.status === "CANCELLED") throw new ApiError(400, "This invoice was cancelled and can't be edited");
+
+    // ── A TEST COMES OFF A STAY'S BILL EVEN AFTER IT IS COLLECTED ──
+    //
+    // The floor below refuses a total under what was collected, and for an OP
+    // or walk-in bill it still does: that money left as an over-collection with
+    // nothing recording it, and the refund flow is where it belongs.
+    //
+    // A LAB or PHARMACY bill that hangs off an admission is different. It is a
+    // line on the ward's running tab, and the desk corrects that tab the way it
+    // corrects every other line on it - by taking the wrong one off. Refusing
+    // because the window already took the money forced a cancel-and-reissue on a
+    // bill the family holds, over one test keyed in twice. So on that bill the
+    // removal saves and the recorded payment comes DOWN to the new total, the
+    // same instrument an IPD stay correction already uses (owner, 3 Oct 2026).
+    //
+    // CONSEQUENCE, stated: the day that bill was collected on shows that much
+    // less, the cash in the drawer is unchanged, and the only record of the gap
+    // is the audit entry below. The internal `trimPaymentsToTotal` (the stay
+    // re-issue) still forces the same path; this widens it to the two counters'
+    // own bills, decided HERE from the bill itself so an OP bill can never ask
+    // for it down the API.
+    const trimToTotal =
+      input.trimPaymentsToTotal === true
+      || billTrimsPaymentOnShortfall({ source: inv.source, admissionId: inv.admissionId });
 
     // ── A REGISTERED BILL IS THE GOVERNMENT'S COPY, NOT OURS ──
     //
@@ -694,12 +731,13 @@ export async function updateInvoice(
     // The floor, checked now that there is a new total to check it against. The
     // rule and its wording live in billing/calc, where they are tested.
     //
-    // EXCEPT on an IPD stay re-issue, where the owner's rule is that the stay's
-    // dates always save and the recorded payment comes down to the corrected
+    // EXCEPT where `trimToTotal` holds - an IPD stay re-issue, or a lab/pharmacy
+    // bill on a stay's running tab (see above). There the owner's rule is that
+    // the edit always saves and the recorded payment comes down to the corrected
     // total instead (planPaymentTrim says why and which rows give way). Every
     // row it touches goes in the audit log with its old figure - that entry is
     // the only place the earlier amount survives.
-    if (input.trimPaymentsToTotal && r2(total) < r2(collected) - 0.01) {
+    if (trimToTotal && r2(total) < r2(collected) - 0.01) {
       const plan = planPaymentTrim(
         inv.payments.map((p) => ({
           id: p.id, amount: Number(p.amount.toString()),
@@ -712,9 +750,12 @@ export async function updateInvoice(
         else await tx.payment.update({ where: { id: step.id }, data: { amount: s2(step.to) } });
       }
       await logAudit(actor, {
+        // A stay re-issue and a test taken off a tab bill both land here; the
+        // meta's `source` tells them apart when the log is read later.
         action: "PAYMENT_REDUCED_ON_STAY_CORRECTION",
         targetTable: "Invoice", targetId: inv.id,
         meta: {
+          source: inv.source,
           oldTotal: inv.totalAmount.toString(), newTotal: s2(total),
           collectedBefore: s2(collected),
           payments: plan.map((s) => ({ id: s.id, from: s2(s.from), to: s2(s.to) })),

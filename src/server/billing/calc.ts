@@ -405,6 +405,30 @@ export function resolveChargeDate(
  * `collected` is NET of refunds - money already returned is not money the bill
  * still has to cover.
  */
+/**
+ * WHICH BILLS GIVE WAY INSTEAD OF REFUSING, WHEN A LINE IS TAKEN OFF BELOW
+ * WHAT WAS COLLECTED.
+ *
+ * The floor above is a wall for an OP or walk-in bill: there a correction under
+ * the money in the drawer is an over-collection the refund flow has to record.
+ *
+ * A LAB or PHARMACY bill that belongs to a stay is not that. It is a line on
+ * the ward's running tab, and the desk corrects a tab by taking the wrong line
+ * off - collected or not. On these the edit lands and the recorded payment is
+ * lowered to the new total (see planPaymentTrim), the same instrument an IPD
+ * stay re-issue already uses (owner, 3 Oct 2026).
+ *
+ * The stay's OWN invoice (source IPD) is not decided here: it has its own
+ * re-issue path that passes the trim explicitly. One predicate, so the server
+ * that enforces this and the dialog that warns about it read the same rule.
+ */
+export function billTrimsPaymentOnShortfall(bill: {
+  source: string;
+  admissionId: string | null;
+}): boolean {
+  return !!bill.admissionId && (bill.source === "LAB" || bill.source === "PHARMACY");
+}
+
 export function assertTotalCoversCollected(newTotal: number, collected: number): void {
   if (collected <= 0) return;
   // The same paise tolerance assertPaymentsWithinTotal uses. Without it a bill

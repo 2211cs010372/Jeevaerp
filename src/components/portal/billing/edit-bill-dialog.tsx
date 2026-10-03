@@ -10,7 +10,7 @@ import { localDateISO } from "@/lib/date";
 // Pure arithmetic - no database, no clock, no network (see the header of that
 // file). Imported so this dialog predicts the total using the SAME function the
 // server stores it with, rather than an approximation of it.
-import { computeInvoiceTotals } from "@/server/billing/calc";
+import { computeInvoiceTotals, billTrimsPaymentOnShortfall } from "@/server/billing/calc";
 
 /**
  * EDITING A BILL, IN ONE PLACE.
@@ -45,6 +45,12 @@ export interface EditableInvoice {
   id: string;
   receiptNo: string;
   status: string;
+  /** LAB / PHARMACY / IPD / … - with `admissionId`, decides whether a line can
+   *  be removed below what was collected. See `trimsOnShortfall`. */
+  source: string;
+  /** The stay this bill is on, or null. A LAB/PHARMACY bill on a stay is a
+   *  running-tab line the desk may correct past the collected floor. */
+  admissionId: string | null;
   /** When the row was written. Never edited - it is what the day close counts. */
   createdAt: string;
   /** The corrected date this bill prints, when a desk has set one. */
@@ -133,6 +139,19 @@ export function EditBillDialog({
   const subtotal = inv ? inv.items.reduce((s, i) => s + Number(i.unitPrice || 0) * (i.qty || 1), 0) : 0;
 
   /**
+   * A LAB OR PHARMACY BILL ON A STAY TRIMS INSTEAD OF REFUSING.
+   *
+   * On a running tab the desk takes a wrong test off the way it takes any other
+   * line off, collected or not - the server lowers the recorded payment to the
+   * new total rather than blocking the edit (see updateInvoice). An OP or
+   * walk-in bill is unchanged: there the collected figure is a hard floor and
+   * the refund flow is the way under it. The server decides this from the bill
+   * itself; this flag only keeps the dialog's warning and its Save button honest
+   * about which bill is in front of the desk.
+   */
+  const trimsOnShortfall = !!inv && billTrimsPaymentOnShortfall({ source: inv.source, admissionId: inv.admissionId });
+
+  /**
    * WHAT THE SERVER WILL ACTUALLY STORE - GST included.
    *
    * This used to be a pre-GST subtotal compared against a GST-inclusive figure,
@@ -167,7 +186,13 @@ export function EditBillDialog({
 
   // The same paise tolerance assertTotalCoversCollected applies, so a bill
   // settled to the exact rupee is not refused on a rounding crumb.
-  const belowCollected = collected > 0 && newTotal < collected - 0.01;
+  const below = collected > 0 && newTotal < collected - 0.01;
+  // On a stay's lab/pharmacy bill, below-collected is not a wall - it trims the
+  // payment. So it blocks Save only where the server would actually refuse it.
+  const belowCollected = below && !trimsOnShortfall;
+  /** Below collected, but on a bill where that lowers the payment rather than
+   *  refusing - a warning to show, not a reason to seize Save. */
+  const willTrim = below && trimsOnShortfall;
 
   async function save(): Promise<boolean> {
     if (!inv) return false;
@@ -256,11 +281,24 @@ export function EditBillDialog({
                       The lines now come to ₹{newTotal.toFixed(2)} including GST, which is less than that — the
                       server will refuse this. Refund the difference first, then correct the bill.
                     </>
+                  ) : willTrim ? (
+                    // A test taken off a stay's lab/pharmacy bill: the removal
+                    // saves and the recorded payment drops to match.
+                    <>
+                      <strong>₹{collected.toFixed(2)} was collected; the lines now come to ₹{newTotal.toFixed(2)}.</strong>{" "}
+                      This bill is on the stay&apos;s running tab, so the test comes off and the recorded
+                      payment is lowered to ₹{newTotal.toFixed(2)} to match. The ₹{(collected - newTotal).toFixed(2)}
+                      {" "}difference is cash already in the drawer — hand it back at the counter; no refund is
+                      recorded here, and that day&apos;s collection shows the lower figure.
+                    </>
                   ) : (
                     <>
                       <strong>₹{collected.toFixed(2)} has already been collected on this bill</strong>{" "}
-                      and the patient has a receipt for it. You can correct this bill, but not to a total
-                      below that figure. If the total goes up, the difference reappears as a balance to collect.
+                      and the patient has a receipt for it.{" "}
+                      {trimsOnShortfall
+                        ? "This bill is on the stay's running tab, so you can take a test off it even below that figure — the recorded payment drops to match."
+                        : "You can correct this bill, but not to a total below that figure."}{" "}
+                      If the total goes up, the difference reappears as a balance to collect.
                     </>
                   )}
                 </div>
