@@ -2886,7 +2886,7 @@ export async function dischargeSummaryData(admissionId: string) {
           address: true, city: true, bloodGroup: true, dob: true,
         },
       },
-      doctor: { select: { name: true, specialization: true, department: true, registrationNo: true } },
+      doctor: { select: { name: true, specialization: true, department: true, qualification: true, registrationNo: true } },
       prescriptionUploads: {
         orderBy: { createdAt: "asc" },
         select: {

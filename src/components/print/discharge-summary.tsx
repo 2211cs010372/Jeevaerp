@@ -53,7 +53,7 @@ export interface Data {
     displayId: string; fullName: string; age: number | null; gender: string | null;
     phone: string; address: string | null; city: string | null; bloodGroup: string | null; dob: string | null;
   };
-  doctor: { name: string; specialization: string; department: string; registrationNo: string | null };
+  doctor: { name: string; specialization: string; department: string; registrationNo: string | null; qualification?: string | null };
   clinical: {
     diagnosis: string | null; advice: string | null; nextVisit: string | null;
     labsAdvised: { name: string; ordered: boolean; declined: boolean }[];
@@ -86,6 +86,11 @@ export interface Data {
 const date = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "-");
 const dateTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "-");
 const GENDER: Record<string, string> = { MALE: "Male", FEMALE: "Female", OTHER: "Other" };
+const withDr = (name: string) => {
+  const t = (name ?? "").trim();
+  if (!t) return "-";
+  return /^dr\.?\s/i.test(t) ? t : `Dr. ${t}`;
+};
 
 const pad = (n: number) => String(n).padStart(2, "0");
 /** A Date as `<input type="datetime-local">` wants it: local wall clock. */
@@ -200,6 +205,7 @@ const DS_CSS = (onStationery: boolean) => `
   .ds-draft { margin: 6px 0 0; padding: 4px 8px; border-radius: 3px; background: var(--pr-accent);
     text-align: center; font-size: 9px; font-weight: 800; letter-spacing: .16em; color: #fff; }
   .ds-sign { break-inside: avoid; }
+  .keep-together { break-inside: avoid; }
   /* The one line a signature genuinely needs - a mark to sign above - drawn
      as a thin filled bar rather than a border so it prints the same weight
      every time regardless of renderer. */
@@ -218,6 +224,7 @@ const DS_CSS = (onStationery: boolean) => `
     /* Print the fills and the ink, not a lightened approximation - browsers
        drop background color and darken-to-toner unless told otherwise. */
     #print-sheet, #print-sheet * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .keep-together { break-inside: avoid; }
   }
 `;
 
@@ -329,16 +336,13 @@ export function DischargeSummaryDoc({
 
   // Two colon-aligned columns, exactly as the lab report and the hospital's own
   // discharge paper set the identity block.
+  // Patient Reg.No. (IP No) and Length of Stay removed.
+  // Doctor details moved into their own dedicated block below, matching detailed bill.
   const leftFields: { k: string; v: string; mono?: boolean }[] = [
-    { k: "IP No", v: a.ipNumber, mono: true },
     { k: "UHID", v: p.displayId, mono: true },
     { k: "Name", v: p.fullName },
     { k: "Age / Sex", v: ageSex },
     { k: "Ward / Bed", v: bedLabel(a.wardName, a.bedNo) },
-    { k: "Doctor", v: d.doctor.name },
-    ...(d.doctor.registrationNo?.trim()
-      ? [{ k: "Reg. No.", v: d.doctor.registrationNo.trim(), mono: true as const }]
-      : []),
     { k: "H. Panel", v: a.payerType === "INSURANCE" ? (a.insurer || "Insurance") : "Self pay / Cash" },
   ];
   const rightFields: { k: string; v: string; mono?: boolean }[] = [
@@ -351,7 +355,6 @@ export function DischargeSummaryDoc({
     // wins over both: a death does not become a normal discharge because
     // somebody typed a date on a print screen.
     { k: "Type of Discharge", v: outcomeNote ?? (closed || pickedIso ? "Normal Discharge" : "Interim summary") },
-    { k: "Length of Stay", v: `${a.days} day${a.days === 1 ? "" : "s"}` },
     // BLOOD GROUP IS NOT PRINTED. Removed at the hospital's request: it is taken
     // at admission only if somebody thought to ask, so the field went out as a
     // dash on most sheets - and a blank blood group on a discharge summary is
@@ -459,7 +462,7 @@ export function DischargeSummaryDoc({
           {closed
             ? " The stay stays closed on its own recorded date - nothing here changes it."
             : " Nothing is saved: the stay stays open, the bed stays occupied and no bill is raised."}
-          {" "}Length of stay and charges are unchanged.
+          {" "}Charges are unchanged.
         </div>
       )}
 
@@ -517,6 +520,20 @@ export function DischargeSummaryDoc({
                     {rightFields.map((x) => <IdRow key={x.k} {...x} />)}
                   </div>
                 </div>
+
+                {/* ── DOCTOR INFORMATION ── who treated, same as in detailed bill */}
+                <div className="keep-together mt-1.5 border border-[#333]">
+                  <div className="border-b border-[#333] bg-[#eef2f1] px-1.5 py-[3px] text-[11.5px] font-bold uppercase">
+                    Doctor Information
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-4 p-1.5">
+                    <DocField k="Consultant Doctor" v={withDr(d.doctor.name)} strong />
+                    <DocField k="Department" v={d.doctor.department || "-"} />
+                    <DocField k="Specialization" v={d.doctor.qualification || d.doctor.specialization || "-"} />
+                    <DocField k="Reg. No." v={d.doctor.registrationNo || "-"} />
+                  </div>
+                </div>
+
                 <div className="ds-gap" />
 
         {drafting && <div className="ds-draft">DRAFT &mdash; NOT YET COMPLETED</div>}
@@ -694,5 +711,16 @@ function Sec({ t, children }: { t: string; children: React.ReactNode }) {
       <h2 className="ds-sec-t">{t}</h2>
       {children}
     </section>
+  );
+}
+
+/** One label:value pair in the Doctor Information box, identical to detailed bill */
+function DocField({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
+  return (
+    <div className="flex gap-1 py-[1.5px] text-[10.5px] leading-tight">
+      <span className="w-[104px] shrink-0 font-semibold">{k}</span>
+      <span className="shrink-0">:</span>
+      <span className={strong ? "font-bold" : "font-semibold"}>{v}</span>
+    </div>
   );
 }
