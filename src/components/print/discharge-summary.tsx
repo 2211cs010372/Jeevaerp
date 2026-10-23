@@ -336,9 +336,10 @@ export function DischargeSummaryDoc({
 
   // Two colon-aligned columns, exactly as the lab report and the hospital's own
   // discharge paper set the identity block.
-  // Patient Reg.No. (IP No) and Length of Stay removed.
+  // Length of Stay removed. IP No restored at the hospital's request.
   // Doctor details moved into their own dedicated block below, matching detailed bill.
   const leftFields: { k: string; v: string; mono?: boolean }[] = [
+    { k: "IP No", v: a.ipNumber, mono: true },
     { k: "UHID", v: p.displayId, mono: true },
     { k: "Name", v: p.fullName },
     { k: "Age / Sex", v: ageSex },
@@ -477,7 +478,8 @@ export function DischargeSummaryDoc({
             "Discharge Summary", and nothing else.
 
             THE PATIENT BLOCK USED TO LIVE IN IT, so that a page two separated
-            from page one still had a name and an IP number on it. The cost was
+            from page one still had a name and an IP number on it.
+            (The IP number is still in the block below; only the repeat went.) The cost was
             the whole identity block re-printed at the head of every sheet of a
             long summary, and the hospital asked for it once instead. It now
             prints ONCE, as the first thing in the body - page one only.
