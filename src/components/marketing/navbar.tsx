@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { PhoneCall, User, ChevronDown, ArrowRight, ArrowUpRight } from "@/components/ui/hugeicons";
+import { User, ChevronDown, ArrowRight, ArrowUpRight, Search, PhoneCall } from "@/components/ui/hugeicons";
 import { DeptIcon } from "@/components/marketing/dept-icon";
 import { MenuIcon } from "@/components/marketing/menu-icon";
 import { DoctorSearchBox } from "@/components/marketing/doctor-search-box";
@@ -13,61 +14,40 @@ import { doctorHref } from "@/lib/doctors";
 import { api } from "@/lib/api-client";
 
 /**
- * Three-tier navbar with care-area mega-menus.
+ * The public header - one quiet row.
  *
- *   Strip  - live OPD status · emergency line. Retracts on scroll.
- *   Row 1  - wordmark · search · appointment + emergency lines · login.
- *   Row 2  - Child Care / Women Care / Heart Care / … each opening a full-width
- *            panel listing EVERYTHING that care area covers.
+ *   wordmark · Specialities ▾  Doctors  Health checks  Rooms & wards  Visit us · search  emergency  [Book]  login
  *
- * Organised by care area rather than by clinical department because that is how
- * people arrive: nobody searches for "Orthopaedics", they search for a bone
- * doctor, or they only know that something is wrong with their child. The
- * department is still the heading inside the panel, so the clinical structure
- * is visible - it just isn't the front door.
+ * It used to be three tiers: a pine status strip, a row with a search field and
+ * a bordered phone panel, and a second row of six care-area triggers. Ten
+ * top-level choices at two weights, set against two background bands, read as
+ * noise before anyone had found what they came for. Now there are five links,
+ * all at one weight (500), and the six care areas live behind "Specialities" -
+ * the mega panel still lists everything each area covers, it just isn't the
+ * front door any more.
  *
- * Every sub-item links to the consultant who actually treats it, because that
- * page carries their live slots: one click from "Vaccination schedule" to a
- * bookable time.
+ * NO BOLD ANYWHERE IN THE CHROME. Medium for links, semibold only for the
+ * wordmark and the one panel heading. The header is furniture; it should not
+ * shout over the page under it.
  *
- * The shell is solid porcelain at rest - the hero's top band is the same
- * colour, so header and hero read as one surface - and becomes glass with a
- * hairline once the page has moved. The status strip retracts at the same
- * moment, which is what buys the condensed height.
+ * Every sub-item links to the department page, which carries the full service
+ * list and the consultant - and their live slots are one click on from there.
  *
- * DRAWN IN VALUE STEPS, NOT HAIRLINES. The chrome used to separate itself with
- * 1px rules and outline every control in a bordered pill; the rest of the site
- * had already moved to flat panels that are told apart by the step between
- * paper and bone. So the care-area rail is a bone band rather than a ruled
- * one, and the controls beside the wordmark - phone, login, menu - are bone
- * fills that deepen on hover instead of rings that change colour. The pine
- * status strip and the pill CTAs are untouched: pills are the site's button
- * language everywhere (see `.btn` in site-theme.css), and a button that stops
- * looking like every other button on the site to match a panel is a trade in
- * the wrong direction.
- *
- * WHERE A HAIRLINE COMES OFF, ITS BOX STAYS. Row 1's rule is transparent now
- * rather than absent, because `--nav-h` is a hand-written token that pages
- * offset their first section from - the header measured 141px before this
- * change and measures 141px after it. The same trick the shell itself uses at
- * rest, two dozen lines down.
+ * The shell is plain white at rest - the hero is the same white, so
+ * header and page read as one surface - and becomes frosted with a hairline
+ * once the page has moved. Scrolling down tucks it away above the viewport;
+ * scrolling up brings it back. Height never changes: `--nav-h` (site-theme.css)
+ * is what every page offsets its first section from, and it is 72px at every
+ * width now that there is no second row.
  */
 
 const deptsOf = (a: CareArea) => DEPARTMENTS.filter((d) => a.departments.includes(d.name));
 const doctorsOf = (doctors: Doctor[], dept: string) => doctors.filter((d) => d.department === dept);
 
-/**
- * Services land on the department page, not straight on a doctor.
- * That page carries the full service list, the clinic hours and the consultant
- * - and it's the page a search engine can actually rank for "child vaccination
- * Hanamkonda". The consultant (and their live slots) is one click on from there.
- */
-const serviceHref = (dept: string) => careHref(dept);
-
 const LINKS = [
   { label: "Doctors", href: "/doctors" },
   { label: "Health checks", href: "/health-checks" },
-  { label: "Rooms & prices", href: "/#wards" },
+  { label: "Rooms & wards", href: "/#facilities" },
   { label: "Visit us", href: "/#visit" },
 ];
 
@@ -76,8 +56,8 @@ const LINKS = [
  * department never closes.
  *
  * The day check is the point: this used to test the clock only, so at 10am on a
- * Sunday - the one day there is no routine consulting - the strip told visitors
- * "OPD open now". A status pill that is wrong is worse than no status pill.
+ * Sunday - the one day there is no routine consulting - the header told
+ * visitors "OPD open now". A status line that is wrong is worse than none.
  */
 function opdState(now: Date) {
   const mins = now.getHours() * 60 + now.getMinutes();
@@ -99,17 +79,23 @@ function opdState(now: Date) {
  * server/services/public-doctors.service.ts.
  */
 export function Navbar({ doctors }: { doctors: Doctor[] }) {
-  const [menu, setMenu] = useState<string | null>(null);
+  const pathname = usePathname();
+  const [mega, setMega] = useState(false);
+  const [area, setArea] = useState(CARE_AREAS[0].label);
+  const [search, setSearch] = useState(false);
   const [open, setOpen] = useState(false);
   const [mobileArea, setMobileArea] = useState<string | null>(null);
   const [stuck, setStuck] = useState(false);
+  /** Tucked away above the viewport - see the scroll handler below. */
+  const [tucked, setTucked] = useState(false);
   // Rendered only after mount: the server has no idea what time it is where
   // the visitor is, and a hydration mismatch on the first paint of a hospital
-  // homepage is not worth a status pill.
+  // homepage is not worth a status line.
   const [opd, setOpd] = useState<ReturnType<typeof opdState> | null>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
   /** Has the drawer ever been opened? Guards the focus return below. */
   const used = useRef(false);
 
@@ -125,16 +111,11 @@ export function Navbar({ doctors }: { doctors: Doctor[] }) {
   /**
    * The hospital's own logo, as uploaded by an admin under Settings.
    *
-   * Same source the portal shells and the sign-in screens read - one
-   * unauthenticated endpoint over HospitalConfig, so a hospital that uploads a
-   * logo gets it on the public site and both portals without touching code.
-   * Only the logo is used here; the wordmark beside it stays on lib/data.ts,
-   * for the reason given where it is set.
-   * Fetched after mount rather than server-rendered: this header is on every
-   * public page, and blocking their render on a database round-trip to draw a
-   * 36px mark is the wrong trade. Until it lands - and forever, if no logo has
-   * been uploaded or the request fails - the built-in teal mark stands in, so
-   * there is never a gap where the brand should be.
+   * Same unauthenticated endpoint the portal shells read, so a hospital that
+   * uploads a logo gets it everywhere without touching code. Fetched after
+   * mount rather than server-rendered: blocking every public page on a database
+   * round-trip to draw a 32px mark is the wrong trade. Until it lands - and
+   * forever, if none was uploaded - the built-in teal mark stands in.
    */
   const [brand, setBrand] = useState<{
     brandName: string;
@@ -149,8 +130,29 @@ export function Navbar({ doctors }: { doctors: Doctor[] }) {
   }, []);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { setMenu(null); setOpen(false); } };
-    const onScroll = () => setStuck(window.scrollY > 24);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { setMega(false); setSearch(false); setOpen(false); }
+    };
+    /**
+     * Out of the way going down, back the moment you turn round.
+     *
+     * Reading down the page, the header slides up out of view and gives the
+     * screen back to the content; any upward scroll - the gesture of somebody
+     * looking for the menu - brings it straight back. It never hides in the
+     * first two header-heights of the page, so the top of every page always
+     * has its navigation, and a 6px dead band stops a trackpad's jitter from
+     * flicking it in and out.
+     */
+    let last = window.scrollY;
+    const onScroll = () => {
+      const y = window.scrollY;
+      setStuck(y > 12);
+      if (y < 144) setTucked(false);
+      else if (y - last > 6) setTucked(true);
+      else if (last - y > 6) setTucked(false);
+      else return; // inside the dead band - keep `last` where the move began
+      last = y;
+    };
     onScroll();
     window.addEventListener("keydown", onKey);
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -160,14 +162,20 @@ export function Navbar({ doctors }: { doctors: Doctor[] }) {
     };
   }, []);
 
+  // Any navigation closes every overlay - including the browser's back button,
+  // which none of the onClick handlers below would ever see.
+  useEffect(() => { setMega(false); setSearch(false); setOpen(false); }, [pathname]);
+
+  /** The search popover takes focus as it opens - it is a search box, and the
+   *  click that opened it was already the intent to type. */
+  useEffect(() => {
+    if (search) searchRef.current?.querySelector("input")?.focus();
+  }, [search]);
+
   /**
-   * While the drawer is open the page behind it must not scroll. Without this,
-   * a thumb landing on the scrim - the natural way to dismiss a drawer - drags
-   * the homepage instead, and the menu you were reading is now floating over
-   * a different part of the site.
-   *
-   * Locking `body` rather than calling into Lenis on purpose: Lenis is mounted
-   * on the public site only, and the navbar has to behave the same either way.
+   * While the drawer is open the page behind it must not scroll. Locking `body`
+   * rather than calling into Lenis on purpose: Lenis is mounted on the public
+   * site only, and the navbar has to behave the same either way.
    */
   useEffect(() => {
     if (!open) return;
@@ -191,227 +199,191 @@ export function Navbar({ doctors }: { doctors: Doctor[] }) {
 
   // A small grace period on leave: the pointer has to cross a gap between the
   // trigger and the panel, and snapping shut mid-journey is maddening.
-  const hold = (label: string) => {
+  const hold = () => {
     if (closeTimer.current) clearTimeout(closeTimer.current);
-    setMenu(label);
+    setSearch(false);
+    setMega(true);
   };
   const release = () => {
     if (closeTimer.current) clearTimeout(closeTimer.current);
-    closeTimer.current = setTimeout(() => setMenu(null), 120);
+    closeTimer.current = setTimeout(() => setMega(false), 140);
   };
 
-  const close = () => { setMenu(null); setOpen(false); };
+  const close = () => { setMega(false); setSearch(false); setOpen(false); };
+
+  /** `/#facilities` is a section of the homepage, never a page of its own - it only
+   *  counts as "here" for the real routes. */
+  const isActive = (href: string) => !href.includes("#") && pathname.startsWith(href);
+
+  const raised = stuck || mega || search;
+  // An open panel holds the header in place - it would otherwise slide away
+  // with the menu you are reading still hanging from it.
+  const hidden = tucked && !mega && !search && !open;
 
   return (
     <>
     <header
       data-stuck={stuck}
-      className={`fixed inset-x-0 top-0 z-50 transition-[background-color,box-shadow,border-color] duration-500 ${
-        stuck
-          ? "border-b border-[var(--line)] bg-[var(--paper)]/85 shadow-[0_10px_40px_-24px_rgba(11,32,29,0.35)] backdrop-blur-xl backdrop-saturate-150"
-          : "border-b border-transparent bg-[var(--paper)]"
+      data-hidden={hidden}
+      /* focus-within: a keyboard visitor tabbing into a tucked header gets it
+         back rather than focusing links they cannot see */
+      className={`fixed inset-x-0 top-0 z-50 border-b transition-[transform,background-color,border-color] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] focus-within:translate-y-0 ${
+        hidden ? "-translate-y-full" : "translate-y-0"
+      } ${
+        raised
+          ? "border-[var(--line)] bg-white/85 backdrop-blur-xl backdrop-saturate-150"
+          : "border-transparent bg-white"
       }`}
     >
-      {/* ── status strip - retracts once the page has moved ───────── */}
-      <div
-        className="overflow-hidden bg-[var(--pine-ink)] text-white transition-[height,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]"
-        style={{ height: stuck ? 0 : 32, opacity: stuck ? 0 : 1 }}
-        aria-hidden={stuck}
-      >
-        <div className="mx-auto flex h-8 max-w-[1320px] items-center justify-between gap-4 px-4 sm:px-6">
-          <span className="mono flex min-w-0 items-center gap-2.5 text-[10.5px] tracking-[0.1em]">
-            <span className={`pulse ${opd && !opd.open ? "pulse-alert" : ""}`} />
-            <span className="truncate text-white/80">
-              {/* the pre-hydration fallback said "seven days" while the data
-                  said Monday to Saturday - read it, do not retype it */}
-              {opd ? opd.text : `OPD ${HOSPITAL.opdHours} · ${HOSPITAL.opdDays}`}
+      {/* Full width with the hero's 1.5rem edge, not the 1320px shell: the
+          wordmark and the hero's first label hang off the same line. */}
+      <div className="flex h-[var(--nav-h)] w-full items-center gap-4 px-[1.5rem]">
+        {/* ── wordmark ─────────────────────────────────────────── */}
+        <Link href="/" className="group flex shrink-0 items-center gap-2.5" aria-label="Jeeva - home" onClick={close}>
+          {brand?.logoDataUrl ? (
+            /* A plain <img>: the source is a base64 data URI out of the
+               database, so there is nothing for the optimiser to fetch.
+               `object-contain` because an uploaded logo is whatever shape it
+               is - and no hover rotation, which is fine on our glyph and
+               vandalism on somebody's actual logotype. */
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={brand.logoDataUrl} alt="" className="h-8 w-8 shrink-0 rounded-[9px] object-contain" />
+          ) : (
+            <span className="grid h-8 w-8 place-items-center rounded-[9px] bg-[var(--teal)] text-white transition-transform duration-500 group-hover:rotate-90" aria-hidden>
+              <svg width="12" height="12" viewBox="0 0 14 14"><path d="M5 0h4v5h5v4H9v5H5V9H0V5h5z" fill="currentColor" /></svg>
+            </span>
+          )}
+          {/* THE WORDMARK IS NOT THE BRAND NAME FROM SETTINGS, deliberately.
+              That field holds "Jeeva Multi Speciality Hospital", which wraps on
+              a phone and takes the header's height with it. The public site's
+              copy comes from lib/data.ts; Settings drives the logo. */}
+          <span className="leading-none">
+            <span className="block [font-family:var(--font-display)] text-[17px] font-semibold tracking-[-0.025em] text-[var(--ink)]">
+              {HOSPITAL.shortName}
+            </span>
+            <span className="mt-[3px] hidden text-[11px] font-medium tracking-[-0.005em] text-[var(--muted)] sm:block">
+              Multispeciality Hospital
             </span>
           </span>
-          <a
-            href={`tel:${emergency}`}
-            className="mono flex shrink-0 items-center gap-2 text-[10.5px] tracking-[0.1em] text-white/80 transition-colors hover:text-white"
+        </Link>
+
+        {/* ── the five links (desktop) ─────────────────────────── */}
+        <nav aria-label="Main" className="mx-auto hidden items-center gap-0.5 lg:flex" onMouseLeave={release}>
+          <button
+            type="button"
+            onMouseEnter={hold}
+            onClick={() => (mega ? setMega(false) : hold())}
+            aria-expanded={mega}
+            aria-controls="specialities-panel"
+            className={`nav-link ${mega || pathname.startsWith("/care") ? "nav-link-on" : ""}`}
           >
-            <span className="hidden uppercase sm:inline">Emergency 24×7</span>
-            <span className="font-semibold text-white">{HOSPITAL.emergency}</span>
-          </a>
-        </div>
-      </div>
-
-      {/* ── Row 1 - brand · search · actions ─────────────────────── */}
-      <div className={stuck ? "" : "border-b border-transparent"}>
-        <div className="mx-auto flex max-w-[1320px] items-center gap-3 px-4 py-2.5 sm:gap-4 sm:px-6">
-          <Link href="/" className="group flex shrink-0 items-center gap-2.5" aria-label="Jeeva - home" onClick={close}>
-            {brand?.logoDataUrl ? (
-              /* A plain <img>, as in the portal shell: the source is a base64
-                 data URI out of the database, so there is nothing for the image
-                 optimiser to fetch or resize - it would only add a proxy hop to
-                 bytes we already hold. `object-contain` because an uploaded
-                 logo is whatever shape it is, and no hover rotation: spinning
-                 the built-in glyph is a nice touch, spinning somebody's actual
-                 logotype is vandalism. */
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={brand.logoDataUrl}
-                alt=""
-                className="h-9 w-9 shrink-0 rounded-[11px] object-contain"
-              />
-            ) : (
-              <span className="grid h-9 w-9 place-items-center rounded-[11px] bg-[var(--teal)] text-white transition-transform duration-500 group-hover:rotate-90" aria-hidden>
-                <svg width="13" height="13" viewBox="0 0 14 14"><path d="M5 0h4v5h5v4H9v5H5V9H0V5h5z" fill="currentColor" /></svg>
-              </span>
-            )}
-            <span className="leading-none">
-              {/* THE WORDMARK IS NOT THE BRAND NAME FROM SETTINGS, deliberately.
-                  That field currently holds "Jeeva Multi Speciality Hospital" -
-                  31 characters where this sets five at 20px display, which on a
-                  phone wraps to a second line and takes the header's height
-                  with it. The public site's copy comes from lib/data.ts by
-                  design; the Settings record drives the logo and the portals. */}
-              <span className="display block text-[20px] tracking-[-0.04em] text-[var(--ink)]">Jeeva</span>
-              <span className="mono mt-1 hidden text-[8px] uppercase tracking-[0.16em] text-[var(--muted)] sm:block">Multispeciality · Diagnostics · Pharmacy</span>
-            </span>
-          </Link>
-
-          <DoctorSearchBox doctors={doctors} onNavigate={close} />
-
-          {/* `ml-auto` is load-bearing below `md`. The search box is the only
-              flexible child in this row, and it is display:none on a phone -
-              so with nothing left to take up the slack the actions packed in
-              against the wordmark and the menu button sat beside the logo with
-              160px of empty header to the right of it. At `md` and up the
-              search box's own `flex-1` has already eaten the free space, so
-              this changes nothing there. */}
-          <div className="ml-auto flex shrink-0 items-center gap-2">
-            {/* two lines of information rather than a control, so it takes the
-                panel shape - 10px outer, 8px inner frame, the doctor card's
-                proportions at a quarter of the size */}
-            <a href={`tel:${phone}`} className="hidden items-center gap-2 rounded-[10px] bg-[var(--bone)] px-2.5 py-1.5 transition-colors duration-300 hover:bg-[var(--bone-deep)] xl:inline-flex">
-              <span className="grid h-7 w-7 place-items-center rounded-[8px] bg-[var(--teal-soft)] text-[var(--teal)]"><PhoneCall size={13} /></span>
-              <span className="leading-tight">
-                <span className="mono block text-[8px] uppercase tracking-[0.14em] text-[var(--muted)]">For appointment</span>
-                <span className="mono block text-[12.5px] font-bold text-[var(--ink)]">{HOSPITAL.phone}</span>
-              </span>
-            </a>
-            <Link
-              href="/book"
-              onClick={close}
-              className="hidden items-center gap-1.5 rounded-full bg-[var(--ink)] px-4 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-black sm:inline-flex"
-            >
-              Book <ArrowUpRight size={14} />
-            </Link>
-            <Link href="/portal/login" aria-label="Patient login" className="grid h-9 w-9 place-items-center rounded-full bg-[var(--bone)] text-[var(--ink)] transition-colors duration-300 hover:bg-[var(--bone-deep)] hover:text-[var(--teal)]" onClick={close}>
-              <User size={16} />
-            </Link>
-            <button
-              ref={toggleRef}
-              onClick={() => setOpen((v) => !v)}
-              aria-label={open ? "Close menu" : "Open menu"}
-              aria-expanded={open}
-              aria-controls="mobile-drawer"
-              className="grid h-9 w-9 place-items-center rounded-full bg-[var(--bone)] text-[var(--ink)] transition-colors duration-300 hover:bg-[var(--bone-deep)] hover:text-[var(--teal)] lg:hidden"
-            >
-              <MenuIcon open={open} />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Row 2 - care areas + mega-menus (desktop) ──────────────
-          The bone band IS the separation from row 1 - it replaces the hairline
-          that used to run between them. It comes off once the header is stuck,
-          because a solid strip under a glass one reads as two headers rather
-          than one: scrolled, the whole shell is the same frosted surface. */}
-      <div
-        className={`relative hidden lg:block ${stuck ? "" : "bg-[var(--bone)]"}`}
-        onMouseLeave={release}
-      >
-        {/* Scrolls rather than overflows. Row 2 appears at exactly lg, which is
-            the width where its ten items do NOT fit: at 1024px the content ran
-            1219px wide inside a 1009px container, clipped "Visit us" off the
-            end and dragged the whole document into horizontal scroll. Tighter
-            padding at lg gets most of it back; the scroll catches the rest. */}
-        <div className="nav-rail mx-auto flex max-w-[1320px] items-center overflow-x-auto px-4 xl:px-6">
-          {CARE_AREAS.map((area) => {
-            const on = menu === area.label;
-            return (
-              <button
-                key={area.label}
-                onMouseEnter={() => hold(area.label)}
-                onClick={() => setMenu(on ? null : area.label)}
-                aria-expanded={on}
-                aria-haspopup="true"
-                className={`relative flex shrink-0 items-center gap-1.5 px-2.5 py-3 text-[13.5px] font-medium tracking-[-0.01em] transition-colors xl:px-3.5 xl:text-[14.5px] ${
-                  on ? "text-[var(--teal)]" : "text-[var(--ink-soft)] hover:text-[var(--teal)]"
-                }`}
-              >
-                {area.label}
-                <ChevronDown size={12} className={`transition-transform duration-300 ${on ? "rotate-180" : ""}`} />
-                <span
-                  className={`absolute inset-x-2.5 bottom-0 h-[2px] origin-left bg-[var(--teal)] transition-transform duration-400 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                    on ? "scale-x-100" : "scale-x-0"
-                  }`}
-                />
-              </button>
-            );
-          })}
-
-          <span className="mx-3 h-3.5 w-px shrink-0 bg-[var(--line-strong)]" aria-hidden />
-
+            Specialities
+            <ChevronDown size={13} className={`transition-transform duration-300 ${mega ? "rotate-180" : ""}`} />
+          </button>
           {LINKS.map((l) => (
-            <Link key={l.label} href={l.href} onMouseEnter={release} onClick={close}
-              className="group relative shrink-0 whitespace-nowrap px-2.5 py-3 text-[13.5px] font-medium tracking-[-0.01em] text-[var(--ink-soft)] transition-colors hover:text-[var(--teal)] xl:px-3.5 xl:text-[14.5px]">
+            <Link
+              key={l.label}
+              href={l.href}
+              onMouseEnter={release}
+              onClick={close}
+              aria-current={isActive(l.href) ? "page" : undefined}
+              className={`nav-link ${isActive(l.href) ? "nav-link-on" : ""}`}
+            >
               {l.label}
-              <span className="absolute inset-x-2.5 bottom-0 h-[2px] origin-left scale-x-0 bg-[var(--teal)] transition-transform duration-400 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-x-100" />
             </Link>
           ))}
-        </div>
+        </nav>
 
-        {menu && (
-          /* No rules top or bottom: the panel is paper dropping out of a bone
-             band, which is already a step, and the lift shadow is what says it
-             is floating. Shadows are out on inline cards, not on things that
-             hover over the page. */
-          <div
-            className="mega-in absolute inset-x-0 top-full bg-[var(--paper)] shadow-[var(--shadow-lift)]"
-            onMouseEnter={() => hold(menu)}
+        {/* ── actions ──────────────────────────────────────────── */}
+        <div className="ml-auto flex shrink-0 items-center gap-1.5 lg:ml-0">
+          <button
+            type="button"
+            onClick={() => { setMega(false); setSearch((v) => !v); }}
+            aria-label="Search doctors and specialities"
+            aria-expanded={search}
+            aria-controls="nav-search"
+            className={`nav-icon hidden md:grid ${search ? "nav-icon-on" : ""}`}
           >
-            <CarePanel area={CARE_AREAS.find((a) => a.label === menu)!} doctors={doctors} onNavigate={close} />
-          </div>
-        )}
+            <Search size={16} />
+          </button>
+
+          <a
+            href={`tel:${emergency}`}
+            className="hidden items-center gap-2 rounded-full px-3 py-[7px] text-[13px] font-medium text-[var(--ink-soft)] transition-colors hover:text-[var(--alert)] xl:inline-flex"
+          >
+            <span className="pulse pulse-alert" aria-hidden />
+            Emergency 24×7
+          </a>
+
+          <Link href="/book" onClick={close} className="btn-ghost-sm hidden sm:inline-flex">
+            Book appointment <ArrowUpRight size={14} />
+          </Link>
+
+          <Link href="/portal/login" aria-label="Patient login" onClick={close} className="nav-icon">
+            <User size={16} />
+          </Link>
+
+          <button
+            ref={toggleRef}
+            onClick={() => setOpen((v) => !v)}
+            aria-label={open ? "Close menu" : "Open menu"}
+            aria-expanded={open}
+            aria-controls="mobile-drawer"
+            className="nav-icon lg:hidden"
+          >
+            <MenuIcon open={open} />
+          </button>
+        </div>
       </div>
 
-      </header>
+      {/* ── Specialities - the mega panel ────────────────────────── */}
+      {mega && (
+        <div
+          id="specialities-panel"
+          className="mega-in absolute inset-x-0 top-full hidden lg:block"
+          onMouseEnter={hold}
+          onMouseLeave={release}
+        >
+          <div className="px-[1.5rem] pt-2">
+            <SpecialitiesPanel
+              doctors={doctors}
+              area={area}
+              onArea={setArea}
+              opd={opd}
+              onNavigate={close}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ── search popover ───────────────────────────────────────── */}
+      {search && (
+        <div id="nav-search" className="mega-in absolute inset-x-0 top-full hidden md:block">
+          <div className="shell-w pt-2">
+            <div ref={searchRef} className="mx-auto max-w-[560px] rounded-[18px] bg-[var(--paper)] p-3 shadow-[var(--shadow-lift)]">
+              <DoctorSearchBox doctors={doctors} variant="mobile" onNavigate={close} />
+              <p className="px-2 pb-1 pt-2.5 text-[12px] text-[var(--muted)]">
+                Try a name, a speciality, or what you need treated - “knee pain”, “child fever”.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+    </header>
 
       {/* ── mobile drawer ──────────────────────────────────────────────────
-          A real drawer now, not a panel pushed out of the header. It used to
-          be an accordion that unfolded downwards and was clipped to whatever
-          height was left under the navbar - which on a small phone in landscape
-          left the login button permanently below the fold. A panel anchored to
-          the full height of the viewport has the whole screen to work with.
+          MOUNTED ALWAYS, MOVED WITH A TRANSFORM, so it can animate out as well
+          as in; `inert` keeps its links out of the tab order while closed.
 
-          MOUNTED ALWAYS, MOVED WITH A TRANSFORM. Rendering it only when open
-          means it can animate in and never out - React removes the node before
-          the transition can run. It stays in the tree, translated off-screen,
-          and `inert` keeps its links out of the tab order and away from screen
-          readers while it is closed.
-
-          AND IT IS A SIBLING OF THE HEADER, NOT A CHILD OF IT. This is the
-          whole reason the drawer used to vanish the moment you scrolled with
-          it open. Past 24px the header becomes glass, and `backdrop-filter`
-          makes an element a CONTAINING BLOCK for every `position: fixed`
-          descendant - so the drawer stopped being fixed to the viewport and
-          became fixed to the header instead. Measured: `inset-y-0` resolved to
-          812px of viewport before the filter and 89px of header box after it,
-          the scrim collapsing with it. Nothing about the drawer was wrong; it
-          was being measured against the wrong box. Out here there is no
-          filtered ancestor, so it is fixed to the viewport in both states.
-          z-[60] still clears the header's z-50 - they are siblings in the root
-          stacking context now, so the numbers compare directly. ──────────── */}
+          AND IT IS A SIBLING OF THE HEADER, NOT A CHILD OF IT. Once scrolled
+          the header carries `backdrop-filter`, which makes it the containing
+          block for every `position: fixed` descendant - inside it the drawer
+          would be fixed to the 72px header instead of to the viewport. ─────── */}
       <div className="lg:hidden">
         <div
           aria-hidden
           onClick={close}
-          className={`fixed inset-0 z-[55] bg-[rgba(11,32,29,0.55)] backdrop-blur-[2px] transition-opacity duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+          className={`fixed inset-0 z-[55] bg-[rgba(11,32,29,0.45)] backdrop-blur-[2px] transition-opacity duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
             open ? "opacity-100" : "pointer-events-none opacity-0"
           }`}
         />
@@ -422,111 +394,120 @@ export function Navbar({ doctors }: { doctors: Doctor[] }) {
           aria-modal={open || undefined}
           aria-label="Menu"
           inert={!open}
-          className={`fixed inset-y-0 right-0 z-[60] flex w-[min(23rem,88vw)] flex-col bg-[var(--paper)] shadow-[var(--shadow-lift)] transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+          className={`fixed inset-y-0 right-0 z-[60] flex w-[min(24rem,90vw)] flex-col bg-[var(--paper)] shadow-[var(--shadow-lift)] transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
             open ? "translate-x-0" : "translate-x-full"
           }`}
         >
-          {/* bone against the paper body below it - the drawer's own header
-              separates the same way the care-area rail does upstairs */}
-          <div className="flex flex-none w-full items-center justify-between gap-3 bg-[var(--bone)] px-4 py-3.5">
-            <span className="min-w-0">
-              <span className="display block text-[17px] leading-none text-[var(--ink)]">
+          <div className="flex h-[var(--nav-h)] flex-none items-center justify-between gap-3 px-5">
+            <span className="min-w-0 leading-none">
+              <span className="block [font-family:var(--font-display)] text-[17px] font-semibold tracking-[-0.025em] text-[var(--ink)]">
                 {HOSPITAL.shortName}
               </span>
-              <span className="mono mt-1 block truncate text-[8.5px] uppercase tracking-[0.18em] text-[var(--muted)]">
+              <span className="mt-[3px] block truncate text-[11px] font-medium text-[var(--muted)]">
                 {HOSPITAL.locality}
               </span>
             </span>
-            <button
-              ref={closeRef}
-              onClick={close}
-              aria-label="Close menu"
-              className="grid h-9 w-9 flex-none place-items-center rounded-full bg-[var(--paper)] text-[var(--ink)] transition-colors duration-300 hover:bg-[var(--bone-deep)] hover:text-[var(--teal)]"
-            >
+            <button ref={closeRef} onClick={close} aria-label="Close menu" className="nav-icon bg-[var(--bone)]">
               <MenuIcon open />
             </button>
           </div>
 
           {/* `data-lenis-prevent` hands wheel and touch inside this box back to
-              the browser. Lenis is a global listener that preventDefaults the
-              gesture and scrolls the page virtually instead, which over an
-              overlay means the drawer's own list will not move while the page
-              behind it does. Lenis reads this attribute and skips the gesture
-              entirely, so the drawer scrolls natively. Portals never see this -
-              Lenis is mounted on the public site only. */}
-          <div
-            data-lenis-prevent
-            className="drawer-scroll min-h-0 flex-1 overflow-y-auto"
-          >
-            <div className="space-y-3 px-4 py-4">
-            <DoctorSearchBox doctors={doctors} variant="mobile" onNavigate={close} />
+              the browser - otherwise Lenis scrolls the page behind the drawer
+              and the drawer's own list will not move. */}
+          <div data-lenis-prevent className="drawer-scroll min-h-0 flex-1 overflow-y-auto">
+            <div className="px-5 pb-6">
+              <DoctorSearchBox doctors={doctors} variant="mobile" onNavigate={close} />
 
-            {CARE_AREAS.map((area) => {
-              const on = mobileArea === area.label;
-              return (
-                <div key={area.label} className="overflow-hidden rounded-[12px] bg-[var(--bone)]">
-                  <button onClick={() => setMobileArea(on ? null : area.label)} aria-expanded={on}
-                    className="flex w-full items-center gap-3 px-3.5 py-3.5 text-left">
-                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[10px] bg-[var(--teal-soft)] text-[var(--teal)]">
-                      <DeptIcon name={area.departments[0]} className="h-5 w-5" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[14.5px] font-semibold tracking-[-0.01em] text-[var(--ink)]">{area.label}</span>
-                      <span className="block truncate text-[11.5px] text-[var(--muted)]">{area.blurb}</span>
-                    </span>
-                    <ChevronDown size={15} className={`shrink-0 transition-transform duration-300 ${on ? "rotate-180" : ""}`} />
-                  </button>
+              <p className="mt-7 text-[12px] font-medium text-[var(--muted)]">Specialities</p>
+              <div className="mt-2 divide-y divide-[var(--line)] border-y border-[var(--line)]">
+                {CARE_AREAS.map((a) => {
+                  const on = mobileArea === a.label;
+                  return (
+                    <div key={a.label}>
+                      <button
+                        onClick={() => setMobileArea(on ? null : a.label)}
+                        aria-expanded={on}
+                        className="flex w-full items-center gap-3 py-3.5 text-left"
+                      >
+                        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-[var(--teal-soft)] text-[var(--teal)]">
+                          <DeptIcon name={a.departments[0]} className="h-[18px] w-[18px]" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[15px] font-medium tracking-[-0.01em] text-[var(--ink)]">{a.label}</span>
+                          <span className="block truncate text-[12px] text-[var(--muted)]">{a.blurb}</span>
+                        </span>
+                        <ChevronDown size={15} className={`shrink-0 text-[var(--muted)] transition-transform duration-300 ${on ? "rotate-180" : ""}`} />
+                      </button>
 
-                  {on && (
-                    <div className="space-y-4 border-t border-[var(--line)] bg-[var(--bone-deep)] p-3">
-                      {deptsOf(area).map((d) => (
-                        <div key={d.name}>
-                          <p className="mono mb-1.5 text-[9.5px] font-bold uppercase tracking-[0.16em] text-[var(--teal)]">
-                            {d.name}
-                          </p>
-                          <div className="grid grid-cols-2 gap-1">
-                            {d.services.map((s) => (
-                              <Link key={s.name} href={serviceHref(d.name)} onClick={close}
-                                className="rounded-lg px-2 py-1.5 text-[12px] leading-snug text-[var(--ink-soft)] hover:bg-white hover:text-[var(--teal)]">
-                                {s.name}
+                      {on && (
+                        <div className="space-y-4 pb-4 pl-12">
+                          {deptsOf(a).map((d) => (
+                            <div key={d.name}>
+                              <Link
+                                href={careHref(d.name)}
+                                onClick={close}
+                                className="text-[13px] font-semibold text-[var(--teal)]"
+                              >
+                                {d.name} →
                               </Link>
-                            ))}
-                          </div>
-                          <Link href={`/book?dept=${encodeURIComponent(d.name)}`} onClick={close}
-                            className="mt-2 inline-block text-[12px] font-semibold text-[var(--teal)]">
-                            Book {d.name} →
-                          </Link>
+                              <ul className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1">
+                                {d.services.map((s) => (
+                                  <li key={s.name}>
+                                    <Link
+                                      href={careHref(d.name)}
+                                      onClick={close}
+                                      className="block py-0.5 text-[12.5px] leading-snug text-[var(--ink-soft)] hover:text-[var(--teal)]"
+                                    >
+                                      {s.name}
+                                    </Link>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      )}
                     </div>
-                  )}
+                  );
+                })}
+              </div>
+
+              <nav aria-label="Main" className="mt-2">
+                {LINKS.map((l) => (
+                  <Link
+                    key={l.label}
+                    href={l.href}
+                    onClick={close}
+                    className="flex items-center justify-between border-b border-[var(--line)] py-3.5 text-[15px] font-medium tracking-[-0.01em] text-[var(--ink)] transition-colors hover:text-[var(--teal)]"
+                  >
+                    {l.label}
+                    <ArrowRight size={14} className="text-[var(--muted)]" />
+                  </Link>
+                ))}
+              </nav>
+
+              <div className="mt-6 space-y-2">
+                <Link href="/book" onClick={close} className="flex items-center justify-center gap-1.5 rounded-full bg-[var(--ink)] py-3 text-[14px] font-medium text-white">
+                  Book an appointment <ArrowUpRight size={15} />
+                </Link>
+                <div className="grid grid-cols-2 gap-2">
+                  <a href={`tel:${phone}`} className="flex items-center justify-center gap-1.5 rounded-full border border-[var(--line-strong)] py-3 text-[13px] font-medium text-[var(--ink)]">
+                    <PhoneCall size={14} /> Call desk
+                  </a>
+                  <a href={`tel:${emergency}`} className="flex items-center justify-center gap-2 rounded-full border border-[var(--alert)]/30 py-3 text-[13px] font-medium text-[var(--alert)]">
+                    <span className="pulse pulse-alert" aria-hidden /> Emergency
+                  </a>
                 </div>
-              );
-            })}
+                <Link href="/portal/login" onClick={close} className="flex items-center justify-center gap-1.5 rounded-full py-3 text-[13px] font-medium text-[var(--ink-soft)] hover:text-[var(--teal)]">
+                  <User size={14} /> Patient login
+                </Link>
+              </div>
 
-            {/* the same bone panel the care areas above are built from, so the
-                drawer is one list of cells rather than cells then a ruled list */}
-            {LINKS.map((l) => (
-              <Link
-                key={l.label}
-                href={l.href}
-                onClick={close}
-                className="block rounded-[12px] bg-[var(--bone)] px-3.5 py-3.5 text-[14.5px] font-medium text-[var(--ink)] transition-colors duration-300 hover:bg-[var(--bone-deep)] hover:text-[var(--teal)]"
-              >
-                {l.label}
-              </Link>
-            ))}
-
-            <div className="grid grid-cols-2 gap-2 pt-1">
-              <a href={`tel:${phone}`} className="rounded-full border border-[var(--line-strong)] py-3 text-center text-[13px] font-semibold text-[var(--ink)]">Appointment</a>
-              <a href={`tel:${emergency}`} className="rounded-full bg-[var(--alert-soft)] py-3 text-center text-[13px] font-semibold text-[var(--alert)]">Emergency 24×7</a>
-            </div>
-            <Link href="/book" onClick={close} className="flex items-center justify-center gap-1.5 rounded-full bg-[var(--ink)] py-3 text-[14px] font-semibold text-white">
-              Book an appointment <ArrowUpRight size={15} />
-            </Link>
-            <Link href="/portal/login" onClick={close} className="flex items-center justify-center gap-1.5 rounded-full border border-[var(--line-strong)] py-3 text-[14px] font-semibold text-[var(--ink)]">
-              <User size={15} /> Patient login
-            </Link>
+              <p className="mt-4 flex items-center justify-center gap-2 text-[12px] text-[var(--muted)]">
+                <span className={`pulse ${opd && !opd.open ? "pulse-alert" : ""}`} aria-hidden />
+                {opd ? opd.text : `OPD ${HOSPITAL.opdHours}`}
+              </p>
             </div>
           </div>
         </aside>
@@ -536,53 +517,97 @@ export function Navbar({ doctors }: { doctors: Doctor[] }) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   The panel. Left rail says what this care area IS and who runs it; the rest
-   is the full list of what it covers, in newspaper columns so a long list
-   stays scannable instead of becoming a scroll.
+   The Specialities panel. Left: the six care areas, hover or focus to pick
+   one. Right: everything that area covers, then who runs it. One floating
+   card rather than a full-bleed sheet, so it reads as a menu over the page
+   instead of a second page sliding over the first.
    ───────────────────────────────────────────────────────────────────────── */
-function CarePanel({ area, doctors, onNavigate }: { area: CareArea; doctors: Doctor[]; onNavigate: () => void }) {
-  const depts = deptsOf(area);
+function SpecialitiesPanel({
+  doctors,
+  area,
+  onArea,
+  opd,
+  onNavigate,
+}: {
+  doctors: Doctor[];
+  area: string;
+  onArea: (label: string) => void;
+  opd: ReturnType<typeof opdState> | null;
+  onNavigate: () => void;
+}) {
+  const current = CARE_AREAS.find((a) => a.label === area) ?? CARE_AREAS[0];
+  const depts = deptsOf(current);
   const multi = depts.length > 1;
-  const consultants = depts.flatMap((d) => doctorsOf(doctors, d.name));
+  const consultants = depts.flatMap((d) => doctorsOf(doctors, d.name)).slice(0, 4);
 
   return (
-    <div className="mx-auto max-w-[1320px] px-6 py-7">
-      <div className="grid grid-cols-[248px_1fr] gap-8">
-        {/* ---- what this area is ---- */}
-        <aside className="rounded-[16px] bg-[var(--teal-soft)] p-5">
-          <span className="grid h-16 w-16 place-items-center rounded-[10px] bg-[var(--teal)]/15 text-[var(--teal)]">
-            <DeptIcon name={area.departments[0]} className="h-9 w-9" />
-          </span>
-          <p className="display-sm mt-4 text-[var(--ink)]">{area.label}</p>
-          <p className="mt-2 text-[12.5px] leading-relaxed text-[var(--ink-soft)]">{area.blurb}</p>
+    <div className="overflow-hidden rounded-[20px] bg-[var(--paper)] shadow-[var(--shadow-lift)]">
+      <div className="grid grid-cols-[260px_1fr]">
+        {/* ---- the areas ---- */}
+        <ul className="space-y-0.5 bg-[var(--bone)]/60 p-3">
+          {CARE_AREAS.map((a) => {
+            const on = a.label === current.label;
+            return (
+              <li key={a.label}>
+                <button
+                  type="button"
+                  onMouseEnter={() => onArea(a.label)}
+                  onFocus={() => onArea(a.label)}
+                  onClick={() => onArea(a.label)}
+                  aria-pressed={on}
+                  className={`flex w-full items-center gap-3 rounded-[12px] px-3 py-2.5 text-left transition-colors ${
+                    on ? "bg-[var(--paper)] text-[var(--ink)]" : "text-[var(--ink-soft)] hover:text-[var(--ink)]"
+                  }`}
+                >
+                  <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-[9px] transition-colors ${on ? "bg-[var(--teal)] text-white" : "bg-[var(--teal-soft)] text-[var(--teal)]"}`}>
+                    <DeptIcon name={a.departments[0]} className="h-[17px] w-[17px]" />
+                  </span>
+                  <span className="text-[14px] font-medium tracking-[-0.01em]">{a.label}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
 
-          {consultants.length > 0 && (
-            <div className="mt-5 space-y-1.5 border-t border-[var(--teal-tint)] pt-4">
-              <p className="mono text-[9px] font-bold uppercase tracking-[0.18em] text-[var(--teal)]">
-                {consultants.length === 1 ? "Consultant" : "Consultants"}
-              </p>
+        {/* ---- what it covers ---- */}
+        <div className="flex min-h-[340px] flex-col p-7">
+          <div className="flex items-start justify-between gap-6">
+            <div>
+              <p className="[font-family:var(--font-display)] text-[22px] font-medium tracking-[-0.03em] text-[var(--ink)]">{current.label}</p>
+              <p className="mt-1 max-w-[52ch] text-[13px] leading-relaxed text-[var(--muted)]">{current.blurb}</p>
+            </div>
+            <Link href="/doctors" onClick={onNavigate} className="btn-ghost-sm shrink-0">
+              All doctors <ArrowRight size={13} />
+            </Link>
+          </div>
+
+          <div className={`mt-6 flex-1 ${multi ? "grid grid-cols-2 gap-x-10 gap-y-6 xl:grid-cols-3" : ""}`}>
+            {depts.map((d) => (
+              <DeptColumn key={d.name} dept={d} newspaper={!multi} onNavigate={onNavigate} />
+            ))}
+          </div>
+
+          <div className="mt-6 flex items-center justify-between gap-6 border-t border-[var(--line)] pt-4">
+            <div className="flex min-w-0 flex-wrap gap-2">
               {consultants.map((doc) => (
-                <Link key={doc.id} href={doctorHref(doc)} onClick={onNavigate}
-                  className="group flex items-center gap-3 rounded-[10px] bg-[var(--paper)] p-2 transition-colors hover:bg-[var(--bone)]">
-                  <span className="h-11 w-11 shrink-0 overflow-hidden rounded-[8px]">
-                    <DoctorAvatar name={doc.name} className="h-full w-full text-[11px]" />
+                <Link
+                  key={doc.id}
+                  href={doctorHref(doc)}
+                  onClick={onNavigate}
+                  className="flex items-center gap-2 rounded-full bg-[var(--bone)] py-1 pl-1 pr-3 transition-colors hover:bg-[var(--teal-soft)]"
+                >
+                  <span className="h-7 w-7 shrink-0 overflow-hidden rounded-full">
+                    <DoctorAvatar name={doc.name} className="h-full w-full text-[9px]" />
                   </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[12.5px] font-semibold text-[var(--ink)]">{doc.name}</span>
-                    <span className="block truncate text-[10.5px] text-[var(--teal)]">{doc.specialization}</span>
-                  </span>
-                  <ArrowRight size={13} className="shrink-0 text-[var(--muted)] transition-transform duration-300 group-hover:translate-x-0.5 group-hover:text-[var(--teal)]" />
+                  <span className="truncate text-[12.5px] font-medium text-[var(--ink)]">{doc.name}</span>
                 </Link>
               ))}
             </div>
-          )}
-        </aside>
-
-        {/* ---- everything it covers ---- */}
-        <div className={multi ? "grid grid-cols-2 gap-x-8 gap-y-6" : ""}>
-          {depts.map((d) => (
-            <DeptColumn key={d.name} dept={d} newspaper={!multi} onNavigate={onNavigate} />
-          ))}
+            <span className="flex shrink-0 items-center gap-2 text-[12px] text-[var(--muted)]">
+              <span className={`pulse ${opd && !opd.open ? "pulse-alert" : ""}`} aria-hidden />
+              {opd ? opd.text : `OPD ${HOSPITAL.opdHours}`}
+            </span>
+          </div>
         </div>
       </div>
     </div>
@@ -592,24 +617,26 @@ function CarePanel({ area, doctors, onNavigate }: { area: CareArea; doctors: Doc
 function DeptColumn({ dept, newspaper, onNavigate }: { dept: Department; newspaper: boolean; onNavigate: () => void }) {
   return (
     <div>
-      <div className="mb-3 flex items-center gap-3 border-b border-[var(--line)] pb-2">
-        <p className="mono shrink-0 text-[9.5px] font-bold uppercase tracking-[0.18em] text-[var(--teal)]">
-          {dept.name}
-        </p>
-        <span className="h-px flex-1 bg-[var(--line)]" />
-        <Link href={`/book?dept=${encodeURIComponent(dept.name)}`} onClick={onNavigate}
-          className="shrink-0 text-[11.5px] font-semibold text-[var(--teal)] hover:underline">
-          Book →
-        </Link>
-      </div>
+      <Link
+        href={careHref(dept.name)}
+        onClick={onNavigate}
+        className="group mb-2 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--teal)]"
+      >
+        {dept.name}
+        <ArrowRight size={12} className="transition-transform duration-300 group-hover:translate-x-0.5" />
+      </Link>
       {/* CSS columns keep an 11-item list three rows deep instead of eleven */}
-      <ul className={newspaper ? "columns-3 gap-x-8" : ""}>
+      <ul className={newspaper ? "columns-3 gap-x-10" : ""}>
         {dept.services.map((s) => (
           <li key={s.name} className="break-inside-avoid">
             {/* the description rides along as a tooltip - it belongs on the
                 department page, not crammed into a menu row */}
-            <Link href={serviceHref(dept.name)} onClick={onNavigate} title={s.desc}
-              className="block rounded-md py-[5px] text-[13.5px] leading-snug text-[var(--ink-soft)] transition-colors hover:text-[var(--teal)]">
+            <Link
+              href={careHref(dept.name)}
+              onClick={onNavigate}
+              title={s.desc}
+              className="block py-[5px] text-[13.5px] leading-snug text-[var(--ink-soft)] transition-colors hover:text-[var(--teal)]"
+            >
               {s.name}
             </Link>
           </li>

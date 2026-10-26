@@ -91,11 +91,11 @@ export default async function AboutPage() {
           <Fact value={DEPARTMENTS.length} label="Departments, staffed"
             text="Medicine, surgery, women's and children's health and more, consulting under one roof." />
           <Fact value={consultants} suffix="+" label="Consultants on the panel"
-            text="Named doctors with published fees, days and OPD hours." />
+            text="Named doctors with their days and OPD hours on the record." />
           <Fact value={30} suffix=" min" label="Routine report turnaround" className="lg:col-span-2"
             text="Bloods are processed in this building and land on your record - and your phone - usually before you have left." />
           <Fact value={beds} label="Beds, including ICU" className="sm:col-span-2"
-            text="General, semi-private and private rooms plus a monitored ICU, every day rate published on the site." />
+            text="General, semi-private and private rooms plus a monitored ICU, and a bed for the attendant." />
         </Stagger>
       </Chapter>
 
@@ -104,17 +104,17 @@ export default async function AboutPage() {
         <ChapterHead
           index="02"
           label="What we publish"
-          lines={[{ text: "You should not" }, { text: "meet the price at the counter." }]}
-          lede="Consultation fees, room rates and health check prices are all on this website. They are the same figures the hospital's own system bills from, so the site and the bill cannot disagree."
+          lines={[{ text: "You should know" }, { text: "who you will see." }]}
+          lede="Every consultant, every room and every health check is described on this website before you arrive - who sits when, what a room includes, what a package tests."
         />
 
         <Stagger each={0.08} y={20} className="mt-10 grid gap-3 sm:mt-14 sm:grid-cols-3">
-          <Published title="Consultation fees" href="/doctors"
-            text="Every consultant's fee is on their profile and again in the booking flow, before you commit to a slot." />
-          <Published title="Room rates" href="/#wards"
-            text="Every ward's day rate, what it includes and the GST that applies, published rather than quoted on admission." />
-          <Published title="Health check prices" href="/health-checks"
-            text="Each package lists every test it contains beside what it costs, so nobody finds out afterwards." />
+          <Published title="Your consultant" href="/doctors"
+            text="Every consultant's qualification, days and hours are on their profile, with live slots, before you commit to one." />
+          <Published title="The rooms" href="/#facilities"
+            text="General, semi-private, private and ICU - what each one includes, and room for the person who stays with you." />
+          <Published title="Health checks" href="/health-checks"
+            text="Each package lists every test it contains, and whether you need to come fasting, so nothing is a surprise." />
         </Stagger>
       </Chapter>
 

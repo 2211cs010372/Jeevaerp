@@ -148,6 +148,7 @@ type DoctorRow = {
   age: number | null;
   languages: string | null;
   bio: string | null;
+  photoUrl: string | null;
   schedules: { dayOfWeek: number; startTime: string; endTime: string }[];
 };
 
@@ -178,6 +179,8 @@ function toPublicDoctor(d: DoctorRow): Doctor {
     // true of every general physician sitting in it.
     about: dept?.guidance.about ? [dept.guidance.about] : [],
     languages: d.languages?.trim() || "Telugu, English",
+    // Only a real upload - an empty string from the HR form is not a photo.
+    photoUrl: d.photoUrl?.trim() || undefined,
     focus: services.slice(0, 4).map((s) => s.name),
     treats: services.map((s) => s.name),
     prepare: PREPARE_FOR_ANY_CLINIC,
@@ -204,7 +207,7 @@ export const listPublicDoctors = cache(async (): Promise<Doctor[]> => {
       select: {
         id: true, name: true, specialization: true, department: true,
         consultationFee: true, qualification: true, experienceYears: true,
-        age: true, languages: true, bio: true,
+        age: true, languages: true, bio: true, photoUrl: true,
         schedules: { where: { isActive: true }, select: { dayOfWeek: true, startTime: true, endTime: true } },
       },
     });

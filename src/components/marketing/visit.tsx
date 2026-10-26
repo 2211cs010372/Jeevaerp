@@ -1,170 +1,121 @@
-import { ArrowUpRight, Clock, Mail, MapPin, Phone } from "@/components/ui/hugeicons";
-import { SmartImage } from "@/components/ui/smart-image";
-import { Vitals } from "@/components/marketing/vitals";
-import { HOSPITAL } from "@/lib/data";
-import { Chapter, ChapterHead } from "./section";
+import Image from "next/image";
+import { ArrowUpRight } from "@/components/ui/hugeicons";
+import { HOSPITAL, IMAGES } from "@/lib/data";
 import { Reveal, Stagger } from "./motion";
+import { PosterIntro, POSTER_SECTION } from "./poster-intro";
 
 /**
- * Chapter 09 - where we are and when we are open.
+ * Chapter 07 - where we are and when we are open.
  *
- * The most-used content on any hospital site, and usually the worst laid out.
- * Built as a bento in chapter 01's grammar: the map takes the deepest cell, the
- * building takes a photograph so it is recognisable on arrival, and address,
- * hours, phone and the emergency number are each their own cell rather than
- * rows of a table nobody scans.
+ * The map on one side, the facts on hairline rows on the other: address, OPD
+ * hours, the desk's phone and email, and the emergency line - the only red row.
+ * Under the facts, the building itself, small and cut out, the same picture
+ * the hero opens on, so the page ends where it began and somebody arriving
+ * knows what to look for from the road.
  *
  * THE MAP IS EMBEDDED, NOT LINKED. A link to Google Maps is a link away from
- * the site, taken by somebody who is usually already in a car park. The embed
- * answers "is this the building I can see" without a navigation, and the
- * open-in-maps link is still there for the people who do want turn-by-turn.
+ * the site, taken by somebody usually already in a car park. The embed answers
+ * "is this the building I can see" without leaving; "Directions" is still there
+ * for turn-by-turn. Queried by the full address so the pin lands on the
+ * hospital, and lazy, so nobody who never scrolls this far pays for it.
  *
- * It is queried by the full published address rather than by the town, so the
- * pin lands on the hospital rather than on Hanamkonda generally. Loaded lazily:
- * this chapter sits nine screens down, and an eager third-party iframe would be
- * paid for by every visitor who never reaches it.
+ *   phone   map, then the facts
+ *   iPad    side by side, the map at 4:5 and card-sized (5/12, ~300px)
+ *   desktop the map wider (7/12), the facts beside it
  */
-const MAP_EMBED = `https://www.google.com/maps?q=${encodeURIComponent(
-  HOSPITAL.address,
-)}&output=embed`;
+const MAP_EMBED = `https://www.google.com/maps?q=${encodeURIComponent(HOSPITAL.address)}&output=embed`;
 
 export function Visit() {
   const tel = HOSPITAL.phone.replace(/\s/g, "");
   const emergency = HOSPITAL.emergency.replace(/\s/g, "");
 
-  return (
-    <Chapter id="visit" tone="paper">
-      <ChapterHead
-        index="09"
-        label="Visit us"
-        lines={[{ text: "Easy to find," }, { text: "open all day." }]}
-        lede="Parking at the gate, wheelchair access at the main entrance, and a person on the other end of the phone."
-        action={{ href: HOSPITAL.mapUrl, label: "Open in Google Maps" }}
-      />
-
-      <Stagger
-        each={0.07}
-        y={22}
-        className="mt-12 grid gap-3 sm:mt-16 sm:grid-cols-2 lg:grid-cols-4"
-      >
-        {/* the map - deepest cell, and the reason most people opened this */}
-        <div className="relative min-h-[20rem] overflow-hidden rounded-[16px] bg-[var(--bone)] sm:col-span-2 lg:row-span-2">
-          <iframe
-            src={MAP_EMBED}
-            title={`Map showing ${HOSPITAL.name}, ${HOSPITAL.locality}`}
-            loading="lazy"
-            referrerPolicy="no-referrer-when-downgrade"
-            className="absolute inset-0 h-full w-full border-0"
-          />
-          <a
-            href={HOSPITAL.mapUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="btn btn-light absolute bottom-4 left-4 z-10 shadow-[var(--shadow-sm)]"
-          >
-            Directions <ArrowUpRight className="h-4 w-4" />
-          </a>
-        </div>
-
-        {/* the building, so it is recognisable from the road */}
-        <div className="relative min-h-[13rem] overflow-hidden rounded-[16px] bg-[var(--bone)] sm:col-span-2">
-          <SmartImage
-            src="/images/hospital_banner.jpeg"
-            alt={`${HOSPITAL.name}, ${HOSPITAL.locality}`}
-            label="Hospital exterior"
-            className="absolute inset-0 h-full w-full brightness-[0.55]"
-          />
-          <div
-            aria-hidden
-            className="absolute inset-0 bg-gradient-to-t from-[var(--pine-ink)]/88 via-[var(--pine-ink)]/30 to-transparent"
-          />
-          <div className="absolute inset-x-0 bottom-0 z-10 p-6">
-            <p className="mono text-[10px] uppercase tracking-[0.2em] text-white/65">
-              {HOSPITAL.locality}
-            </p>
-            <p className="display-sm mt-2 max-w-[24ch] text-white">
-              {HOSPITAL.name}
-            </p>
-          </div>
-        </div>
-
-        <Cell icon={<MapPin className="h-3.5 w-3.5" />} label="Address" className="sm:col-span-2">
-          <p className="max-w-[34ch] text-[14.5px] leading-[1.7] text-[var(--ink)]">
-            {HOSPITAL.address}
-          </p>
-        </Cell>
-
-        <Cell icon={<Clock className="h-3.5 w-3.5" />} label="OPD hours">
-          <p className="mono text-[14.5px] text-[var(--ink)]">{HOSPITAL.opdHours}</p>
-          <p className="mt-1.5 text-[13px] leading-[1.6] text-[var(--muted)]">
-            {HOSPITAL.opdDays}.
-          </p>
-        </Cell>
-
-        <Cell icon={<Phone className="h-3.5 w-3.5" />} label="Contact">
-          <a
-            href={`tel:${tel}`}
-            className="mono block text-[14.5px] text-[var(--ink)] transition-colors hover:text-[var(--teal)]"
-          >
+  const rows = [
+    { label: "Address", body: <span className="max-w-[34ch]">{HOSPITAL.address}</span> },
+    { label: "OPD hours", body: <>{HOSPITAL.opdHours} · {HOSPITAL.opdDays}</> },
+    {
+      label: "Front desk",
+      body: (
+        <>
+          <a href={`tel:${tel}`} className="block tabular-nums transition-colors hover:text-[var(--teal)]">
             {HOSPITAL.phone}
           </a>
-          <a
-            href={`mailto:${HOSPITAL.email}`}
-            className="mt-2 flex items-start gap-1.5 break-all text-[12.5px] leading-[1.5] text-[var(--muted)] transition-colors hover:text-[var(--teal)]"
-          >
-            <Mail className="mt-[3px] h-3 w-3 shrink-0" aria-hidden />
+          <a href={`mailto:${HOSPITAL.email}`} className="mt-0.5 block break-all text-[12.5px] text-[var(--muted)] transition-colors hover:text-[var(--teal)]">
             {HOSPITAL.email}
           </a>
-        </Cell>
+        </>
+      ),
+    },
+  ];
 
-        {/* the only red cell, and it is a phone number rather than a promotion */}
-        <a
-          href={`tel:${emergency}`}
-          className="group flex flex-col justify-between rounded-[16px] bg-[var(--alert-soft)] p-5 transition-colors duration-250 hover:bg-[var(--alert)]/15 sm:col-span-2 sm:p-6"
-        >
-          <p className="mono flex items-center gap-2.5 text-[10px] uppercase tracking-[0.18em] text-[var(--alert)]">
-            <span className="pulse pulse-alert" /> Emergency · 24×7
-          </p>
-          <div className="mt-8">
-            <p className="mono text-[16px] font-semibold text-[var(--alert-deep)]">
-              {HOSPITAL.emergency}
-            </p>
-            <p className="mt-1.5 text-[13px] leading-[1.6] text-[var(--ink-soft)]">
-              Every day, including holidays. Walk straight in - no appointment,
-              no registration first.
-            </p>
-          </div>
-        </a>
-      </Stagger>
-
-      <Reveal className="mt-16 lg:mt-20">
-        <Vitals />
-      </Reveal>
-    </Chapter>
-  );
-}
-
-/** One fact about getting here, on its own cell. */
-function Cell({
-  icon,
-  label,
-  children,
-  className = "",
-}: {
-  icon: React.ReactNode;
-  label: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
   return (
-    <div
-      className={`flex flex-col justify-between rounded-[16px] bg-[var(--bone)] p-5 sm:p-6 ${className}`}
-    >
-      <p className="mono flex items-center gap-2.5 text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">
-        <span aria-hidden>{icon}</span>
-        {label}
-      </p>
-      <div className="mt-8">{children}</div>
-    </div>
+    <section id="visit" className={POSTER_SECTION}>
+      <PosterIntro
+        index="07"
+        label="Visit us"
+        aside={["Parking at the gate.", "Step-free entrance.", "A person on the phone."]}
+        lede="Find us in Hanamkonda, near Asian Cinema. Walk in for the OPD, or call ahead and the desk will have your file ready."
+        action={{ href: HOSPITAL.mapUrl, label: "Open in Google Maps", external: true }}
+        lines={[{ text: "Easy to find," }, { text: "open all day.", className: "italic text-[var(--teal)]" }]}
+      />
+
+      <div className="mt-[clamp(2rem,4vw,3rem)] grid gap-6 md:grid-cols-12">
+        {/* the map */}
+        <Reveal y={20} className="md:col-span-5 lg:col-span-7">
+          <div className="relative aspect-[4/5] overflow-hidden rounded-[12px] bg-[var(--bone)] lg:aspect-[16/11]">
+            <iframe
+              src={MAP_EMBED}
+              title={`Map showing ${HOSPITAL.name}, ${HOSPITAL.locality}`}
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+              className="absolute inset-0 h-full w-full border-0 grayscale-[0.35]"
+            />
+            <a
+              href={HOSPITAL.mapUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="btn-ghost-sm absolute bottom-3 left-3 z-10 border-transparent bg-white hover:bg-white"
+            >
+              Directions <ArrowUpRight size={14} />
+            </a>
+          </div>
+        </Reveal>
+
+        {/* the facts */}
+        <div className="flex flex-col md:col-span-7 lg:col-span-5">
+          <Stagger each={0.06} y={14} className="border-b border-[var(--line-strong)]">
+            {rows.map((r) => (
+              <div key={r.label} className="grid grid-cols-[7.5rem_1fr] gap-4 border-t border-[var(--line-strong)] py-4">
+                <span className="text-[12px] font-medium text-[var(--muted)]">{r.label}</span>
+                <span className="text-[14px] font-medium leading-[1.3] text-[var(--ink)]">{r.body}</span>
+              </div>
+            ))}
+            <a
+              href={`tel:${emergency}`}
+              className="group grid grid-cols-[7.5rem_1fr] gap-4 border-t border-[var(--line-strong)] py-4"
+            >
+              <span className="flex items-center gap-2 text-[12px] font-medium text-[var(--alert)]">
+                <span className="pulse pulse-alert" aria-hidden /> Emergency
+              </span>
+              <span className="flex items-center justify-between gap-3 text-[14px] font-medium text-[var(--alert)]">
+                <span className="tabular-nums">{HOSPITAL.emergency} · 24×7</span>
+                <ArrowUpRight size={14} className="transition-transform duration-300 group-hover:rotate-45" />
+              </span>
+            </a>
+          </Stagger>
+
+          {/* the building, so it is recognisable from the road */}
+          <Reveal y={16} className="mx-auto mt-auto w-[min(100%,360px)] pt-8">
+            <Image
+              src={IMAGES.heroBuilding}
+              alt={`${HOSPITAL.name} from the road`}
+              width={1272}
+              height={903}
+              sizes="360px"
+              className="h-auto w-full"
+            />
+          </Reveal>
+        </div>
+      </div>
+    </section>
   );
 }

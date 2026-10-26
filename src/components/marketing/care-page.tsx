@@ -69,7 +69,7 @@ export function CarePage({
 
         <div className="shell-w">
           <Link
-            href="/#departments"
+            href="/#specialities"
             className="mono inline-flex items-center gap-2 text-[10.5px] uppercase tracking-[0.18em] text-white/60 transition-colors hover:text-white"
           >
             <ArrowLeft className="h-3.5 w-3.5" /> All departments
@@ -160,16 +160,14 @@ export function CarePage({
                   </dl>
                 </div>
 
-                {/* consultation charges + the two ways to act on them */}
+                {/* when they sit + the two ways to act on it. No fee here -
+                    prices are not shown anywhere on the public site. */}
                 <div className="shrink-0 rounded-[var(--r-md)] bg-[var(--pine-ink)] p-5 text-center text-white sm:w-[196px]">
                   <p className="mono text-[9.5px] uppercase tracking-[0.16em] text-white/45">
-                    Consultation
+                    Consults
                   </p>
-                  <p className="mono mt-2 text-[32px] font-semibold tabular leading-none text-white">
-                    <span className="align-top text-[15px] text-white/55">₹</span>
-                    {doc.fee}
-                  </p>
-                  <p className="mt-2 text-[10.5px] text-white/45">paid at the hospital</p>
+                  <p className="mt-2 text-[15px] font-medium leading-snug text-white">{doc.days}</p>
+                  <p className="mt-1 text-[10.5px] text-white/45">{doc.opd}</p>
 
                   <Link href={doctorHref(doc)} className="btn btn-light mt-4 w-full !px-4 !py-2.5 !text-[13px]">
                     See times &amp; book

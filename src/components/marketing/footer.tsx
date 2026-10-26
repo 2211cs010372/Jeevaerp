@@ -47,9 +47,9 @@ export function Footer() {
               {[
                 { href: "/about", label: "About the hospital" },
                 { href: "/doctors", label: "Doctors" },
-                { href: "/#departments", label: "Departments" },
+                { href: "/#specialities", label: "Specialities" },
                 { href: "/health-checks", label: "Health checks" },
-                { href: "/#wards", label: "Rooms & prices" },
+                { href: "/#facilities", label: "Rooms & wards" },
                 { href: "/book", label: "Book an appointment" },
                 { href: "/portal/login", label: "Patient portal" },
               ].map((l) => (

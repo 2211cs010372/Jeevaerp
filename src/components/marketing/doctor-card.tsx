@@ -1,153 +1,97 @@
-"use client";
-
-import { useEffect, useLayoutEffect, useRef } from "react";
+import Image from "next/image";
 import Link from "next/link";
-import gsap from "gsap";
-import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
+import { ArrowUpRight } from "@/components/ui/hugeicons";
 import type { Doctor } from "@/lib/data";
 import { doctorHref } from "@/lib/doctors";
+import { doctorImage } from "@/lib/speciality-images";
 
 /**
- * The consultant card, in the reference site's people-card shape.
+ * The consultant card - one shape on the homepage, the directory and the
+ * "other consultants" row under a profile, so a doctor looks the same
+ * wherever you meet them.
  *
- * A portrait at 3:4 filling a 10px-cornered cell, with a white pill floating
- * clear of the bottom edge carrying the name and the department. The reference
- * builds its card the same way: 10px outer, 10px padding, an 8px inner frame,
- * and a 5px pill inset 14px from the sides and foot.
+ * A 4:5 picture over the name, the speciality and the days they consult; 10px
+ * corners, laid 8px apart by its parent grid. Not big, not small: about 290px
+ * wide four-across on a desktop, ~250-300px on an iPad.
  *
- * THE PORTRAIT IS THE POINT. A directory of consultants is scanned by face
- * before it is read by name - people recognise the doctor they saw last time
- * long before they recall how it was spelled. So the photograph gets the whole
- * cell and the type gets a pill, rather than the other way round.
+ * THE PICTURE IS THE CONSULTANT'S OWN PHOTO WHEN ONE EXISTS (Doctor.photoUrl,
+ * uploaded under Admin -> HR), and their speciality's photograph until then -
+ * an ultrasound print for gynaecology, a stethoscope for medicine. Never a
+ * stock face: see lib/speciality-images.ts. Without an own photo the card
+ * carries the doctor's monogram on the picture, so it is clear the picture is
+ * of the work and the monogram is the person.
  *
- * ONE DIFFERENCE FROM THE REFERENCE, DELIBERATELY. Its pill leads with a 44px
- * circular headshot beside the name. Ours does not: the face is already the
- * entire card behind it, and printing the same person twice in one card reads
- * as a mistake. The years-in-practice badge takes that slot instead, up on the
- * portrait where it does not squeeze the name.
- *
- * THE PILL OPENS ON HOVER. Specialisation, years in practice and age sit in a
- * panel that is closed until the pointer arrives, then grows the pill upward
- * over the portrait. Three reasons it is built this way and not another:
- *
- *   - The badge leaves as the panel arrives. "12 yrs" is printed on the
- *     portrait already, so the two would otherwise say the same thing twice
- *     with the panel open. Read it as the figure moving into the pill rather
- *     than as two separate animations.
- *   - The panel is real markup, not a tooltip. With JavaScript off nothing
- *     runs, the panel is never collapsed, and the card simply renders taller
- *     with every field visible - the same bargain the scroll primitives in
- *     motion.tsx make.
- *   - Under prefers-reduced-motion the effect installs nothing at all. The
- *     panel stays open, because a card that hides a doctor's specialisation
- *     behind an interaction the visitor has switched off would be worse than
- *     a card that is simply a little taller.
- *
- * A hover is a pointer's idea, so on a phone none of this fires - which is
- * why nothing here is unique to the card. Every field in the panel is also on
- * the consultant's profile, one tap away.
- *
- * No fee. Consultation prices are published on the doctor's own profile and in
- * the booking flow, not on the browsing card.
+ * No fee - nothing on the public site shows a price.
  */
-
-/** useLayoutEffect that doesn't warn during SSR - as in motion.tsx. */
-const useIsoLayoutEffect =
-  typeof window !== "undefined" ? useLayoutEffect : useEffect;
-
 export function DoctorCard({ doctor: d }: { doctor: Doctor }) {
-  const root = useRef<HTMLAnchorElement>(null);
-  const panel = useRef<HTMLDivElement>(null);
-  const badge = useRef<HTMLSpanElement>(null);
-
-  useIsoLayoutEffect(() => {
-    const card = root.current;
-    const detail = panel.current;
-    const chip = badge.current;
-    if (!card || !detail || !chip) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-
-    const ctx = gsap.context(() => {
-      gsap.set(detail, { height: 0, autoAlpha: 0 });
-
-      /* One paused timeline played forward and reversed, rather than a tween
-         per event: a pointer crossing three cards in a second interrupts
-         mid-open, and reversing an existing timeline picks up from wherever it
-         got to instead of restarting from the closed state. */
-      const tl = gsap
-        .timeline({ paused: true, defaults: { ease: "power3.out" } })
-        .to(detail, { height: "auto", autoAlpha: 1, duration: 0.42 }, 0)
-        .to(chip, { autoAlpha: 0, y: -6, duration: 0.26 }, 0);
-
-      const open = () => tl.play();
-      const close = () => tl.reverse();
-
-      /* focusin/focusout rather than focus/blur - they bubble, so a keyboard
-         visitor tabbing onto the card gets the same panel a mouse does. */
-      card.addEventListener("mouseenter", open);
-      card.addEventListener("mouseleave", close);
-      card.addEventListener("focusin", open);
-      card.addEventListener("focusout", close);
-
-      return () => {
-        card.removeEventListener("mouseenter", open);
-        card.removeEventListener("mouseleave", close);
-        card.removeEventListener("focusin", open);
-        card.removeEventListener("focusout", close);
-      };
-    }, card);
-
-    return () => ctx.revert();
-  }, []);
+  const img = doctorImage(d);
 
   return (
     <Link
-      ref={root}
       href={doctorHref(d)}
-      className="group block rounded-[10px] bg-[var(--bone)] p-2.5 transition-colors duration-300 hover:bg-[var(--bone-deep)]"
+      className="group f-sans flex h-full flex-col rounded-[10px] bg-[var(--bone)] p-1.5 transition-colors duration-300 hover:bg-[var(--bone-deep)]"
     >
-      <div className="zoom-media relative aspect-[3/4] overflow-hidden rounded-[8px] bg-[var(--bone-deep)]">
-        <DoctorAvatar
-          name={d.name}
-          className="h-full w-full text-3xl"
-        />
+      <div className="relative aspect-[4/5] overflow-hidden rounded-[7px] bg-[var(--bone-deep)]">
+        {img.own ? (
+          /* An uploaded portrait lives on the storage host, not in /public,
+             so a plain <img> rather than next/image and its host allow-list. */
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={img.src}
+            alt={d.name}
+            loading="lazy"
+            className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 ease-[var(--ease-out)] group-hover:scale-[1.04]"
+          />
+        ) : (
+          <Image
+            src={img.src}
+            alt=""
+            fill
+            sizes="(min-width: 1024px) 290px, (min-width: 768px) 33vw, 50vw"
+            className="object-cover transition-transform duration-700 ease-[var(--ease-out)] group-hover:scale-[1.04]"
+          />
+        )}
 
-        {/* years in practice - kept on the portrait so the pill below can give
-            the whole of its width to a name that must not be truncated */}
-        <span
-          ref={badge}
-          className="mono absolute left-3 top-3 z-10 rounded-full bg-black/40 px-2.5 py-1 text-[9.5px] uppercase tracking-[0.14em] text-white backdrop-blur"
-        >
-          {d.experience} yrs
+        <span className="absolute left-2 top-2 max-w-[calc(100%-3rem)] truncate rounded-full bg-white/85 px-2 py-0.5 text-[10.5px] font-medium text-[var(--ink)] backdrop-blur">
+          {d.department}
+        </span>
+        <span className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-white/85 text-[var(--ink)] backdrop-blur transition-[transform,background-color,color] duration-400 group-hover:rotate-45 group-hover:bg-[var(--ink)] group-hover:text-white">
+          <ArrowUpRight size={13} />
         </span>
 
-        {/* the reference's box_white: 5px corners, 8px of padding, sitting
-            clear of the frame rather than flush to it */}
-        <div className="absolute inset-x-3 bottom-3 z-10 rounded-[5px] bg-[var(--paper)] p-2">
-          <h3 className="text-[12.5px] font-semibold leading-[1.25] tracking-[-0.02em] text-[var(--ink)] sm:text-[13.5px]">
-            {d.name}
-          </h3>
-          <p className="mono mt-0.5 truncate text-[9px] uppercase tracking-[0.12em] text-[var(--muted)] sm:text-[9.5px]">
-            {d.department}
-          </p>
+        {/* the person, on a picture of the work */}
+        {!img.own && (
+          <span
+            aria-hidden
+            className="f-serif absolute bottom-2 left-2 grid h-9 w-9 place-items-center rounded-full bg-white text-[15px] text-[var(--ink)]"
+          >
+            {initials(d.name)}
+          </span>
+        )}
+      </div>
 
-          {/* what the hover opens. `overflow-hidden` is what makes a height
-              tween to `auto` clip rather than spill while it runs. */}
-          <div ref={panel} className="overflow-hidden">
-            <dl className="mt-1.5 border-t border-[var(--line)] pt-1.5">
-              <dt className="sr-only">Specialisation</dt>
-              <dd className="mono text-[9px] uppercase leading-[1.35] tracking-[0.1em] text-[var(--teal)]">
-                {d.specialization}
-              </dd>
-
-              <dt className="sr-only">Experience and age</dt>
-              <dd className="mt-1 text-[10.5px] leading-[1.4] text-[var(--ink-soft)]">
-                {d.experience} yrs in practice · Age {d.age}
-              </dd>
-            </dl>
-          </div>
-        </div>
+      <div className="px-1.5 pb-1.5 pt-2.5">
+        <h3 className="f-serif truncate text-[clamp(1.15rem,1.6vw,1.4rem)] leading-[1.1] tracking-[-0.01em] text-[var(--ink)]">
+          {d.name}
+        </h3>
+        <p className="mt-0.5 truncate text-[12px] font-medium text-[var(--muted)]">{d.specialization}</p>
+        <p className="mt-2 flex items-center justify-between gap-2 border-t border-[var(--line-strong)] pt-2 text-[11.5px] font-medium text-[var(--ink-soft)]">
+          <span className="truncate">{d.days}</span>
+          {d.experience > 0 && <span className="shrink-0 text-[var(--muted)]">{d.experience} yrs</span>}
+        </p>
       </div>
     </Link>
   );
+}
+
+/** "Dr. K. Padmaja" -> "KP". Exported for the profile's portrait badge. */
+export function initials(name: string) {
+  return name
+    .replace(/^Dr\.?\s*/i, "")
+    .split(/[\s.]+/)
+    .map((n) => n[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
 }

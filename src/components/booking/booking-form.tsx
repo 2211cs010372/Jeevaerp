@@ -90,7 +90,7 @@ export function BookingForm({ doctors }: { doctors: Doctor[] }) {
                   <span className="min-w-0">
                     <span className="block truncate text-[13.5px] font-semibold text-[var(--ink)]">{d.name}</span>
                     <span className="block truncate text-[11.5px] text-[var(--teal)]">{d.specialization}</span>
-                    <span className="mt-0.5 block font-mono text-[10px] text-[var(--muted)]">{d.days} · {d.opd} · ₹{d.fee}</span>
+                    <span className="mt-0.5 block font-mono text-[10px] text-[var(--muted)]">{d.days} · {d.opd}</span>
                   </span>
                 </button>
               );
@@ -103,7 +103,7 @@ export function BookingForm({ doctors }: { doctors: Doctor[] }) {
           <p className={label}>03 - Time & confirmation</p>
           <div className="mt-3">
             {doctor ? (
-              <DoctorSlots doctorName={doctor.name} days={doctor.days} fee={doctor.fee} opd={doctor.opd} />
+              <DoctorSlots doctorName={doctor.name} days={doctor.days} opd={doctor.opd} />
             ) : (
               <p className="rounded-[1.1rem] border border-dashed border-[var(--line-strong)] px-4 py-8 text-center text-[13px] text-[var(--muted)]">
                 Choose a doctor above and their open times appear here.
@@ -130,7 +130,7 @@ function DoctorRail({ doctor }: { doctor?: Doctor }) {
         </span>
         <p className="mt-4 text-[14.5px] font-semibold text-[var(--ink)]">No doctor selected yet</p>
         <p className="mt-1.5 max-w-[240px] text-[13px] leading-[1.65] text-[var(--muted)]">
-          Choose a doctor and their timings and fee appear here.
+          Choose a doctor and their timings appear here.
         </p>
         <Link href="/doctors" className="mt-4 text-[13px] font-semibold text-[var(--teal)] underline underline-offset-2">
           Browse all doctors
@@ -166,9 +166,7 @@ function DoctorRail({ doctor }: { doctor?: Doctor }) {
         <div className="relative z-10">
           <div className="flex items-baseline justify-between">
             <p className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-white/55">Consultation</p>
-            <p className="display text-[1.9rem] leading-none text-white">
-              <span className="align-top text-[1rem] text-white/60">₹</span>{doctor.fee}
-            </p>
+            <p className="text-[13px] font-medium text-white">Free to book</p>
           </div>
           <p className="mt-4 border-t border-white/12 pt-3 text-[11.5px] leading-relaxed text-white/55">
             Paid at the hospital. Booking is free, and we&apos;ll text a code to confirm the number is yours.

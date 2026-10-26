@@ -169,7 +169,6 @@ export function DoctorSearchBox({
                           <span className="block truncate text-[10.5px] text-[var(--muted)]">{m.reason}</span>
                         )}
                       </span>
-                      <span className="shrink-0 font-mono text-[11px] text-[var(--muted)]">₹{m.doctor.fee}</span>
                       <ArrowRight size={13} className="shrink-0 text-[var(--muted)]" />
                     </Link>
                   </li>

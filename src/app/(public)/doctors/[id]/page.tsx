@@ -26,7 +26,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   // two URLs for one consultant is two half-ranked pages instead of one.
   const href = doctorHref(doctor);
   const title = `${doctor.name} · ${doctor.specialization}`;
-  const description = `${doctor.name}, ${doctor.designation} at Jeeva Multispeciality Hospital, Hanamkonda. ${doctor.qualification}, ${doctor.experience} years in practice. Treats ${doctor.treats.slice(0, 4).join(", ").toLowerCase()}. OPD ${doctor.opd}, ${doctor.days}. Consultation ₹${doctor.fee}. Book an appointment online.`;
+  const description = `${doctor.name}, ${doctor.designation} at Jeeva Multispeciality Hospital, Hanamkonda. ${doctor.qualification}, ${doctor.experience} years in practice. Treats ${doctor.treats.slice(0, 4).join(", ").toLowerCase()}. OPD ${doctor.opd}, ${doctor.days}. Book an appointment online.`;
   return {
     title,
     description,
@@ -110,12 +110,6 @@ export default async function DoctorPage({ params }: { params: Promise<{ id: str
               description: p.desc,
             })),
             knowsAbout: doctor.treats,
-            makesOffer: {
-              "@type": "Offer",
-              name: "Outpatient consultation",
-              price: doctor.fee,
-              priceCurrency: "INR",
-            },
             worksFor: { "@type": "Hospital", name: HOSPITAL.name, url: SITE_URL },
             address: {
               "@type": "PostalAddress",

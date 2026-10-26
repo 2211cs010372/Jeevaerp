@@ -3,10 +3,12 @@ import { DEPARTMENTS } from "@/lib/data";
 /**
  * The department marquee.
  *
- * A pine strip immediately under the hero, running the eight department names
- * at display size. It does one job: the moment after the headline, prove there
- * is substance behind it. Names only, no photos - a marquee of thumbnails is
- * a slideshow, and nobody reads a slideshow.
+ * A quiet line of type under the hero, on the hero's own white, ruled top and
+ * bottom by hairlines. It used to be a pine strip at display weight - the
+ * loudest band on the page directly under the quietest one. Now it carries on
+ * in the hero's voice: department names in Instrument Serif, every other one
+ * in italic and a step lighter, so the line reads with a rhythm rather than as
+ * a list. A small teal dot between them is the only colour.
  *
  * Two copies of the list, translated -50%, gives a seamless loop. It pauses on
  * hover, and prefers-reduced-motion stops it dead (see .ticker in site-theme).
@@ -15,15 +17,15 @@ export function Ticker() {
   const items = [...DEPARTMENTS, ...DEPARTMENTS];
 
   return (
-    <div className="ticker-wrap relative overflow-hidden bg-[var(--pine-ink)] py-5 sm:py-7">
-      {/* the ends fade into the pine rather than being cut off by the viewport */}
+    <div className="ticker-wrap relative overflow-hidden border-y border-[var(--line)] bg-white py-5 sm:py-7">
+      {/* the ends fade into the white rather than being cut off by the viewport */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-y-0 left-0 z-10 w-16 bg-gradient-to-r from-[var(--pine-ink)] to-transparent sm:w-32"
+        className="pointer-events-none absolute inset-y-0 left-0 z-10 w-16 bg-gradient-to-r from-white to-transparent sm:w-40"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-y-0 right-0 z-10 w-16 bg-gradient-to-l from-[var(--pine-ink)] to-transparent sm:w-32"
+        className="pointer-events-none absolute inset-y-0 right-0 z-10 w-16 bg-gradient-to-l from-white to-transparent sm:w-40"
       />
 
       {/* The visible copy is aria-hidden and the real list is read once, in
@@ -38,14 +40,14 @@ export function Ticker() {
       <div className="ticker" aria-hidden>
         {items.map((d, i) => (
           <span key={`${d.name}-${i}`} className="flex shrink-0 items-center">
-            <span className="display px-5 text-[clamp(1.05rem,1.9vw,1.65rem)] text-white/85 sm:px-8">
+            <span
+              className={`f-serif px-6 text-[clamp(1.7rem,3.2vw,2.9rem)] leading-none tracking-[-0.01em] sm:px-10 ${
+                i % 2 ? "italic text-[var(--muted)]" : "text-[var(--ink)]"
+              }`}
+            >
               {d.name}
             </span>
-            <span className="text-[var(--teal-lift)]" aria-hidden>
-              <svg width="11" height="11" viewBox="0 0 14 14">
-                <path d="M5 0h4v5h5v4H9v5H5V9H0V5h5z" fill="currentColor" />
-              </svg>
-            </span>
+            <span className="h-[5px] w-[5px] shrink-0 rounded-full bg-[var(--teal)]" />
           </span>
         ))}
       </div>

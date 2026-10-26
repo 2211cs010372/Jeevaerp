@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Bricolage_Grotesque, DM_Mono, Fraunces, Geist, Geist_Mono, Instrument_Sans } from "next/font/google";
+import { Bricolage_Grotesque, DM_Mono, Fraunces, Geist, Geist_Mono, Instrument_Sans, Instrument_Serif, Montserrat } from "next/font/google";
 import "./globals.css";
 import { SITE_URL } from "@/lib/site";
 
@@ -27,6 +27,25 @@ const bricolage = Bricolage_Grotesque({
 const instrument = Instrument_Sans({
   subsets: ["latin"],
   variable: "--font-instrument",
+  display: "swap",
+});
+
+/* The homepage hero's pair - Instrument Serif for the headline, Montserrat for
+   everything around it. Scoped by variable, not set globally: the rest of the
+   public site still reads --font-display / --font-sans. Instrument Serif ships
+   one weight (400), which is the point - the headline is large enough not to
+   need a heavier one. */
+const instrumentSerif = Instrument_Serif({
+  subsets: ["latin"],
+  weight: "400",
+  style: ["normal", "italic"],
+  variable: "--font-instrument-serif",
+  display: "swap",
+});
+
+const montserrat = Montserrat({
+  subsets: ["latin"],
+  variable: "--font-montserrat",
   display: "swap",
 });
 
@@ -107,7 +126,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${bricolage.variable} ${instrument.variable} ${dmMono.variable} ${fraunces.variable} ${geist.variable} ${geistMono.variable}`}
+      className={`${bricolage.variable} ${instrument.variable} ${instrumentSerif.variable} ${montserrat.variable} ${dmMono.variable} ${fraunces.variable} ${geist.variable} ${geistMono.variable}`}
     >
       <body>{children}</body>
     </html>

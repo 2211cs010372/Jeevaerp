@@ -815,12 +815,16 @@ export interface Doctor {
   opd: string;
   days: string;
   /**
-   * NO PHOTO FIELD. There was one, and behind it sat eight stock portraits
-   * shown under the names of real consultants - a face a patient would look for
-   * in the corridor and never find. `DoctorAvatar` renders initials instead,
-   * which claims nothing. If the hospital ever photographs its own panel, add
-   * the URL to Doctor.photoUrl in the ERP and thread it through from there.
+   * The consultant's OWN photograph, from Doctor.photoUrl in the ERP (Admin ->
+   * HR -> Upload photo). Absent until someone uploads one.
+   *
+   * Never a stock face. There used to be eight stock portraits shown under the
+   * names of real consultants - a face a patient would look for in the
+   * corridor and never find. Until a real photo exists, cards show their
+   * speciality's photograph instead (lib/speciality-images.ts), which is a
+   * picture of the work, not a claim about the person.
    */
+  photoUrl?: string;
   /** The title on the consulting room door - fuller than `specialization`. */
   designation: string;
   /** Where to go once reception has registered you. */
@@ -940,8 +944,8 @@ export const CARE_MODEL = [
   },
   {
     index: "05",
-    title: "The price is on the website, not at the counter",
-    text: "Consultation fees, ward rates and health check prices are all published here, and they are the same figures the hospital bills from. A room rate is locked at admission, so the number you were quoted is the number on the bill.",
+    title: "No surprises at the counter",
+    text: "Every charge is explained at the desk before it is billed, and every payment gets a printed, GST-compliant receipt. A room rate is locked at admission, so what you are told is what you are billed.",
   },
   {
     index: "06",
@@ -988,7 +992,9 @@ export const JOURNEY = [
 ];
 
 export const IMAGES = {
-  heroBuilding: "/images/hospital_banner1.png",
+  /* hospital_banner1.png with the sky cut away (alpha PNG, trimmed to the
+     building) - the hero sets it on plain white, so the sky would be a box */
+  heroBuilding: "/images/hospital-building-cutout.png",
   equipment: "/images/facility-equipment.jpg",
   ward: "/images/facility-ward.jpg",
   gynaec: "/images/dept-gynocology.avif",
@@ -1128,7 +1134,7 @@ export const FAQ = [
   },
   {
     q: "Can I choose which doctor I see?",
-    a: `Yes. Every consultant is named on this site with their qualification, the days and hours they consult, and their fee - you pick the one you want and book that slot. There is no pooled queue and no "whoever is on duty": the consultant you booked is the consultant who sees you.`,
+    a: `Yes. Every consultant is named on this site with their qualification and the days and hours they consult - you pick the one you want and book that slot. There is no pooled queue and no "whoever is on duty": the consultant you booked is the consultant who sees you.`,
   },
   {
     q: "Are you open on Sunday?",
@@ -1156,9 +1162,7 @@ export const FAQ = [
   },
   {
     q: "What will a room cost if I have to be admitted?",
-    a: `Every ward rate is on this site rather than quoted to you at admission - from ₹${Math.min(
-      ...WARDS.map((w) => w.price),
-    ).toLocaleString("en-IN")} a day for the general ward, with what each room includes listed beside the price. Room rent above ₹5,000 a day attracts 5% GST on the non-ICU wards; ICU is exempt. The rate is locked at admission, so the figure you were quoted is the figure you are billed.`,
+    a: "The front desk explains the rate for each ward class - general, semi-private, private and ICU - before you are admitted, along with what each room includes. The rate is locked at admission, so the figure you are told is the figure you are billed.",
   },
   {
     q: "Do I need to fast for a health check?",

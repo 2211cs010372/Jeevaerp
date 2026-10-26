@@ -27,18 +27,15 @@ export const metadata: Metadata = {
  */
 export default function HealthChecksPage() {
   const phone = HOSPITAL.phone.replace(/\s/g, "");
-  const cheapest = Math.min(...HEALTH_PACKAGES.map((p) => p.price));
-
   return (
     <div className="bg-[var(--bone)]">
       <SectionHeading
         index="Health checks"
-        title={"Know what it costs\nbefore you come."}
-        subtitle="Six packages, every test listed, every price on the page. Book one at the desk or by phone - reports are explained by a doctor the same day, not posted to you."
+        title={"Know what is tested\nbefore you come."}
+        subtitle="Six packages, every test listed. Book one at the desk or by phone - reports are explained by a doctor the same day, not posted to you."
         meta={
           <>
             <span className="chip chip-dark">{HEALTH_PACKAGES.length} packages</span>
-            <span className="chip chip-dark">From ₹{cheapest.toLocaleString("en-IN")}</span>
             <span className="chip chip-dark">Reports same day</span>
           </>
         }
@@ -81,13 +78,13 @@ export default function HealthChecksPage() {
                     dark ? "text-white" : "text-[var(--ink)]"
                   }`}
                 >
-                  ₹{p.price.toLocaleString("en-IN")}
+                  {p.includes.length}
                   <span
                     className={`ml-2 text-[12px] font-normal ${
                       dark ? "text-white/45" : "text-[var(--muted)]"
                     }`}
                   >
-                    all tests included
+                    tests included
                   </span>
                 </p>
 

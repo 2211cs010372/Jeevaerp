@@ -90,11 +90,11 @@
   --shell-max:   1320px;
   --shell-x:     clamp(1.25rem, 4vw, 3rem);
 
-  /* Height of the fixed header AT REST (status strip + row 1; row 2 appears
-     at lg). Every page that starts under the navbar measures from this rather
-     than from a hand-counted pixel value - the last time those were hardcoded,
-     growing the header by 6px pushed three pages under it. */
-  --nav-h:       92px;
+  /* Height of the fixed header - one row, the same at every width. Every page
+     that starts under the navbar measures from this rather than from a
+     hand-counted pixel value, and the header itself is drawn at this height,
+     so the two cannot drift apart. */
+  --nav-h:       72px;
 
   --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
 
@@ -112,11 +112,6 @@
 /* ============================================================================
    1 · STRUCTURE - chapters, containers, rooms
    ========================================================================== */
-
-/* the care-area row appears at lg, and the header grows by its height */
-@media (min-width: 1024px) {
-  .site { --nav-h: 142px; }
-}
 
 /* Anything that begins directly under the fixed header opens with this. */
 .below-nav { padding-top: calc(var(--nav-h) + clamp(2rem, 5vw, 3.25rem)); }
@@ -225,6 +220,13 @@
   color: var(--teal);
 }
 .tabular { font-variant-numeric: tabular-nums; }
+
+/* The hero pair, as classes, for the chapters that follow it in the same
+   voice: Instrument Serif for headlines and numerals (one weight - never ask
+   it for bold), Montserrat for everything read at body size. Loaded in
+   app/layout.tsx. */
+.f-serif { font-family: var(--font-instrument-serif), Georgia, serif; font-weight: 400; }
+.f-sans  { font-family: var(--font-montserrat), system-ui, sans-serif; }
 .mono { font-family: var(--font-mono); }
 
 /* ============================================================================
@@ -421,6 +423,56 @@
 .btn-ghost-dark:hover { border-color: rgba(255, 255, 255, 0.65); background: rgba(255, 255, 255, 0.06); transform: translateY(-2px); }
 .btn-alert { background: var(--alert); color: #fff; }
 .btn-alert:hover { background: var(--alert-deep); transform: translateY(-2px); box-shadow: var(--shadow); }
+
+/* The small ghost pill - the header's Book button and the hero's CTAs. 4px
+   vertical padding on purpose: these sit beside narrow type, and a 15x30 slab would
+   outweigh the sentence it is attached to. Medium weight, never bold. */
+.btn-ghost-sm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  padding: 4px 13px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  white-space: nowrap;
+  transition: border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease;
+}
+.btn-ghost-sm:hover { border-color: var(--ink); background: var(--bone); }
+
+
+/* ── header controls ─────────────────────────────────────────────────── */
+.nav-link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 7px 13px;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+.nav-link:hover { color: var(--ink); }
+.nav-link-on { color: var(--ink); background: var(--bone); }
+
+.nav-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 999px;
+  color: var(--ink);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+.nav-icon:hover, .nav-icon-on { background: var(--bone); color: var(--teal); }
 
 /* magnetic wrapper - the child is what actually moves */
 .magnetic { display: inline-block; }

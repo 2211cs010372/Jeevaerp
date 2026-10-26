@@ -46,8 +46,8 @@ const BANDS = [
 ] as const;
 
 export function DoctorSlots({
-  doctorName, days, fee, opd = "",
-}: { doctorName: string; days: string; fee: number; opd?: string }) {
+  doctorName, days, opd = "",
+}: { doctorName: string; days: string; opd?: string }) {
   // Anaesthetists and the like have no online diary - offer a call, not a grid
   // that would forever read "fully booked".
   const byAppointment = isByAppointment(opd);
@@ -196,7 +196,6 @@ export function DoctorSlots({
             <Row k="Patient" v={`${booking.patientName} · ${booking.displayId}`} />
             <Row k="Doctor" v={`${booking.doctorName} · ${booking.department}`} />
             <Row k="When" v={`${DOW[new Date(`${booking.date}T00:00:00`).getDay()]}, ${new Date(`${booking.date}T00:00:00`).getDate()} ${MON[new Date(`${booking.date}T00:00:00`).getMonth()]} at ${clockLabel(mins(booking.time))}`} />
-            <Row k="Fee" v={`₹${booking.fee}, paid at the hospital`} />
           </dl>
 
           <p className="mt-4 rounded-[1rem] bg-white/70 px-4 py-3 text-[12.5px] leading-relaxed text-[var(--muted)]">
@@ -263,7 +262,7 @@ export function DoctorSlots({
       <div className="flex h-full min-w-0 flex-col p-5 sm:p-6">
         <div className="flex items-baseline justify-between gap-3">
           <h2 className="display text-[20px] text-[var(--ink)]">Pick a time</h2>
-          <span className="font-mono text-[12px] text-[var(--muted)]">₹{fee} at the desk</span>
+          <span className="text-[12px] text-[var(--muted)]">Free to book</span>
         </div>
         <p className="mt-1 text-[12.5px] text-[var(--muted)]">
           Live availability from the hospital's own diary.
@@ -388,7 +387,7 @@ export function DoctorSlots({
               </span>
             </button>
             <p className="mt-2 text-center text-[11px] leading-relaxed text-[var(--muted)]">
-              We&apos;ll text a code to confirm it&apos;s you. No payment now - ₹{fee} at the hospital.
+              We&apos;ll text a code to confirm it&apos;s you. Nothing to pay now.
             </p>
           </div>
         )}
