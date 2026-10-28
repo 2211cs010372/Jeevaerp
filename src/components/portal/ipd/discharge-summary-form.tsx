@@ -112,7 +112,11 @@ export function formatDischargeType(type: string, details: string): string {
   return type;
 }
 
-const ALL_KEYS = ["dischargeType", ...NARRATIVE, ...REST].map((f) => f.key).concat(EXAM_VITALS.map((f) => f.key));
+const ALL_KEYS = [
+  "dischargeType",
+  ...[...NARRATIVE, ...REST].map((f) => f.key),
+  ...EXAM_VITALS.map((f) => f.key),
+];
 
 const blank = (): Record<string, string> =>
   Object.fromEntries(ALL_KEYS.map((k) => [k, ""]));
