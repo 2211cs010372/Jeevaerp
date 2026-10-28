@@ -15,6 +15,7 @@ import { z } from "zod";
 const text = (max: number) => z.string().trim().max(max).nullish();
 
 export const dischargeSummarySchema = z.object({
+  dischargeType: text(200),
   // Clinical narrative. Generous caps - a course-in-hospital entry runs long,
   // and a truncated sentence on a medico-legal document is worse than a long one.
   diagnosis: text(2000),

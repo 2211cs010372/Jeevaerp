@@ -84,7 +84,35 @@ const REST: { key: string; label: string; rows: number; hint?: string }[] = [
   { key: "conditionAtDischarge", label: "Condition at discharge", rows: 2 },
 ];
 
-const ALL_KEYS = [...NARRATIVE, ...REST].map((f) => f.key).concat(EXAM_VITALS.map((f) => f.key));
+export const DISCHARGE_TYPE_OPTIONS = [
+  "Normal Discharge",
+  "Lama Discharge",
+  "Refer to",
+  "Death",
+] as const;
+
+export function parseDischargeType(raw: string | null | undefined): { type: string; details: string } {
+  const v = (raw ?? "").trim();
+  if (!v) return { type: "Normal Discharge", details: "" };
+  if (/^refer(\s*to)?/i.test(v)) {
+    const after = v.replace(/^refer(\s*to)?[:\s-]*/i, "").trim();
+    return { type: "Refer to", details: after };
+  }
+  if (/lama/i.test(v)) return { type: "Lama Discharge", details: "" };
+  if (/death|expired/i.test(v)) return { type: "Death", details: "" };
+  if (/normal/i.test(v)) return { type: "Normal Discharge", details: "" };
+  return { type: "Normal Discharge", details: "" };
+}
+
+export function formatDischargeType(type: string, details: string): string {
+  if (type === "Refer to") {
+    const d = details.trim();
+    return d ? `Refer to: ${d}` : "Refer to";
+  }
+  return type;
+}
+
+const ALL_KEYS = ["dischargeType", ...NARRATIVE, ...REST].map((f) => f.key).concat(EXAM_VITALS.map((f) => f.key));
 
 const blank = (): Record<string, string> =>
   Object.fromEntries(ALL_KEYS.map((k) => [k, ""]));
@@ -150,10 +178,16 @@ export function DischargeSummaryForm({ admissionId, onClose }: {
    */
   const [meds, setMeds] = useState<{ name: string; dose: string }[]>([]);
 
-  const apply = useCallback((s: SummaryDTO | null) => {
+  const apply = useCallback((s: SummaryDTO | null, admissionStatus?: string) => {
     if (!s) { setToken(null); setStatus(null); return; }
     const next = blank();
     for (const k of ALL_KEYS) next[k] = s.fields[k] ?? "";
+    if (!next.dischargeType) {
+      if (admissionStatus === "LAMA") next.dischargeType = "Lama Discharge";
+      else if (admissionStatus === "EXPIRED") next.dischargeType = "Death";
+      else if (admissionStatus === "TRANSFERRED_OUT") next.dischargeType = "Refer to";
+      else next.dischargeType = "Normal Discharge";
+    }
     setF(next);
     setFollowUpDate(s.followUpDate ?? "");
     setToken(s.updatedAt);
@@ -165,7 +199,7 @@ export function DischargeSummaryForm({ admissionId, onClose }: {
     try {
       const r = await api.get<Derived>(`/ipd/admissions/${admissionId}/discharge-summary`);
       setD(r);
-      apply(r.summary);
+      apply(r.summary, r.admission?.status);
       const rx = await api.get<{ medicines: { medicineName: string; dosage: string | null }[] }>(
         `/ipd/admissions/${admissionId}/discharge-medicines`
       ).catch(() => ({ medicines: [] }));
@@ -184,7 +218,7 @@ export function DischargeSummaryForm({ admissionId, onClose }: {
     setBusy(true); setError(null);
     try {
       const r = await api.post<{ summary: SummaryDTO }>(`/ipd/admissions/${admissionId}/discharge-summary`);
-      apply(r.summary);
+      apply(r.summary, d?.admission?.status);
       setFlash("Draft started. Nothing is final until you press Complete.");
     } catch (e) {
       setError(e instanceof ApiClientError ? e.message : "Couldn't start the summary.");
@@ -321,6 +355,54 @@ export function DischargeSummaryForm({ admissionId, onClose }: {
                     a mistake here is fixed on this record, never by writing a second summary.
                   </div>
                 )}
+
+                {/* ── DISCHARGE TYPE ── */}
+                <div className="rounded-xl border border-[var(--p-border)] bg-[var(--p-bg)] p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <span className="block text-[11.5px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
+                        Discharge Type
+                      </span>
+                      <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">
+                        Classification of discharge for this patient
+                      </p>
+                    </div>
+                    <div className="flex flex-1 flex-col gap-2 sm:max-w-md sm:items-end">
+                      <select
+                        className={`${inp} font-medium`}
+                        value={parseDischargeType(f.dischargeType).type}
+                        disabled={completed}
+                        onChange={(e) => {
+                          const newType = e.target.value;
+                          const curDetails = parseDischargeType(f.dischargeType).details;
+                          set("dischargeType")(formatDischargeType(newType, curDetails));
+                        }}
+                      >
+                        {DISCHARGE_TYPE_OPTIONS.map((opt) => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+
+                      {parseDischargeType(f.dischargeType).type === "Refer to" && (
+                        <div className="w-full">
+                          <input
+                            type="text"
+                            className={inp}
+                            placeholder="Referred hospital / center / reason (e.g. Higher Center, NIMS)"
+                            value={parseDischargeType(f.dischargeType).details}
+                            disabled={completed}
+                            onChange={(e) => {
+                              set("dischargeType")(formatDischargeType("Refer to", e.target.value));
+                            }}
+                          />
+                          <span className="mt-1 block text-[11px] text-[var(--p-muted)]">
+                            Prints as: <span className="font-semibold text-[var(--p-ink)]">{f.dischargeType || "Refer to"}</span>
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
 
                 {NARRATIVE.map((x) => (
                   <Field key={x.key} label={x.label} rows={x.rows} hint={x.hint}

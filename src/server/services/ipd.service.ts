@@ -3237,7 +3237,11 @@ export async function admissionSheet(admissionId: string): Promise<{
       // family's hand have to say the same thing about the same stay.
       invoices: {
         where: { source: "IPD", status: { not: "CANCELLED" } },
-        select: { source: true, items: { select: { description: true } } },
+        select: {
+          source: true,
+          payments: { select: { amount: true, reference: true } },
+          items: { select: { description: true } },
+        },
       },
     },
   });
@@ -3372,6 +3376,14 @@ export async function admissionSheet(admissionId: string): Promise<{
     createdAt: i.createdAt.toISOString(),
   }));
   const claimBillsTotal = claimBills.reduce((s, b) => round2(s + Number(b.total)), 0);
+  // On a discharged stay that has an IPD invoice, payments taken at the counter
+  // (beyond the advance adjustment) also reduce what is still to pay.
+  const ipdInvoice = a.invoices[0];
+  const ipdPaid = ipdInvoice
+    ? ipdInvoice.payments
+        .filter((p) => !isAdvanceAdjustment(p.reference))
+        .reduce((s, p) => round2(s + Number(p.amount.toString())), 0)
+    : 0;
 
   return {
     admission: {
@@ -3407,7 +3419,7 @@ export async function admissionSheet(admissionId: string): Promise<{
     claimTotal: round2(grandTotal + claimBillsTotal).toFixed(2),
     // Never negative. An advance bigger than the bill is a REFUND owed, not a
     // negative debt that would quietly subtract from the day's takings.
-    balance: Math.max(0, grandTotal - advanceTotal).toFixed(2),
+    balance: Math.max(0, round2(grandTotal - advanceTotal - ipdPaid)).toFixed(2),
   };
 }
 

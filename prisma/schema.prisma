@@ -2549,6 +2549,7 @@ model DischargeSummary {
   // Text, not varchar: a course-in-hospital entry runs to paragraphs, and a
   // length cap here shows up as a doctor's sentence silently truncated on a
   // medico-legal document.
+  dischargeType        String?
   diagnosis            String? @db.Text
   historyPresenting    String? @db.Text
   pastPersonalHistory  String? @db.Text

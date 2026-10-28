@@ -73,6 +73,7 @@ export const GET = handler(async (req, ctx) => {
             vitalBp: stored.vitalBp, vitalSpo2: stored.vitalSpo2,
             examCvs: stored.examCvs, examRs: stored.examRs,
             examPa: stored.examPa, examCns: stored.examCns,
+            dischargeType: stored.dischargeType,
           },
           followUpDate: stored.followUpDate ? stored.followUpDate.toISOString().slice(0, 10) : null,
           createdBy: stored.createdBy.name,

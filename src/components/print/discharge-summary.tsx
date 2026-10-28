@@ -9,6 +9,11 @@ import {
 import { isClosed, OUTCOME_LABEL, type AdmissionStatusValue } from "@/lib/admission-outcome";
 import { bedLabel } from "@/lib/beds";
 import { PAPER, fitScale, pageHeightPx } from "@/lib/print/fit-page";
+import {
+  DISCHARGE_TYPE_OPTIONS,
+  parseDischargeType,
+  formatDischargeType,
+} from "@/components/portal/ipd/discharge-summary-form";
 
 /**
  * THE DISCHARGE SUMMARY, SET LIKE THE LAB REPORT.
@@ -268,6 +273,7 @@ function DischargeSummaryInner() {
    * Edit, which writes it down and re-issues the invoice.
    */
   const [pickedDischarge, setPickedDischarge] = useState("");
+  const [pickedDischargeType, setPickedDischargeType] = useState("");
   const [d, setD] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -287,6 +293,9 @@ function DischargeSummaryInner() {
       setOnStationery={setOnStationery}
       pickedDischarge={pickedDischarge}
       setPickedDischarge={setPickedDischarge}
+      pickedDischargeType={pickedDischargeType}
+      setPickedDischargeType={setPickedDischargeType}
+      admissionId={admissionId}
     />
   );
 }
@@ -301,17 +310,24 @@ function DischargeSummaryInner() {
  */
 export function DischargeSummaryDoc({
   d, onStationery, setOnStationery, pickedDischarge, setPickedDischarge,
+  pickedDischargeType = "", setPickedDischargeType, admissionId,
 }: {
   d: Data;
   onStationery: boolean;
   setOnStationery: (v: boolean) => void;
   pickedDischarge: string;
   setPickedDischarge: (v: string) => void;
+  pickedDischargeType?: string;
+  setPickedDischargeType?: (v: string) => void;
+  admissionId?: string;
 }) {
   const p = d.patient;
   const a = d.admission;
   const closed = isClosed(a.status);
   const outcomeNote = closed && a.status !== "DISCHARGED" ? OUTCOME_LABEL[a.status as AdmissionStatusValue] : null;
+
+  const [savingType, setSavingType] = useState(false);
+  const [savedTypeMsg, setSavedTypeMsg] = useState(false);
 
   // The typed date, only if it is a date this stay could have. Before the
   // admission it is not - nobody leaves before they arrive - so it prints
@@ -330,6 +346,11 @@ export function DischargeSummaryDoc({
     return (fallback ?? "").trim() || null;
   };
   const drafting = d.summary?.status === "DRAFT";
+
+  const defaultDischargeType =
+    (f.dischargeType?.trim()) ||
+    (outcomeNote ?? (closed || pickedIso ? "Normal Discharge" : "Interim summary"));
+  const effectiveDischargeType = pickedDischargeType || defaultDischargeType;
 
   const ageSex = [p.age != null ? `${p.age} Y` : null, p.gender ? GENDER[p.gender] ?? p.gender : null]
     .filter(Boolean).join(" / ") || "-";
@@ -351,11 +372,8 @@ export function DischargeSummaryDoc({
     // A typed date wins over both the recorded one and "Still admitted" - see
     // the note on `pickedDischarge`.
     { k: "Discharge Date", v: pickedIso ? dateTime(pickedIso) : closed ? dateTime(a.dischargedAt) : "Still admitted", mono: true },
-    // ...and a sheet carrying a discharge date must not call itself an interim
-    // one two lines down. An outcome that is NOT an ordinary discharge still
-    // wins over both: a death does not become a normal discharge because
-    // somebody typed a date on a print screen.
-    { k: "Type of Discharge", v: outcomeNote ?? (closed || pickedIso ? "Normal Discharge" : "Interim summary") },
+    // Type of Discharge: user selection or stored summary value or outcome fallback
+    { k: "Type of Discharge", v: effectiveDischargeType },
     // BLOOD GROUP IS NOT PRINTED. Removed at the hospital's request: it is taken
     // at admission only if somebody thought to ask, so the field went out as a
     // dash on most sheets - and a blank blood group on a discharge summary is
@@ -406,7 +424,7 @@ export function DischargeSummaryDoc({
     fonts?.ready?.then(measure).catch(() => {});
     const t = window.setTimeout(measure, 250);
     return () => window.clearTimeout(t);
-  }, [d, onStationery, pickedDischarge]);
+  }, [d, onStationery, pickedDischarge, effectiveDischargeType]);
 
   const examShown = EXAM.filter(([k]) => say(k));
 
@@ -416,9 +434,7 @@ export function DischargeSummaryDoc({
       <PrintToolbar title={`Discharge summary · ${a.ipNumber} · ${p.fullName}`} />
 
       {/* Screen-only desk controls: which paper is in the tray, and which
-          discharge date this sheet carries. The paper toggle keeps the lab
-          report's wording and place; the date box sits beside it because both
-          answer the same question - what comes out of the printer. */}
+          discharge date/type this sheet carries. */}
       <div className="mx-auto mb-3 flex w-full max-w-[210mm] flex-wrap items-center gap-x-5 gap-y-2 print:hidden">
         <label className="flex items-center gap-2 text-[12.5px] text-[#3a4744]">
           <input type="checkbox" checked={onStationery} onChange={(e) => setOnStationery(e.target.checked)} />
@@ -445,7 +461,78 @@ export function DischargeSummaryDoc({
               : "Left empty, the sheet prints \u201cStill admitted\u201d."}
           </span>
         )}
+
+        {/* ── DISCHARGE TYPE ON THIS SHEET ── */}
+        <label className="flex items-center gap-2 text-[12.5px] text-[#3a4744]">
+          Discharge type on this sheet
+          <select
+            value={parseDischargeType(effectiveDischargeType).type}
+            onChange={(e) => {
+              const newType = e.target.value;
+              const curDetails = parseDischargeType(effectiveDischargeType).details;
+              setPickedDischargeType?.(formatDischargeType(newType, curDetails));
+            }}
+            className="rounded border border-[#c8ccc9] bg-white px-2 py-1 text-[12.5px] font-medium text-[#3a4744]"
+          >
+            {DISCHARGE_TYPE_OPTIONS.map((opt) => (
+              <option key={opt} value={opt}>{opt}</option>
+            ))}
+          </select>
+        </label>
+
+        {parseDischargeType(effectiveDischargeType).type === "Refer to" && (
+          <input
+            type="text"
+            placeholder="Referred to (e.g. Higher Center, NIMS)"
+            value={parseDischargeType(effectiveDischargeType).details}
+            onChange={(e) => {
+              setPickedDischargeType?.(formatDischargeType("Refer to", e.target.value));
+            }}
+            className="min-w-[200px] rounded border border-[#c8ccc9] bg-white px-2 py-1 text-[12.5px] text-[#3a4744]"
+          />
+        )}
+
+        {pickedDischargeType && pickedDischargeType !== defaultDischargeType && (
+          <button
+            type="button"
+            onClick={() => setPickedDischargeType?.("")}
+            className="rounded border border-[#c8ccc9] bg-white px-2.5 py-1 text-[12px] font-medium text-[#3a4744] hover:border-[#0b5f55] hover:text-[#0b5f55]"
+          >
+            Reset type
+          </button>
+        )}
+
+        {d.summary && admissionId && pickedDischargeType && pickedDischargeType !== (d.summary.fields?.dischargeType ?? "") && (
+          <button
+            type="button"
+            onClick={async () => {
+              setSavingType(true);
+              try {
+                await api.patch(`/ipd/admissions/${admissionId}/discharge-summary`, {
+                  dischargeType: effectiveDischargeType,
+                });
+                if (d.summary) d.summary.fields.dischargeType = effectiveDischargeType;
+                setSavedTypeMsg(true);
+                setTimeout(() => setSavedTypeMsg(false), 2500);
+              } catch (err) {
+                console.error("Failed to save discharge type to summary", err);
+              } finally {
+                setSavingType(false);
+              }
+            }}
+            disabled={savingType}
+            className="rounded border border-[#0b5f55] bg-[#edf6f4] px-2.5 py-1 text-[12px] font-semibold text-[#0b5f55] hover:bg-[#d8ece8] disabled:opacity-50"
+          >
+            {savingType ? "Saving…" : savedTypeMsg ? "Saved to summary ✓" : "Save to summary"}
+          </button>
+        )}
       </div>
+
+      {pickedDischargeType && pickedDischargeType !== defaultDischargeType && (
+        <div className="mx-auto mb-3 w-full max-w-[210mm] rounded-lg border border-[#c8ccc9] bg-white px-3 py-2 text-[12.5px] leading-relaxed text-[#3a4744] print:hidden">
+          This sheet prints <b>{effectiveDischargeType}</b> as the discharge type.
+        </div>
+      )}
 
       {/* Typed a date the stay cannot have. Said out loud rather than silently
           ignored - the desk is standing at the printer expecting that date. */}

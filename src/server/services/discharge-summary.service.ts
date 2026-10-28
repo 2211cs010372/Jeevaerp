@@ -28,6 +28,7 @@ import type { AuthUser } from "@/lib/auth/types";
 
 /** Exactly the fields a person types. Anything absent is left alone. */
 export interface DischargeSummaryInput {
+  dischargeType?: string | null;
   diagnosis?: string | null;
   historyPresenting?: string | null;
   pastPersonalHistory?: string | null;
@@ -52,6 +53,7 @@ export interface DischargeSummaryInput {
 }
 
 const TEXT_FIELDS = [
+  "dischargeType",
   "diagnosis", "historyPresenting", "pastPersonalHistory", "clinicalFindings",
   "physicalExamination", "systemicExamination", "courseInHospital", "procedureNotes",
   "conditionAtDischarge", "followUpInstruction", "preventiveAdvice",
@@ -141,12 +143,21 @@ export async function getOrCreateDischargeSummary(
   // typed a second time, slightly differently, and then the two documents
   // disagree. Seeded, never locked: the stored field is the one that prints from
   // here on, and it is fully editable.
-  let seed: { diagnosis: string | null; advice: string | null } = { diagnosis: null, advice: null };
+  let seed: { diagnosis: string | null; advice: string | null; dischargeType: string } = {
+    diagnosis: null,
+    advice: null,
+    dischargeType: "Normal Discharge",
+  };
   try {
     const derived = await dischargeSummaryData(admissionId);
+    let dt = "Normal Discharge";
+    if (derived.admission.status === "LAMA") dt = "Lama Discharge";
+    else if (derived.admission.status === "EXPIRED") dt = "Death";
+    else if (derived.admission.status === "TRANSFERRED_OUT") dt = "Refer to";
     seed = {
       diagnosis: derived.clinical.diagnosis?.trim() || null,
       advice: derived.clinical.advice?.trim() || null,
+      dischargeType: dt,
     };
   } catch {
     // A stay with nothing filed yet is normal - open a blank draft.
@@ -159,6 +170,7 @@ export async function getOrCreateDischargeSummary(
         createdById: actor.id,
         diagnosis: seed.diagnosis,
         followUpInstruction: seed.advice,
+        dischargeType: seed.dischargeType,
       },
       include: withAuthors,
     });
