@@ -145,13 +145,10 @@ const d = (iso: string | null) => {
   const x = new Date(iso);
   return `${String(x.getDate()).padStart(2, "0")}-${String(x.getMonth() + 1).padStart(2, "0")}-${x.getFullYear()}`;
 };
-/** dd-mm-yyyy, h:mm AM/PM - the same date, with the clock time after it. */
+/** dd-mm-yyyy date only (timings removed as requested). */
 const dt = (iso: string | null) => {
   if (!iso) return "-";
-  const x = new Date(iso);
-  const h = x.getHours();
-  const clock = `${h % 12 === 0 ? 12 : h % 12}:${String(x.getMinutes()).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
-  return `${d(iso)}, ${clock}`;
+  return d(iso);
 };
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -475,7 +472,7 @@ export function DetailedBillSheet() {
                       <thead>
                         <tr className="border-b border-t text-[11.5px] border-[#333]">
                           <Th w="32%">Invoice No</Th>
-                          <Th w="26%">Date &amp; time</Th>
+                          <Th w="20%">Date</Th>
                           <Th w="22%">Counter</Th>
                           <Th w="20%" right>Amount(<Rs />)</Th>
                         </tr>
@@ -506,7 +503,7 @@ export function DetailedBillSheet() {
                         <tr className="border-b border-t border-[#333]">
                           <Th w="8%">S.NO</Th>
                           <Th w="30%">Invoice No</Th>
-                          <Th w="26%">Date &amp; time</Th>
+                          <Th w="20%">Date</Th>
                           <Th w="20%">Payment Mode</Th>
                           <Th w="16%" right>Amount(<Rs />)</Th>
                         </tr>
@@ -579,8 +576,8 @@ export function DetailedBillSheet() {
                     <div className="text-[10.5px] font-semibold">( IP No )</div>
                   </div>
                   <div className="text-[10.5px]">
-                    <div className="flex gap-2"><span className="w-[82px] font-semibold">Bill date &amp; Time</span><span>: {dt(b.billedAt)}</span></div>
-                    <div className="flex gap-2"><span className="w-[82px] font-semibold">Print Date &amp; Time</span><span>: {dt(new Date().toISOString())}</span></div>
+                    <div className="flex gap-2"><span className="w-[82px] font-semibold">Bill date</span><span>: {dt(b.billedAt)}</span></div>
+                    <div className="flex gap-2"><span className="w-[82px] font-semibold">Print Date</span><span>: {dt(new Date().toISOString())}</span></div>
                   </div>
 
                 </div>

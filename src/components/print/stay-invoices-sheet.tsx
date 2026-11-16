@@ -68,7 +68,7 @@ export function StayInvoicesSheet({ filterSource }: { filterSource?: "LAB" | "PH
               <tr className="border-b border-t border-[#333]">
                 <th className="w-[8%] pb-[3px] text-left text-[9px] font-bold uppercase">#</th>
                 <th className="w-[30%] pb-[3px] text-left text-[9px] font-bold uppercase">Invoice No</th>
-                <th className="w-[26%] pb-[3px] text-left text-[9px] font-bold uppercase">Date &amp; time</th>
+                <th className="w-[20%] pb-[3px] text-left text-[9px] font-bold uppercase">Date</th>
                 <th className="w-[20%] pb-[3px] text-left text-[9px] font-bold uppercase">Counter</th>
                 <th className="w-[16%] pb-[3px] text-right text-[9px] font-bold uppercase">Amount(₹)</th>
               </tr>
@@ -109,13 +109,10 @@ export function StayInvoicesSheet({ filterSource }: { filterSource?: "LAB" | "PH
 
 const money = (v: string | number) =>
   Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-/** dd-mm-yyyy h:mm AM/PM, matching the IP final bill. Two bills raised on one
- *  day are told apart by the clock, not by their position in the list. */
+/** dd-mm-yyyy matching the IP final bill (timings removed as requested). */
 const fmt = (iso: string) => {
   const x = new Date(iso);
-  const h = x.getHours();
-  const date = `${String(x.getDate()).padStart(2, "0")}-${String(x.getMonth() + 1).padStart(2, "0")}-${x.getFullYear()}`;
-  return `${date} ${h % 12 === 0 ? 12 : h % 12}:${String(x.getMinutes()).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
+  return `${String(x.getDate()).padStart(2, "0")}-${String(x.getMonth() + 1).padStart(2, "0")}-${x.getFullYear()}`;
 };
 
 const RUN_CSS = `

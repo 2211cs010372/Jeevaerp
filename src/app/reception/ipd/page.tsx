@@ -47,6 +47,116 @@ interface Sheet {
   charges: { id: string }[];
 }
 
+function RealHospitalBedSvg({ className = "h-12 w-auto", muted = false }: { className?: string; muted?: boolean }) {
+  const strokeColor = muted ? "#94a3b8" : "#64748b";
+  const frameColor = muted ? "#cbd5e1" : "url(#bed-metal-grad)";
+  const sheetColor = muted ? "#f1f5f9" : "url(#bed-sheet-grad)";
+  const sheetBorder = muted ? "#cbd5e1" : "#10b981";
+
+  return (
+    <svg
+      viewBox="0 0 108 58"
+      className={className}
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient id="bed-metal-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stopColor="#94a3b8" />
+          <stop offset="45%" stopColor="#e2e8f0" />
+          <stop offset="70%" stopColor="#cbd5e1" />
+          <stop offset="100%" stopColor="#64748b" />
+        </linearGradient>
+        <linearGradient id="bed-mattress-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stopColor="#ffffff" />
+          <stop offset="100%" stopColor="#e2e8f0" />
+        </linearGradient>
+        <linearGradient id="bed-sheet-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stopColor="#ecfdf5" />
+          <stop offset="100%" stopColor="#d1fae5" />
+        </linearGradient>
+        <linearGradient id="bed-pillow-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#ffffff" />
+          <stop offset="100%" stopColor="#f8fafc" />
+        </linearGradient>
+      </defs>
+
+      {/* Ground soft shadow */}
+      <ellipse cx="56" cy="53" rx="44" ry="2.5" fill="#0f172a" fillOpacity={muted ? "0.04" : "0.08"} />
+
+      {/* IV Pole / Saline Stand (attached to headboard) */}
+      {!muted && (
+        <g opacity="0.9">
+          <path d="M 17 8 L 17 48" stroke="#94a3b8" strokeWidth="1.25" strokeLinecap="round" />
+          <path d="M 13 11 Q 17 9 21 11" stroke="#94a3b8" strokeWidth="1.2" strokeLinecap="round" fill="none" />
+          {/* IV Bag */}
+          <rect x="19" y="12" width="6" height="8.5" rx="1.5" fill="#e0f2fe" stroke="#38bdf8" strokeWidth="0.75" />
+          <line x1="20.5" y1="16" x2="23.5" y2="16" stroke="#0284c7" strokeWidth="0.6" strokeLinecap="round" />
+          {/* Drip Tubing */}
+          <path d="M 22 20.5 L 22 28 Q 22 34 27 35" stroke="#7dd3fc" strokeWidth="0.75" strokeDasharray="1.5 1" fill="none" />
+        </g>
+      )}
+
+      {/* Wheels / Casters */}
+      {/* Front/Left Caster */}
+      <rect x="25" y="47" width="2.5" height="3.5" rx="0.5" fill="#64748b" />
+      <circle cx="26.2" cy="51.5" r="2.5" fill="#334155" />
+      <circle cx="26.2" cy="51.5" r="0.9" fill="#e2e8f0" />
+      {/* Back/Right Caster */}
+      <rect x="87" y="47" width="2.5" height="3.5" rx="0.5" fill="#64748b" />
+      <circle cx="88.2" cy="51.5" r="2.5" fill="#334155" />
+      <circle cx="88.2" cy="51.5" r="0.9" fill="#e2e8f0" />
+
+      {/* Lower Chassis Frame Beam */}
+      <rect x="23" y="45.5" width="68" height="2.8" rx="1.4" fill={frameColor} stroke={strokeColor} strokeWidth="0.4" />
+      {/* Scissor / lift struts */}
+      <line x1="30" y1="45.5" x2="36" y2="38" stroke={strokeColor} strokeWidth="1.4" strokeLinecap="round" />
+      <line x1="83" y1="45.5" x2="77" y2="38" stroke={strokeColor} strokeWidth="1.4" strokeLinecap="round" />
+
+      {/* Bed Base Deck Beam */}
+      <path d="M 20 31.5 L 43 38 L 92 38" stroke="#334155" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+
+      {/* Headboard (Arched tubular metallic frame) */}
+      <path d="M 16 48 L 16 18 C 16 15 22 15 22 18 L 22 48" stroke={frameColor} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <line x1="16" y1="25" x2="22" y2="25" stroke="#94a3b8" strokeWidth="1.4" strokeLinecap="round" />
+
+      {/* Footboard (Shorter matching frame) */}
+      <path d="M 91 48 L 91 28 C 91 25.5 96 25.5 96 28 L 96 48" stroke={frameColor} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <line x1="91" y1="33" x2="96" y2="33" stroke="#94a3b8" strokeWidth="1.4" strokeLinecap="round" />
+
+      {/* Mattress 3D Contour */}
+      {/* Elevated backrest section */}
+      <path d="M 21 29.5 L 43 36.5 L 43 40 L 21 33 Z" fill="#cbd5e1" stroke="#94a3b8" strokeWidth="0.5" />
+      <path d="M 21 28 L 43 35 L 43 37 L 21 30 Z" fill="url(#bed-mattress-grad)" stroke="#94a3b8" strokeWidth="0.5" />
+
+      {/* Flat mattress section */}
+      <path d="M 43 36.5 L 90 36.5 L 90 40 L 43 40 Z" fill="#cbd5e1" stroke="#94a3b8" strokeWidth="0.5" />
+      <path d="M 43 35 L 90 35 L 90 37 L 43 37 Z" fill="url(#bed-mattress-grad)" stroke="#94a3b8" strokeWidth="0.5" />
+
+      {/* Soft Pillow on the elevated backrest */}
+      <path
+        d="M 24 25 C 24 22.5 32 24.5 34 26.5 C 35 28.5 33.5 30.5 31.5 31.5 C 29 32.5 24 30.5 23 28.5 C 22 26.5 24 25.5 24 25 Z"
+        fill="url(#bed-pillow-grad)"
+        stroke="#94a3b8"
+        strokeWidth="0.5"
+      />
+      <path d="M 26.5 26.5 Q 29 27.5 31 28.5" stroke="#cbd5e1" strokeWidth="0.6" strokeLinecap="round" fill="none" />
+
+      {/* Hospital Sheet / Blanket neatly folded over lower half */}
+      <path d="M 48 34.5 L 90 34.5 L 90 39.5 L 48 39.5 Z" fill={sheetColor} stroke={sheetBorder} strokeWidth="0.5" />
+      <rect x="46.5" y="34" width="3" height="5.5" rx="1" fill={muted ? "#94a3b8" : "#10b981"} stroke={sheetBorder} strokeWidth="0.4" />
+
+      {/* Safety Side Guard Rail */}
+      <rect x="45" y="27" width="30" height="2.2" rx="1" fill="#cbd5e1" stroke={strokeColor} strokeWidth="0.5" />
+      <line x1="50" y1="29.2" x2="50" y2="37" stroke={strokeColor} strokeWidth="1" strokeLinecap="round" />
+      <line x1="60" y1="29.2" x2="60" y2="37" stroke={strokeColor} strokeWidth="1" strokeLinecap="round" />
+      <line x1="70" y1="29.2" x2="70" y2="37" stroke={strokeColor} strokeWidth="1" strokeLinecap="round" />
+      <line x1="45" y1="32.5" x2="75" y2="32.5" stroke="#94a3b8" strokeWidth="0.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 const blank = {
   reason: "", attendantName: "", attendantPhone: "", attendantRelation: "", notes: "",
   // Self-pay is the default because it is the common case and because the wrong
@@ -70,51 +180,6 @@ function PatientFromUrl({ onFound }: { onFound: (p: Patient) => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return null;
-}
-
-/**
- * BedIllustration: Vector SVG representation of the bed.
- * Shows an occupied bed with patient blanket and pillow,
- * an empty cleanly made bed with invitation to admit,
- * or an out-of-service bed with maintenance stripe.
- */
-function BedIllustration({ status }: { status: string }) {
-  const isOccupied = status === "OCCUPIED";
-  const isMaint = status === "MAINTENANCE";
-
-  return (
-    <svg viewBox="0 0 88 44" className="bed-vector" role="img" aria-hidden="true">
-      {/* Bed Base & Legs */}
-      <rect x="8" y="34" width="3.5" height="7" rx="1.5" className="bv-frame" />
-      <rect x="76.5" y="34" width="3.5" height="7" rx="1.5" className="bv-frame" />
-      
-      {/* Headboard (taller) & Footboard */}
-      <rect x="6" y="10" width="5.5" height="28" rx="2.5" className="bv-frame" />
-      <rect x="76.5" y="22" width="5.5" height="16" rx="2.5" className="bv-frame" />
-      
-      {/* Mattress */}
-      <rect x="10" y="24" width="67" height="11" rx="3" className="bv-mattress" />
-      
-      {/* Pillow */}
-      <rect x="14" y="16" width="18" height="9" rx="3.5" className="bv-pillow" />
-
-      {isOccupied ? (
-        <>
-          {/* Blanket drawn over occupant */}
-          <path d="M32 24h43a3 3 0 0 1 3 3v2a3 3 0 0 1-3 3H32z" className="bv-blanket" />
-          {/* Knee rise under blanket */}
-          <path d="M48 24.2c3.2-5 9.5-5 12.8 0z" className="bv-blanket" />
-          {/* Head resting on pillow */}
-          <circle cx="23" cy="18.5" r="4.8" className="bv-head" />
-        </>
-      ) : isMaint ? (
-        <line x1="20" y1="12" x2="68" y2="36" stroke="#a3a3a3" strokeWidth="2.5" strokeLinecap="round" opacity="0.6" />
-      ) : (
-        /* Empty bed sheet crease / neat fold line */
-        <path d="M34 26.5h38" stroke="#10b981" strokeWidth="1.2" strokeDasharray="3 3" opacity="0.6" />
-      )}
-    </svg>
-  );
 }
 
 export default function BedBoardPage() {
@@ -349,8 +414,11 @@ export default function BedBoardPage() {
                       <div className="flex flex-wrap items-center gap-3">
                         <div className="flex items-center gap-2">
                           <span className="h-2 w-2 rounded-full bg-[#111111]" />
-                          <h3 className="text-[14px] font-semibold tracking-tight text-[#111111]">{w.name}</h3>
+                          <h3 className="text-[14px] font-bold tracking-tight text-[#111111]">{w.name}</h3>
                         </div>
+                        <span className="rounded-md border border-[#e5e5e5] bg-white px-2 py-0.5 text-[11px] font-semibold text-[#525252]">
+                          {w.total}
+                        </span>
                         {w.floor && (
                           <span className="rounded-md border border-[#e5e5e5] bg-white px-2 py-0.5 text-[11px] font-medium text-[#737373]">
                             {w.floor}
@@ -388,7 +456,7 @@ export default function BedBoardPage() {
 
                     {/* ── SECTION BEDS GRID ── */}
                     <div className="p-4">
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+                      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4">
                         {w.beds.map((b) => {
                           const st = b.status.toLowerCase();
                           const picked = bedId === b.id;
@@ -406,91 +474,78 @@ export default function BedBoardPage() {
                               key={b.id}
                               onClick={() => tapBed(b, w)}
                               disabled={b.status === "MAINTENANCE"}
-                              className={`bed-card bed-${st} ${picked ? "is-picked" : ""} ${shown ? "is-shown" : ""} ${bq && matches ? "ring-2 ring-[#111111] shadow-md" : ""} ${bq && !matches ? "opacity-30" : ""}`}
+                              className={`group bed-card bed-${st} ${picked ? "is-picked" : ""} ${shown ? "is-shown" : ""} ${bq && matches ? "ring-2 ring-[#111111] shadow-md" : ""} ${bq && !matches ? "opacity-30" : ""}`}
                             >
-                              {/* ── CARD TOP: Bed Number & Status Badge ── */}
-                              <div className="flex w-full items-center justify-between gap-2 border-b border-[#f0f0f0] pb-2.5">
+                              {/* ── CARD TOP: Bed Number & Status Pill ── */}
+                              <div className="flex w-full items-start justify-between gap-2">
                                 <div className="flex items-center gap-2">
-                                  <span className={`flex h-6 w-6 items-center justify-center rounded-md border text-[11px] font-semibold ${
+                                  <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-[11px] font-semibold ${
                                     b.patient
-                                      ? "border-[#d4d4d4] bg-[#f5f5f4] text-[#111111]"
+                                      ? "border-blue-200 bg-blue-50 text-blue-700"
                                       : b.status === "MAINTENANCE"
                                       ? "border-[#e5e5e5] bg-[#fafafa] text-[#a3a3a3]"
-                                      : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                      : "border-emerald-200 bg-emerald-100/10 text-emerald-800"
                                   }`}>
                                     <Icon name="bed" size={12} />
                                   </span>
-                                  <div className="text-left">
-                                    <div className="bed-no">{bedShort(b.bedNo)}</div>
-                                    <div className="text-[10px] text-[#737373] uppercase tracking-wider">{w.name}</div>
+                                  <div className="text-left leading-tight">
+                                    <div className="bed-no font-bold text-[13px] text-[#111111]">{bedShort(b.bedNo)}</div>
+                                    <div className="text-[10px] font-bold uppercase tracking-wider text-[#8e8e8e]">{w.name}</div>
                                   </div>
                                 </div>
 
                                 {picked ? (
                                   <span className="bed-tick"><Icon name="check" size={11} /></span>
                                 ) : b.patient ? (
-                                  <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50/90 px-2.5 py-0.5 text-[10.5px] font-semibold text-blue-800 tabular-nums shadow-sm">
+                                  <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-300 bg-blue-100/90 px-1.5 py-0.5 text-[10.5px] font-bold text-blue-800 shadow-2xs">
                                     <span className="h-1.5 w-1.5 rounded-full bg-blue-600" />
-                                    Admitted · Day {b.patient.days}
+                                    Day {b.patient.days}
                                   </span>
                                 ) : b.status === "MAINTENANCE" ? (
                                   <span className="rounded-full border border-[#e5e5e5] bg-[#f5f5f4] px-2 py-0.5 text-[10px] font-medium text-[#737373]">
                                     Out of service
                                   </span>
                                 ) : (
-                                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-0.5 text-[10.5px] font-semibold text-emerald-800 shadow-sm">
+                                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-100/90 px-1.5 py-0.5 text-[10.5px] font-medium text-emerald-800 shadow-2xs">
                                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-600 animate-pulse" />
-                                    Vacant / Free
+                                    Free
                                   </span>
                                 )}
                               </div>
 
-                              {/* ── CARD MIDDLE: BED SVG & STATUS INFO ── */}
-                              <div className="flex flex-1 w-full items-center gap-3 py-3 text-left">
-                                {/* SVG Illustration with dynamic frame */}
-                                <div className="shrink-0 flex items-center justify-center rounded-lg border p-1 bg-white shadow-sm"
-                                  style={{
-                                    borderColor: b.patient ? "#e5e5e5" : b.status === "MAINTENANCE" ? "#e5e5e5" : "#bbf7d0",
-                                    width: "66px"
-                                  }}>
-                                  <BedIllustration status={b.status} />
-                                </div>
-
-                                {/* Patient Details or Free Bed Action Callout */}
-                                <div className="min-w-0 flex-1">
-                                  {b.patient ? (
-                                    <>
-                                      <div className="bed-who truncate">{b.patient.fullName}</div>
-                                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11.5px] tabular-nums">
-                                        <span className="rounded bg-[#f5f5f4] px-1.5 py-0.5 font-medium text-[#404040]">{b.patient.displayId}</span>
-                                        <span className="text-[#d4d4d4]">·</span>
-                                        <span className="font-semibold text-[#111111]">{b.patient.ipNumber}</span>
-                                      </div>
-                                    </>
-                                  ) : (
-                                    <div>
-                                      <div className="text-[13px] font-semibold text-emerald-800">
-                                        {b.status === "MAINTENANCE" ? "Under Maintenance" : "Ready for Patient"}
-                                      </div>
-                                      <div className="mt-0.5 text-[11px] text-[#737373]">
-                                        {b.status === "MAINTENANCE" ? "Temporarily locked" : "Tap to assign & admit"}
-                                      </div>
+                              {/* ── CARD MIDDLE: Patient Details or Real Hospital Bed SVG ── */}
+                              <div className="my-2 text-left w-full min-h-[48px] flex flex-col justify-center">
+                                {b.patient ? (
+                                  <div>
+                                    <div className="text-[13.5px] font-bold text-[#111111] truncate">{b.patient.fullName}</div>
+                                    <div className="mt-1 font-mono text-[11px] text-[#475569] leading-tight space-y-0.5">
+                                      <div>{b.patient.displayId}</div>
+                                      <div className="font-semibold text-[#1e293b]">{b.patient.ipNumber}</div>
                                     </div>
-                                  )}
-                                </div>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-center py-0.5">
+                                    <RealHospitalBedSvg
+                                      muted={b.status === "MAINTENANCE"}
+                                      className="h-12 w-auto max-w-[118px] drop-shadow-2xs transition-transform duration-200 group-hover:scale-105"
+                                    />
+                                  </div>
+                                )}
                               </div>
 
-                              {/* ── CARD BOTTOM: Clear Key-Value Information ── */}
-                              <div className="flex w-full items-center justify-between border-t border-[#f0f0f0] pt-2 text-[11px]">
+                              {/* ── CARD BOTTOM: Base charge or Admitted Date ── */}
+                              <div className={`flex w-full items-center justify-between border-t pt-2 text-[11px] ${
+                                b.patient ? "border-slate-200 text-[#64748b]" : "border-emerald-200/80 text-emerald-800"
+                              }`}>
                                 {b.patient ? (
                                   <>
-                                    <span className="text-[#737373]">Admitted date</span>
-                                    <span className="font-semibold text-[#111111] tabular-nums">{sinceDay(b.patient.admittedAt)}</span>
+                                    <span>Admitted</span>
+                                    <span className="font-semibold text-[#111111]">{sinceDay(b.patient.admittedAt)}</span>
                                   </>
                                 ) : (
                                   <>
-                                    <span className="text-[#059669] font-medium">Daily charge</span>
-                                    <span className="font-semibold text-emerald-900 tabular-nums">₹{money(w.dailyCharge)}/day</span>
+                                    <span className="font-medium text-emerald-700">Base charge</span>
+                                    <span className="font-mono font-bold text-emerald-900">₹{money(w.dailyCharge)}/day</span>
                                   </>
                                 )}
                               </div>
@@ -798,48 +853,47 @@ function Stat({ label, value, tone }: { label: string; value: number; tone: "ink
 
 const CSS = `
 .bed-card { position: relative; display: flex; flex-direction: column; align-items: stretch; justify-content: space-between;
-  min-height: 144px; border-radius: 14px; border: 1px solid #e5e5e5; background: #ffffff;
-  padding: 12px 14px; text-align: left; transition: border-color .18s ease, transform .14s ease, box-shadow .18s ease, background .18s ease; }
-.bed-card:not(:disabled):hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,.06); }
-.bed-no { font-size: 13.5px; font-weight: 600; color: #111111; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
-.bed-who { font-size: 13.5px; font-weight: 600; color: #111111; }
+  min-height: 136px; border-radius: 14px; border: 1px solid #e5e5e5; background: #ffffff;
+  padding: 12px 14px; text-align: left; transition: all .14s ease; }
+.bed-card:not(:disabled):hover { border-color: #111111; box-shadow: 0 4px 14px rgba(0,0,0,.05); }
+.bed-no { font-size: 13px; font-weight: 700; color: #111111; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.bed-who { font-size: 13.5px; font-weight: 700; color: #111111; }
 
-/* SVG Vector inside Bed Card */
-.bed-vector { width: 100%; height: auto; max-height: 40px; }
-.bv-frame { fill: #a3a3a3; }
-.bv-mattress { fill: #ffffff; stroke: #d4d4d4; stroke-width: 1.2; }
-.bv-pillow { fill: #f5f5f4; stroke: #d4d4d4; stroke-width: 1.1; }
-.bv-blanket { fill: #111111; }
-.bv-head { fill: #111111; }
+/* ── VACANT / AVAILABLE BED (Fresh Soft Mint/Emerald Shade) ── */
+.bed-available {
+  border-color: #86efac;
+  background: linear-gradient(180deg, #ffffff 0%, #f0fdf4 100%);
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(16, 185, 129, 0.06);
+}
+.bed-available:hover {
+  border-color: #10b981;
+  background: #ecfdf5;
+  box-shadow: 0 6px 18px rgba(16, 185, 129, 0.14);
+}
 
-/* ── VACANT / FREE BED (Clean White with subtle emerald shade & borders) ── */
-.bed-available { border-color: #a7f3d0; background: linear-gradient(180deg, #ffffff 0%, #f0fdf4 100%); cursor: pointer; }
-.bed-available:hover { border-color: #059669; background: #ecfdf5; box-shadow: 0 6px 20px rgba(16,185,129,0.12); }
-.bed-available .bv-frame { fill: #10b981; opacity: .75; }
-.bed-available .bv-mattress { stroke: #10b981; stroke-opacity: .6; fill: #ffffff; }
-.bed-available .bv-pillow { fill: #d1fae5; stroke: #10b981; stroke-opacity: .5; }
+/* ── OCCUPIED / ADMITTED BED (Calm Crisp Sky/Blue Shade) ── */
+.bed-occupied {
+  border-color: #93c5fd;
+  background: linear-gradient(180deg, #ffffff 0%, #eff6ff 100%);
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(59, 130, 246, 0.06);
+}
+.bed-occupied:hover {
+  border-color: #2563eb;
+  background: #f0f7ff;
+  box-shadow: 0 6px 18px rgba(37, 99, 235, 0.14);
+}
 
-/* ── OCCUPIED / ADMITTED BED (Crisp High-Contrast Studio Warm Gray Shade) ── */
-.bed-occupied { border-color: #d4d4d8; background: linear-gradient(180deg, #ffffff 0%, #f4f4f5 100%); cursor: pointer; }
-.bed-occupied:hover { border-color: #111111; background: #ffffff; box-shadow: 0 6px 20px rgba(0,0,0,.09); }
-.bed-occupied .bv-frame { fill: #52525b; }
-.bed-occupied .bv-mattress { stroke: #71717a; stroke-width: 1.2; }
-.bed-occupied .bv-pillow { fill: #e4e4e7; stroke: #71717a; }
-.bed-occupied .bv-blanket { fill: #18181b; }
-.bed-occupied .bv-head { fill: #09090b; }
-
-/* ── OUT OF SERVICE / MAINTENANCE ── */
 .bed-maintenance { border-style: dashed; border-color: #e5e5e5; background: #fafafa; cursor: not-allowed; opacity: .6; }
 
 /* Selected in the admit panel */
-.is-picked { border-color: #111111 !important; background: #ffffff !important;
-  box-shadow: 0 0 0 2px #111111, 0 6px 20px rgba(0,0,0,.1) !important; }
+.is-picked { border: 2px solid #111111 !important; background: #ffffff !important; box-shadow: none !important; }
 .bed-tick { display: grid; place-items: center;
   height: 18px; width: 18px; border-radius: 999px; background: #111111; color: #ffffff; }
 
 /* Whose details are open on the right */
-.is-shown { border-color: #111111 !important; background: #ffffff !important;
-  box-shadow: 0 0 0 2px #111111, 0 6px 20px rgba(0,0,0,.1) !important; }
+.is-shown { border: 2px solid #111111 !important; background: #ffffff !important; box-shadow: none !important; }
 
 /* Who is paying - crisp studio selection pills */
 .payer-opt { display: flex; flex-direction: column; gap: 1px; border-radius: 10px;
