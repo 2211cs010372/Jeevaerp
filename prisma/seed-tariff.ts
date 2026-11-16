@@ -28,18 +28,13 @@ const prisma = new PrismaClient();
 
 /** Board 1, top block - what an inpatient is charged for, beyond the bed. */
 const IP_CHARGES: { name: string; price: number; category: ChargeCategory; perDay?: boolean }[] = [
-  { name: "Doctor Consultation", price: 1000, category: "DOCTOR_VISIT" },
-  { name: "DMO Charges", price: 800, category: "DOCTOR_VISIT" },
-  // "Nursing charges … 600/-" IS on the board, and is deliberately NOT here.
-  // The hospital has WITHDRAWN the per-day nursing fee: no stay admitted since
-  // is charged for it, and stays billed before the withdrawal keep the line
-  // their invoice already carries (see NURSE_FEE_PER_DAY in ipd.service).
-  // Putting it in the picker would hand a desk a way to charge it again, one
-  // stay at a time, off a board that has not been repainted yet.
+  { name: "Doctor Consultation", price: 1500, category: "DOCTOR_VISIT" },
+  { name: "DMO Charges", price: 1000, category: "DOCTOR_VISIT" },
+  { name: "Nursing charges", price: 800, category: "NURSING", perDay: true },
   { name: "Monitor Charges", price: 1000, category: "PROCEDURE", perDay: true },
-  { name: "Emergency Charges", price: 1000, category: "PROCEDURE" },
-  { name: "Blood Transfusion (IO Charges)", price: 2500, category: "PROCEDURE" },
-  { name: "Oxygen Charges", price: 2000, category: "OXYGEN", perDay: true },
+  { name: "Emergency Charges", price: 1500, category: "PROCEDURE" },
+  { name: "Blood Transfusion (10 Charges)", price: 2500, category: "PROCEDURE" },
+  { name: "Oxygen Charges(per day)", price: 2500, category: "OXYGEN", perDay: true },
   { name: "Nebulization", price: 300, category: "PROCEDURE" },
   // Printed on the board under surgery but priced as an outpatient visit; kept
   // here so it is findable where the desk looks for consultation rates.
@@ -48,14 +43,14 @@ const IP_CHARGES: { name: string; price: number; category: ChargeCategory; perDa
 
 /** Board 1, "SURGERY CHARGES OPEN". */
 const SURGERY_OPEN: { name: string; price: number }[] = [
-  { name: "Normal Delivery", price: 24999 },
-  { name: "Cesarian Section", price: 29999 },
+  { name: "Normal Delivery", price: 30000 },
+  { name: "Cesarian Section", price: 45000 },
   { name: "Hysterectomy", price: 29999 },
-  { name: "Tubectomy", price: 14999 },
-  { name: "Hernia", price: 29999 },
-  { name: "Hemorrhoids", price: 24999 },
-  { name: "Vasectomy", price: 9999 },
-  { name: "Hydrocele Surgery", price: 24999 },
+  { name: "Tubectomy", price: 25000 },
+  { name: "Hernia", price: 40000 },
+  { name: "Hemorrhoids", price: 40000 },
+  { name: "Vasectomy", price: 15000 },
+  { name: "Hydrocele Surgery", price: 30000 },
 ];
 
 /** Board 1, "SURGERY CHARGES LAPAROSCOPIC". */
@@ -64,16 +59,16 @@ const SURGERY_LAP: { name: string; price: number }[] = [
   { name: "Lap. Appindicectomy", price: 34999 },
   { name: "Lap. Cholecystectomy", price: 44999 },
   { name: "Lap. Ovrian Cystectomy", price: 39999 },
-  { name: "Lap. Tubectomy", price: 19999 },
-  { name: "Lap. Hernia", price: 49999 },
+  { name: "Lap. Tubectomy", price: 30000 },
+  { name: "Lap. Hernia", price: 60000 },
 ];
 
 /** Board 1, room rates. `was` is the name this system seeded, when it differs. */
 const WARDS: { name: string; was?: string; category: string; price: number }[] = [
-  { name: "ICU", category: "ICU", price: 4500 },
+  { name: "ICU", category: "ICU", price: 6000 },
   { name: "Deluxe Room", category: "PRIVATE", price: 5500 },
-  { name: "Special Room", was: "Private Room", category: "PRIVATE", price: 4600 },
-  { name: "Sharing Room", was: "Semi-Private", category: "SEMI_PRIVATE", price: 3800 },
+  { name: "Special Room", was: "Private Room", category: "PRIVATE", price: 5000 },
+  { name: "Sharing Room", was: "Semi-Private", category: "SEMI_PRIVATE", price: 4000 },
   { name: "General Ward", category: "GENERAL", price: 2500 },
 ];
 
@@ -147,26 +142,13 @@ const ALIAS: Record<string, string> = {
 async function service(name: string, group: ServiceGroup, category: ChargeCategory, price: number, perDay = false) {
   await prisma.serviceCharge.upsert({
     where: { name },
-    // Deliberately narrow: the board sets price, grouping and category. `active`
-    // is NOT reset, so a service the hospital has switched off stays off through
-    // a re-run rather than quietly coming back.
-    update: { group, category, price: price.toFixed(2), perDay },
-    create: { name, group, category, price: price.toFixed(2), perDay, gstRatePct: "0.00" },
+    update: { group, category, price: price.toFixed(2), perDay, active: true },
+    create: { name, group, category, price: price.toFixed(2), perDay, gstRatePct: "0.00", active: true },
   });
 }
 
 async function main() {
   console.log("\n  Rate boards → Jeeva\n");
-
-  // Retires the picker entry an earlier run of this script created before it was
-  // understood that nursing is applied automatically. Deactivated, not deleted:
-  // a stay may already carry a hand-added line raised from it, and removing the
-  // catalogue row would leave that charge unexplainable.
-  const staleNursing = await prisma.serviceCharge.findUnique({ where: { name: "Nursing Charges" }, select: { id: true, active: true } });
-  if (staleNursing?.active) {
-    await prisma.serviceCharge.update({ where: { id: staleNursing.id }, data: { active: false } });
-    console.log("  ✓ retired the pickable \"Nursing Charges\" - nursing is applied automatically per day");
-  }
 
   for (const s of IP_CHARGES) await service(s.name, "IP_CHARGE", s.category, s.price, s.perDay ?? false);
   for (const s of SURGERY_OPEN) await service(s.name, "SURGERY_OPEN", "PROCEDURE", s.price);

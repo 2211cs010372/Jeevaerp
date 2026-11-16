@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Icon } from "@/components/portal/ui/icons";
+import { SvgArrow } from "@/components/portal/ui/svg-arrow";
 import { Spinner, Field } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { DischargeSummaryForm } from "@/components/portal/ipd/discharge-summary-form";
@@ -30,6 +31,229 @@ const SERVICE_GROUP_LABEL: Record<string, string> = {
   SURGERY_LAPAROSCOPIC: "Surgery - laparoscopic",
   OTHER: "Other",
 };
+
+/**
+ * Modern ElevenLabs Light Studio Searchable Rate Card Selection List
+ */
+function RateCardSelect({
+  services,
+  selectedId,
+  onPick,
+  onRemove,
+  onSelectNone,
+}: {
+  services: ServiceCharge[];
+  selectedId?: string | null;
+  onPick: (id: string) => void;
+  onRemove: () => void;
+  onSelectNone: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const selectedService = useMemo(() => {
+    return services.find((s) => s.id === selectedId) ?? null;
+  }, [services, selectedId]);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    if (open) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return services;
+    const q = search.toLowerCase();
+    return services.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        (SERVICE_GROUP_LABEL[s.group] && SERVICE_GROUP_LABEL[s.group].toLowerCase().includes(q)) ||
+        s.category.toLowerCase().includes(q)
+    );
+  }, [services, search]);
+
+  const groups = useMemo(() => {
+    return Object.keys(SERVICE_GROUP_LABEL)
+      .filter((g) => filtered.some((x) => x.group === g))
+      .map((g) => ({
+        key: g,
+        label: SERVICE_GROUP_LABEL[g],
+        items: filtered.filter((x) => x.group === g),
+      }));
+  }, [filtered]);
+
+  return (
+    <div className={`relative mb-3 ${open ? "z-30" : ""}`} ref={containerRef}>
+      <div className="flex items-center justify-between mb-1.5">
+        <label className="text-[11px] font-semibold uppercase tracking-wider text-[var(--p-muted)]">
+          Pick from the rate card
+        </label>
+        {selectedService && (
+          <span className="text-[11px] text-[var(--p-muted)] truncate max-w-[260px]">
+            Selected: <span className="font-medium text-[var(--p-ink)]">{selectedService.name}</span>
+          </span>
+        )}
+      </div>
+
+      {/* Modern Studio Combobox Trigger */}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={`group flex h-10 w-full items-center justify-between rounded-xl border bg-white px-3.5 text-left transition-all ${
+          open
+            ? "border-[#111111] ring-2 ring-black/5 shadow-sm"
+            : "border-[var(--p-border)] hover:border-[#111111]/40 shadow-xs"
+        }`}
+      >
+        <span className="flex items-center gap-2.5 truncate text-[13.5px]">
+          <Icon name="search" size={15} className="shrink-0 text-[var(--p-muted)]" />
+          <span className={selectedService ? "text-[var(--p-ink)] font-medium" : "text-[var(--p-muted)]"}>
+            {selectedService ? selectedService.name : "Choose a service from rate card, or type one below…"}
+          </span>
+        </span>
+        <span className="flex items-center gap-2 shrink-0 pl-2">
+          {selectedService && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemove();
+              }}
+              title="Remove selected service"
+              className="inline-flex items-center gap-1 rounded-md border border-[#e5e5e5] bg-white px-2 py-0.5 text-[11px] font-medium text-[#737373] hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 transition-colors"
+            >
+              <span className="text-[10px]">✕</span> Remove
+            </button>
+          )}
+          <span className="rounded-md bg-[#f5f5f4] px-1.5 py-0.5 text-[10.5px] font-semibold tabular-nums text-[#737373]">
+            {services.length} services
+          </span>
+          <svg
+            className={`h-4 w-4 text-[var(--p-muted)] transition-transform duration-200 ${open ? "rotate-180 text-[var(--p-ink)]" : ""}`}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </span>
+      </button>
+
+      {/* Floating Studio Selection Dropdown */}
+      {open && (
+        <div className="absolute left-0 top-[calc(100%+6px)] z-[100] w-full overflow-hidden rounded-xl border border-[#e5e5e5] bg-white shadow-[0_20px_50px_rgba(0,0,0,0.18)] animate-in fade-in zoom-in-95 duration-150">
+          {/* Studio Search Bar */}
+          <div className="flex items-center gap-2.5 border-b border-[var(--p-border)] bg-[#fafafa] px-3.5 py-2.5">
+            <Icon name="search" size={15} className="shrink-0 text-[var(--p-muted)]" />
+            <input
+              type="text"
+              autoFocus
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Filter services by name, category or code…"
+              className="w-full bg-transparent text-[13px] text-[var(--p-ink)] placeholder-[var(--p-muted)] outline-none"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className="text-[11px] font-semibold text-[var(--p-muted)] hover:text-[var(--p-ink)]"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          {/* Select None / Clear Option */}
+          <div className="p-1 border-b border-[var(--p-border)]/50 bg-[#fafafa]/50">
+            <button
+              type="button"
+              onClick={() => {
+                onSelectNone();
+                setOpen(false);
+                setSearch("");
+              }}
+              className="group flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-rose-50/60"
+            >
+              <span className="flex items-center gap-2 text-[12.5px] font-medium text-[#737373] group-hover:text-rose-700">
+                <span className="flex h-5 w-5 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[10px] text-[#737373] group-hover:border-rose-300 group-hover:text-rose-600">
+                  ✕
+                </span>
+                <span>Select none (Clear selection)</span>
+              </span>
+              {selectedId && (
+                <span className="text-[11px] font-medium text-rose-600">Deselect</span>
+              )}
+            </button>
+          </div>
+
+          {/* Grouped Service Options List */}
+          <div className="max-h-72 overflow-y-auto p-1.5 divide-y divide-[var(--p-border)]/50 [scrollbar-width:thin]">
+            {groups.length === 0 ? (
+              <div className="py-8 text-center text-[12.5px] text-[var(--p-muted)]">
+                No services found matching &quot;{search}&quot;
+              </div>
+            ) : (
+              groups.map((group) => (
+                <div key={group.key} className="py-1.5 first:pt-0 last:pb-0">
+                  <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[var(--p-muted)]">
+                    {group.label}
+                  </div>
+                  <div className="space-y-0.5 mt-0.5">
+                    {group.items.map((x) => {
+                      const isPicked = selectedId === x.id;
+                      return (
+                        <button
+                          key={x.id}
+                          type="button"
+                          onClick={() => {
+                            onPick(x.id);
+                            setOpen(false);
+                            setSearch("");
+                          }}
+                          className={`group flex w-full items-center justify-between rounded-xl px-2.5 py-2 text-left transition-colors ${
+                            isPicked ? "bg-[#f5f5f4] font-medium" : "hover:bg-[#f5f5f4]"
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1 pr-3">
+                            <span className="block truncate text-[13px] font-medium text-[var(--p-ink)] group-hover:text-black">
+                              {x.name}
+                            </span>
+                            <span className="block text-[11px] text-[var(--p-muted)]">
+                              {x.category}
+                            </span>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <span className="inline-flex items-center gap-1 rounded-md bg-[#fafafa] group-hover:bg-white px-2 py-0.5 font-mono text-[12px] font-semibold text-[var(--p-ink)] border border-[var(--p-border)] shadow-xs">
+                              ₹{Number(x.price).toLocaleString("en-IN")}
+                              {x.perDay && (
+                                <span className="font-sans text-[10px] font-normal text-[var(--p-muted)]">/day</span>
+                              )}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface Charge {
   id: string; category: string; description: string; qty: number;
@@ -140,6 +364,131 @@ export default function AdmissionSheetPage() {
   const [qty, setQty] = useState("1");
   const [price, setPrice] = useState("");
   const [gst, setGst] = useState("0");
+  const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
+
+  // Line form undo/redo history
+  type LineFormState = {
+    cat: string;
+    desc: string;
+    qty: string;
+    price: string;
+    gst: string;
+    selectedServiceId: string | null;
+  };
+  const [lineHistory, setLineHistory] = useState<LineFormState[]>([
+    { cat: "PROCEDURE", desc: "", qty: "1", price: "", gst: "0", selectedServiceId: null },
+  ]);
+  const [historyIndex, setHistoryIndex] = useState(0);
+  const [lastRemovedCharge, setLastRemovedCharge] = useState<Charge | null>(null);
+
+  // Discard confirmation popup state
+  const [discardModalOpen, setDiscardModalOpen] = useState(false);
+
+  function pushLineHistory(nextState: LineFormState) {
+    setLineHistory((prev) => {
+      const curr = prev[historyIndex];
+      if (
+        curr &&
+        curr.cat === nextState.cat &&
+        curr.desc === nextState.desc &&
+        curr.qty === nextState.qty &&
+        curr.price === nextState.price &&
+        curr.gst === nextState.gst &&
+        curr.selectedServiceId === nextState.selectedServiceId
+      ) {
+        return prev;
+      }
+      const sliced = prev.slice(0, historyIndex + 1);
+      return [...sliced, nextState];
+    });
+    setHistoryIndex((prev) => prev + 1);
+  }
+
+  async function handleUndo() {
+    if (historyIndex > 0) {
+      const prevIdx = historyIndex - 1;
+      const target = lineHistory[prevIdx];
+      setHistoryIndex(prevIdx);
+      setCat(target.cat);
+      setDesc(target.desc);
+      setQty(target.qty);
+      setPrice(target.price);
+      setGst(target.gst);
+      setSelectedServiceId(target.selectedServiceId);
+      return;
+    }
+    if (lastRemovedCharge) {
+      setBusy(true);
+      try {
+        await api.post(`/ipd/admissions/${admissionId}/charges`, {
+          category: lastRemovedCharge.category,
+          description: lastRemovedCharge.description,
+          qty: lastRemovedCharge.qty,
+          unitPrice: Number(lastRemovedCharge.unitPrice),
+          gstRatePct: Number(lastRemovedCharge.gstRatePct),
+        });
+        setFlash(`Restored "${lastRemovedCharge.description}" to the tab.`);
+        setLastRemovedCharge(null);
+        await load();
+      } catch (e) {
+        setErr(e instanceof ApiClientError ? e.message : "Could not restore charge.");
+      } finally {
+        setBusy(false);
+      }
+    }
+  }
+
+  function handleRedo() {
+    if (historyIndex < lineHistory.length - 1) {
+      const nextIdx = historyIndex + 1;
+      const target = lineHistory[nextIdx];
+      setHistoryIndex(nextIdx);
+      setCat(target.cat);
+      setDesc(target.desc);
+      setQty(target.qty);
+      setPrice(target.price);
+      setGst(target.gst);
+      setSelectedServiceId(target.selectedServiceId);
+    }
+  }
+
+  function commitLineField(updates: Partial<LineFormState>) {
+    const next: LineFormState = {
+      cat: updates.cat ?? cat,
+      desc: updates.desc ?? desc,
+      qty: updates.qty ?? qty,
+      price: updates.price ?? price,
+      gst: updates.gst ?? gst,
+      selectedServiceId: updates.selectedServiceId !== undefined ? updates.selectedServiceId : selectedServiceId,
+    };
+    pushLineHistory(next);
+  }
+
+  function discardLineChanges() {
+    setCat("PROCEDURE");
+    setDesc("");
+    setQty("1");
+    setPrice("");
+    setGst("0");
+    setSelectedServiceId(null);
+    pushLineHistory({
+      cat: "PROCEDURE",
+      desc: "",
+      qty: "1",
+      price: "",
+      gst: "0",
+      selectedServiceId: null,
+    });
+    setDiscardModalOpen(false);
+  }
+
+  function handleRequestDiscard() {
+    if (desc.trim() || price || selectedServiceId) {
+      setDiscardModalOpen(true);
+    } else {
+      discardLineChanges();
+    }
+  }
 
   // The hospital's published rate card - the boards on the wall, in a dropdown.
   const [services, setServices] = useState<ServiceCharge[]>([]);
@@ -151,13 +500,23 @@ export default function AdmissionSheetPage() {
   function pickService(id: string) {
     const svc = services.find((x) => x.id === id);
     if (!svc) return;
+    const nextQty = svc.perDay && sheet ? String(sheet.days) : "1";
+    const nextPrice = String(Number(svc.price));
+    const nextGst = String(Number(svc.gstRatePct));
     setDesc(svc.name);
     setCat(svc.category);
-    setPrice(String(Number(svc.price)));
-    setGst(String(Number(svc.gstRatePct)));
-    // A per-day charge defaults to the days so far. Still editable - nobody is
-    // on oxygen for every night they are in the bed.
-    setQty(svc.perDay && sheet ? String(sheet.days) : "1");
+    setPrice(nextPrice);
+    setGst(nextGst);
+    setQty(nextQty);
+    setSelectedServiceId(id);
+    pushLineHistory({
+      cat: svc.category,
+      desc: svc.name,
+      qty: nextQty,
+      price: nextPrice,
+      gst: nextGst,
+      selectedServiceId: id,
+    });
   }
 
   // nursing / observation notes
@@ -328,7 +687,15 @@ export default function AdmissionSheetPage() {
       });
       setRepeat(null);
       setFlash(`₹${money(lineTotal)} added to the tab.`);
-      setDesc(""); setQty("1"); setPrice(""); setGst("0");
+      setDesc(""); setQty("1"); setPrice(""); setGst("0"); setSelectedServiceId(null);
+      pushLineHistory({
+        cat: "PROCEDURE",
+        desc: "",
+        qty: "1",
+        price: "",
+        gst: "0",
+        selectedServiceId: null,
+      });
       await load();
     } catch (e) {
       // The same line went on minutes ago - nothing was added.
@@ -342,7 +709,12 @@ export default function AdmissionSheetPage() {
 
   async function removeCharge(c: Charge) {
     setBusy(true); setErr(null);
-    try { await api.del(`/ipd/charges/${c.id}`); await load(); }
+    try {
+      await api.del(`/ipd/charges/${c.id}`);
+      setLastRemovedCharge(c);
+      setFlash(`Removed "${c.description}". Click Undo to restore.`);
+      await load();
+    }
     catch (e) { setErr(e instanceof ApiClientError ? e.message : "Could not remove it."); }
     finally { setBusy(false); }
   }
@@ -378,7 +750,157 @@ export default function AdmissionSheetPage() {
 
   const fld = "w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]";
 
-  if (loading) return <PortalScroll><div className="flex items-center justify-center gap-2 py-24 text-[14px] text-[var(--p-muted)]"><Spinner /> Loading the sheet…</div></PortalScroll>;
+  if (loading) {
+    return (
+      <PortalScroll>
+        <div className="space-y-5 animate-pulse">
+          {/* Exact Replica of Top Patient Banner */}
+          <div className="rounded-2xl border border-[#e5e5e5] bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <div className="h-6 w-52 rounded-md bg-[#ececec]" />
+                  <div className="h-5 w-24 rounded-full bg-[#f0f0f0]" />
+                </div>
+                <div className="h-4 w-96 max-w-full rounded bg-[#f5f5f4]" />
+                <div className="h-3.5 w-64 rounded bg-[#f5f5f4]" />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="h-9 w-28 rounded-lg border border-[#e5e5e5] bg-white" />
+                <div className="h-9 w-28 rounded-lg border border-[#e5e5e5] bg-white" />
+                <div className="h-9 w-32 rounded-lg border border-[#e5e5e5] bg-white" />
+                <div className="h-9 w-28 rounded-lg bg-[#f0f0f0]" />
+              </div>
+            </div>
+          </div>
+
+          {/* Exact Replica of Section Placements (2 Columns: Main Left + Sticky Right Rail) */}
+          <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
+            {/* Left Column Sections */}
+            <div className="space-y-5">
+              {/* 1. The Running Tab Section */}
+              <div className="overflow-hidden rounded-xl border border-[#e5e5e5] bg-[#f5f5f4] p-1 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+                <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <div className="h-4 w-28 rounded bg-[#e5e5e5]" />
+                    <div className="h-4 w-12 rounded-full bg-[#e5e5e5]" />
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="h-6 w-20 rounded-md bg-[#e5e5e5]" />
+                    <div className="h-6 w-20 rounded-md bg-[#e5e5e5]" />
+                    <div className="h-6 w-24 rounded-md bg-[#e5e5e5]" />
+                    <div className="h-6 w-24 rounded-md bg-[#111111]/20" />
+                  </div>
+                </div>
+
+                <div className="divide-y divide-[#f0f0f0] overflow-hidden rounded-lg border border-[#e5e5e5] bg-white">
+                  {/* Bed Line */}
+                  <div className="flex items-center justify-between bg-[#fafafa] px-4 py-3">
+                    <div className="space-y-1.5">
+                      <div className="h-4 w-48 rounded bg-[#e5e5e5]" />
+                      <div className="h-3 w-64 rounded bg-[#f0f0f0]" />
+                    </div>
+                    <div className="h-5 w-20 rounded bg-[#e5e5e5]" />
+                  </div>
+                  {/* Charges / Invoices Lines */}
+                  {[1, 2, 3, 4].map((i) => (
+                    <div key={i} className="flex items-center justify-between px-4 py-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="h-4 w-4 rounded-full bg-[#f0f0f0]" />
+                        <div className="space-y-1">
+                          <div className="h-4 w-40 rounded bg-[#ececec]" />
+                          <div className="h-3 w-56 rounded bg-[#f5f5f4]" />
+                        </div>
+                      </div>
+                      <div className="h-4 w-16 rounded bg-[#ececec]" />
+                    </div>
+                  ))}
+                  {/* Add Charge input row */}
+                  <div className="bg-[#fafafa] p-3">
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      <div className="h-8 rounded-lg bg-white border border-[#e5e5e5]" />
+                      <div className="h-8 rounded-lg bg-white border border-[#e5e5e5]" />
+                      <div className="h-8 rounded-lg bg-white border border-[#e5e5e5]" />
+                      <div className="h-8 rounded-lg bg-[#111111]/20" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Nursing & Observation Notes Section */}
+              <div className="overflow-hidden rounded-xl border border-[#e5e5e5] bg-[#f5f5f4] p-1 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+                <div className="flex items-center justify-between px-3 py-2">
+                  <div className="space-y-1">
+                    <div className="h-4 w-44 rounded bg-[#e5e5e5]" />
+                    <div className="h-3 w-60 rounded bg-[#e5e5e5]/70" />
+                  </div>
+                  <div className="h-4 w-14 rounded-full bg-[#e5e5e5]" />
+                </div>
+                <div className="space-y-3 rounded-lg border border-[#e5e5e5] bg-white p-3.5">
+                  <div className="border-l-2 border-[#e5e5e5] pl-2.5 space-y-1.5">
+                    <div className="flex gap-2">
+                      <div className="h-3 w-24 rounded bg-[#f0f0f0]" />
+                      <div className="h-3 w-28 rounded bg-[#ececec]" />
+                    </div>
+                    <div className="h-4 w-full rounded bg-[#f5f5f4]" />
+                  </div>
+                  <div className="h-14 w-full rounded-lg border border-[#e5e5e5] bg-white" />
+                  <div className="flex justify-end">
+                    <div className="h-8 w-24 rounded-lg bg-[#111111]/20" />
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. Patient History Tabs Section */}
+              <div className="rounded-xl border border-[#e5e5e5] bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)] space-y-3">
+                <div className="flex gap-4 border-b border-[#f0f0f0] pb-2">
+                  <div className="h-4 w-20 rounded bg-[#e5e5e5]" />
+                  <div className="h-4 w-24 rounded bg-[#f0f0f0]" />
+                  <div className="h-4 w-24 rounded bg-[#f0f0f0]" />
+                </div>
+                <div className="space-y-2">
+                  <div className="h-8 w-full rounded-lg bg-[#fafafa]" />
+                  <div className="h-8 w-full rounded-lg bg-[#fafafa]" />
+                </div>
+              </div>
+            </div>
+
+            {/* Right Column: Sticky Running Total / Final Bill Aside */}
+            <aside className="h-fit overflow-hidden rounded-xl border border-[#e5e5e5] bg-[#f5f5f4] p-1 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+              <div className="px-3 py-2">
+                <div className="h-4 w-28 rounded bg-[#e5e5e5]" />
+              </div>
+              <div className="rounded-lg border border-[#e5e5e5] bg-white">
+                <div className="space-y-3 p-3.5">
+                  <div className="flex justify-between">
+                    <div className="h-4 w-24 rounded bg-[#f5f5f4]" />
+                    <div className="h-4 w-16 rounded bg-[#ececec]" />
+                  </div>
+                  <div className="flex justify-between">
+                    <div className="h-4 w-28 rounded bg-[#f5f5f4]" />
+                    <div className="h-4 w-16 rounded bg-[#ececec]" />
+                  </div>
+                  <div className="flex justify-between border-t border-[#f0f0f0] pt-2.5">
+                    <div className="h-4 w-24 rounded bg-[#e5e5e5]" />
+                    <div className="h-5 w-20 rounded bg-[#111111]/40" />
+                  </div>
+                  {/* Still to pay box */}
+                  <div className="rounded-xl border border-[#e5e5e5] bg-[#f5f5f4] p-3 flex justify-between items-center">
+                    <div className="h-4 w-20 rounded bg-[#e5e5e5]" />
+                    <div className="h-5 w-24 rounded bg-[#111111]/50" />
+                  </div>
+                  <div className="h-3 w-full rounded bg-[#f5f5f4]" />
+                </div>
+                <div className="border-t border-[#e5e5e5] bg-[#fafafa] p-3.5">
+                  <div className="h-9 w-full rounded-lg bg-[#111111]/30" />
+                </div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </PortalScroll>
+    );
+  }
   if (!sheet) return <PortalScroll><p className="py-24 text-center text-[14px] text-[var(--p-rose)]">{err ?? "Not found."}</p></PortalScroll>;
 
   const a = sheet.admission;
@@ -393,15 +915,15 @@ export default function AdmissionSheetPage() {
   return (
     <PortalScroll>
       {/* header */}
-      <div  className="surface dotgrid mb-5 flex flex-wrap items-start justify-between gap-4 px-6 py-5">
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-4 rounded-2xl border border-[#e5e5e5] bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">{a.patient.fullName}</h1>
-            <span className="rounded bg-[var(--p-blue-soft)] px-2 py-0.5 font-mono text-[13px] font-bold text-[var(--p-blue-deep)]">{a.ipNumber}</span>
-            {discharged && <span className="rounded bg-[var(--p-bg)] px-2 py-0.5 text-[12px] font-semibold uppercase text-[var(--p-muted)]">Discharged</span>}
+            <h1 className="text-[21px] font-semibold tracking-tight text-[#111111]">{a.patient.fullName}</h1>
+            <span className="rounded-full border border-[#e5e5e5] bg-[#f5f5f4] px-2.5 py-0.5 text-[12px] font-medium text-[#111111] tabular-nums">{a.ipNumber}</span>
+            {discharged && <span className="rounded-full border border-[#e5e5e5] bg-[#fafafa] px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-[#737373]">Discharged</span>}
           </div>
-          <p className="mt-1 text-[14px] text-[var(--p-muted)]">
-            <span className="font-mono">{a.patient.displayId}</span> · <b className="text-[var(--p-ink)]">{bedLabel(a.wardName, a.bedNo)}</b> ·
+          <p className="mt-1.5 text-[13.5px] text-[#737373]">
+            <span className="font-medium text-[#404040] tabular-nums">{a.patient.displayId}</span> · <b className="font-medium text-[#111111]">{bedLabel(a.wardName, a.bedNo)}</b> ·
             Dr. {a.doctor.name} ({a.doctor.department})
           </p>
           {/* THE STAY'S DATES, WHERE SOMEBODY ACTUALLY LOOKS FOR THEM.
@@ -419,54 +941,54 @@ export default function AdmissionSheetPage() {
               date" form here would be a way to change the bill without seeing
               what it did to it, which is the whole thing CorrectStayDialog's
               live preview exists to prevent. */}
-          <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">
-            Admitted <b className="text-[var(--p-ink)]">{chargeDateLabel(a.admittedAt)}</b>
+          <p className="mt-0.5 text-[13px] text-[#737373]">
+            Admitted <b className="font-medium text-[#111111]">{chargeDateLabel(a.admittedAt)}</b>
             {a.dischargedAt && (
-              <> · Discharged <b className="text-[var(--p-ink)]">{chargeDateLabel(a.dischargedAt)}</b></>
+              <> · Discharged <b className="font-medium text-[#111111]">{chargeDateLabel(a.dischargedAt)}</b></>
             )}
             {" · "}
             <button
               onClick={() => setCorrectOpen(true)}
               title="Correct the stay's dates - the day count, the bed lines and the bill move with them"
-              className="font-semibold text-[var(--p-teal)] underline underline-offset-2 hover:text-[var(--p-ink)]"
+              className="font-medium text-[#111111] underline decoration-[#d4d4d4] underline-offset-2 hover:decoration-[#111111]"
             >
               Edit dates
             </button>
           </p>
-          {a.reason && <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">Reason: {a.reason}</p>}
+          {a.reason && <p className="mt-0.5 text-[13px] text-[#737373]">Reason: {a.reason}</p>}
           {a.attendantName && (
-            <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">
-              Attendant: <b className="text-[var(--p-ink)]">{a.attendantName}</b>
+            <p className="mt-0.5 text-[13px] text-[#737373]">
+              Attendant: <b className="font-medium text-[#111111]">{a.attendantName}</b>
               {a.attendantRelation && ` (${a.attendantRelation})`}
-              {a.attendantPhone && <> · <a href={`tel:${a.attendantPhone}`} className="font-mono text-[var(--p-blue)]">{a.attendantPhone}</a></>}
+              {a.attendantPhone && <> · <a href={`tel:${a.attendantPhone}`} className="font-medium text-[#111111] underline decoration-[#d4d4d4] underline-offset-2 tabular-nums">{a.attendantPhone}</a></>}
             </p>
           )}
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {!discharged && (
             <button onClick={() => setAdvOpen(true)}
               title="The deposit. Comes off the discharge bill."
-              className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)]">
-              <Icon name="rupee" size={15} /> Take advance
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-2 text-[13px] font-medium text-[#404040] transition-colors hover:border-[#111111] hover:text-[#111111]">
+              <Icon name="rupee" size={14} /> Take advance
             </button>
           )}
           {!discharged && (
             <button onClick={openTransfer}
               title="Move them to another bed. The bill keeps each leg at its own rate."
-              className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
-              <Icon name="bed" size={15} /> Transfer bed
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-2 text-[13px] font-medium text-[#404040] transition-colors hover:border-[#111111] hover:text-[#111111]">
+              <Icon name="bed" size={14} /> Transfer bed
             </button>
           )}
           {!discharged && (
             <button onClick={() => setRxOpen(true)}
-              className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
-              <Icon name="file" size={15} /> Add prescription
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-2 text-[13px] font-medium text-[#404040] transition-colors hover:border-[#111111] hover:text-[#111111]">
+              <Icon name="file" size={14} /> Add prescription
             </button>
           )}
           {!discharged && (
             <button onClick={() => setLabsOpen(true)}
-              className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
-              <Icon name="flask" size={15} /> Order labs
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-2 text-[13px] font-medium text-[#404040] transition-colors hover:border-[#111111] hover:text-[#111111]">
+              <Icon name="flask" size={14} /> Order labs
             </button>
           )}
           {/* WRITE it here; the neighbour PRINTS it. Two separate acts on the
@@ -495,16 +1017,17 @@ export default function AdmissionSheetPage() {
           )}
           <button onClick={() => setSummaryOpen(true)}
             title="Write or edit this stay's discharge summary. The insurance desk edits the same record."
-            className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
-            <Icon name="file" size={15} /> Discharge summary
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-2 text-[13px] font-medium text-[#404040] transition-colors hover:border-[#111111] hover:text-[#111111]">
+            <Icon name="file" size={14} /> Discharge summary
           </button>
           <a href={`/print/discharge/${a.id}`} target="_blank" rel="noopener noreferrer"
             title={discharged ? "Print the discharge summary for this stay" : "Interim summary - the discharge document, as it stands"}
-            className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
-            <Icon name="printer" size={15} /> Print summary
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-2 text-[13px] font-medium text-[#404040] transition-colors hover:border-[#111111] hover:text-[#111111]">
+            <Icon name="printer" size={14} /> Print summary
           </a>
-          <Link href="/ipd/inpatients" className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
-            Inpatients
+          <Link href="/ipd/inpatients" className="group inline-flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-[#f5f5f4] px-3.5 py-2 text-[13px] font-medium text-[#111111] transition-colors hover:border-[#111111] hover:bg-white">
+            <SvgArrow size={13} direction="left" className="transition-transform group-hover:-translate-x-0.5" />
+            <span>Inpatients</span>
           </Link>
         </div>
       </div>
@@ -527,100 +1050,118 @@ export default function AdmissionSheetPage() {
       )}
       {err && <div data-rise className="mb-4 rounded-lg border border-[var(--p-rose)]/25 bg-[var(--p-rose-soft)] px-4 py-3 text-[14px] text-[var(--p-rose)]">{err}</div>}
 
-      <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
-        <div className="space-y-5">
+      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+        <div className="space-y-4">
         {/* THE TAB */}
-        <section data-rise className="surface overflow-hidden">
-          <div className="flex items-center justify-between border-b border-[var(--p-border)] px-5 py-3.5">
-            <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">The running tab</h3>
+        <section data-rise className="rounded-xl border border-[#e5e5e5] bg-[#f5f5f4] p-1 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+          <div className="flex flex-wrap items-center justify-between gap-1.5 px-3 py-2">
             <div className="flex items-center gap-2">
-              {/* +1 for the bed, which is derived rather than stored, +1 more
-                  on a stay old enough to still carry nursing, plus every counter
-                  bill on the stay - the count has to match what is under it, and
-                  what is under it now includes the bills that have already been
-                  paid. */}
-              <span className="badge">
+              <h3 className="text-[12.5px] font-semibold text-[#111111]">Running tab</h3>
+              <span className="rounded-full border border-[#e5e5e5] bg-white px-2 py-0.2 text-[10.5px] font-medium text-[#737373] tabular-nums">
                 {sheet.charges.length + (sheet.counterBills?.length ?? 0) + 1 + (sheet.nursingApplies ? 1 : 0)} lines
               </span>
-              {/* THE TAB, ON PAPER. Until now it existed only on this screen, so
-                  a ward round asking what the stay is at, or a family wanting to
-                  see the position before agreeing to another day, had to stand
-                  at the terminal and left with nothing. The sheet is stamped
-                  with its print time and says on its face that it is not a bill
-                  - see running-tab-sheet for why that matters. */}
+              <div className="flex items-center gap-1 border-l border-[#e5e5e5] pl-2 ml-1">
+                <button
+                  type="button"
+                  onClick={() => void handleUndo()}
+                  disabled={historyIndex <= 0 && !lastRemovedCharge}
+                  title="Undo last change (Ctrl+Z)"
+                  className="inline-flex items-center gap-1 rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-[11.5px] font-medium text-[#404040] transition-colors hover:border-[#111111] hover:text-[#111111] disabled:opacity-30 disabled:pointer-events-none shadow-xs"
+                >
+                  <Icon name="undo" size={12} />
+                  <span>Undo</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRedo}
+                  disabled={historyIndex >= lineHistory.length - 1}
+                  title="Redo change (Ctrl+Y)"
+                  className="inline-flex items-center gap-1 rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-[11.5px] font-medium text-[#404040] transition-colors hover:border-[#111111] hover:text-[#111111] disabled:opacity-30 disabled:pointer-events-none shadow-xs"
+                >
+                  <Icon name="redo" size={12} />
+                  <span>Redo</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1">
               <a href={`/print/tab/${a.id}`} target="_blank" rel="noopener noreferrer"
                 title="Print the running tab as it stands — a dated statement of position, not a bill"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
-                <Icon name="printer" size={13} /> Print tab
+                className="inline-flex items-center gap-1 rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-[11.5px] font-medium text-[#404040] transition-colors hover:border-[#111111] hover:text-[#111111]">
+                <Icon name="printer" size={12} /> Print tab
               </a>
-              {/* EVERY COUNTER'S BILL, IN ONE JOB. The rows below each print
-                  their own, which is right when a family queries one line - but
-                  "give me the bills" means all of them, and doing that a row at
-                  a time on a week-long stay is where a pharmacy bill gets
-                  missed. Each sheet in the run is still its own tax invoice. */}
+              
+              {/* Separate Print Labs Button */}
+              <a href={`/print/bills/${a.id}?source=LAB`} target="_blank" rel="noopener noreferrer"
+                title="Print only laboratory invoices raised against this stay"
+                className="inline-flex items-center gap-1 rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-[11.5px] font-medium text-[#404040] transition-colors hover:border-[#111111] hover:text-[#111111]">
+                <Icon name="flask" size={12} /> Print labs
+              </a>
+
+              {/* Separate Print Pharmacy Button */}
+              <a href={`/print/bills/${a.id}?source=PHARMACY`} target="_blank" rel="noopener noreferrer"
+                title="Print only pharmacy invoices raised against this stay"
+                className="inline-flex items-center gap-1 rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-[11.5px] font-medium text-[#404040] transition-colors hover:border-[#111111] hover:text-[#111111]">
+                <Icon name="pill" size={12} /> Print pharmacy
+              </a>
+
+              {/* Print All Bills */}
               <a href={`/print/bills/${a.id}`} target="_blank" rel="noopener noreferrer"
                 title="Print every bill raised against this stay — ward, pharmacy and lab, each as its own invoice"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[12px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">
-                <Icon name="receipt" size={13} /> Print all bills
+                className="inline-flex items-center gap-1 rounded-md border border-[#111111] bg-[#111111] px-2.5 py-1 text-[11.5px] font-medium text-white transition-colors hover:bg-[#262626]">
+                <Icon name="receipt" size={12} /> Print all bills
               </a>
-              {/* ── THE SELF-PAY BILL, IN THE IP BILL'S OWN FORMAT ──
-                  The detailed bill is unchanged and still the claim sheet: one
-                  gross figure, the discount off the bottom, a number for a TPA.
-                  This is the same stay split the way the counter argues it -
-                  the hospital's own services discounted, the pharmacy and the
-                  lab at cost, and every rupee already paid at those windows
-                  taken off what is asked for now.
 
-                  SELF-PAYING STAYS ONLY, and that includes one an insurer
-                  refused: the conversion flips payerType, so by the time the
-                  family is being asked for cash this is exactly what the stay
-                  is. On a live cashless stay the sheet would ask a family for
-                  money the insurer is carrying, and the service refuses it. */}
               {a.payerType === "SELF_PAY" && (
                 <a href={`/print/services-bill/${a.id}`} target="_blank" rel="noopener noreferrer"
-                  title="The self-pay bill — hospital services only, discounted; the pharmacy and the lab bill at their own counters"
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-2.5 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
-                  <Icon name="receipt" size={13} /> Services bill
+                  title="The self-pay bill — hospital services only, discounted"
+                  className="inline-flex items-center gap-1 rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-[11.5px] font-medium text-[#404040] transition-colors hover:border-[#111111] hover:text-[#111111]">
+                  <Icon name="receipt" size={12} /> Services bill
                 </a>
               )}
             </div>
           </div>
 
-          <div className="divide-y divide-[var(--p-border)]">
+          <div className="rounded-lg border border-[#e5e5e5] bg-white">
+          <div className="divide-y divide-[#f0f0f0]">
             {/* bed is always line 1 */}
-            <div className="flex items-center justify-between gap-3 bg-[var(--p-bg)] px-5 py-3.5">
-              <div className="min-w-0">
-                <div className="text-[14px] font-semibold text-[var(--p-ink)]">
-                  Bed charges · {bedLabel(a.wardName, a.bedNo)}
-                </div>
-                <div className="text-[12px] text-[var(--p-muted)]">
-                  {bedDaysBilled} day{bedDaysBilled === 1 ? "" : "s"} × ₹{money(a.dailyCharge)}
-                  {Number(a.gstRatePct) > 0 && ` · ${a.gstRatePct}% GST`}
-                  {" · rate taken at admission"}
-                </div>
-                {/* A CAPPED BED SAYS SO, ON THE ROW ITSELF.
-                    Without this the line reads as an ordinary bed charge that
-                    has simply come out low, and the stay is billed short by
-                    however many nights somebody took off it. */}
-                {sheet.uncoveredDays > 0 && (
-                  <div className="mt-1 text-[11.5px] font-medium text-[#8a6414]">
-                    Capped — {sheet.uncoveredDays} more day{sheet.uncoveredDays === 1 ? "" : "s"} of this
-                    stay {sheet.uncoveredDays === 1 ? "is" : "are"} not on any bed line. Add them to the
-                    tab as their own charge.
+            <div className="bg-[#fafafa] px-4 py-2.5 rounded-t-lg">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[13px] font-semibold text-[#111111]">
+                    Bed charges{sheet.legs.length > 1 ? ` · ${sheet.legs.length} Ward Stays` : ` · ${bedLabel(a.wardName, a.bedNo)}`}
                   </div>
-                )}
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <span className="font-mono text-[14px] font-bold text-[var(--p-ink)]">₹{money(sheet.bedTotal)}</span>
-                {/* Both this and the nursing row open the SAME dialog: the rate
-                    and the day count are one arithmetic, and correcting a bed
-                    rate without seeing what it does to the days is how a stay
-                    ends up billed for a night nobody slept. */}
-                <button onClick={() => setCorrectOpen(true)}
-                  title="Correct the bed rate, the nursing rate or the stay's dates"
-                  className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
-                  Edit
-                </button>
+                  {sheet.legs.length <= 1 ? (
+                    <div className="text-[11.5px] text-[#737373]">
+                      {bedDaysBilled} day{bedDaysBilled === 1 ? "" : "s"} × ₹{money(a.dailyCharge)}
+                      {Number(a.gstRatePct) > 0 && ` · ${a.gstRatePct}% GST`}
+                    </div>
+                  ) : (
+                    <div className="mt-1 space-y-0.5">
+                      {sheet.legs.map((leg) => (
+                        <div key={leg.id} className="text-[11.5px] text-[#525252] flex flex-wrap items-center gap-1.5">
+                          <span className="font-semibold text-[#111111]">{leg.wardName}</span>
+                          <span>·</span>
+                          <span>{leg.days} day{leg.days === 1 ? "" : "s"} × ₹{money(leg.dailyCharge)}</span>
+                          <span className="text-[#737373]">(₹{money(leg.total)})</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {sheet.uncoveredDays > 0 && (
+                    <div className="mt-0.5 text-[11px] font-medium text-amber-700">
+                      Capped — {sheet.uncoveredDays} more day{sheet.uncoveredDays === 1 ? "" : "s"} not on bed line.
+                    </div>
+                  )}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="text-[13px] font-semibold text-[#111111] tabular-nums">₹{money(sheet.bedTotal)}</span>
+                  <button onClick={() => setCorrectOpen(true)}
+                    title="Correct the bed rate, ward, or split across stays"
+                    className="rounded border border-[#e5e5e5] bg-white px-2 py-0.5 text-[11px] font-medium text-[#404040] hover:border-[#111111] transition-colors">
+                    Edit
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -781,8 +1322,43 @@ export default function AdmissionSheetPage() {
 
           {/* add a charge */}
           {!discharged && (
-            <div className="border-t border-[var(--p-border)] bg-[var(--p-bg)] p-5">
-              <p className="mb-3 text-[12px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Add to the tab</p>
+            <div className="border-t border-[var(--p-border)] bg-[var(--p-bg)] p-5 rounded-b-lg">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-[12px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Add to the tab</p>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => void handleUndo()}
+                    disabled={historyIndex <= 0 && !lastRemovedCharge}
+                    title="Undo line change"
+                    className="inline-flex items-center gap-1 rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-[11.5px] font-medium text-[#404040] hover:border-[#111111] hover:text-[#111111] disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                  >
+                    <Icon name="undo" size={12} />
+                    <span>Undo</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRedo}
+                    disabled={historyIndex >= lineHistory.length - 1}
+                    title="Redo line change"
+                    className="inline-flex items-center gap-1 rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-[11.5px] font-medium text-[#404040] hover:border-[#111111] hover:text-[#111111] disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                  >
+                    <Icon name="redo" size={12} />
+                    <span>Redo</span>
+                  </button>
+                  {(desc.trim() || price || selectedServiceId) && (
+                    <button
+                      type="button"
+                      onClick={handleRequestDiscard}
+                      title="Clear and reset line"
+                      className="inline-flex items-center gap-1 rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-[11.5px] font-medium text-[#737373] hover:border-rose-300 hover:text-rose-600 transition-colors"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+
               {/* THE RATE CARD, ahead of the free-text boxes.
                   Typing a description and a price by hand is how the same
                   procedure got billed at three different rates by three shifts,
@@ -790,51 +1366,41 @@ export default function AdmissionSheetPage() {
                   apart with nobody able to say which was right. Picking fills
                   both; the boxes below stay editable for the genuinely one-off. */}
               {services.length > 0 && (
-                <div className="mb-3">
-                  <Field label="Pick from the rate card">
-                    <select className={fld} value="" onChange={(e) => pickService(e.target.value)}>
-                      <option value="">Choose a service, or type one below…</option>
-                      {Object.keys(SERVICE_GROUP_LABEL)
-                        .filter((g) => services.some((x) => x.group === g))
-                        .map((g) => (
-                          <optgroup key={g} label={SERVICE_GROUP_LABEL[g]}>
-                            {services.filter((x) => x.group === g).map((x) => (
-                              <option key={x.id} value={x.id}>
-                                {x.name} — ₹{Number(x.price).toLocaleString("en-IN")}{x.perDay ? " / day" : ""}
-                              </option>
-                            ))}
-                          </optgroup>
-                        ))}
-                    </select>
-                  </Field>
-                </div>
+                <RateCardSelect
+                  services={services}
+                  selectedId={selectedServiceId}
+                  onPick={pickService}
+                  onRemove={handleRequestDiscard}
+                  onSelectNone={handleRequestDiscard}
+                />
               )}
               <div className="grid gap-3 sm:grid-cols-6">
                 <div className="sm:col-span-2">
-                  <Field label="What"><select className={fld} value={cat} onChange={(e) => setCat(e.target.value)}>
+                  <Field label="What"><select className={fld} value={cat} onChange={(e) => { setCat(e.target.value); commitLineField({ cat: e.target.value }); }}>
                     {CATEGORIES.map((c) => <option key={c.k} value={c.k}>{c.label}</option>)}
                   </select></Field>
                 </div>
                 <div className="sm:col-span-4">
-                  <Field label="Description" required><input className={fld} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Dressing change, ECG, night nursing…" /></Field>
+                  <Field label="Description" required><input className={fld} value={desc} onChange={(e) => setDesc(e.target.value)} onBlur={() => commitLineField({ desc })} placeholder="Dressing change, ECG, night nursing…" /></Field>
                 </div>
-                <Field label="Qty"><input className={fld} value={qty} inputMode="numeric" onChange={(e) => setQty(e.target.value.replace(/\D/g, ""))} /></Field>
+                <Field label="Qty"><input className={fld} value={qty} inputMode="numeric" onChange={(e) => setQty(e.target.value.replace(/\D/g, ""))} onBlur={() => commitLineField({ qty })} /></Field>
                 <div className="sm:col-span-2">
-                  <Field label="Rate (₹)" required><input className={fld} value={price} inputMode="decimal" onChange={(e) => setPrice(e.target.value.replace(/[^\d.]/g, ""))} /></Field>
+                  <Field label="Rate (₹)" required><input className={fld} value={price} inputMode="decimal" onChange={(e) => setPrice(e.target.value.replace(/[^\d.]/g, ""))} onBlur={() => commitLineField({ price })} /></Field>
                 </div>
-                <Field label="GST %"><input className={fld} value={gst} inputMode="decimal" onChange={(e) => setGst(e.target.value.replace(/[^\d.]/g, ""))} /></Field>
+                <Field label="GST %"><input className={fld} value={gst} inputMode="decimal" onChange={(e) => setGst(e.target.value.replace(/[^\d.]/g, ""))} onBlur={() => commitLineField({ gst })} /></Field>
                 <div className="flex items-end sm:col-span-2">
                   <button onClick={() => addCharge()} disabled={busy || !desc.trim() || !price}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#111111] px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-[#262626] disabled:opacity-40">
                     {busy ? <Spinner /> : <Icon name="plus" size={14} />} Add ₹{money(lineTotal)}
                   </button>
                 </div>
               </div>
-              <p className="mt-2 text-[12px] text-[var(--p-muted)]">
+              <p className="mt-2 text-[12px] text-[#737373]">
                 Most hospital services are GST-exempt - leave it 0 unless your CA says otherwise.
               </p>
             </div>
           )}
+          </div>
         </section>
 
         {/* FORGOTTEN BILLS - pharmacy/lab billed as OP while this patient was
@@ -843,41 +1409,41 @@ export default function AdmissionSheetPage() {
           onLinked={() => { void load(); loadHistory(); }} />
 
         {/* NURSING / OBSERVATION NOTES - shift handover text, not billed */}
-        <section data-rise className="surface overflow-hidden">
-          <div className="flex items-center justify-between border-b border-[var(--p-border)] px-5 py-3.5">
+        <section data-rise className="overflow-hidden rounded-xl border border-[#e5e5e5] bg-[#f5f5f4] p-1 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+          <div className="flex items-center justify-between gap-3 px-3 py-2">
             <div>
-              <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Nursing &amp; observation notes</h3>
-              <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">Shift handover - vitals, intake, how the night went. Each entry is kept with the name and time it was written; nothing here can be edited or removed.</p>
+              <h3 className="text-[12.5px] font-semibold text-[#111111]">Nursing &amp; observation notes</h3>
+              <p className="mt-0.5 text-[11px] text-[#737373]">Shift handover - vitals, intake, how the night went.</p>
             </div>
-            <span className="rounded bg-[var(--p-bg)] px-2 py-0.5 text-[11px] font-semibold text-[var(--p-muted)]">
+            <span className="shrink-0 rounded-full border border-[#e5e5e5] bg-white px-2 py-0.2 text-[10.5px] font-medium text-[#737373] tabular-nums">
               {sheet.notes.length} {sheet.notes.length === 1 ? "entry" : "entries"}
             </span>
           </div>
-          <div className="p-5">
+          <div className="rounded-lg border border-[#e5e5e5] bg-white p-3.5">
             {/* The chronology. A correction is a NEW entry saying what it
                 corrects - the same as on paper, and the reason there is no
                 edit button on any of these rows. */}
             {sheet.notes.length > 0 ? (
-              <ol className="mb-4 flex flex-col gap-3">
+              <ol className="mb-3 flex flex-col gap-2.5">
                 {sheet.notes.map((n) => (
-                  <li key={n.id} className="border-l-2 border-[var(--p-border)] pl-3">
+                  <li key={n.id} className="border-l-2 border-[#e5e5e5] pl-2.5">
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                      <span className="font-mono text-[11px] tabular-nums text-[var(--p-muted)]">
+                      <span className="text-[10.5px] tabular-nums text-[#737373]">
                         {new Date(n.createdAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
                       </span>
-                      <span className="text-[11px] font-semibold text-[var(--p-ink)]">
+                      <span className="text-[11px] font-semibold text-[#111111]">
                         {n.authorName ?? "Author not recorded"}
                       </span>
                       {n.kind === "DISCHARGE" && (
-                        <span className="rounded bg-[var(--p-bg)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">On discharge</span>
+                        <span className="rounded bg-[#f5f5f4] px-1.5 py-0.2 text-[9.5px] font-medium uppercase tracking-wide text-[#737373]">On discharge</span>
                       )}
                     </div>
-                    <p className="mt-0.5 whitespace-pre-wrap text-[13px] leading-relaxed text-[var(--p-ink)]">{n.body}</p>
+                    <p className="mt-0.5 whitespace-pre-wrap text-[12.5px] leading-relaxed text-[#404040]">{n.body}</p>
                   </li>
                 ))}
               </ol>
             ) : (
-              <p className="mb-4 text-[13px] text-[var(--p-muted)]">No notes recorded on this stay yet.</p>
+              <p className="mb-3 text-[12.5px] text-[#737373]">No notes recorded on this stay yet.</p>
             )}
 
             {!discharged && (
@@ -885,14 +1451,14 @@ export default function AdmissionSheetPage() {
                 <textarea
                   value={notes}
                   onChange={(e) => { setNotes(e.target.value); setNotesDirty(true); }}
-                  rows={3}
+                  rows={2}
                   placeholder="e.g. 08:00 - BP 130/80, afebrile, tolerating orals."
-                  className="w-full resize-y rounded-lg border border-[var(--p-border)] bg-white px-3 py-2 text-sm leading-relaxed text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]" />
-                <div className="mt-3 flex items-center justify-end gap-3">
-                  {notesDirty && <button onClick={() => { setNotes(""); setNotesDirty(false); }} className="text-[13px] font-medium text-[var(--p-muted)] hover:text-[var(--p-ink)]">Clear</button>}
+                  className="w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-[12.5px] leading-relaxed text-[#111111] outline-none focus:border-[#111111]" />
+                <div className="mt-2.5 flex items-center justify-end gap-2.5">
+                  {notesDirty && <button onClick={() => { setNotes(""); setNotesDirty(false); }} className="text-[12px] font-medium text-[#737373] hover:text-[#111111]">Clear</button>}
                   <button onClick={saveNotes} disabled={savingNotes || !notes.trim()}
-                    className="inline-flex items-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">
-                    {savingNotes ? <><Spinner /> Adding…</> : <><Icon name="check" size={14} /> Add note</>}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#111111] px-3.5 py-1.5 text-[12.5px] font-medium text-white transition-colors hover:bg-[#262626] disabled:opacity-40">
+                    {savingNotes ? <><Spinner /> Adding…</> : <><Icon name="check" size={13} /> Add note</>}
                   </button>
                 </div>
               </>
@@ -912,11 +1478,12 @@ export default function AdmissionSheetPage() {
         </div>
 
         {/* TOTAL */}
-        <aside data-rise className="surface h-fit overflow-hidden lg:sticky lg:top-20">
-          <div className="border-b border-[var(--p-border)] px-5 py-3.5">
-            <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">{discharged ? "Final bill" : "Running total"}</h3>
+        <aside data-rise className="h-fit overflow-hidden rounded-xl border border-[#e5e5e5] bg-[#f5f5f4] p-1 shadow-[0_1px_2px_rgba(0,0,0,0.02)] lg:sticky lg:top-20">
+          <div className="px-3 py-2">
+            <h3 className="text-[12.5px] font-semibold text-[#111111]">{discharged ? "Final bill" : "Running total"}</h3>
           </div>
-          <div className="space-y-2.5 p-5">
+          <div className="overflow-hidden rounded-lg border border-[#e5e5e5] bg-white">
+          <div className="space-y-2 p-3.5">
             {/* Each leg of the stay, priced at the rate it actually carried. Two
                 rows here means the patient was moved - and the bill says so. */}
             {sheet.legs.length > 1 ? (
@@ -1022,9 +1589,9 @@ export default function AdmissionSheetPage() {
                     ))}
                   </div>
                 )}
-                <div className="flex items-center justify-between rounded-lg bg-[var(--p-teal-soft)] px-3 py-2.5">
-                  <span className="text-[14px] font-bold text-[var(--p-ink)]">Still to pay</span>
-                  <span className="font-mono text-[20px] font-bold text-[var(--p-teal-deep)]">₹{money(sheet.balance)}</span>
+                <div className="flex items-center justify-between rounded-xl border border-[#e5e5e5] bg-[#f5f5f4] px-3.5 py-2.5">
+                  <span className="text-[13.5px] font-semibold text-[#111111]">Still to pay</span>
+                  <span className="text-[19px] font-semibold tracking-tight text-[#111111] tabular-nums">₹{money(sheet.balance)}</span>
                 </div>
                 {Number(sheet.advanceTotal) > Number(sheet.grandTotal) && (
                   <p className="rounded-lg bg-[var(--p-amber-soft)] px-3 py-2 text-[12px] leading-relaxed text-[#8a6414]">
@@ -1034,21 +1601,22 @@ export default function AdmissionSheetPage() {
                 )}
               </>
             )}
-            <p className="text-[12px] leading-relaxed text-[var(--p-muted)]">
+            <p className="text-[12px] leading-relaxed text-[#737373]">
               {discharged
                 ? "This stay is closed. The invoice was raised at discharge."
                 : "Bed charges grow each day. GST is applied per line at discharge - the room and a 12% syrup aren't taxed the same."}
             </p>
           </div>
           {!discharged && (
-            <div className="border-t border-[var(--p-border)] p-5">
+            <div className="border-t border-[#e5e5e5] bg-[#fafafa] p-4">
               <Link href="/ipd/inpatients"
-                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[var(--p-blue-deep)]">
-                <Icon name="receipt" size={15} /> Discharge &amp; bill
+                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#111111] px-4 py-2.5 text-[13px] font-medium text-white transition-colors hover:bg-[#262626]">
+                <Icon name="receipt" size={14} /> Discharge &amp; bill
               </Link>
-              <p className="mt-2 text-center text-[12px] text-[var(--p-muted)]">Everything above goes on one invoice.</p>
+              <p className="mt-2 text-center text-[11.5px] text-[#737373]">Everything above goes on one invoice.</p>
             </div>
           )}
+          </div>
         </aside>
       </div>
 
@@ -1425,6 +1993,79 @@ export default function AdmissionSheetPage() {
           onConfirm={() => repeat.retry()}
           onClose={() => setRepeat(null)}
         />
+      )}
+
+      {/* ─────────── DISCARD CONFIRMATION MODAL ─────────── */}
+      {discardModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setDiscardModalOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="surface w-full max-w-md overflow-hidden rounded-xl border border-[#e5e5e5] bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-150"
+          >
+            <div className="flex items-center justify-between border-b border-[#e5e5e5] px-5 py-4">
+              <div>
+                <h3 className="text-[15px] font-semibold text-[#111111]">Discard line edits?</h3>
+                <p className="mt-0.5 text-[12px] text-[#737373]">
+                  Unsaved procedure details on this line will be cleared.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDiscardModalOpen(false)}
+                aria-label="Close"
+                className="rounded-md p-1 text-[#737373] hover:bg-[#f5f5f4] hover:text-[#111111] transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 p-5 text-[13px] text-[#404040]">
+              {(desc || price || selectedServiceId) && (
+                <div className="rounded-lg border border-[#e5e5e5] bg-[#fafafa] p-3 text-[12.5px] space-y-1">
+                  {desc && (
+                    <div><span className="text-[#737373]">Item:</span> <span className="font-medium text-[#111111]">{desc}</span></div>
+                  )}
+                  {price && (
+                    <div><span className="text-[#737373]">Rate:</span> <span className="font-medium text-[#111111]">₹{price}</span> × {qty}</div>
+                  )}
+                  {selectedServiceId && (
+                    <div className="text-[11.5px] text-[#737373]">Rate card selection will be removed.</div>
+                  )}
+                </div>
+              )}
+              <p className="text-[12.5px] text-[#737373]">
+                Are you sure you want to discard your edits and reset the line? You can also undo this action later.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[#e5e5e5] bg-[#fafafa] px-5 py-3">
+              <button
+                type="button"
+                onClick={() => setDiscardModalOpen(false)}
+                className="rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-2 text-[12.5px] font-medium text-[#525252] hover:border-[#a3a3a3] hover:text-[#171717] transition-colors"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => setDiscardModalOpen(false)}
+                className="rounded-lg border border-[#111111] bg-white px-3.5 py-2 text-[12.5px] font-medium text-[#111111] hover:bg-[#f5f5f4] transition-colors"
+              >
+                Continue edit
+              </button>
+              <button
+                type="button"
+                onClick={discardLineChanges}
+                className="rounded-lg bg-rose-600 px-4 py-2 text-[12.5px] font-semibold text-white hover:bg-rose-700 transition-colors shadow-xs"
+              >
+                Discard
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </PortalScroll>
   );

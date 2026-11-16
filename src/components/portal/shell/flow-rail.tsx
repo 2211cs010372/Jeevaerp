@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Icon, type IconName } from "@/components/portal/ui/icons";
+import { SvgArrow } from "@/components/portal/ui/svg-arrow";
 
 /**
  * THE FLOW RAIL
@@ -102,7 +103,11 @@ export function FlowRail({ counts }: { counts: FlowCounts }) {
                 </span>
 
                 {/* the arrow that says "and then…" - hidden on the last one */}
-                {i < steps.length - 1 && <span className="flow-step__arrow" aria-hidden>→</span>}
+                {i < steps.length - 1 && (
+                  <span className="flow-step__arrow" aria-hidden>
+                    <SvgArrow size={12} className="opacity-75 transition-all group-hover:translate-x-0.5 group-hover:opacity-100" />
+                  </span>
+                )}
               </Link>
             ))}
           </div>

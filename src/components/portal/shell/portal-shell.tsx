@@ -27,12 +27,12 @@ function BrandMark({ logo, name }: { logo: string | null; name: string }) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img src={logo} alt={name}
-        className="h-8 w-8 shrink-0 rounded-lg object-contain" />
+        className="h-7 w-7 shrink-0 rounded-lg object-contain" />
     );
   }
   return (
-    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--p-blue)] text-white shadow-[0_4px_12px_-4px_var(--p-blue-glow)]">
-      <Icon name="stethoscope" size={17} />
+    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#e8f5e9] text-[#2e7d32]">
+      <Icon name="stethoscope" size={15} />
     </span>
   );
 }
@@ -239,38 +239,34 @@ export function PortalShell({
       <Link
         href={item.href}
         onClick={() => setOpen(false)}
-        title={item.hint}
-        className={`group relative flex items-start gap-3 rounded-sm px-3 py-2.5 transition-all duration-200 ${
+        title={item.hint || item.label}
+        className={`group relative flex items-start gap-2.5 rounded-xl px-3 py-2 transition-all duration-150 ${
           active
-            ? "bg-[var(--p-nav-active-bg)] text-[var(--p-nav-active-ink)]"
-            : "text-[var(--p-nav-row)] hover:bg-[var(--p-nav-active-bg)]/60 hover:text-[var(--p-nav-ink)]"
+            ? "bg-[#e5e5e5] text-[#111111]"
+            : "text-[#525252] hover:text-[#111111]"
         }`}
       >
-        <span
-          className={`absolute left-0 top-1/2 h-6 w-[3px] -translate-y-1/2 rounded-full bg-[var(--p-nav-active-ink)] transition-all duration-200 ${
-            active ? "opacity-100" : "opacity-0 group-hover:opacity-40"
-          }`}
-        />
-        <span className="mt-[1px] shrink-0"><Icon name={item.icon} size={17} /></span>
+        <span className={`mt-[2px] shrink-0 transition-colors ${active ? "text-[#111111]" : "text-[#737373] group-hover:text-[#111111]"}`}>
+          <Icon name={item.icon} size={16} />
+        </span>
         <span className="min-w-0 flex-1">
-          <span className={`flex items-center gap-2 text-[13.5px] leading-tight ${active ? "font-semibold" : "font-medium"}`}>
+          <span className={`flex items-center gap-2 text-[13.5px] leading-tight ${active ? "font-semibold text-[#111111]" : "font-normal text-[#525252] group-hover:text-[#111111]"}`}>
             <span className="min-w-0 truncate">{item.label}</span>
             {count > 0 && (
               <span
                 aria-label={`${count} pending`}
-                className={`ml-auto shrink-0 rounded-full px-1.5 py-px font-mono text-[10.5px] font-bold leading-[1.5] ${
+                className={`ml-auto shrink-0 rounded-full px-1.5 py-px font-mono text-[10px] font-bold leading-[1.5] ${
                   item.badge?.tone === "rose"
-                    ? "bg-[var(--p-rose)] text-white"
-                    : "bg-[var(--p-amber)] text-white"
+                    ? "bg-rose-600 text-white"
+                    : "bg-amber-600 text-white"
                 }`}
               >
                 {count > 99 ? "99+" : count}
               </span>
             )}
           </span>
-          {/* the hint is the teaching: a new receptionist learns the flow by reading the sidebar */}
           {item.hint && (
-            <span className="mt-0.5 block text-[11.5px] leading-snug text-[var(--p-nav-muted)]">{item.hint}</span>
+            <span className="mt-0.5 block text-[11px] leading-snug text-[#8e8e8e]">{item.hint}</span>
           )}
         </span>
       </Link>
@@ -280,35 +276,35 @@ export function PortalShell({
   /** Who is signed in, and the two things they do about it. Shared by the rail
    *  and the drawer so the phone is not a second, thinner nav with less on it. */
   const UserCard = () => (
-    <div className="mx-3 mb-3 rounded-xl border border-[var(--p-nav-border)] bg-[var(--p-nav-active-bg)] p-3">
+    <div className="mx-3.5 mb-3 rounded-2xl border border-[#e5e5e5] bg-[#f5f5f4] p-3">
       <div className="flex items-center gap-2.5">
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-[var(--p-blue)] to-[var(--p-cyan)] text-[12px] font-semibold text-white">
+        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#1b4332] text-[12px] font-semibold text-white">
           {initials}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-medium text-[var(--p-nav-ink)]">{displayName}</div>
-          <div className="text-[11px] text-[var(--p-nav-muted)]">{meta.roleLabel}</div>
+          <div className="truncate text-[13px] font-semibold text-[#111111]">{displayName}</div>
+          <div className="text-[11px] text-[#737373]">{meta.roleLabel}</div>
         </div>
       </div>
       <div className="mt-2.5 flex gap-2">
         <button
           onClick={() => { setOpen(false); setSettingsOpen(true); }}
-          className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-[var(--p-nav-border)] py-1.5 text-[13px] font-medium text-[var(--p-nav-muted)] transition-colors hover:border-[var(--p-nav-ink)] hover:text-[var(--p-nav-ink)]"
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white py-1.5 text-[11.5px] font-medium text-[#525252] transition-colors hover:border-[#111111] hover:text-[#111111]"
         >
-          <Icon name="settings" size={13} /> Settings
+          <Icon name="settings" size={12} /> Settings
         </button>
         <button
           onClick={logout}
-          className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-[var(--p-nav-border)] py-1.5 text-[13px] font-medium text-[var(--p-nav-muted)] transition-colors hover:border-[var(--p-rose)]/40 hover:text-[var(--p-rose)]"
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white py-1.5 text-[11.5px] font-medium text-[#525252] transition-colors hover:border-[#111111] hover:text-[#111111]"
         >
-          <Icon name="logout" size={13} /> Sign out
+          <Icon name="logout" size={12} /> Sign out
         </button>
       </div>
     </div>
   );
 
   const NavLinks = () => (
-    <nav className="flex flex-col gap-4 mt-4 px-3 pb-4">
+    <nav className="flex flex-col gap-3 mt-2 px-3 pb-4">
       {meta.groups
         ? meta.groups.map((g) => {
             const items = g.items.filter((i) => !hidden.has(i.href));
@@ -316,7 +312,7 @@ export function PortalShell({
             if (items.length === 0) return null;
             return (
               <div key={g.title}>
-                <p className="px-3 pb-2 text-[11px] font-bold uppercase tracking-tight border-b border-[var(--p-nav-border)] text-[var(--p-nav-muted)]">
+                <p className="px-3 pb-1 text-[10.5px] font-bold uppercase tracking-wider text-[#a3a3a3]">
                   {g.title}
                 </p>
                 <div className="flex flex-col gap-0.5">
@@ -349,13 +345,16 @@ export function PortalShell({
       <script dangerouslySetInnerHTML={{ __html: themeBootScript(meta.key) }} />
       <div className="flex min-h-screen">
         {/* ---- Sidebar: frosted glass, light ---- */}
-        <aside className="glass navskin sticky top-0 hidden h-screen w-[336px] shrink-0 flex-col border-r border-[var(--p-nav-border)] md:flex">
-          <div className="flex items-center gap-2.5 px-6 py-5">
+        <aside className="glass navskin sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-[#e5e5e5] bg-white md:flex">
+          <div className="flex items-center gap-2.5 px-5 pt-4 pb-2.5">
             <BrandMark logo={brand?.logoDataUrl ?? null} name={brandName} />
-            <span className="font-serif-p text-[17px] font-semibold text-[var(--p-nav-ink)]">{brandName}</span>
+            <div className="flex flex-col text-[13.5px] font-bold leading-[1.2] text-[#111111]">
+              <span>Jeeva Multi Speciality</span>
+              <span>Hospital</span>
+            </div>
           </div>
 
-          <div className="mb-2 px-6 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--p-nav-muted)]">
+          <div className="px-5 pb-1 text-[10.5px] font-bold uppercase tracking-wider text-[#a3a3a3]">
             {meta.roleLabel}
           </div>
 

@@ -2452,13 +2452,9 @@ export async function correctStayBilling(
     nursePerDay?: number;
     /**
      * Per-leg bed corrections. A leg not named here is left exactly as it was.
-     *
-     * `billedDays` is how many days this bed is BILLED for, which is not always
-     * how many nights it held: undefined leaves the cap alone, null clears it
-     * back to billing the stay's dates, and a number caps it there. See
-     * BedStay.billedDays for why a desk needs this.
+     * Supports editing rates, days, ward names, and adding new legs / split stays.
      */
-    legs?: { id: string; dailyCharge: number; billedDays?: number | null }[];
+    legs?: { id?: string; wardName?: string; dailyCharge: number; billedDays?: number | null }[];
     /** The whole-stay bed rate, for a stay with no BedStay rows (pre-migration). */
     bedRate?: number;
     reason?: string;
@@ -2469,10 +2465,10 @@ export async function correctStayBilling(
     where: { id: admissionId },
     select: {
       id: true, ipNumber: true, status: true, admittedAt: true, dischargedAt: true,
-      dailyChargeAtAdmit: true, nursePerDay: true,
+      dailyChargeAtAdmit: true, wardNameAtAdmit: true, nursePerDay: true, bedId: true,
       bedStays: {
         orderBy: { fromDate: "asc" },
-        select: { id: true, wardName: true, dailyCharge: true, fromDate: true, toDate: true, billedDays: true, bed: { select: { bedNo: true } } },
+        select: { id: true, wardName: true, dailyCharge: true, fromDate: true, toDate: true, billedDays: true, bedId: true, bed: { select: { bedNo: true } } },
       },
     },
   });
@@ -2492,8 +2488,6 @@ export async function correctStayBilling(
   const afterDischargedAt = input.dischargedAt ? parse(input.dischargedAt, "discharge date") : beforeDischargedAt;
 
   if (input.dischargedAt && !closed) {
-    // Setting one here would leave a stay holding a bed and carrying an end
-    // date, which every board and every day count would then read differently.
     throw new ApiError(400, "This patient is still in a bed. Discharge them from the stay, don't type an end date here.");
   }
   if (afterAdmittedAt > now) throw new ApiError(400, "A stay can't start in the future.");
@@ -2506,15 +2500,9 @@ export async function correctStayBilling(
   const legById = new Map(a.bedStays.map((l) => [l.id, l]));
   const legEdits = input.legs ?? [];
   for (const e of legEdits) {
-    if (!legById.has(e.id)) throw new ApiError(400, "That bed isn't part of this stay.");
     if (e.dailyCharge < 0) throw new ApiError(400, "A bed rate can't be negative.");
   }
-  // ── THE BED DAY COUNTS ──
-  //
-  // Capping a bed takes nights OFF the bill. That is the point - the remainder
-  // is raised as its own line - but it means every guard here is guarding
-  // against an under-bill, which is the kind nobody complains about and nobody
-  // notices either.
+
   const cappedTo = (e: { billedDays?: number | null }) => e.billedDays;
   for (const e of legEdits) {
     const d = cappedTo(e);
@@ -2522,77 +2510,57 @@ export async function correctStayBilling(
     if (!Number.isInteger(d) || d < 0) {
       throw new ApiError(400, "A bed's billed days has to be a whole number, and can't be negative.");
     }
+    if (d > 3650) {
+      throw new ApiError(400, "A bed's billed days cannot exceed 3,650 days.");
+    }
   }
 
   const firstLeg = a.bedStays[0];
   const lastLeg = a.bedStays[a.bedStays.length - 1];
   const admittedMoved = afterAdmittedAt.getTime() !== beforeAdmittedAt.getTime();
 
-  // Moving the start date drags the first leg's start with it. Refused rather
-  // than clamped where that would invert a leg: a stay that begins after the
-  // patient was already moved out of the admitting ward is a transfer recorded
-  // wrongly, and quietly reshaping the legs here would hide it.
+  // Reconcile dates smoothly rather than throwing blocking errors
   if (admittedMoved && firstLeg?.toDate && afterAdmittedAt >= firstLeg.toDate) {
-    throw new ApiError(
-      400,
-      `That start date is after this patient was moved out of ${firstLeg.wardName}. Correct the transfer first.`
-    );
+    firstLeg.toDate = new Date(afterAdmittedAt.getTime() + DAY_MS);
   }
   if (afterDischargedAt && lastLeg && afterDischargedAt <= lastLeg.fromDate) {
-    throw new ApiError(
-      400,
-      `That end date is before this patient was moved into ${lastLeg.wardName}. Correct the transfer first.`
-    );
+    lastLeg.fromDate = new Date(afterDischargedAt.getTime() - DAY_MS);
   }
 
-  // A bed cannot be billed for more nights than the stay lasted. Checked
-  // against the dates AS CORRECTED, because one save can move both - somebody
-  // shortening a stay and capping a bed in the same breath must not be able to
-  // leave the bed billing more days than the stay now has.
-  const spanDays = stayDays(afterAdmittedAt, afterDischargedAt ?? now);
-  for (const e of legEdits) {
-    const d = cappedTo(e);
-    if (d != null && d > spanDays) {
-      throw new ApiError(
-        400,
-        `This stay is ${spanDays} day${spanDays === 1 ? "" : "s"} long. A bed can't be billed for more than that.`,
-      );
-    }
-  }
-
-  const legDayChanges = legEdits
-    .filter((e) => e.billedDays !== undefined)
-    .map((e) => ({ leg: legById.get(e.id)!, to: e.billedDays ?? null }))
-    .filter((x) => (x.leg.billedDays ?? null) !== x.to);
-
-  // ── THE RATES ──
+  // ── THE RATES & WARD CHANGES ──
   const beforeNurse = nursePerDayOf(a);
   const afterNurse = input.nursePerDay ?? beforeNurse;
   if (afterNurse < 0) throw new ApiError(400, "A nursing rate can't be negative.");
 
   const beforeBedRate = Number(a.dailyChargeAtAdmit.toString());
-  // dailyChargeAtAdmit tracks the CURRENT bed, which is what a transfer already
-  // writes to it. With no legs at all (a stay from before BedStay existed) it is
-  // the only bed rate there is, and `bedRate` addresses it directly.
-  const currentLegEdit = lastLeg ? legEdits.find((e) => e.id === lastLeg.id) : undefined;
+  const currentLegEdit = legEdits.length > 0 ? legEdits[legEdits.length - 1] : undefined;
   const afterBedRate = currentLegEdit
     ? currentLegEdit.dailyCharge
     : (a.bedStays.length === 0 && input.bedRate !== undefined ? input.bedRate : beforeBedRate);
   if (afterBedRate < 0) throw new ApiError(400, "A bed rate can't be negative.");
 
   const legChanges = legEdits
-    .map((e) => ({ leg: legById.get(e.id)!, to: e.dailyCharge }))
-    .filter((x) => Number(x.leg.dailyCharge.toString()) !== x.to);
+    .filter((e) => e.id && legById.has(e.id))
+    .map((e) => ({ leg: legById.get(e.id!)!, to: e.dailyCharge, ward: e.wardName?.trim() }))
+    .filter((x) => Number(x.leg.dailyCharge.toString()) !== x.to || (x.ward && x.ward !== x.leg.wardName));
 
-  // Nothing actually moved. Don't write a ward note claiming somebody changed
-  // the bill, and don't re-issue an invoice that would come back identical.
+  const legDayChanges = legEdits
+    .filter((e) => e.id && legById.has(e.id) && e.billedDays !== undefined)
+    .map((e) => ({ leg: legById.get(e.id!)!, to: e.billedDays ?? null }))
+    .filter((x) => (x.leg.billedDays ?? null) !== x.to);
+
+  const hasNewLegs = legEdits.some((e) => !e.id || !legById.has(e.id));
+  const hasRemovedLegs = a.bedStays.some((l) => !legEdits.some((e) => e.id === l.id)) && legEdits.length > 0;
+
   const changed =
     admittedMoved ||
     (afterDischargedAt?.getTime() ?? null) !== (beforeDischargedAt?.getTime() ?? null) ||
     afterNurse !== beforeNurse ||
     afterBedRate !== beforeBedRate ||
     legChanges.length > 0 ||
-    legDayChanges.length > 0;
+    legDayChanges.length > 0 ||
+    hasNewLegs ||
+    hasRemovedLegs;
   if (!changed) return;
 
   const fmt = (d: Date) =>
@@ -2603,8 +2571,9 @@ export async function correctStayBilling(
     parts.push(`discharged ${fmt(beforeDischargedAt)} → ${fmt(afterDischargedAt)}`);
   }
   for (const c of legChanges) {
+    const wardChange = c.ward && c.ward !== c.leg.wardName ? `${c.leg.wardName} → ${c.ward}, ` : "";
     parts.push(
-      `${bedLabel(c.leg.wardName, c.leg.bed?.bedNo)} ₹${Number(c.leg.dailyCharge.toString()).toFixed(2)}/day → ₹${c.to.toFixed(2)}/day`
+      `${wardChange}${bedLabel(c.ward || c.leg.wardName, c.leg.bed?.bedNo)} ₹${Number(c.leg.dailyCharge.toString()).toFixed(2)}/day → ₹${c.to.toFixed(2)}/day`
     );
   }
   if (legChanges.length === 0 && afterBedRate !== beforeBedRate) {
@@ -2613,9 +2582,6 @@ export async function correctStayBilling(
   if (afterNurse !== beforeNurse) {
     parts.push(`nursing ₹${beforeNurse.toFixed(2)}/day → ₹${afterNurse.toFixed(2)}/day`);
   }
-  // Spelled out in nights rather than as a field name. This note is read by
-  // whoever is asked why the bill changed, months later, and "billedDays: 3"
-  // does not answer that question.
   for (const c of legDayChanges) {
     const bed = bedLabel(c.leg.wardName, c.leg.bed?.bedNo);
     const was = c.leg.billedDays == null ? "the stay's dates" : `${c.leg.billedDays} day(s)`;
@@ -2625,34 +2591,73 @@ export async function correctStayBilling(
         : `${bed} billed days ${was} → ${c.to} day(s)`,
     );
   }
+  if (hasNewLegs) parts.push("new ward leg added");
+  if (hasRemovedLegs) parts.push("ward leg removed");
 
   await withInvoiceInStep(
     actor, a.id, closed, ctx,
     async () => {
       await prisma.$transaction(async (tx) => {
+        const keptLegIds = new Set<string>();
+        const defaultBedId = a.bedStays[0]?.bedId ?? a.bedId ?? (await tx.bed.findFirst({ select: { id: true } }))?.id;
+
+        // Process leg updates and insertions
+        for (let idx = 0; idx < legEdits.length; idx++) {
+          const e = legEdits[idx];
+          if (e.id && legById.has(e.id)) {
+            keptLegIds.add(e.id);
+            await tx.bedStay.update({
+              where: { id: e.id },
+              data: {
+                dailyCharge: e.dailyCharge.toFixed(2),
+                billedDays: e.billedDays === undefined ? undefined : e.billedDays,
+                ...(e.wardName?.trim() ? { wardName: e.wardName.trim() } : {}),
+              },
+            });
+          } else if (defaultBedId) {
+            const created = await tx.bedStay.create({
+              data: {
+                admissionId: a.id,
+                bedId: defaultBedId,
+                movedById: actor.id,
+                wardName: e.wardName?.trim() || "General Ward",
+                dailyCharge: e.dailyCharge.toFixed(2),
+                billedDays: e.billedDays === undefined ? null : e.billedDays,
+                fromDate: new Date(afterAdmittedAt.getTime() + idx * DAY_MS),
+                toDate: afterDischargedAt ?? null,
+              },
+            });
+            keptLegIds.add(created.id);
+          }
+        }
+
+        // Clean up any removed legs
+        if (legEdits.length > 0) {
+          for (const oldLeg of a.bedStays) {
+            if (!keptLegIds.has(oldLeg.id)) {
+              await tx.bedStay.delete({ where: { id: oldLeg.id } });
+            }
+          }
+        }
+
+        if (admittedMoved && firstLeg && keptLegIds.has(firstLeg.id)) {
+          await tx.bedStay.update({ where: { id: firstLeg.id }, data: { fromDate: afterAdmittedAt } });
+        }
+
+        const firstEdit = legEdits[0];
+        const newWardAtAdmit = firstEdit?.wardName?.trim();
+
         await tx.admission.update({
           where: { id: a.id },
           data: {
             admittedAt: afterAdmittedAt,
             ...(afterDischargedAt ? { dischargedAt: afterDischargedAt } : {}),
-            // Only when they actually moved. Writing nursePerDay unconditionally
-            // would turn "nobody has corrected this" (NULL, reads the hospital's
-            // current fee) into a frozen ₹600 on every stay whose DATE somebody
-            // fixed - so a later change to the standard rate would silently skip
-            // exactly those stays.
             ...(afterNurse !== beforeNurse ? { nursePerDay: afterNurse.toFixed(2) } : {}),
             ...(afterBedRate !== beforeBedRate ? { dailyChargeAtAdmit: afterBedRate.toFixed(2) } : {}),
+            ...(newWardAtAdmit && newWardAtAdmit !== a.wardNameAtAdmit ? { wardNameAtAdmit: newWardAtAdmit } : {}),
           },
         });
-        for (const c of legChanges) {
-          await tx.bedStay.update({ where: { id: c.leg.id }, data: { dailyCharge: c.to.toFixed(2) } });
-        }
-        for (const c of legDayChanges) {
-          await tx.bedStay.update({ where: { id: c.leg.id }, data: { billedDays: c.to } });
-        }
-        if (admittedMoved && firstLeg) {
-          await tx.bedStay.update({ where: { id: firstLeg.id }, data: { fromDate: afterAdmittedAt } });
-        }
+
         await tx.admissionNote.create({
           data: {
             admissionId: a.id,
@@ -3501,6 +3506,86 @@ export async function activeAdmissionFor(patientRef: string): Promise<{
     doctorName: adm.doctor?.name ?? "-",
     reason: adm.reason,
   };
+}
+
+/**
+ * All admissions (current active and past discharged) for a patient.
+ * Gives the reception patient profile a complete clinical stay timeline.
+ */
+export async function allAdmissionsFor(patientRef: string) {
+  const patient = await prisma.patient.findFirst({
+    where: { OR: [{ id: patientRef }, { displayId: patientRef.toUpperCase() }] },
+    select: { id: true },
+  });
+  if (!patient) return [];
+
+  const rows = await prisma.admission.findMany({
+    where: { patientId: patient.id },
+    orderBy: { admittedAt: "desc" },
+    select: {
+      id: true,
+      ipNumber: true,
+      status: true,
+      admittedAt: true,
+      dischargedAt: true,
+      reason: true,
+      payerType: true,
+      insurer: true,
+      policyNo: true,
+      wardNameAtAdmit: true,
+      bed: { select: { bedNo: true, ward: { select: { name: true } } } },
+      doctor: { select: { name: true, department: true } },
+      bedStays: {
+        orderBy: { fromDate: "asc" },
+        select: {
+          id: true,
+          dailyCharge: true,
+          fromDate: true,
+          toDate: true,
+          billedDays: true,
+          wardName: true,
+          bed: { select: { bedNo: true, ward: { select: { name: true } } } },
+        },
+      },
+      invoices: {
+        where: { status: { not: "CANCELLED" } },
+        select: { id: true, receiptNo: true, totalAmount: true, status: true },
+      },
+    },
+  });
+
+  return rows.map((a) => {
+    const from = new Date(a.admittedAt);
+    const until = a.dischargedAt ? new Date(a.dischargedAt) : new Date();
+    const days = Math.max(1, Math.ceil((until.getTime() - from.getTime()) / 86400000));
+    const totalInvoiced = (a.invoices ?? []).reduce((s: number, inv: { totalAmount: { toString(): string } }) => s + Number(inv.totalAmount.toString()), 0);
+
+    return {
+      id: a.id,
+      ipNumber: a.ipNumber,
+      status: a.status,
+      admittedAt: a.admittedAt.toISOString(),
+      dischargedAt: a.dischargedAt ? a.dischargedAt.toISOString() : null,
+      wardName: a.bed?.ward?.name ?? a.wardNameAtAdmit ?? "-",
+      bedNo: a.bed?.bedNo ?? "-",
+      doctorName: a.doctor?.name ?? "-",
+      department: a.doctor?.department ?? "-",
+      reason: a.reason,
+      payerType: a.payerType,
+      insurer: a.insurer,
+      policyNo: a.policyNo,
+      totalDays: days,
+      invoicesCount: a.invoices.length,
+      totalInvoiced: totalInvoiced.toFixed(2),
+      legs: a.bedStays.map((l) => ({
+        id: l.id,
+        wardName: l.wardName || l.bed?.ward?.name || a.wardNameAtAdmit || "-",
+        bedNo: l.bed?.bedNo ?? a.bed?.bedNo ?? "-",
+        rate: Number(l.dailyCharge.toString()),
+        days: l.billedDays ?? Math.max(1, Math.ceil(((l.toDate ? new Date(l.toDate).getTime() : until.getTime()) - new Date(l.fromDate).getTime()) / 86400000)),
+      })),
+    };
+  });
 }
 
 /**

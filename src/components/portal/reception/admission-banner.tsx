@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/portal/ui/icons";
+import { SvgArrow } from "@/components/portal/ui/svg-arrow";
 import { api } from "@/lib/api-client";
 import { bedLabel } from "@/lib/beds";
 
@@ -112,8 +113,9 @@ export function AdmissionBanner({
           </div>
         </div>
         <Link href={`/ipd/${admission.id}`}
-          className="shrink-0 rounded-lg bg-white/20 px-3 py-1.5 text-[12px] font-semibold text-white backdrop-blur-sm transition-colors hover:bg-white/30">
-          Open sheet →
+          className="group inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white/20 px-3 py-1.5 text-[12px] font-semibold text-white backdrop-blur-sm transition-colors hover:bg-white/30">
+          <span>Open sheet</span>
+          <SvgArrow size={12} className="transition-transform group-hover:translate-x-0.5" />
         </Link>
       </div>
 

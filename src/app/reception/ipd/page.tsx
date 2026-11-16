@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Icon } from "@/components/portal/ui/icons";
+import { SvgArrow } from "@/components/portal/ui/svg-arrow";
 import { Req, Spinner } from "@/components/portal/ui/form-atoms";
 import { PortalScroll } from "@/components/portal/portal-scroll";
 import { api, ApiClientError } from "@/lib/api-client";
@@ -72,41 +73,46 @@ function PatientFromUrl({ onFound }: { onFound: (p: Patient) => void }) {
 }
 
 /**
- * A bed, drawn as a bed.
- *
- * A coloured square tells you nothing at a glance; a made bed vs. a bed with
- * someone in it does. Occupied beds get a blanket, a pillow dent and a head -
- * so the board reads as a ward from across the room, which is how a receptionist
- * actually uses it.
+ * BedIllustration: Vector SVG representation of the bed.
+ * Shows an occupied bed with patient blanket and pillow,
+ * an empty cleanly made bed with invitation to admit,
+ * or an out-of-service bed with maintenance stripe.
  */
-function BedGlyph({ status }: { status: string }) {
-  const occupied = status === "OCCUPIED";
-  const maint = status === "MAINTENANCE";
+function BedIllustration({ status }: { status: string }) {
+  const isOccupied = status === "OCCUPIED";
+  const isMaint = status === "MAINTENANCE";
+
   return (
-    <svg viewBox="0 0 76 46" className="bed-svg" role="img" aria-label={occupied ? "Occupied bed" : maint ? "Bed out of service" : "Empty bed"}>
-      {/* legs */}
-      <rect className="bd-frame" x="7" y="36" width="3.5" height="8" rx="1.75" />
-      <rect className="bd-frame" x="65" y="36" width="3.5" height="8" rx="1.75" />
-      {/* headboard + footboard */}
-      <rect className="bd-frame" x="5" y="9" width="5.5" height="29" rx="2.75" />
-      <rect className="bd-frame" x="64.5" y="22" width="5.5" height="16" rx="2.75" />
-      {/* mattress */}
-      <rect className="bd-mattress" x="9" y="25" width="56" height="11" rx="3.5" />
-      {/* pillow */}
-      <rect className="bd-pillow" x="12" y="16" width="17" height="9.5" rx="4.5" />
+    <svg viewBox="0 0 88 44" className="bed-vector" role="img" aria-hidden="true">
+      {/* Bed Base & Legs */}
+      <rect x="8" y="34" width="3.5" height="7" rx="1.5" className="bv-frame" />
+      <rect x="76.5" y="34" width="3.5" height="7" rx="1.5" className="bv-frame" />
+      
+      {/* Headboard (taller) & Footboard */}
+      <rect x="6" y="10" width="5.5" height="28" rx="2.5" className="bv-frame" />
+      <rect x="76.5" y="22" width="5.5" height="16" rx="2.5" className="bv-frame" />
+      
+      {/* Mattress */}
+      <rect x="10" y="24" width="67" height="11" rx="3" className="bv-mattress" />
+      
+      {/* Pillow */}
+      <rect x="14" y="16" width="18" height="9" rx="3.5" className="bv-pillow" />
 
-      {occupied && (
+      {isOccupied ? (
         <>
-          {/* blanket, drawn over the mattress */}
-          <path className="bd-blanket" d="M31 25h29a4.5 4.5 0 0 1 4.5 4.5v2A4.5 4.5 0 0 1 60 36H31z" />
-          {/* knees */}
-          <path className="bd-blanket" d="M45 25.4c3.4-5.6 10-5.6 13.2 0z" />
-          {/* head on the pillow */}
-          <circle className="bd-head" cx="22" cy="19" r="5.2" />
+          {/* Blanket drawn over occupant */}
+          <path d="M32 24h43a3 3 0 0 1 3 3v2a3 3 0 0 1-3 3H32z" className="bv-blanket" />
+          {/* Knee rise under blanket */}
+          <path d="M48 24.2c3.2-5 9.5-5 12.8 0z" className="bv-blanket" />
+          {/* Head resting on pillow */}
+          <circle cx="23" cy="18.5" r="4.8" className="bv-head" />
         </>
+      ) : isMaint ? (
+        <line x1="20" y1="12" x2="68" y2="36" stroke="#a3a3a3" strokeWidth="2.5" strokeLinecap="round" opacity="0.6" />
+      ) : (
+        /* Empty bed sheet crease / neat fold line */
+        <path d="M34 26.5h38" stroke="#10b981" strokeWidth="1.2" strokeDasharray="3 3" opacity="0.6" />
       )}
-
-      {maint && <line className="bd-slash" x1="18" y1="12" x2="58" y2="38" />}
     </svg>
   );
 }
@@ -234,20 +240,34 @@ export default function BedBoardPage() {
         <PatientFromUrl onFound={(p) => { setPatient(p); setPq(""); }} />
       </Suspense>
 
-      <div data-rise className="surface dotgrid mb-5 flex flex-wrap items-center justify-between gap-4 px-6 py-5">
-        <div>
-          <h1 className="font-serif-p text-[22px] font-semibold text-[var(--p-ink)]">IP desk - inpatients &amp; beds</h1>
-          <p className="mt-1 text-[14px] text-[var(--p-muted)]">
-            Every bed in the hospital. Tap an <b className="text-[var(--p-ink)]">empty</b> bed to pick it, or an
-            <b className="text-[var(--p-ink)]"> occupied</b> one to see who&apos;s in it.
-          </p>
+      {/* ---- Studio Header & Tab Bar (ElevenLabs Light Studio) ---- */}
+      <div data-rise className="mb-5 overflow-hidden rounded-2xl border border-[#e5e5e5] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
+        <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2 text-[12px] font-medium text-[#737373]">
+              <span>Front desk</span>
+              <span className="text-[#d4d4d4]">/</span>
+              <span className="text-[#111111]">Admissions</span>
+            </div>
+            <h1 className="text-[22px] font-semibold tracking-tight text-[#111111]">Inpatients &amp; beds</h1>
+          </div>
+          <Link href="/ipd/inpatients" className="btn-primary group inline-flex items-center gap-2 rounded-[10px] px-4 py-2 text-[13px] font-medium text-white transition-all">
+            <Icon name="bed" size={14} />
+            <span>Inpatients &amp; discharge</span>
+            <SvgArrow size={13} className="transition-transform group-hover:translate-x-0.5" />
+          </Link>
         </div>
-        <Link href="/ipd/inpatients" className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-blue)] hover:text-[var(--p-blue)]">
-          <Icon name="bed" size={15} /> Inpatients &amp; discharge
-        </Link>
+
+        <div className="flex items-center justify-between border-t border-[#ececec] px-6">
+          <nav className="flex items-center gap-6 text-[13px]" aria-label="IPD sections">
+            <span className="border-b-2 border-[#111111] py-2.5 font-medium text-[#111111] whitespace-nowrap">Bed board</span>
+            <Link href="/ipd/inpatients" className="border-b-2 border-transparent py-2.5 font-medium text-[#737373] transition-colors hover:text-[#111111] whitespace-nowrap">Inpatients list</Link>
+            <Link href="/" className="border-b-2 border-transparent py-2.5 font-medium text-[#737373] transition-colors hover:text-[#111111] whitespace-nowrap">Today</Link>
+          </nav>
+        </div>
       </div>
 
-      <div data-rise className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div data-rise className="mb-5 grid grid-cols-2 gap-3.5 lg:grid-cols-4">
         <Stat label="Total beds" value={board?.summary.total ?? 0} tone="ink" />
         <Stat label="Empty" value={board?.summary.available ?? 0} tone="ok" />
         <Stat label="Occupied" value={board?.summary.occupied ?? 0} tone="busy" />
@@ -255,39 +275,39 @@ export default function BedBoardPage() {
       </div>
 
       {flash && (
-        <div data-rise className="mb-4 flex items-center justify-between rounded-lg border border-[var(--p-cyan)]/30 bg-[var(--p-cyan-soft)] px-4 py-1.5 text-[14px] font-medium text-[var(--p-cyan-deep)]">
+        <div data-rise className="mb-4 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-[13.5px] font-medium text-emerald-800">
           <span className="flex items-center gap-2"><Icon name="check" size={15} /> {flash}</span>
-          <button onClick={() => setFlash(null)}>✕</button>
+          <button onClick={() => setFlash(null)} className="text-emerald-600 hover:text-emerald-900">✕</button>
         </div>
       )}
-      {error && <div data-rise className="mb-4 rounded-lg border border-[var(--p-rose)]/25 bg-[var(--p-rose-soft)] px-4 py-3 text-[14px] text-[var(--p-rose)]">{error}</div>}
+      {error && <div data-rise className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13.5px] text-rose-700">{error}</div>}
 
-      <div className="grid gap-5 xl:grid-cols-[1fr_380px]">
+      <div className="grid items-start gap-5 xl:grid-cols-[1fr_380px]">
         {/* ───────── BED BOARD ───────── */}
-        <section data-rise className="surface overflow-hidden">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--p-border)] px-6 py-4">
-            <div>
-              <h2 className="text-[14px] font-semibold text-[var(--p-ink)]">Ward &amp; bed board</h2>
-              <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">
-                Live. Discharging frees the bed for the next admission immediately.
-              </p>
+        <section data-rise className="overflow-hidden rounded-2xl border border-[#e5e5e5] bg-[#f5f5f4] p-1.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-6 w-6 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#111111]">
+                <Icon name="bed" size={13} />
+              </span>
+              <h2 className="text-[13.5px] font-semibold text-[#111111]">Ward &amp; bed board</h2>
             </div>
             <div className="flex items-center gap-2">
-              <div className="relative w-full max-w-xs">
+              <div className="relative w-full min-w-[220px] max-w-xs">
                 <input
                   type="text"
                   value={bedFilter}
                   onChange={(e) => setBedFilter(e.target.value)}
-                  placeholder="Search bed by mobile, IP, OP, name…"
-                  className="w-full rounded-lg border border-[var(--p-border)] bg-white py-1.5 pl-8 pr-7 text-[13px] text-[var(--p-ink)] outline-none focus:border-[var(--p-blue)]"
+                  placeholder="Search bed, IP, name, phone…"
+                  className="w-full rounded-[10px] border border-[#e5e5e5] bg-white py-1.5 pl-8 pr-7 text-[12.5px] text-[#111111] outline-none focus:border-[#111111]"
                 />
-                <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--p-muted)]">
-                  <Icon name="search" size={14} />
+                <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[#737373]">
+                  <Icon name="search" size={13} />
                 </span>
                 {bedFilter && (
                   <button
                     onClick={() => setBedFilter("")}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 px-1 text-xs text-[var(--p-muted)] hover:text-[var(--p-ink)]"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 px-1 text-xs text-[#737373] hover:text-[#111111]"
                   >
                     ✕
                   </button>
@@ -296,118 +316,234 @@ export default function BedBoardPage() {
               {bedFilter && (
                 <Link
                   href={`/ipd/inpatients?q=${encodeURIComponent(bedFilter)}`}
-                  className="shrink-0 rounded-lg border border-[var(--p-border)] bg-white px-2.5 py-1.5 text-[12px] font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]"
+                  className="group inline-flex shrink-0 items-center gap-1.5 rounded-[10px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-[12px] font-medium text-[#111111] hover:border-[#d4d4d4]"
                   title="Search this query in Inpatients list"
                 >
-                  Inpatients list →
+                  <span>Inpatients list</span>
+                  <SvgArrow size={12} className="transition-transform group-hover:translate-x-0.5" />
                 </Link>
               )}
             </div>
           </div>
 
+          <div className="rounded-xl border border-[#e5e5e5] bg-[#fafafa] p-4">
           {loading ? (
-            <div className="flex items-center justify-center gap-2 py-24 text-[14px] text-[var(--p-muted)]"><Spinner /> Loading…</div>
+            <div className="flex items-center justify-center gap-2 py-24 text-[14px] text-[#737373]"><Spinner /> Loading wards…</div>
           ) : !board?.wards.length ? (
             <div className="flex flex-col items-center px-6 py-20 text-center">
-              <span className="grid h-12 w-12 place-items-center rounded-full border border-[var(--p-border)] text-[var(--p-muted)]"><Icon name="bed" size={20} /></span>
-              <p className="mt-3 text-[14px] font-semibold text-[var(--p-ink)]">No wards yet.</p>
-              <p className="mt-1 max-w-sm text-[13px] leading-relaxed text-[var(--p-muted)]">
-                An admin creates them under <b>Wards &amp; beds</b> - there&apos;s a one-click standard layout there.
-                (Or run <span className="font-mono">npx prisma db seed</span>.)
+              <span className="grid h-12 w-12 place-items-center rounded-full border border-[#e5e5e5] bg-white text-[#737373]"><Icon name="bed" size={20} /></span>
+              <p className="mt-3 text-[14px] font-semibold text-[#111111]">No wards yet.</p>
+              <p className="mt-1 max-w-sm text-[13px] leading-relaxed text-[#737373]">
+                An admin creates them under <b>Wards &amp; beds</b>.
               </p>
             </div>
           ) : (
-            <div className="space-y-6 p-6">
-              {board.wards.map((w) => (
-                <div key={w.id}>
-                  <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-                    <div>
-                      <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">{w.name}</h3>
-                      <p className="text-[12px] text-[var(--p-muted)]">
-                        ₹{money(w.dailyCharge)}/day{Number(w.gstRatePct) > 0 && ` · ${w.gstRatePct}% GST`}
-                        {w.floor && ` · ${w.floor}`}
-                      </p>
-                    </div>
-                    <span className={`rounded-full px-2.5 py-1 text-[12px] font-semibold ${
-                      w.available === 0 ? "bg-[var(--p-rose-soft)] text-[var(--p-rose)]" : "bg-[var(--p-cyan-soft)] text-[var(--p-cyan-deep)]"}`}>
-                      {w.total - w.available}/{w.total} occupied
-                    </span>
-                  </div>
+            <div className="space-y-4">
+              {board.wards.map((w) => {
+                const occCount = w.total - w.available;
+                const occPct = w.total > 0 ? Math.round((occCount / w.total) * 100) : 0;
+                return (
+                  <div key={w.id} className="overflow-hidden rounded-xl border border-[#e5e5e5] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+                    {/* ── SECTION HEADER BAR ── */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#f0f0f0] bg-[#fafafa] px-5 py-3">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="flex items-center gap-2">
+                          <span className="h-2 w-2 rounded-full bg-[#111111]" />
+                          <h3 className="text-[14px] font-semibold tracking-tight text-[#111111]">{w.name}</h3>
+                        </div>
+                        {w.floor && (
+                          <span className="rounded-md border border-[#e5e5e5] bg-white px-2 py-0.5 text-[11px] font-medium text-[#737373]">
+                            {w.floor}
+                          </span>
+                        )}
+                        <span className="text-[12px] font-medium text-[#737373] tabular-nums">
+                          ₹{money(w.dailyCharge)}/day{Number(w.gstRatePct) > 0 && ` + ${w.gstRatePct}% GST`}
+                        </span>
+                      </div>
 
-                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
-                    {w.beds.map((b) => {
-                      const st = b.status.toLowerCase();
-                      const picked = bedId === b.id;
-                      const shown = occupant?.admission.id === b.patient?.admissionId && !!b.patient;
-                      const bq = bedFilter.trim().toLowerCase();
-                      const matches = !bq || (b.patient && (
-                        b.patient.fullName.toLowerCase().includes(bq) ||
-                        b.patient.ipNumber.toLowerCase().includes(bq) ||
-                        b.patient.displayId.toLowerCase().includes(bq) ||
-                        (b.patient.phone && b.patient.phone.includes(bq))
-                      )) || b.bedNo.toLowerCase().includes(bq);
-                      return (
-                        <button key={b.id} onClick={() => tapBed(b, w)}
-                          disabled={b.status === "MAINTENANCE"}
-                          className={`bed-card bed-${st} ${picked ? "is-picked" : ""} ${shown ? "is-shown" : ""} ${bq && matches ? "ring-2 ring-[var(--p-blue)] shadow-md" : ""} ${bq && !matches ? "opacity-30" : ""}`}>
-                          <BedGlyph status={b.status} />
-                          <span className="bed-no">{bedShort(b.bedNo)}</span>
-                          {b.patient ? (
-                            <>
-                              <span className="bed-who">{b.patient.fullName}</span>
-                              <span className="bed-ip">{b.patient.ipNumber}</span>
-                              {/* How long this bed has been held. The desk's most
-                                  asked question at the board, and the same count
-                                  the running bill uses. */}
-                              <span className="bed-days">
-                                Day {b.patient.days}
-                                <span className="bed-days-since"> · since {sinceDay(b.patient.admittedAt)}</span>
-                              </span>
-                            </>
-                          ) : (
-                            <span className="bed-free">{b.status === "MAINTENANCE" ? "Out of service" : "Empty"}</span>
-                          )}
-                          {picked && <span className="bed-tick"><Icon name="check" size={11} /></span>}
-                        </button>
-                      );
-                    })}
+                      {/* Right: Occupancy badge + Progress bar */}
+                      <div className="flex items-center gap-3">
+                        <div className="hidden sm:flex items-center gap-2">
+                          <div className="h-1.5 w-20 overflow-hidden rounded-full bg-[#e5e5e5]">
+                            <div
+                              className={`h-full rounded-full transition-all ${
+                                w.available === 0 ? "bg-rose-500" : occPct > 75 ? "bg-amber-500" : "bg-[#111111]"
+                              }`}
+                              style={{ width: `${occPct}%` }}
+                            />
+                          </div>
+                          <span className="text-[11px] text-[#737373] tabular-nums">{occPct}%</span>
+                        </div>
+
+                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium tabular-nums ${
+                          w.available === 0
+                            ? "border border-rose-200 bg-rose-50 text-rose-700"
+                            : "border border-[#e5e5e5] bg-white text-[#404040]"
+                        }`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${w.available === 0 ? "bg-rose-500" : "bg-emerald-500"}`} />
+                          {occCount}/{w.total} Occupied ({w.available} free)
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* ── SECTION BEDS GRID ── */}
+                    <div className="p-4">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+                        {w.beds.map((b) => {
+                          const st = b.status.toLowerCase();
+                          const picked = bedId === b.id;
+                          const shown = occupant?.admission.id === b.patient?.admissionId && !!b.patient;
+                          const bq = bedFilter.trim().toLowerCase();
+                          const matches = !bq || (b.patient && (
+                            b.patient.fullName.toLowerCase().includes(bq) ||
+                            b.patient.ipNumber.toLowerCase().includes(bq) ||
+                            b.patient.displayId.toLowerCase().includes(bq) ||
+                            (b.patient.phone && b.patient.phone.includes(bq))
+                          )) || b.bedNo.toLowerCase().includes(bq);
+
+                          return (
+                            <button
+                              key={b.id}
+                              onClick={() => tapBed(b, w)}
+                              disabled={b.status === "MAINTENANCE"}
+                              className={`bed-card bed-${st} ${picked ? "is-picked" : ""} ${shown ? "is-shown" : ""} ${bq && matches ? "ring-2 ring-[#111111] shadow-md" : ""} ${bq && !matches ? "opacity-30" : ""}`}
+                            >
+                              {/* ── CARD TOP: Bed Number & Status Badge ── */}
+                              <div className="flex w-full items-center justify-between gap-2 border-b border-[#f0f0f0] pb-2.5">
+                                <div className="flex items-center gap-2">
+                                  <span className={`flex h-6 w-6 items-center justify-center rounded-md border text-[11px] font-semibold ${
+                                    b.patient
+                                      ? "border-[#d4d4d4] bg-[#f5f5f4] text-[#111111]"
+                                      : b.status === "MAINTENANCE"
+                                      ? "border-[#e5e5e5] bg-[#fafafa] text-[#a3a3a3]"
+                                      : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                  }`}>
+                                    <Icon name="bed" size={12} />
+                                  </span>
+                                  <div className="text-left">
+                                    <div className="bed-no">{bedShort(b.bedNo)}</div>
+                                    <div className="text-[10px] text-[#737373] uppercase tracking-wider">{w.name}</div>
+                                  </div>
+                                </div>
+
+                                {picked ? (
+                                  <span className="bed-tick"><Icon name="check" size={11} /></span>
+                                ) : b.patient ? (
+                                  <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50/90 px-2.5 py-0.5 text-[10.5px] font-semibold text-blue-800 tabular-nums shadow-sm">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-blue-600" />
+                                    Admitted · Day {b.patient.days}
+                                  </span>
+                                ) : b.status === "MAINTENANCE" ? (
+                                  <span className="rounded-full border border-[#e5e5e5] bg-[#f5f5f4] px-2 py-0.5 text-[10px] font-medium text-[#737373]">
+                                    Out of service
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-0.5 text-[10.5px] font-semibold text-emerald-800 shadow-sm">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                                    Vacant / Free
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* ── CARD MIDDLE: BED SVG & STATUS INFO ── */}
+                              <div className="flex flex-1 w-full items-center gap-3 py-3 text-left">
+                                {/* SVG Illustration with dynamic frame */}
+                                <div className="shrink-0 flex items-center justify-center rounded-lg border p-1 bg-white shadow-sm"
+                                  style={{
+                                    borderColor: b.patient ? "#e5e5e5" : b.status === "MAINTENANCE" ? "#e5e5e5" : "#bbf7d0",
+                                    width: "66px"
+                                  }}>
+                                  <BedIllustration status={b.status} />
+                                </div>
+
+                                {/* Patient Details or Free Bed Action Callout */}
+                                <div className="min-w-0 flex-1">
+                                  {b.patient ? (
+                                    <>
+                                      <div className="bed-who truncate">{b.patient.fullName}</div>
+                                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11.5px] tabular-nums">
+                                        <span className="rounded bg-[#f5f5f4] px-1.5 py-0.5 font-medium text-[#404040]">{b.patient.displayId}</span>
+                                        <span className="text-[#d4d4d4]">·</span>
+                                        <span className="font-semibold text-[#111111]">{b.patient.ipNumber}</span>
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <div>
+                                      <div className="text-[13px] font-semibold text-emerald-800">
+                                        {b.status === "MAINTENANCE" ? "Under Maintenance" : "Ready for Patient"}
+                                      </div>
+                                      <div className="mt-0.5 text-[11px] text-[#737373]">
+                                        {b.status === "MAINTENANCE" ? "Temporarily locked" : "Tap to assign & admit"}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* ── CARD BOTTOM: Clear Key-Value Information ── */}
+                              <div className="flex w-full items-center justify-between border-t border-[#f0f0f0] pt-2 text-[11px]">
+                                {b.patient ? (
+                                  <>
+                                    <span className="text-[#737373]">Admitted date</span>
+                                    <span className="font-semibold text-[#111111] tabular-nums">{sinceDay(b.patient.admittedAt)}</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className="text-[#059669] font-medium">Daily charge</span>
+                                    <span className="font-semibold text-emerald-900 tabular-nums">₹{money(w.dailyCharge)}/day</span>
+                                  </>
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
+          </div>
         </section>
 
         {/* ───────── RIGHT RAIL ───────── */}
         <div className="space-y-5">
           {/* WHO'S IN THIS BED */}
           {(occupant || occupantLoading) && (
-            <section data-rise className="surface overflow-hidden xl:sticky xl:top-4">
-              <div className="flex items-center justify-between border-b border-[var(--p-border)] px-5 py-3.5">
-                <h2 className="text-[14px] font-semibold text-[var(--p-ink)]">Who&apos;s in this bed</h2>
-                <button onClick={() => setOccupant(null)} className="text-[var(--p-muted)] hover:text-[var(--p-ink)]">✕</button>
+            <section data-rise className="rounded-2xl border border-[#e5e5e5] bg-[#f5f5f4] p-1.5 shadow-[0_1px_2px_rgba(0,0,0,0.03)] xl:sticky xl:top-4">
+              <div className="flex items-center justify-between px-3.5 py-2.5">
+                <h2 className="text-[13px] font-medium text-[#111111]">Who&apos;s in this bed</h2>
+                <button
+                  onClick={() => setOccupant(null)}
+                  aria-label="Close bed details"
+                  className="grid h-6 w-6 place-items-center rounded-md text-[#737373] transition-colors hover:bg-white hover:text-[#111111]"
+                >
+                  ✕
+                </button>
               </div>
-              {occupantLoading || !occupant ? (
-                <div className="flex items-center justify-center gap-2 py-12 text-[14px] text-[var(--p-muted)]"><Spinner /> Loading…</div>
-              ) : (
-                <>
-                  <div className="border-b border-[var(--p-border)] px-5 py-4">
-                    <p className="text-[16px] font-semibold text-[var(--p-ink)]">{occupant.admission.patient.fullName}</p>
-                    <p className="mt-0.5 text-[13px] text-[var(--p-muted)]">
-                      <span className="font-mono">{occupant.admission.patient.displayId}</span>
-                      {occupant.admission.patient.age != null && ` · ${occupant.admission.patient.age}y`}
-                      {occupant.admission.patient.gender && ` · ${occupant.admission.patient.gender}`}
-                    </p>
-                    <a href={`tel:${occupant.admission.patient.phone}`} className="mt-1 inline-block font-mono text-[13px] font-medium text-[var(--p-blue)]">
-                      {occupant.admission.patient.phone}
-                    </a>
-                  </div>
+              <div className="overflow-hidden rounded-xl border border-[#e5e5e5] bg-white">
+                {occupantLoading || !occupant ? (
+                  <div className="flex items-center justify-center gap-2 py-12 text-[14px] text-[#737373]"><Spinner /> Loading…</div>
+                ) : (
+                  <>
+                    <div className="border-b border-[#e5e5e5] px-4 py-3.5">
+                      <p className="text-[15px] font-semibold tracking-tight text-[#111111]">{occupant.admission.patient.fullName}</p>
+                      <p className="mt-0.5 text-[12.5px] text-[#737373]">
+                        <span className="font-medium text-[#404040] tabular-nums">{occupant.admission.patient.displayId}</span>
+                        {occupant.admission.patient.age != null && ` · ${occupant.admission.patient.age}y`}
+                        {occupant.admission.patient.gender && ` · ${occupant.admission.patient.gender}`}
+                      </p>
+                      <a href={`tel:${occupant.admission.patient.phone}`} className="mt-1 inline-block text-[12.5px] font-medium text-[#111111] underline decoration-[#d4d4d4] underline-offset-2 hover:decoration-[#111111] tabular-nums">
+                        {occupant.admission.patient.phone}
+                      </a>
+                    </div>
 
-                  <dl className="divide-y divide-[var(--p-border)] text-[14px]">
-                    <Row k="IP number" v={<span className="font-mono font-semibold text-[var(--p-ink)]">{occupant.admission.ipNumber}</span>} />
-                    <Row k="Bed" v={<b className="text-[var(--p-ink)]">{bedLabel(occupant.admission.wardName, occupant.admission.bedNo)}</b>} />
-                    <Row k="Attending" v={<>Dr. {occupant.admission.doctor.name} <span className="text-[var(--p-muted)]">({occupant.admission.doctor.department})</span></>} />
-                    <Row k="Admitted" v={<>{new Date(occupant.admission.admittedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} · <b className="text-[var(--p-ink)]">day {occupant.days}</b></>} />
+                    <dl className="divide-y divide-[#f0f0f0] text-[13px]">
+                      <Row k="IP number" v={<span className="font-semibold text-[#111111] tabular-nums">{occupant.admission.ipNumber}</span>} />
+                      <Row k="Bed" v={<b className="font-medium text-[#111111]">{bedLabel(occupant.admission.wardName, occupant.admission.bedNo)}</b>} />
+                      <Row k="Attending" v={<>Dr. {occupant.admission.doctor.name} <span className="text-[#737373]">({occupant.admission.doctor.department})</span></>} />
+                      <Row k="Admitted" v={<>{new Date(occupant.admission.admittedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} · <b className="font-medium text-[#111111]">day {occupant.days}</b></>} />
                     {/* The desk asks the family for money at discharge. It has to
                         know BEFORE it opens its mouth whether this is a bill they
                         owe or one going to an insurer. */}
@@ -427,9 +563,9 @@ export default function BedBoardPage() {
                       <Row k="Attendant" v={
                         <>
                           {occupant.admission.attendantName}
-                          {occupant.admission.attendantRelation && <span className="text-[var(--p-muted)]"> ({occupant.admission.attendantRelation})</span>}
+                          {occupant.admission.attendantRelation && <span className="text-[#737373]"> ({occupant.admission.attendantRelation})</span>}
                           {occupant.admission.attendantPhone && (
-                            <a href={`tel:${occupant.admission.attendantPhone}`} className="ml-1 block font-mono text-[13px] text-[var(--p-blue)]">
+                            <a href={`tel:${occupant.admission.attendantPhone}`} className="ml-1 block text-[12.5px] font-medium text-[#111111] underline decoration-[#d4d4d4] underline-offset-2 tabular-nums">
                               {occupant.admission.attendantPhone}
                             </a>
                           )}
@@ -438,82 +574,84 @@ export default function BedBoardPage() {
                     )}
                   </dl>
 
-                  <div className="border-t border-[var(--p-border)] bg-[var(--p-bg)] px-5 py-4">
+                  <div className="border-t border-[#e5e5e5] bg-[#fafafa] px-4 py-3.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-[13px] text-[var(--p-muted)]">Running bill</span>
-                      <span className="font-mono text-[17px] font-bold text-[var(--p-ink)]">₹{money(occupant.grandTotal)}</span>
+                      <span className="text-[12.5px] text-[#737373]">Running bill</span>
+                      <span className="text-[16px] font-semibold tracking-tight text-[#111111] tabular-nums">₹{money(occupant.grandTotal)}</span>
                     </div>
-                    <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">
+                    <p className="mt-0.5 text-[11.5px] text-[#737373] tabular-nums">
                       bed ₹{money(occupant.bedTotal)} ({occupant.days}d)
                       {occupant.charges.length > 0 && <> + {occupant.charges.length} charge{occupant.charges.length === 1 ? "" : "s"} ₹{money(occupant.chargesTotal)}</>}
                     </p>
                     <div className="mt-3 flex gap-2">
                       <Link href={`/ipd/${occupant.admission.id}`}
-                        className="flex-1 rounded-lg bg-[var(--p-blue)] px-3 py-2 text-center text-[13px] font-semibold text-white hover:bg-[var(--p-blue-deep)]">
+                        className="flex-1 rounded-lg bg-[#111111] px-3 py-2 text-center text-[13px] font-medium text-white transition-colors hover:bg-[#262626]">
                         Open sheet
                       </Link>
                       <Link href="/ipd/inpatients"
-                        className="flex-1 rounded-lg border border-[var(--p-border)] px-3 py-2 text-center text-[13px] font-medium text-[var(--p-text)] hover:border-[var(--p-blue)]">
+                        className="flex-1 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-center text-[13px] font-medium text-[#404040] transition-colors hover:border-[#111111] hover:text-[#111111]">
                         Discharge
                       </Link>
                     </div>
                   </div>
                 </>
               )}
+              </div>
             </section>
           )}
 
           {/* ADMIT */}
-          <section data-rise className="surface overflow-hidden">
-            <div className="border-b border-[var(--p-border)] px-5 py-3.5">
-              <h2 className="text-[14px] font-semibold text-[var(--p-ink)]">Admit a patient</h2>
-              <p className="mt-0.5 text-[13px] leading-relaxed text-[var(--p-muted)]">
-                Move an outpatient into a bed. Only <b>empty</b> beds are offered - you can&apos;t double-book one.
+          <section data-rise className="rounded-2xl border border-[#e5e5e5] bg-[#f5f5f4] p-1.5 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+            <div className="px-3.5 py-2.5">
+              <h2 className="text-[13px] font-medium text-[#111111]">Admit a patient</h2>
+              <p className="mt-0.5 text-[12px] leading-relaxed text-[#737373]">
+                Move an outpatient into a bed. Only <span className="font-medium text-[#111111]">empty</span> beds are offered.
               </p>
             </div>
 
+            <div className="overflow-hidden rounded-xl border border-[#e5e5e5] bg-white">
             {doneIp ? (
               <div className="flex flex-col items-center px-6 py-10 text-center">
-                <span className="grid h-13 w-13 place-items-center rounded-full bg-[var(--p-cyan-soft)] p-3 text-[var(--p-cyan-deep)]"><Icon name="check" size={24} /></span>
-                <h3 className="mt-3 font-serif-p text-[19px] font-semibold text-[var(--p-ink)]">Admitted</h3>
-                <p className="mt-1 text-[14px] text-[var(--p-muted)]">
-                  <span className="font-mono font-semibold text-[var(--p-ink)]">{doneIp.ipNumber}</span><br />
+                <span className="grid h-12 w-12 place-items-center rounded-full bg-[#ecfdf5] text-[#059669]"><Icon name="check" size={22} /></span>
+                <h3 className="mt-3 text-[17px] font-semibold tracking-tight text-[#111111]">Admitted</h3>
+                <p className="mt-1 text-[13px] text-[#737373]">
+                  <span className="font-semibold text-[#111111] tabular-nums">{doneIp.ipNumber}</span><br />
                   {bedLabel(doneIp.ward, doneIp.bedNo)}
                 </p>
-                <p className="mt-2 text-[12px] leading-relaxed text-[var(--p-muted)]">
+                <p className="mt-2 text-[12px] leading-relaxed text-[#737373]">
                   Bed charges start today. Add procedures and prescriptions on the sheet.
                 </p>
                 <button onClick={() => setDoneIp(null)}
-                  className="mt-5 w-full rounded-lg bg-[var(--p-blue)] px-4 py-2.5 text-sm font-semibold text-white">
+                  className="mt-5 w-full rounded-lg bg-[#111111] px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-[#262626]">
                   Admit someone else
                 </button>
               </div>
             ) : (
-              <div className="space-y-4 p-5">
+              <div className="space-y-4 p-4">
                 {/* patient */}
                 <div>
                   <label className={lbl}>Patient<Req /></label>
                   {patient ? (
-                    <div className="flex items-center justify-between rounded-lg border border-[var(--p-blue)]/30 bg-[var(--p-blue-soft)] px-3 py-2.5">
+                    <div className="flex items-center justify-between rounded-xl border border-[#e5e5e5] bg-[#fafafa] px-3 py-2.5">
                       <div className="min-w-0">
-                        <div className="truncate text-[14px] font-semibold text-[var(--p-ink)]">{patient.fullName}</div>
-                        <div className="font-mono text-[12px] text-[var(--p-muted)]">{patient.displayId}</div>
+                        <div className="truncate text-[13.5px] font-semibold text-[#111111]">{patient.fullName}</div>
+                        <div className="text-[12px] text-[#737373] tabular-nums">{patient.displayId}</div>
                       </div>
-                      <button onClick={() => { setPatient(null); setPq(""); }} className="text-[13px] font-medium text-[var(--p-blue-deep)] underline underline-offset-2">Change</button>
+                      <button onClick={() => { setPatient(null); setPq(""); }} className="text-[12.5px] font-medium text-[#111111] underline decoration-[#d4d4d4] underline-offset-2 hover:decoration-[#111111]">Change</button>
                     </div>
                   ) : (
                     <>
-                      <div className="flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-3 py-2">
+                      <div className="flex items-center gap-2 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 focus-within:border-[#111111]">
                         <Icon name="search" size={15} />
-                        <input value={pq} onChange={(e) => setPq(e.target.value)} placeholder="Patient ID, name or phone…" className="w-full bg-transparent text-sm outline-none" />
+                        <input value={pq} onChange={(e) => setPq(e.target.value)} placeholder="Patient ID, name or phone…" className="w-full bg-transparent text-[13px] text-[#111111] placeholder:text-[#a3a3a3] outline-none" />
                       </div>
                       {pResults.length > 0 && (
-                        <div className="mt-1.5 max-h-72 divide-y divide-[var(--p-border)] overflow-y-auto rounded-lg border border-[var(--p-border)]">
+                        <div className="mt-1.5 max-h-72 divide-y divide-[#f0f0f0] overflow-y-auto rounded-lg border border-[#e5e5e5] bg-white">
                           {pResults.map((p) => (
                             <button key={p.id} onClick={() => { setPatient(p); setPq(""); }}
-                              className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-[var(--p-bg)]">
-                              <span className="truncate text-[14px] text-[var(--p-ink)]">{p.fullName}</span>
-                              <span className="ml-2 shrink-0 font-mono text-[12px] text-[var(--p-muted)]">{p.displayId}</span>
+                              className="flex w-full items-center justify-between px-3 py-2 text-left transition-colors hover:bg-[#fafafa]">
+                              <span className="truncate text-[13.5px] text-[#111111]">{p.fullName}</span>
+                              <span className="ml-2 shrink-0 text-[12px] text-[#737373] tabular-nums">{p.displayId}</span>
                             </button>
                           ))}
                         </div>
@@ -564,8 +702,8 @@ export default function BedBoardPage() {
                     downstream - the insurance desk's list, the discharge bill,
                     whether the day close counts this stay as money - reads the
                     answer given in these two clicks. */}
-                <div className="rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] p-3">
-                  <p className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Who is paying</p>
+                <div className="rounded-xl border border-[#e5e5e5] bg-[#fafafa] p-3">
+                  <p className="mb-2 text-[11.5px] font-medium text-[#737373]">Who is paying</p>
                   <div className="grid grid-cols-2 gap-2">
                     {([
                       { k: "SELF_PAY", label: "Self-paying", sub: "Pays at the desk" },
@@ -598,8 +736,8 @@ export default function BedBoardPage() {
                           placeholder="Star Health, Care, CGHS…" />
                         <datalist id="ins-list">{insurerOptions.map((x) => <option key={x} value={x} />)}</datalist>
                       </div>
-                      <p className="text-[12px] leading-relaxed text-[var(--p-muted)]">
-                        This puts the stay on the <b className="text-[var(--p-ink)]">insurance desk&apos;s</b> list straight away,
+                      <p className="text-[12px] leading-relaxed text-[#737373]">
+                        This puts the stay on the <b className="font-medium text-[#111111]">insurance desk&apos;s</b> list straight away,
                         so the pre-authorization gets raised while the patient is still here.
                         They collect the policy and member number with the claim.
                       </p>
@@ -607,8 +745,8 @@ export default function BedBoardPage() {
                   )}
                 </div>
 
-                <div className="rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] p-3">
-                  <p className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Caring person</p>
+                <div className="rounded-xl border border-[#e5e5e5] bg-[#fafafa] p-3">
+                  <p className="mb-2 text-[11.5px] font-medium text-[#737373]">Caring person</p>
                   <div className="space-y-2">
                     <input className={fld} value={form.attendantName} onChange={(e) => setForm({ ...form, attendantName: e.target.value })} placeholder="Name" />
                     <div className="grid grid-cols-2 gap-2">
@@ -616,21 +754,22 @@ export default function BedBoardPage() {
                       <input className={fld} value={form.attendantRelation} onChange={(e) => setForm({ ...form, attendantRelation: e.target.value })} placeholder="Relation" />
                     </div>
                   </div>
-                  <p className="mt-1.5 text-[12px] text-[var(--p-muted)]">Who the hospital rings at 3am.</p>
+                  <p className="mt-1.5 text-[11.5px] text-[#737373]">Who the hospital rings at 3am.</p>
                 </div>
 
                 <button onClick={admit} disabled={busy || !patient || !bedId || !doctorId || !insuranceReady}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--p-blue)] px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-[var(--p-blue-deep)] disabled:opacity-40">
-                  {busy ? <><Spinner /> Admitting…</> : <><Icon name="bed" size={16} /> Admit &amp; assign bed</>}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#111111] px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-[#262626] disabled:opacity-40">
+                  {busy ? <><Spinner /> Admitting…</> : <><Icon name="bed" size={15} /> Admit &amp; assign bed</>}
                 </button>
-                {!patient && <p className="text-center text-[12px] text-[var(--p-muted)]">Find the patient first.</p>}
+                {!patient && <p className="text-center text-[12px] text-[#737373]">Find the patient first.</p>}
                 {patient && !insuranceReady && (
-                  <p className="text-center text-[12px] text-[var(--p-muted)]">
+                  <p className="text-center text-[12px] text-[#737373]">
                     Name the insurer, or switch to self-paying.
                   </p>
                 )}
               </div>
             )}
+            </div>
           </section>
         </div>
       </div>
@@ -640,84 +779,78 @@ export default function BedBoardPage() {
 
 function Row({ k, v }: { k: string; v: React.ReactNode }) {
   return (
-    <div className="flex items-start justify-between gap-3 px-5 py-2.5">
-      <dt className="shrink-0 text-[13px] text-[var(--p-muted)]">{k}</dt>
-      <dd className="text-right text-[14px] text-[var(--p-text)]">{v}</dd>
+    <div className="flex items-start justify-between gap-3 px-4 py-2.5">
+      <dt className="shrink-0 text-[12.5px] text-[#737373]">{k}</dt>
+      <dd className="text-right text-[13px] text-[#111111]">{v}</dd>
     </div>
   );
 }
 
 function Stat({ label, value, tone }: { label: string; value: number; tone: "ink" | "ok" | "busy" | "off" }) {
-  const c = { ink: "var(--p-ink)", ok: "var(--p-cyan-deep)", busy: "var(--p-blue)", off: "var(--p-muted)" }[tone];
+  const c = { ink: "#111111", ok: "#059669", busy: "#111111", off: "#737373" }[tone];
   return (
-    <div className="surface px-4 py-3.5">
-      <div className="text-[12px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">{label}</div>
-      <div className="mt-0.5 font-mono text-[24px] font-bold" style={{ color: c }}>{value}</div>
+    <div className="rounded-2xl border border-[#e5e5e5] bg-white px-5 py-4 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+      <div className="text-[12px] font-medium text-[#737373]">{label}</div>
+      <div className="mt-1 text-[24px] font-semibold tracking-tight tabular-nums" style={{ color: c }}>{value}</div>
     </div>
   );
 }
 
 const CSS = `
-.bed-card { position: relative; display: flex; flex-direction: column; align-items: center;
-  gap: 2px; border-radius: 12px; border: 1px solid var(--p-border); background: #fff;
-  padding: 12px 8px 10px; text-align: center; transition: border-color .16s ease, transform .12s ease, box-shadow .16s ease; }
-.bed-card:not(:disabled):hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(9,26,52,.08); }
-.bed-svg { width: 100%; max-width: 76px; height: auto; margin-bottom: 4px; }
-.bed-no { font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: var(--p-ink); letter-spacing: .04em; }
-.bed-who { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 12px; font-weight: 600; color: var(--p-ink); }
-.bed-ip { font-family: var(--font-mono); font-size: 10px; color: var(--p-muted); }
-.bed-free { font-size: 11px; color: var(--p-muted); }
-.bed-days { margin-top: 3px; border-radius: 999px; background: var(--p-blue-soft); padding: 1px 7px;
-  font-size: 10px; font-weight: 700; color: var(--p-blue-deep); }
-.bed-days-since { font-weight: 500; opacity: .8; }
+.bed-card { position: relative; display: flex; flex-direction: column; align-items: stretch; justify-content: space-between;
+  min-height: 144px; border-radius: 14px; border: 1px solid #e5e5e5; background: #ffffff;
+  padding: 12px 14px; text-align: left; transition: border-color .18s ease, transform .14s ease, box-shadow .18s ease, background .18s ease; }
+.bed-card:not(:disabled):hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,.06); }
+.bed-no { font-size: 13.5px; font-weight: 600; color: #111111; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.bed-who { font-size: 13.5px; font-weight: 600; color: #111111; }
 
-/* the bed itself */
-.bd-frame    { fill: var(--p-border-strong); }
-.bd-mattress { fill: #fff; stroke: var(--p-border-strong); stroke-width: 1.4; }
-.bd-pillow   { fill: var(--p-bg); stroke: var(--p-border-strong); stroke-width: 1.2; }
-.bd-blanket  { fill: var(--p-blue); opacity: .85; }
-.bd-head     { fill: var(--p-ink); }
-.bd-slash    { stroke: var(--p-muted); stroke-width: 3; stroke-linecap: round; opacity: .5; }
+/* SVG Vector inside Bed Card */
+.bed-vector { width: 100%; height: auto; max-height: 40px; }
+.bv-frame { fill: #a3a3a3; }
+.bv-mattress { fill: #ffffff; stroke: #d4d4d4; stroke-width: 1.2; }
+.bv-pillow { fill: #f5f5f4; stroke: #d4d4d4; stroke-width: 1.1; }
+.bv-blanket { fill: #111111; }
+.bv-head { fill: #111111; }
 
-/* EMPTY - quiet, clickable, inviting */
-.bed-available { border-color: rgba(0,188,199,.35); background: rgba(0,188,199,.05); cursor: pointer; }
-.bed-available:hover { border-color: var(--p-cyan); }
-.bed-available .bd-frame    { fill: var(--p-cyan-deep); opacity: .55; }
-.bed-available .bd-mattress { stroke: var(--p-cyan-deep); stroke-opacity: .45; }
-.bed-available .bd-pillow   { fill: rgba(0,188,199,.12); stroke: var(--p-cyan-deep); stroke-opacity: .4; }
+/* ── VACANT / FREE BED (Clean White with subtle emerald shade & borders) ── */
+.bed-available { border-color: #a7f3d0; background: linear-gradient(180deg, #ffffff 0%, #f0fdf4 100%); cursor: pointer; }
+.bed-available:hover { border-color: #059669; background: #ecfdf5; box-shadow: 0 6px 20px rgba(16,185,129,0.12); }
+.bed-available .bv-frame { fill: #10b981; opacity: .75; }
+.bed-available .bv-mattress { stroke: #10b981; stroke-opacity: .6; fill: #ffffff; }
+.bed-available .bv-pillow { fill: #d1fae5; stroke: #10b981; stroke-opacity: .5; }
 
-/* OCCUPIED - there is a person in it, and you can see that */
-.bed-occupied { border-color: rgba(11,92,255,.3); background: rgba(11,92,255,.05); cursor: pointer; }
-.bed-occupied:hover { border-color: var(--p-blue); }
-.bed-occupied .bd-frame    { fill: var(--p-blue-deep); opacity: .5; }
-.bed-occupied .bd-mattress { fill: #fff; stroke: var(--p-blue-deep); stroke-opacity: .35; }
-.bed-occupied .bd-pillow   { fill: rgba(11,92,255,.1); stroke: var(--p-blue-deep); stroke-opacity: .35; }
+/* ── OCCUPIED / ADMITTED BED (Crisp High-Contrast Studio Warm Gray Shade) ── */
+.bed-occupied { border-color: #d4d4d8; background: linear-gradient(180deg, #ffffff 0%, #f4f4f5 100%); cursor: pointer; }
+.bed-occupied:hover { border-color: #111111; background: #ffffff; box-shadow: 0 6px 20px rgba(0,0,0,.09); }
+.bed-occupied .bv-frame { fill: #52525b; }
+.bed-occupied .bv-mattress { stroke: #71717a; stroke-width: 1.2; }
+.bed-occupied .bv-pillow { fill: #e4e4e7; stroke: #71717a; }
+.bed-occupied .bv-blanket { fill: #18181b; }
+.bed-occupied .bv-head { fill: #09090b; }
 
-/* OUT OF SERVICE - visibly not a choice */
-.bed-maintenance { border-style: dashed; background: var(--p-bg); cursor: not-allowed; opacity: .7; }
-.bed-maintenance .bd-frame    { fill: var(--p-border-strong); }
-.bed-maintenance .bd-mattress { stroke: var(--p-border-strong); }
+/* ── OUT OF SERVICE / MAINTENANCE ── */
+.bed-maintenance { border-style: dashed; border-color: #e5e5e5; background: #fafafa; cursor: not-allowed; opacity: .6; }
 
-/* selected in the admit panel */
-.is-picked { border-color: var(--p-blue) !important; background: var(--p-blue-soft) !important;
-  box-shadow: 0 0 0 3px var(--p-blue-glow); }
-.bed-tick { position: absolute; top: 6px; right: 6px; display: grid; place-items: center;
-  height: 18px; width: 18px; border-radius: 999px; background: var(--p-blue); color: #fff; }
+/* Selected in the admit panel */
+.is-picked { border-color: #111111 !important; background: #ffffff !important;
+  box-shadow: 0 0 0 2px #111111, 0 6px 20px rgba(0,0,0,.1) !important; }
+.bed-tick { display: grid; place-items: center;
+  height: 18px; width: 18px; border-radius: 999px; background: #111111; color: #ffffff; }
 
-/* whose details are open on the right */
-.is-shown { border-color: var(--p-blue) !important; box-shadow: 0 0 0 3px var(--p-blue-glow); }
+/* Whose details are open on the right */
+.is-shown { border-color: #111111 !important; background: #ffffff !important;
+  box-shadow: 0 0 0 2px #111111, 0 6px 20px rgba(0,0,0,.1) !important; }
 
-/* who is paying - two targets big enough to hit without looking down */
+/* Who is paying - crisp studio selection pills */
 .payer-opt { display: flex; flex-direction: column; gap: 1px; border-radius: 10px;
-  border: 1px solid var(--p-border); background: #fff; padding: 8px 10px; text-align: left;
-  transition: border-color .14s ease, background .14s ease; }
-.payer-opt:hover { border-color: var(--p-blue); }
-.payer-label { font-size: 13px; font-weight: 600; color: var(--p-text); }
-.payer-sub   { font-size: 11px; color: var(--p-muted); }
-.payer-opt.is-on { border-color: var(--p-blue); background: var(--p-blue-soft);
-  box-shadow: 0 0 0 2px var(--p-blue-glow); }
-.payer-opt.is-on .payer-label { color: var(--p-blue-deep); }
+  border: 1px solid #e5e5e5; background: #ffffff; padding: 8px 10px; text-align: left;
+  transition: border-color .14s ease, background .14s ease, box-shadow .14s ease; }
+.payer-opt:hover { border-color: #a3a3a3; }
+.payer-label { font-size: 13px; font-weight: 500; color: #404040; }
+.payer-sub { font-size: 11px; color: #737373; }
+.payer-opt.is-on { border-color: #111111; background: #f5f5f4;
+  box-shadow: 0 0 0 1px #111111; }
+.payer-opt.is-on .payer-label { font-weight: 600; color: #111111; }
 
 @media (prefers-reduced-motion: reduce) { .bed-card:hover { transform: none; } }
 `;

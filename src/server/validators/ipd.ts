@@ -211,7 +211,8 @@ export const correctStaySchema = z.object({
   nursePerDay: z.coerce.number().min(0).max(100_000).optional(),
   bedRate: z.coerce.number().min(0).max(1_000_000).optional(),
   legs: z.array(z.object({
-    id: z.string().trim().min(1),
+    id: z.string().trim().min(1).optional(),
+    wardName: z.string().trim().min(1).optional(),
     dailyCharge: z.coerce.number().min(0).max(1_000_000),
     /// How many days this bed BILLS for, where that is not the nights the dates
     /// give it. Omit to leave the cap alone; null clears it back to the dates;

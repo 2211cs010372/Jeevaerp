@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Card, PrimaryButton } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
+import { SvgArrow } from "@/components/portal/ui/svg-arrow";
 import { Field, Spinner, SuccessCheck } from "@/components/portal/ui/form-atoms";
 import { AgeUnitSwitch } from "@/components/portal/ui/age-unit-switch";
 import { api, ApiClientError } from "@/lib/api-client";
@@ -281,13 +282,17 @@ export default function RegisterPage() {
           <div className="mt-6 flex flex-col gap-2.5 self-stretch">
             {emergencyAppt ? (
               <a href={`/print/opd/${emergencyAppt.id}`} target="_blank" rel="noopener noreferrer"
-                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#dc2626] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#b91c1c]">
-                <Icon name="file" size={15} /> Print emergency OPD sheet →
+                 className="group inline-flex items-center justify-center gap-2 rounded-lg bg-[#dc2626] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#b91c1c]">
+                <Icon name="file" size={15} />
+                <span>Print emergency OPD sheet</span>
+                <SvgArrow size={13} className="transition-transform group-hover:translate-x-0.5" />
               </a>
             ) : (
               <a href={`/book?patient=${issued.displayId}`}
-                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-[var(--p-teal)] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[var(--p-teal-deep)]">
-                <Icon name="calendar" size={15} /> Book appointment for {issued.firstName} →
+                 className="group inline-flex items-center justify-center gap-2 rounded-lg bg-[var(--p-teal)] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[var(--p-teal-deep)]">
+                <Icon name="calendar" size={15} />
+                <span>Book appointment for {issued.firstName}</span>
+                <SvgArrow size={13} className="transition-transform group-hover:translate-x-0.5" />
               </a>
             )}
             <div className="flex gap-2.5">

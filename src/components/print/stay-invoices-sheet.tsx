@@ -1,26 +1,11 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useParams } from "next/navigation";
 import { api, ApiClientError } from "@/lib/api-client";
 import { PrintToolbar } from "@/components/print/stationery";
 import { InvoiceDoc, INVOICE_SHEET_CSS, type Invoice } from "@/components/print/invoice-sheet";
-
-/**
- * EVERY BILL ON ONE STAY, PRINTED AS A RUN.
- *
- * A stay is billed by three counters on three documents - the ward's IPD
- * invoice, the pharmacy's, the lab's - and "give me the bills" means all of
- * them. Doing that one at a time meant reading a receipt number off a screen,
- * opening it, printing, going back, six times; that is where one gets missed,
- * and a missed pharmacy bill is a query from the insurer three weeks later.
- *
- * EACH ONE IS STILL ITS OWN INVOICE. This is not a summary and not a combined
- * bill - every sheet in the run is the same tax document the counter would have
- * printed on its own, with its own number, its own GST and its own copies. Only
- * the paper handling is shared: one stylesheet, one toolbar, one page break
- * between bills so nothing runs into the next.
- */
 
 interface Data {
   invoices: Invoice[];
@@ -32,8 +17,11 @@ const SOURCE_LABEL: Record<string, string> = {
   IPD: "Inpatient / Bed charges", OTHER: "Services",
 };
 
-export function StayInvoicesSheet() {
+export function StayInvoicesSheet({ filterSource }: { filterSource?: "LAB" | "PHARMACY" }) {
   const { admissionId } = useParams<{ admissionId: string }>();
+  const searchParams = useSearchParams();
+  const sourceParam = (filterSource ?? searchParams?.get("source")?.toUpperCase()) as "LAB" | "PHARMACY" | undefined;
+
   const [d, setD] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,27 +33,36 @@ export function StayInvoicesSheet() {
 
   if (error) return <div className="p-10 text-center text-[14px] text-[#8a3b2e]">{error}</div>;
   if (!d) return <div className="p-10 text-center text-[14px] text-[#5a6a66]">Preparing the bills…</div>;
-  if (!d.invoices.length) {
+
+  const filteredInvoices = sourceParam
+    ? d.invoices.filter((inv) => inv.source === sourceParam)
+    : d.invoices;
+
+  const filterTitle = sourceParam === "LAB" ? "Lab bills" : sourceParam === "PHARMACY" ? "Pharmacy bills" : "All bills";
+
+  if (!filteredInvoices.length) {
     return (
       <div className="p-10 text-center text-[14px] text-[#5a6a66]">
-        No bills have been raised against this stay yet.
+        {sourceParam
+          ? `No ${sourceParam.toLowerCase()} bills found for this stay.`
+          : "No bills have been raised against this stay yet."}
       </div>
     );
   }
 
-  const total = d.invoices.reduce((s, i) => s + Number(i.totalAmount), 0);
+  const total = filteredInvoices.reduce((s, i) => s + Number(i.totalAmount), 0);
 
   return (
     <div className="print-stage">
       <style dangerouslySetInnerHTML={{ __html: INVOICE_SHEET_CSS + RUN_CSS }} />
-      <PrintToolbar title={`All bills · ${d.invoices.length} · ${d.invoices[0].patient.fullName}`} />
+      <PrintToolbar title={`${filterTitle} · ${filteredInvoices.length} · ${filteredInvoices[0].patient.fullName}`} />
 
-      {/* ── THE RUN SHEET ── what is in the stack, so whoever picks it up off
-          the tray can check nothing is missing before it is handed over. It is
-          screen-and-paper both: on paper it is the cover page of the bundle. */}
+      {/* ── THE RUN SHEET ── */}
       <div id="print-sheet">
         <div className="run-index">
-          <div className="text-[12px] font-bold uppercase tracking-wide">Bills in this run</div>
+          <div className="text-[12px] font-bold uppercase tracking-wide">
+            {sourceParam ? `${filterTitle} in this run` : "Bills in this run"}
+          </div>
           <table className="mt-1.5 w-full border-collapse text-[10px]">
             <thead>
               <tr className="border-b border-t border-[#333]">
@@ -77,7 +74,7 @@ export function StayInvoicesSheet() {
               </tr>
             </thead>
             <tbody>
-              {d.invoices.map((inv, i) => (
+              {filteredInvoices.map((inv, i) => (
                 <tr key={inv.id}>
                   <td className="py-[3px] font-mono text-[9px]">{i + 1}</td>
                   <td className="py-[3px] font-mono text-[9px]">{inv.receiptNo}</td>
@@ -99,10 +96,8 @@ export function StayInvoicesSheet() {
           </p>
         </div>
 
-        {d.invoices.map((inv) => (
+        {filteredInvoices.map((inv) => (
           <Fragment key={inv.id}>
-            {/* A hard break per bill. Two invoices sharing a sheet is how the
-                second one gets handed over as page two of the first. */}
             <div className="run-break" />
             <InvoiceDoc inv={inv} embedded />
           </Fragment>

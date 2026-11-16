@@ -939,95 +939,380 @@
    change it in both this block and the ADMIN block below.
    ========================================================================== */
     
+    /* ============================================================================
+   RECEPTION - ELEVENLABS LIGHT STUDIO THEME
+   Matches the ElevenLabs Agents Platform light UI: crisp alabaster dotgrid
+   canvas (#fafafa), pure white sidebar & topbar (#ffffff), warm stone node
+   frames (#f5f5f4), hairline borders (#e5e5e5), and high-contrast solid black
+   primary CTAs (#111111). Scoped exclusively to [data-portal="reception"].
+   ========================================================================== */
+    
     .portal[data-portal="reception"] {
-        /* neutrals - pine-cast porcelain, identical to admin */
-        --p-ink: #0c1a1c;
-        --p-text: #3d4c4f;
-        --p-muted: #64737a;
-        --p-bg: #f1f3f2;
+        /* neutrals - ElevenLabs crisp light studio */
+        --p-ink: #111111;
+        --p-text: #404040;
+        --p-muted: #737373;
+        --p-bg: #fafafa;
         --p-surface: #ffffff;
-        --p-border: #e2e7e5;
-        --p-border-strong: #cdd6d3;
-        /* primary - deep pine, aliased onto the blue slots the components use */
-        --p-blue: #0b544c;
-        --p-blue-deep: #073d37;
-        --p-blue-soft: rgba(11, 84, 76, 0.08);
-        --p-blue-glow: rgba(11, 84, 76, 0.25);
-        /* positive / live - teal lift */
-        --p-cyan: #17705f;
-        --p-cyan-deep: #0b544c;
-        --p-cyan-soft: rgba(23, 112, 95, 0.10);
-        /* semantic - admin's muted brass + emergency red */
-        --p-amber: #a97b3f;
-        --p-amber-soft: rgba(169, 123, 63, 0.12);
-        --p-rose: #c2402f;
-        --p-rose-soft: rgba(194, 64, 47, 0.10);
+        --p-surface-muted: #f5f5f4;
+        --p-border: #e5e5e5;
+        --p-border-strong: #d4d4d4;
+
+        /* primary - ElevenLabs solid black CTA & crisp dark ink accents */
+        --p-blue: #111111;
+        --p-blue-deep: #000000;
+        --p-blue-soft: #f4f4f3;
+        --p-blue-glow: rgba(17, 17, 17, 0.12);
+
+        /* positive / live - crisp emerald/sky */
+        --p-cyan: #10b981;
+        --p-cyan-deep: #047857;
+        --p-cyan-soft: rgba(16, 185, 129, 0.10);
+
+        /* semantic - refined amber & rose */
+        --p-amber: #d97706;
+        --p-amber-soft: rgba(217, 119, 6, 0.10);
+        --p-rose: #e11d48;
+        --p-rose-soft: rgba(225, 29, 72, 0.08);
         --p-teal: var(--p-blue);
         --p-teal-deep: var(--p-blue-deep);
         --p-teal-soft: var(--p-blue-soft);
-        --p-sidebar: rgba(255, 255, 255, 0.78);
-        --p-sidebar-border: var(--p-border);
-        --p-shadow-sm: 0 1px 2px rgba(12, 26, 28, 0.04);
-        --p-shadow: 0 1px 2px rgba(12, 26, 28, 0.04), 0 10px 30px -18px rgba(12, 26, 28, 0.14);
-        --p-shadow-lg: 0 1px 2px rgba(12, 26, 28, 0.05), 0 24px 50px -24px rgba(12, 26, 28, 0.20);
+
+        /* nav chrome & sidebar - pure white with warm stone active pill */
+        --p-sidebar: #ffffff;
+        --p-sidebar-border: #ececec;
+        --p-sidebar-muted: #737373;
+        --p-nav-bg: #ffffff;
+        --p-nav-ink: #111111;
+        --p-nav-row: #525252;
+        --p-nav-muted: #737373;
+        --p-nav-border: #ececec;
+        --p-nav-active-bg: #f4f4f3;
+        --p-nav-active-ink: #111111;
+
+        /* elevation - ultra clean, minimal shadows */
+        --p-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.03);
+        --p-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px -4px rgba(0, 0, 0, 0.03);
+        --p-shadow-lg: 0 4px 16px -4px rgba(0, 0, 0, 0.06), 0 12px 32px -8px rgba(0, 0, 0, 0.04);
+
+        /* scrollbar */
+        --p-scroll-thumb: rgba(0, 0, 0, 0.14);
+        --p-scroll-thumb-hover: rgba(0, 0, 0, 0.28);
+
+        color: var(--p-text);
+        background-color: var(--p-bg);
     }
-    /* a quiet pine bloom - same fixed backdrop as admin, no navy aurora */
-    
+
+    /* Reception Tier 1 SaaS Studio Sidebar & Layout Tweaks */
+    .portal[data-portal="reception"] aside.glass {
+        width: 256px !important;
+        background: #ffffff !important;
+        border-right: 1px solid #e5e5e5 !important;
+        box-shadow: none !important;
+    }
+
+    .portal[data-portal="reception"] aside.glass .font-serif-p {
+        font-family: var(--font-geist), ui-sans-serif, system-ui, sans-serif !important;
+        font-size: 14px !important;
+        font-weight: 600 !important;
+        line-height: 1.25 !important;
+        letter-spacing: -0.01em !important;
+        color: #111111 !important;
+    }
+
+    /* Brand Logo & Studio Selector in Sidebar */
+    .portal[data-portal="reception"] .brand-mark {
+        width: 28px !important;
+        height: 28px !important;
+        border-radius: 8px !important;
+    }
+
+    /* Nav Links: Clean layout with no heavy borders */
+    .portal[data-portal="reception"] nav a {
+        border-radius: 12px !important;
+        border: none !important;
+        padding: 7px 11px !important;
+        margin-bottom: 2px !important;
+        background-color: transparent !important;
+        transition: background-color 0.14s ease, color 0.14s ease !important;
+    }
+
+    .portal[data-portal="reception"] nav a svg {
+        width: 16px !important;
+        height: 16px !important;
+        color: #737373 !important;
+        transition: color 0.14s ease !important;
+    }
+
+    .portal[data-portal="reception"] nav a span {
+        font-size: 13.5px !important;
+        font-weight: 450 !important;
+        color: #525252 !important;
+    }
+
+    .portal[data-portal="reception"] nav a span.text-\[11px\] {
+        font-size: 11px !important;
+        color: #8e8e8e !important;
+        font-weight: 400 !important;
+    }
+
+    .portal[data-portal="reception"] nav a span.text-\[10px\] {
+        font-size: 10px !important;
+        color: #ffffff !important;
+        font-weight: 700 !important;
+    }
+
+    /* Hover: NO background shade - only text/icon darkens */
+    .portal[data-portal="reception"] nav a:hover:not([class*="bg-[var(--p-nav-active-bg)]"]):not(.active) {
+        background-color: transparent !important;
+        border: none !important;
+    }
+
+    .portal[data-portal="reception"] nav a:hover svg,
+    .portal[data-portal="reception"] nav a:hover span {
+        color: #111111 !important;
+    }
+
+    /* Active Nav Item - ONLY selected tab gets the soft grey pill background shade */
+    .portal[data-portal="reception"] nav a.bg-\[var\(--p-nav-active-bg\)\],
+    .portal[data-portal="reception"] nav a[class*="bg-[#e5e5e5]"],
+    .portal[data-portal="reception"] nav a[class*="bg-[var(--p-nav-active-bg)]"],
+    .portal[data-portal="reception"] nav a.active {
+        background-color: #e5e5e5 !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+
+    .portal[data-portal="reception"] nav a[class*="bg-[#e5e5e5]"] svg,
+    .portal[data-portal="reception"] nav a[class*="bg-[var(--p-nav-active-bg)]"] svg,
+    .portal[data-portal="reception"] nav a.active svg {
+        color: #111111 !important;
+    }
+
+    .portal[data-portal="reception"] nav a[class*="bg-[#e5e5e5]"] span,
+    .portal[data-portal="reception"] nav a[class*="bg-[var(--p-nav-active-bg)]"] span,
+    .portal[data-portal="reception"] nav a.active span {
+        font-weight: 600 !important;
+        color: #111111 !important;
+    }
+
+    /* Clean Subtle Group Headings */
+    .portal[data-portal="reception"] nav p {
+        font-size: 10.5px !important;
+        font-weight: 700 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.08em !important;
+        color: #a3a3a3 !important;
+        padding-left: 11px !important;
+        padding-bottom: 3px !important;
+        margin-top: 12px !important;
+        border: none !important;
+    }
+
+    /* User card in Reception sidebar - seamless borderless card */
+    .portal[data-portal="reception"] aside.glass .mx-3.mb-3,
+    .portal[data-portal="reception"] aside.glass .mx-3\.5.mb-3 {
+        margin: 8px 12px 12px !important;
+        border-radius: 16px !important;
+        background: #f5f5f4 !important;
+        border: 1px solid #e5e5e5 !important;
+        padding: 12px !important;
+    }
+
+    .portal[data-portal="reception"] aside.glass .mx-3.mb-3 button,
+    .portal[data-portal="reception"] aside.glass .mx-3\.5.mb-3 button {
+        border-radius: 8px !important;
+        font-size: 11.5px !important;
+        font-weight: 500 !important;
+        padding: 4px 8px !important;
+        background: #ffffff !important;
+        border: 1px solid #e5e5e5 !important;
+        color: #525252 !important;
+    }
+
+    .portal[data-portal="reception"] aside.glass .mx-3.mb-3 button:hover {
+        border-color: #111111 !important;
+        color: #111111 !important;
+    }
+
+    .portal[data-portal="reception"] header.glass {
+        height: 50px !important;
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+        background: #ffffff !important;
+        border-bottom: 1px solid #e5e5e5 !important;
+    }
+
+    .portal[data-portal="reception"] header.glass h1 {
+        font-size: 14px !important;
+        font-weight: 600 !important;
+        color: #111111 !important;
+    }
+
+    /* Clean studio dotgrid canvas - matching ElevenLabs Studio Canvas */
     .portal[data-portal="reception"]::before {
-        background: radial-gradient(760px 420px at 12% -6%, rgba(11, 84, 76, 0.07), transparent 62%), radial-gradient(620px 380px at 92% 4%, rgba(23, 112, 95, 0.06), transparent 60%);
+        background: transparent;
+        background-image: radial-gradient(#d4d4d8 1.1px, transparent 1.1px);
+        background-size: 20px 20px;
+        opacity: 0.6;
     }
-    /* headings inherit the shared Geist treatment (see base .font-serif-p). */
-    /* surfaces go big-radius and minimal - same geometry as admin's cards.
-   No brand-tab accent strip: admin's cards don't carry one, so reception's
-   no longer does either. */
-    
+
+    /* Headings & numeric labels use clean geometric sans-serif (no thick mono/serif) */
+    .portal[data-portal="reception"] .font-serif-p {
+        font-family: var(--font-geist), ui-sans-serif, system-ui, -apple-system, sans-serif;
+        letter-spacing: -0.02em;
+    }
+
+    .portal[data-portal="reception"] .font-mono {
+        font-family: var(--font-geist), ui-sans-serif, system-ui, -apple-system, sans-serif;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: -0.01em;
+    }
+
+    /* Surfaces: crisp white cards with 1px hairline border */
     .portal[data-portal="reception"] .surface {
-        border-radius: 22px;
+        background: #ffffff;
+        border: 1px solid #e5e5e5;
+        border-radius: 16px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
     }
-    
+
+    .portal[data-portal="reception"] .surface-hover {
+        transition: border-color 0.18s ease, box-shadow 0.2s ease, transform 0.18s ease;
+    }
+
     .portal[data-portal="reception"] .surface-hover:hover {
-        border-color: #c9dcd6;
-        box-shadow: var(--p-shadow-lg);
-        transform: translateY(-2px);
+        border-color: #d4d4d4;
+        box-shadow: 0 6px 20px -6px rgba(0, 0, 0, 0.08);
+        transform: translateY(-1px);
     }
-    /* glass tuned to admin's recipe - light frosted white on BOTH the topbar
-   and the sidebar. No dark rail override: aside.glass just inherits this,
-   same as it does in admin. */
-    
-    .portal[data-portal="reception"] .glass {
-        background: rgba(255, 255, 255, 0.78);
-        backdrop-filter: blur(16px) saturate(1.4);
-        -webkit-backdrop-filter: blur(16px) saturate(1.4);
-        border-color: rgba(255, 255, 255, 0.85);
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 1px 24px -8px rgba(12, 26, 28, 0.08);
+
+    /* Pure white sidebar & topbar chrome */
+    .portal[data-portal="reception"] .glass,
+    .portal[data-portal="reception"] aside.glass,
+    .portal[data-portal="reception"] header.glass {
+        background: #ffffff;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        border-color: #ececec;
+        box-shadow: none;
     }
-    
+
+    /* Sidebar active pill: warm stone rounded pill, no left vertical bar */
     .portal[data-portal="reception"] .dotgrid {
-        background-image: radial-gradient(rgba(11, 84, 76, 0.12) 1px, transparent 1px);
+        background-image: radial-gradient(rgba(0, 0, 0, 0.08) 1px, transparent 1px);
+        background-size: 18px 18px;
     }
-    /* Buttons use the shared Supabase treatment (see base .btn-primary) - the
-   pine accent comes through var(--p-blue). Nothing to override here. */
-    /* rounded utilities scale up inside reception too, matching admin exactly -
-   pills stay pills */
-    
+
+    /* Primary CTA buttons: Solid ElevenLabs Pitch Black (#111111) */
+    .portal[data-portal="reception"] .btn-primary,
+    .portal[data-portal="reception"] button[class*="bg-[var(--p-teal)]"]:not([role="switch"]):not([disabled]),
+    .portal[data-portal="reception"] button[class*="bg-[var(--p-blue)]"]:not([role="switch"]):not([disabled]) {
+        background-color: #111111;
+        background-image: none;
+        color: #ffffff;
+        border: 1px solid #111111;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+        font-weight: 500;
+        border-radius: 10px;
+        letter-spacing: -0.01em;
+    }
+
+    .portal[data-portal="reception"] .btn-primary:hover:not(:disabled),
+    .portal[data-portal="reception"] button[class*="bg-[var(--p-teal)]"]:not([role="switch"]):hover:not(:disabled),
+    .portal[data-portal="reception"] button[class*="bg-[var(--p-blue)]"]:not([role="switch"]):hover:not(:disabled) {
+        background-color: #262626;
+        background-image: none;
+        color: #ffffff;
+        border-color: #262626;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    }
+
+    .portal[data-portal="reception"] .btn-primary:active:not(:disabled),
+    .portal[data-portal="reception"] button[class*="bg-[var(--p-teal)]"]:not([role="switch"]):active:not(:disabled) {
+        transform: scale(0.98);
+        background-color: #0a0a0a;
+    }
+
+    /* Inputs & Selects: crisp white with hairline border */
+    .portal[data-portal="reception"] :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), select, textarea) {
+        border-radius: 10px;
+        border-color: #e5e5e5;
+        background-color: #ffffff;
+        color: #111111;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+    }
+
+    .portal[data-portal="reception"] :is(input, select, textarea):focus,
+    .portal[data-portal="reception"] :is(input, select, textarea):focus-visible {
+        outline: none;
+        border-color: #111111;
+        box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.06);
+    }
+
+    .portal[data-portal="reception"] :is(input, select, textarea)::placeholder {
+        color: #a3a3a3;
+    }
+
+    .portal[data-portal="reception"] select {
+        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23525252' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    }
+
+    /* Badges & Pills: warm stone pill tags */
+    .portal[data-portal="reception"] .badge {
+        background: #f4f4f3;
+        border: 1px solid #e5e5e5;
+        color: #404040;
+        border-radius: 999px;
+        font-weight: 500;
+    }
+
+    /* Flow step bento rail - styled like the ElevenLabs node cards in screenshot */
+    .portal[data-portal="reception"] .flow-step {
+        border-radius: 14px;
+        background: #f5f5f4;
+        border: 1px solid #e5e5e5;
+        padding: 12px;
+    }
+
+    .portal[data-portal="reception"] .flow-step:hover {
+        border-color: #d4d4d4;
+        background: #f5f5f4;
+        box-shadow: 0 6px 18px -6px rgba(0, 0, 0, 0.08);
+    }
+
+    .portal[data-portal="reception"] .flow-step__n {
+        background: #ffffff;
+        border: 1px solid #e5e5e5;
+        color: #525252;
+    }
+
+    .portal[data-portal="reception"] .flow-step:hover .flow-step__n {
+        background: #111111;
+        border-color: #111111;
+        color: #ffffff;
+    }
+
+    .portal[data-portal="reception"] .flow-step__arrow {
+        color: #525252;
+    }
+
+    /* Radius tokens */
     .portal[data-portal="reception"] .rounded-md {
+        border-radius: 8px;
+    }
+
+    .portal[data-portal="reception"] .rounded-lg {
         border-radius: 10px;
     }
-    
-    .portal[data-portal="reception"] .rounded-lg {
+
+    .portal[data-portal="reception"] .rounded-xl {
         border-radius: 14px;
     }
-    
-    .portal[data-portal="reception"] .rounded-xl {
-        border-radius: 18px;
-    }
-    
+
     .portal[data-portal="reception"] .rounded-2xl {
-        border-radius: 24px;
-    }
-    
-    .portal[data-portal="reception"] .flow-step {
-        border-radius: 16px;
+        border-radius: 18px;
     }
     /* ============================================================================
    ADMIN - "porcelain pine"

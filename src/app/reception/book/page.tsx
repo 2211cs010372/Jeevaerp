@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { PrimaryButton } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
+import { SvgArrow } from "@/components/portal/ui/svg-arrow";
 import { DoctorAvatar } from "@/components/marketing/doctor-avatar";
 import { Spinner, SuccessCheck, Field } from "@/components/portal/ui/form-atoms";
 import { DiscountInput, PaymentSection, type Tender } from "@/components/portal/ui/bill-fields";
@@ -352,7 +353,7 @@ export default function BookAppointmentPage() {
             </p>
           )}
           <div className="border-t border-[var(--p-border)] bg-[var(--p-bg)] px-5 py-3 text-[13px] leading-relaxed text-[var(--p-muted)]">
-            <span className="font-semibold text-[var(--p-ink)]">What happens next:</span> the patient sees the doctor → the doctor hands them a paper prescription → they come back to you → upload it from the button below or the Today queue.
+            <span className="font-semibold text-[var(--p-ink)]">What happens next:</span> the patient sees the doctor <SvgArrow size={11} className="mx-1 inline opacity-60" /> the doctor hands them a paper prescription <SvgArrow size={11} className="mx-1 inline opacity-60" /> they come back to you <SvgArrow size={11} className="mx-1 inline opacity-60" /> upload it from the button below or the Today queue.
           </div>
           <div className="flex flex-wrap gap-3 p-5">
             <a href={`/print/opd/${booked.id}`} target="_blank" rel="noopener noreferrer"
@@ -434,7 +435,10 @@ export default function BookAppointmentPage() {
                       {query && !searching && results.length === 0 && (
                         <p className="mt-3 flex flex-wrap items-center gap-1.5 text-[13px] text-[var(--p-muted)]">
                           No patient found.
-                          <button type="button" onClick={() => { setPatientMode("new"); setNp((s) => ({ ...s, firstName: /^\d/.test(query) ? s.firstName : query })); setQuery(""); setResults([]); }} className="font-semibold text-[var(--p-teal)] hover:underline">Register them as a new patient →</button>
+                          <button type="button" onClick={() => { setPatientMode("new"); setNp((s) => ({ ...s, firstName: /^\d/.test(query) ? s.firstName : query })); setQuery(""); setResults([]); }} className="group inline-flex items-center gap-1 font-semibold text-[var(--p-teal)] hover:underline">
+                            <span>Register them as a new patient</span>
+                            <SvgArrow size={12} className="transition-transform group-hover:translate-x-0.5" />
+                          </button>
                         </p>
                       )}
                       {!query && recent.length > 0 && (
