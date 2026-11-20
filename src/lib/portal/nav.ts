@@ -85,6 +85,7 @@ export const PORTALS: Record<string, PortalMeta> = {
       { label: "Billing", href: "/billing", icon: "receipt" },
       { label: "Day close", href: "/day-close", icon: "trend" },
       { label: "Admissions", href: "/ipd", icon: "bed" },
+      { label: "IPD charges", href: "/ipd/charges", icon: "receipt", hint: "Rate card for procedures, surgeries and bed charges" },
       { label: "Patients", href: "/patients", icon: "search" },
       { label: "Schedule", href: "/schedule", icon: "clock" },
       // The roster the booking screen offers. Kept next to Schedule because the
@@ -92,7 +93,6 @@ export const PORTALS: Record<string, PortalMeta> = {
       // who exists at all.
       { label: "Doctors", href: "/doctors", icon: "users", hint: "Add a doctor, or correct their details" },
     ],
-
   },
   admin: {
     key: "admin",

@@ -253,3 +253,35 @@ export const advanceEditSchema = z.object({
   reference: z.string().trim().max(80).optional().nullable(),
   takenAt: z.string().trim().min(1).optional(),
 });
+
+export const updateDoctorSchema = z.object({
+  doctorId: z.string().trim().min(1, "Pick the doctor"),
+  reason: z.string().trim().max(300).optional().or(z.literal("")),
+});
+
+export const SERVICE_GROUPS = [
+  "IP_CHARGE",
+  "SURGERY_OPEN",
+  "SURGERY_LAPAROSCOPIC",
+  "OTHER",
+] as const;
+
+export const serviceChargeSchema = z.object({
+  id: z.string().trim().optional(),
+  name: z.string().trim().min(2, "Service name must be at least 2 characters").max(120),
+  group: z.enum(SERVICE_GROUPS).default("IP_CHARGE"),
+  category: z.enum(CHARGE_CATEGORIES).default("OTHER"),
+  price: z.coerce.number().min(0, "Price must be at least ₹0"),
+  gstRatePct: z.coerce.number().min(0).max(28).default(0),
+  perDay: z.boolean().default(false),
+  active: z.boolean().default(true),
+});
+
+export const serviceChargePricesSchema = z.object({
+  updates: z.array(
+    z.object({
+      id: z.string().trim().min(1),
+      price: z.coerce.number().min(0),
+    })
+  ).min(1),
+});

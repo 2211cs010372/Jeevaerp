@@ -222,6 +222,7 @@ export const updateInvoiceSchema = z.object({
   })).min(1, "An invoice needs at least one item"),
   discountAmount: z.coerce.number().min(0).optional(),
   notes: z.string().trim().max(300).optional(),
+  trimPaymentsToTotal: z.boolean().optional(),
   /**
    * THE DATE THE BILL PRINTS, when that is not the day it was typed.
    *

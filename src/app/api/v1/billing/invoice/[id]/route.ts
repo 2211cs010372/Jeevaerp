@@ -29,6 +29,10 @@ export const PATCH = handler(async (req, ctx) => {
   const actor = await requireRole(req, "RECEPTIONIST", "PHARMACIST", "INSURANCE_DESK", "ADMIN");
   const { id } = await ctx.params;
   const body = await parseBody(req, updateInvoiceSchema.omit({ invoiceId: true }));
-  const invoice = await updateInvoice(actor, { invoiceId: id, ...body }, auditContext(req));
+  const invoice = await updateInvoice(
+    actor,
+    { invoiceId: id, ...body, trimPaymentsToTotal: body.trimPaymentsToTotal ?? true },
+    auditContext(req)
+  );
   return NextResponse.json({ invoice });
 });

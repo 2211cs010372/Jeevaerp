@@ -16,9 +16,10 @@ import { api, ApiClientError } from "@/lib/api-client";
 import { RepeatConfirmDialog } from "@/components/portal/repeat-confirm-dialog";
 import { repeatBlock, type RepeatBlock } from "@/lib/repeat-guard";
 import { bedLabel } from "@/lib/beds";
-import { EditBillDialog, useBillEditing } from "@/components/portal/billing/edit-bill-dialog";
+import { EditBillDialog, useBillEditing, type BillEditSavedInfo } from "@/components/portal/billing/edit-bill-dialog";
 import { PatientHistoryPanel } from "@/components/portal/ipd/patient-history-panel";
 import { ForgottenBillsPanel } from "@/components/portal/ipd/forgotten-bills-panel";
+import { ChangeDoctorDialog } from "@/components/portal/ipd/change-doctor-dialog";
 
 /** One row of the hospital's published rate card. See prisma ServiceCharge. */
 interface ServiceCharge {
@@ -351,6 +352,7 @@ export default function AdmissionSheetPage() {
   // the only ones with no edit path - see CorrectStayDialog. Reached from the two
   // rows themselves, because that is where somebody notices they are wrong.
   const [correctOpen, setCorrectOpen] = useState(false);
+  const [doctorOpen, setDoctorOpen] = useState(false);
   /** The insurer refused - the stay and its bills become the family's. */
   const [rejectOpen, setRejectOpen] = useState(false);
   /** The tab line whose date is being corrected - see CorrectChargeDialog. */
@@ -380,6 +382,11 @@ export default function AdmissionSheetPage() {
   ]);
   const [historyIndex, setHistoryIndex] = useState(0);
   const [lastRemovedCharge, setLastRemovedCharge] = useState<Charge | null>(null);
+  const [lastRemovedBillItem, setLastRemovedBillItem] = useState<{
+    invoiceId: string;
+    receiptNo?: string;
+    item: { description: string; qty: number; unitPrice: string; gstRatePct: string; hsnSac: string | null };
+  } | null>(null);
 
   // Discard confirmation popup state
   const [discardModalOpen, setDiscardModalOpen] = useState(false);
@@ -405,20 +412,46 @@ export default function AdmissionSheetPage() {
   }
 
   async function handleUndo() {
-    if (historyIndex > 0) {
-      const prevIdx = historyIndex - 1;
-      const target = lineHistory[prevIdx];
-      setHistoryIndex(prevIdx);
-      setCat(target.cat);
-      setDesc(target.desc);
-      setQty(target.qty);
-      setPrice(target.price);
-      setGst(target.gst);
-      setSelectedServiceId(target.selectedServiceId);
+    // 1. Restoring a bill item removed from a pharmacy or counter bill
+    if (lastRemovedBillItem) {
+      setBusy(true);
+      setErr(null);
+      try {
+        const { invoice } = await api.get<{ invoice: any }>(`/billing/invoice/${lastRemovedBillItem.invoiceId}`);
+        const lines = (invoice.items || []).map((i: any) => ({
+          description: i.description,
+          qty: i.qty,
+          unitPrice: Number(i.unitPrice),
+          gstRatePct: Number(i.gstRatePct),
+          hsnSac: i.hsnSac ?? undefined,
+        }));
+        lines.push({
+          description: lastRemovedBillItem.item.description,
+          qty: lastRemovedBillItem.item.qty,
+          unitPrice: Number(lastRemovedBillItem.item.unitPrice),
+          gstRatePct: Number(lastRemovedBillItem.item.gstRatePct),
+          hsnSac: lastRemovedBillItem.item.hsnSac ?? undefined,
+        });
+        await api.patch(`/billing/invoice/${lastRemovedBillItem.invoiceId}`, {
+          lines,
+          trimPaymentsToTotal: true,
+        });
+        setFlash(`Restored "${lastRemovedBillItem.item.description}" to bill.`);
+        setLastRemovedBillItem(null);
+        await load();
+        loadHistory();
+      } catch (e) {
+        setErr(e instanceof ApiClientError ? e.message : "Could not restore bill item.");
+      } finally {
+        setBusy(false);
+      }
       return;
     }
+
+    // 2. Restoring a charge removed from the stay running tab
     if (lastRemovedCharge) {
       setBusy(true);
+      setErr(null);
       try {
         await api.post(`/ipd/admissions/${admissionId}/charges`, {
           category: lastRemovedCharge.category,
@@ -435,6 +468,21 @@ export default function AdmissionSheetPage() {
       } finally {
         setBusy(false);
       }
+      return;
+    }
+
+    // 3. Line form field history
+    if (historyIndex > 0) {
+      const prevIdx = historyIndex - 1;
+      const target = lineHistory[prevIdx];
+      setHistoryIndex(prevIdx);
+      setCat(target.cat);
+      setDesc(target.desc);
+      setQty(target.qty);
+      setPrice(target.price);
+      setGst(target.gst);
+      setSelectedServiceId(target.selectedServiceId);
+      return;
     }
   }
 
@@ -870,7 +918,7 @@ export default function AdmissionSheetPage() {
               <div className="px-3 py-2">
                 <div className="h-4 w-28 rounded bg-[#e5e5e5]" />
               </div>
-              <div className="rounded-lg border border-[#e5e5e5] bg-white">
+              <div className="overflow-hidden rounded-lg border border-[#e5e5e5] bg-white">
                 <div className="space-y-3 p-3.5">
                   <div className="flex justify-between">
                     <div className="h-4 w-24 rounded bg-[#f5f5f4]" />
@@ -925,6 +973,15 @@ export default function AdmissionSheetPage() {
           <p className="mt-1.5 text-[13.5px] text-[#737373]">
             <span className="font-medium text-[#404040] tabular-nums">{a.patient.displayId}</span> · <b className="font-medium text-[#111111]">{bedLabel(a.wardName, a.bedNo)}</b> ·
             Dr. {a.doctor.name} ({a.doctor.department})
+            {" · "}
+            <button
+              type="button"
+              onClick={() => setDoctorOpen(true)}
+              title="Change the attending doctor on this admission"
+              className="font-medium text-[#111111] underline decoration-[#d4d4d4] underline-offset-2 hover:decoration-[#111111]"
+            >
+              Change doctor
+            </button>
           </p>
           {/* THE STAY'S DATES, WHERE SOMEBODY ACTUALLY LOOKS FOR THEM.
               The admission date was on this screen nowhere at all, and the only
@@ -1034,7 +1091,20 @@ export default function AdmissionSheetPage() {
 
       {flash && (
         <div data-rise className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--p-cyan)]/30 bg-[var(--p-cyan-soft)] px-4 py-3 text-[14px] text-[var(--p-cyan-deep)]">
-          <span className="flex items-start gap-2"><Icon name="check" size={15} /> {flash}</span>
+          <span className="flex items-center gap-2">
+            <Icon name="check" size={15} />
+            <span>{flash}</span>
+            {(lastRemovedCharge || lastRemovedBillItem) && (
+              <button
+                type="button"
+                onClick={() => void handleUndo()}
+                disabled={busy}
+                className="ml-2 inline-flex items-center gap-1 rounded bg-[var(--p-cyan-deep)] px-2.5 py-1 text-[12px] font-semibold text-white shadow-2xs transition hover:opacity-90 disabled:opacity-50"
+              >
+                <Icon name="undo" size={12} /> Undo
+              </button>
+            )}
+          </span>
           <span className="flex items-center gap-2">
             {/* The money has just changed hands - the slip belongs here, next to
                 the confirmation, not two clicks away. */}
@@ -1053,7 +1123,7 @@ export default function AdmissionSheetPage() {
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
         <div className="space-y-4">
         {/* THE TAB */}
-        <section data-rise className="rounded-xl border border-[#e5e5e5] bg-[#f5f5f4] p-1 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+        <section data-rise className="overflow-hidden rounded-xl border border-[#e5e5e5] bg-[#f5f5f4] p-1 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
           <div className="flex flex-wrap items-center justify-between gap-1.5 px-3 py-2">
             <div className="flex items-center gap-2">
               <h3 className="text-[12.5px] font-semibold text-[#111111]">Running tab</h3>
@@ -1122,7 +1192,7 @@ export default function AdmissionSheetPage() {
             </div>
           </div>
 
-          <div className="rounded-lg border border-[#e5e5e5] bg-white">
+          <div className="overflow-hidden rounded-lg border border-[#e5e5e5] bg-white">
           <div className="divide-y divide-[#f0f0f0]">
             {/* bed is always line 1 */}
             <div className="bg-[#fafafa] px-4 py-2.5 rounded-t-lg">
@@ -1309,28 +1379,28 @@ export default function AdmissionSheetPage() {
                       Edit
                     </button>
                   )}
-                  {!discharged && !c.fromPharmacy && (
-                    <button onClick={() => removeCharge(c)} disabled={busy}
-                      className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] text-[var(--p-muted)] hover:border-[var(--p-rose)] hover:text-[var(--p-rose)]">
-                      Remove
-                    </button>
-                  )}
+                  <button onClick={() => removeCharge(c)} disabled={busy}
+                    title={discharged ? "Remove this line from the stay (re-issues final bill)" : "Remove this line"}
+                    className="rounded-lg border border-[var(--p-border)] px-2 py-1 text-[12px] text-[var(--p-muted)] hover:border-[var(--p-rose)] hover:text-[var(--p-rose)]">
+                    Remove
+                  </button>
                 </div>
               </div>
             ))}
           </div>
 
           {/* add a charge */}
-          {!discharged && (
-            <div className="border-t border-[var(--p-border)] bg-[var(--p-bg)] p-5 rounded-b-lg">
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-[12px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">Add to the tab</p>
+          <div className="border-t border-[var(--p-border)] bg-[var(--p-bg)] p-5 rounded-b-lg">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-[12px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
+                Add to the tab {discharged && <span className="text-amber-800 font-medium normal-case tracking-normal">(discharged stay: re-issues final invoice)</span>}
+              </p>
                 <div className="flex items-center gap-1.5">
                   <button
                     type="button"
                     onClick={() => void handleUndo()}
-                    disabled={historyIndex <= 0 && !lastRemovedCharge}
-                    title="Undo line change"
+                    disabled={historyIndex <= 0 && !lastRemovedCharge && !lastRemovedBillItem}
+                    title={lastRemovedBillItem ? "Undo bill item removal" : lastRemovedCharge ? "Undo charge removal" : "Undo line change"}
                     className="inline-flex items-center gap-1 rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-[11.5px] font-medium text-[#404040] hover:border-[#111111] hover:text-[#111111] disabled:opacity-30 disabled:pointer-events-none transition-colors"
                   >
                     <Icon name="undo" size={12} />
@@ -1399,7 +1469,6 @@ export default function AdmissionSheetPage() {
                 Most hospital services are GST-exempt - leave it 0 unless your CA says otherwise.
               </p>
             </div>
-          )}
           </div>
         </section>
 
@@ -1923,7 +1992,26 @@ export default function AdmissionSheetPage() {
           invoiceId={editingBillId}
           accent="teal"
           onClose={() => setEditingBillId(null)}
-          onSaved={() => { setEditingBillId(null); load(); loadHistory(); }}
+          onSaved={(info?: BillEditSavedInfo) => {
+            setEditingBillId(null);
+            if (info?.removedItems && info.removedItems.length > 0) {
+              const last = info.removedItems[info.removedItems.length - 1];
+              setLastRemovedBillItem({
+                invoiceId: info.invoiceId,
+                receiptNo: info.receiptNo,
+                item: {
+                  description: last.description,
+                  qty: last.qty,
+                  unitPrice: last.unitPrice,
+                  gstRatePct: last.gstRatePct,
+                  hsnSac: last.hsnSac,
+                },
+              });
+              setFlash(`Removed "${last.description}". Click Undo to restore.`);
+            }
+            load();
+            loadHistory();
+          }}
         />
       )}
 
@@ -1937,6 +2025,22 @@ export default function AdmissionSheetPage() {
           insurer={a.insurer}
           onClose={() => setRejectOpen(false)}
           onDone={(msg) => { setRejectOpen(false); setFlash(msg); load(); loadHistory(); }}
+        />
+      )}
+
+      {doctorOpen && (
+        <ChangeDoctorDialog
+          admissionId={a.id}
+          currentDoctor={{ name: a.doctor.name, department: a.doctor.department }}
+          patientName={a.patient.fullName}
+          ipNumber={a.ipNumber}
+          onClose={() => setDoctorOpen(false)}
+          onSaved={(newDocName) => {
+            setDoctorOpen(false);
+            setFlash(`Attending doctor updated to Dr. ${newDocName}.`);
+            load();
+            loadHistory();
+          }}
         />
       )}
 

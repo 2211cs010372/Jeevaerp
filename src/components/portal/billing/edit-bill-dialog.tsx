@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { PrimaryButton } from "@/components/portal/ui/primitives";
 import { Icon } from "@/components/portal/ui/icons";
 import { Spinner } from "@/components/portal/ui/form-atoms";
@@ -94,6 +94,12 @@ function formatDateTimeAmPm(iso: string | null | undefined): string {
   }
 }
 
+export interface BillEditSavedInfo {
+  invoiceId: string;
+  receiptNo: string;
+  removedItems: EditableInvoice["items"];
+}
+
 export function EditBillDialog({
   invoiceId,
   accent = "teal",
@@ -103,13 +109,30 @@ export function EditBillDialog({
   invoiceId: string;
   accent?: "teal" | "blue";
   onClose: () => void;
-  onSaved: () => void;
+  onSaved?: (info?: BillEditSavedInfo) => void;
 }) {
   const [inv, setInv] = useState<EditableInvoice | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** The printed date and time as YYYY-MM-DDTHH:mm. Seeded from the bill once it arrives. */
   const [date, setDate] = useState("");
+  /** Stack of removed line items so mistakes can be undone immediately. */
+  const [removedStack, setRemovedStack] = useState<{ item: EditableInvoice["items"][number]; index: number }[]>([]);
+
+  const undoRemoveItem = useCallback(() => {
+    setRemovedStack((prev) => {
+      if (prev.length === 0) return prev;
+      const last = prev[prev.length - 1];
+      setInv((p) => {
+        if (!p) return p;
+        const next = [...p.items];
+        const insertAt = Math.min(Math.max(last.index, 0), next.length);
+        next.splice(insertAt, 0, last.item);
+        return { ...p, items: next };
+      });
+      return prev.slice(0, -1);
+    });
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -187,12 +210,7 @@ export function EditBillDialog({
   // The same paise tolerance assertTotalCoversCollected applies, so a bill
   // settled to the exact rupee is not refused on a rounding crumb.
   const below = collected > 0 && newTotal < collected - 0.01;
-  // On a stay's lab/pharmacy bill, below-collected is not a wall - it trims the
-  // payment. So it blocks Save only where the server would actually refuse it.
-  const belowCollected = below && !trimsOnShortfall;
-  /** Below collected, but on a bill where that lowers the payment rather than
-   *  refusing - a warning to show, not a reason to seize Save. */
-  const willTrim = below && trimsOnShortfall;
+  const willTrim = below;
 
   async function save(): Promise<boolean> {
     if (!inv) return false;
@@ -212,8 +230,13 @@ export function EditBillDialog({
         // A bill carrying a redundant billDate would read, in the audit log and
         // to the next person, as one somebody deliberately re-dated.
         billDate: dateMoved ? (date ? new Date(date).toISOString() : null) : null,
+        trimPaymentsToTotal: true,
       });
-      onSaved();
+      onSaved?.({
+        invoiceId: inv.id,
+        receiptNo: inv.receiptNo,
+        removedItems: removedStack.map((r) => r.item),
+      });
       return true;
     } catch (e) {
       // The 403 from a switched-off desk arrives here, and its wording tells the
@@ -272,33 +295,25 @@ export function EditBillDialog({
                   live above it. */}
               {collected > 0 && (
                 <div className={`mb-5 border-l-2 px-4 py-3 text-[12px] leading-relaxed ${
-                  belowCollected
-                    ? "border-[var(--p-rose)] bg-[var(--p-rose-soft)] text-[var(--p-rose)]"
+                  willTrim
+                    ? "border-amber-400 bg-amber-50 text-amber-900"
+                    : newTotal > collected + 0.01
+                    ? "border-blue-400 bg-blue-50 text-blue-900"
                     : "border-[#d8b878] bg-[var(--p-amber-soft)] text-[#8a6414]"}`}>
-                  {belowCollected ? (
-                    <>
-                      <strong>₹{collected.toFixed(2)} has already been collected on this bill.</strong>{" "}
-                      The lines now come to ₹{newTotal.toFixed(2)} including GST, which is less than that — the
-                      server will refuse this. Refund the difference first, then correct the bill.
-                    </>
-                  ) : willTrim ? (
-                    // A test taken off a stay's lab/pharmacy bill: the removal
-                    // saves and the recorded payment drops to match.
+                  {willTrim ? (
                     <>
                       <strong>₹{collected.toFixed(2)} was collected; the lines now come to ₹{newTotal.toFixed(2)}.</strong>{" "}
-                      This bill is on the stay&apos;s running tab, so the test comes off and the recorded
-                      payment is lowered to ₹{newTotal.toFixed(2)} to match. The ₹{(collected - newTotal).toFixed(2)}
-                      {" "}difference is cash already in the drawer — hand it back at the counter; no refund is
-                      recorded here, and that day&apos;s collection shows the lower figure.
+                      Removing or adjusting services lowers the bill total. The recorded payment will automatically be adjusted to ₹{newTotal.toFixed(2)} to match. The ₹{(collected - newTotal).toFixed(2)} difference can be refunded or handed back at the counter.
+                    </>
+                  ) : newTotal > collected + 0.01 ? (
+                    <>
+                      <strong>₹{collected.toFixed(2)} collected so far.</strong>{" "}
+                      Adding services or increasing rates brings the new total to ₹{newTotal.toFixed(2)}. An outstanding balance of ₹{(newTotal - collected).toFixed(2)} will remain to be collected.
                     </>
                   ) : (
                     <>
-                      <strong>₹{collected.toFixed(2)} has already been collected on this bill</strong>{" "}
-                      and the patient has a receipt for it.{" "}
-                      {trimsOnShortfall
-                        ? "This bill is on the stay's running tab, so you can take a test off it even below that figure — the recorded payment drops to match."
-                        : "You can correct this bill, but not to a total below that figure."}{" "}
-                      If the total goes up, the difference reappears as a balance to collect.
+                      <strong>₹{collected.toFixed(2)} has already been collected on this bill.</strong>{" "}
+                      You can add new services or remove existing lines, adjust rates, or update the date and time.
                     </>
                   )}
                 </div>
@@ -351,6 +366,25 @@ export function EditBillDialog({
                 )}
               </div>
 
+              {removedStack.length > 0 && (
+                <div className="mb-4 flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-[12px] text-amber-900 shadow-2xs">
+                  <div className="flex items-center gap-2 truncate">
+                    <Icon name="alert" size={14} className="text-amber-700 shrink-0" />
+                    <span className="truncate">
+                      Removed line: <strong className="font-semibold">&quot;{removedStack[removedStack.length - 1].item.description || "Untitled line"}&quot;</strong>
+                      {removedStack.length > 1 && ` (+${removedStack.length - 1} more)`}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={undoRemoveItem}
+                    className="inline-flex shrink-0 items-center gap-1 rounded bg-amber-800 px-2.5 py-1 text-[11.5px] font-semibold text-white shadow-2xs transition hover:bg-amber-900"
+                  >
+                    <Icon name="undo" size={12} /> Undo removal
+                  </button>
+                </div>
+              )}
+
               <div className="mb-2 grid grid-cols-[1fr_70px_90px_80px] gap-2 text-[10.5px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
                 <span>Description</span><span>Qty</span><span>Rate</span><span />
               </div>
@@ -364,7 +398,12 @@ export function EditBillDialog({
                     <input className={fld} value={it.unitPrice} inputMode="decimal"
                       onChange={(e) => patch(idx, { unitPrice: e.target.value.replace(/[^\d.]/g, "") })} />
                     <button
-                      onClick={() => setInv({ ...inv, items: inv.items.filter((_, i) => i !== idx) })}
+                      type="button"
+                      onClick={() => {
+                        const itemToRemove = inv.items[idx];
+                        setRemovedStack((prev) => [...prev, { item: itemToRemove, index: idx }]);
+                        setInv({ ...inv, items: inv.items.filter((_, i) => i !== idx) });
+                      }}
                       disabled={inv.items.length === 1}
                       className="rounded-lg border border-[var(--p-rose)]/30 py-2 text-[12px] text-[var(--p-rose)] hover:bg-[var(--p-rose-soft)] disabled:opacity-40">
                       Remove
@@ -402,12 +441,12 @@ export function EditBillDialog({
               </button>
               <button
                 onClick={saveAndPrint}
-                disabled={busy || future || belowCollected || inv.items.length === 0}
+                disabled={busy || future || inv.items.length === 0}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-4 py-2 text-sm font-medium text-[var(--p-text)] hover:border-[var(--p-teal)] hover:text-[var(--p-teal)] disabled:opacity-40"
               >
                 <Icon name="printer" size={15} /> Save &amp; print
               </button>
-              <PrimaryButton onClick={save} disabled={busy || future || belowCollected || inv.items.length === 0}>
+              <PrimaryButton onClick={save} disabled={busy || future || inv.items.length === 0}>
                 {busy ? <><Spinner /> Saving…</> : <><Icon name="check" size={15} /> Save changes</>}
               </PrimaryButton>
             </div>

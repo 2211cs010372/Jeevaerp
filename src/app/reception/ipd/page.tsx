@@ -327,6 +327,7 @@ export default function BedBoardPage() {
           <nav className="flex items-center gap-6 text-[13px]" aria-label="IPD sections">
             <span className="border-b-2 border-[#111111] py-2.5 font-medium text-[#111111] whitespace-nowrap">Bed board</span>
             <Link href="/ipd/inpatients" className="border-b-2 border-transparent py-2.5 font-medium text-[#737373] transition-colors hover:text-[#111111] whitespace-nowrap">Inpatients list</Link>
+            <Link href="/ipd/charges" className="border-b-2 border-transparent py-2.5 font-medium text-[#737373] transition-colors hover:text-[#111111] whitespace-nowrap">IPD charges</Link>
             <Link href="/" className="border-b-2 border-transparent py-2.5 font-medium text-[#737373] transition-colors hover:text-[#111111] whitespace-nowrap">Today</Link>
           </nav>
         </div>

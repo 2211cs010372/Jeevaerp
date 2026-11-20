@@ -240,17 +240,17 @@ export function PortalShell({
         href={item.href}
         onClick={() => setOpen(false)}
         title={item.hint || item.label}
-        className={`group relative flex items-start gap-2.5 rounded-xl px-3 py-2 transition-all duration-150 ${
+        className={`group relative flex items-start gap-2.5 rounded-xl px-2.5 py-1.5 transition-all duration-150 ${
           active
             ? "bg-[#e5e5e5] text-[#111111]"
-            : "text-[#525252] hover:text-[#111111]"
+            : "text-[#525252] hover:bg-[#fafafa] hover:text-[#111111]"
         }`}
       >
         <span className={`mt-[2px] shrink-0 transition-colors ${active ? "text-[#111111]" : "text-[#737373] group-hover:text-[#111111]"}`}>
-          <Icon name={item.icon} size={16} />
+          <Icon name={item.icon} size={15} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className={`flex items-center gap-2 text-[13.5px] leading-tight ${active ? "font-semibold text-[#111111]" : "font-normal text-[#525252] group-hover:text-[#111111]"}`}>
+          <span className={`flex items-center gap-2 text-[13px] leading-tight ${active ? "font-semibold text-[#111111]" : "font-normal text-[#525252] group-hover:text-[#111111]"}`}>
             <span className="min-w-0 truncate">{item.label}</span>
             {count > 0 && (
               <span
@@ -266,7 +266,7 @@ export function PortalShell({
             )}
           </span>
           {item.hint && (
-            <span className="mt-0.5 block text-[11px] leading-snug text-[#8e8e8e]">{item.hint}</span>
+            <span className="mt-0.5 block text-[10.5px] leading-snug text-[#8e8e8e]">{item.hint}</span>
           )}
         </span>
       </Link>
@@ -276,7 +276,7 @@ export function PortalShell({
   /** Who is signed in, and the two things they do about it. Shared by the rail
    *  and the drawer so the phone is not a second, thinner nav with less on it. */
   const UserCard = () => (
-    <div className="mx-3.5 mb-3 rounded-2xl border border-[#e5e5e5] bg-[#f5f5f4] p-3">
+    <div className="mx-3 mb-3 rounded-2xl border-none bg-white p-3 shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
       <div className="flex items-center gap-2.5">
         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#1b4332] text-[12px] font-semibold text-white">
           {initials}
@@ -289,13 +289,13 @@ export function PortalShell({
       <div className="mt-2.5 flex gap-2">
         <button
           onClick={() => { setOpen(false); setSettingsOpen(true); }}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white py-1.5 text-[11.5px] font-medium text-[#525252] transition-colors hover:border-[#111111] hover:text-[#111111]"
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border-none bg-[#f5f5f4] py-1.5 text-[11.5px] font-medium text-[#525252] transition-colors hover:bg-[#ebebea] hover:text-[#111111]"
         >
           <Icon name="settings" size={12} /> Settings
         </button>
         <button
           onClick={logout}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white py-1.5 text-[11.5px] font-medium text-[#525252] transition-colors hover:border-[#111111] hover:text-[#111111]"
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border-none bg-[#f5f5f4] py-1.5 text-[11.5px] font-medium text-[#525252] transition-colors hover:bg-[#ebebea] hover:text-[#111111]"
         >
           <Icon name="logout" size={12} /> Sign out
         </button>
@@ -304,28 +304,8 @@ export function PortalShell({
   );
 
   const NavLinks = () => (
-    <nav className="flex flex-col gap-3 mt-2 px-3 pb-4">
-      {meta.groups
-        ? meta.groups.map((g) => {
-            const items = g.items.filter((i) => !hidden.has(i.href));
-            // A heading with every item hidden under it is a heading for nothing.
-            if (items.length === 0) return null;
-            return (
-              <div key={g.title}>
-                <p className="px-3 pb-1 text-[10.5px] font-bold uppercase tracking-wider text-[#a3a3a3]">
-                  {g.title}
-                </p>
-                <div className="flex flex-col gap-0.5">
-                  {items.map((item) => <NavRow key={item.href} item={item} />)}
-                </div>
-              </div>
-            );
-          })
-        : (
-            <div className="flex flex-col gap-0.5">
-              {meta.nav.filter((i) => !hidden.has(i.href)).map((item) => <NavRow key={item.href} item={item} />)}
-            </div>
-          )}
+    <nav className="flex flex-col gap-0.5">
+      {meta.nav.filter((i) => !hidden.has(i.href)).map((item) => <NavRow key={item.href} item={item} />)}
     </nav>
   );
 
@@ -345,8 +325,8 @@ export function PortalShell({
       <script dangerouslySetInnerHTML={{ __html: themeBootScript(meta.key) }} />
       <div className="flex min-h-screen">
         {/* ---- Sidebar: frosted glass, light ---- */}
-        <aside className="glass navskin sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-[#e5e5e5] bg-white md:flex">
-          <div className="flex items-center gap-2.5 px-5 pt-4 pb-2.5">
+        <aside className="glass navskin sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-none bg-transparent md:flex">
+          <div className="flex items-center gap-2.5 px-5 pt-4 pb-2">
             <BrandMark logo={brand?.logoDataUrl ?? null} name={brandName} />
             <div className="flex flex-col text-[13.5px] font-bold leading-[1.2] text-[#111111]">
               <span>Jeeva Multi Speciality</span>
@@ -354,61 +334,65 @@ export function PortalShell({
             </div>
           </div>
 
-          <div className="px-5 pb-1 text-[10.5px] font-bold uppercase tracking-wider text-[#a3a3a3]">
+          <div className="px-5 pb-2 text-[10.5px] font-bold uppercase tracking-wider text-[#a3a3a3]">
             {meta.roleLabel}
           </div>
 
-          <NavLinks />
-
-          <div className="flex-1" />
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-1">
+            <div className="rounded-2xl border-none bg-white p-1.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
+              <NavLinks />
+            </div>
+          </div>
 
           <UserCard />
         </aside>
 
         {/* ---- Main ---- */}
         <div className="flex min-w-0 flex-1 flex-col">
-          {/* sticky glass topbar - content blurs under it as you scroll */}
-          <header className="glass navskin sticky top-0 z-30 flex items-center justify-between border-b border-[var(--p-nav-border)] px-5 py-3.5 md:px-8">
-            <div className="flex items-center gap-3">
-              <button
-                ref={menuBtnRef}
-                onClick={() => setOpen((v) => !v)}
-                className="rounded-lg border border-[var(--p-nav-border)] p-1.5 text-[var(--p-nav-ink)] md:hidden"
-                aria-label="Menu"
-                aria-expanded={open}
-                aria-controls="portal-nav-drawer"
-              >
-                <Icon name="grid" size={18} />
-              </button>
-              <h1 className="font-serif-p text-[19px] font-semibold text-[var(--p-nav-ink)]">{localPath === "/" ? `${greeting}, ${firstName}` : title}</h1>
-            </div>
-
-            <div className="flex items-center gap-3">
-              {/* one keystroke to anyone, from any screen - the desk's single busiest move */}
-              <CommandBar portal={meta.key} />
-              <span className="hidden items-center gap-1.5 rounded-full border border-[var(--p-nav-border)] bg-[var(--p-nav-active-bg)] px-3 py-1 text-[12px] font-medium text-[var(--p-nav-muted)] xl:inline-flex">
-                <span className="h-1.5 w-1.5 rounded-full bg-[var(--p-cyan)]" />
-                Live
-              </span>
-              <button
-                onClick={() => setSettingsOpen(true)}
-                aria-label="Settings"
-                title="Settings - your account, the accent and the sidebar colours"
-                className="rounded-lg border border-[var(--p-nav-border)] bg-[var(--p-nav-active-bg)] p-1.5 text-[var(--p-nav-muted)] transition-colors hover:border-[var(--p-nav-ink)] hover:text-[var(--p-nav-ink)]"
-              >
-                <Icon name="settings" size={16} />
-              </button>
-              <div className="hidden text-right sm:block">
-                <div className="text-[13px] font-semibold leading-tight text-[var(--p-nav-ink)]">{displayName}</div>
-                <div className="text-[11px] text-[var(--p-nav-muted)]">{meta.roleLabel}</div>
+          {/* sticky glass topbar - styled as a floating card synced to the studio canvas dots */}
+          <header className="glass navskin sticky top-0 z-30 border-none bg-transparent px-5 pt-3.5 pb-2 md:px-8">
+            <div className="flex items-center justify-between rounded-2xl border-none bg-white px-3.5 py-2 shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
+              <div className="flex items-center gap-2.5">
+                <button
+                  ref={menuBtnRef}
+                  onClick={() => setOpen((v) => !v)}
+                  className="rounded-lg border-none bg-[#f5f5f4] p-1.5 text-[#525252] transition-colors hover:bg-[#ebebea] hover:text-[#111111] md:hidden"
+                  aria-label="Menu"
+                  aria-expanded={open}
+                  aria-controls="portal-nav-drawer"
+                >
+                  <Icon name="grid" size={17} />
+                </button>
+                <h1 className="font-serif-p text-[15px] font-semibold text-[#111111]">{localPath === "/" ? `${greeting}, ${firstName}` : title}</h1>
               </div>
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[var(--p-blue)] to-[var(--p-cyan)] text-[13px] font-semibold text-white shadow-[0_4px_12px_-4px_var(--p-blue-glow)]">
-                {initials}
+
+              <div className="flex items-center gap-2.5">
+                {/* one keystroke to anyone, from any screen - the desk's single busiest move */}
+                <CommandBar portal={meta.key} />
+                <span className="hidden items-center gap-1.5 rounded-full border-none bg-[#f5f5f4] px-2.5 py-1 text-[11.5px] font-medium text-[#737373] xl:inline-flex">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--p-cyan)]" />
+                  Live
+                </span>
+                <button
+                  onClick={() => setSettingsOpen(true)}
+                  aria-label="Settings"
+                  title="Settings - your account, the accent and the sidebar colours"
+                  className="rounded-lg border-none bg-[#f5f5f4] p-1.5 text-[#737373] transition-colors hover:bg-[#ebebea] hover:text-[#111111]"
+                >
+                  <Icon name="settings" size={15} />
+                </button>
+                <div className="hidden text-right sm:block">
+                  <div className="text-[13px] font-semibold leading-tight text-[#111111]">{displayName}</div>
+                  <div className="text-[10.5px] text-[#737373]">{meta.roleLabel}</div>
+                </div>
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#1b4332] text-[12px] font-semibold text-white shadow-xs">
+                  {initials}
+                </div>
               </div>
             </div>
           </header>
 
-          <main className="flex-1 px-5 py-6 md:px-8 md:py-8">{children}</main>
+          <main className="flex-1 px-5 py-4 md:px-8 md:py-6">{children}</main>
         </div>
       </div>
 
@@ -430,7 +414,7 @@ export function PortalShell({
         aria-modal="true"
         aria-label={`${brandName} navigation`}
         inert={!open}
-        className={`glass navskin fixed inset-y-0 left-0 z-50 flex w-[300px] max-w-[85vw] flex-col border-r border-[var(--p-nav-border)] shadow-[0_20px_60px_-15px_rgba(9,26,52,0.5)] transition-transform duration-300 ease-out will-change-transform motion-reduce:transition-none md:hidden ${
+        className={`glass navskin fixed inset-y-0 left-0 z-50 flex w-[300px] max-w-[85vw] flex-col border-none shadow-[0_20px_60px_-15px_rgba(9,26,52,0.5)] transition-transform duration-300 ease-out will-change-transform motion-reduce:transition-none md:hidden ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -448,13 +432,15 @@ export function PortalShell({
           </button>
         </div>
 
-        <div className="px-5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--p-nav-muted)]">
+        <div className="px-5 pb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--p-nav-muted)]">
           {meta.roleLabel}
         </div>
 
         {/* The list is longer than a phone, so THIS scrolls - and only this. */}
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-          <NavLinks />
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-1">
+          <div className="rounded-2xl border-none bg-white p-1.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
+            <NavLinks />
+          </div>
         </div>
 
         <UserCard />

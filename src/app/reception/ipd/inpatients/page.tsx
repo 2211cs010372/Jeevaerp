@@ -433,9 +433,14 @@ export default function InpatientsPage() {
             Search all admitted patients by mobile number, IP number, OP / UHID, name, and admission dates.
           </p>
         </div>
-        <Link href="/ipd" className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-4 py-2.5 text-sm font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">
-          <Icon name="bed" size={15} /> Bed board
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link href="/ipd" className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-3.5 py-2 text-sm font-medium text-[var(--p-blue)] hover:border-[var(--p-blue)]">
+            <Icon name="bed" size={15} /> Bed board
+          </Link>
+          <Link href="/ipd/charges" className="inline-flex items-center gap-2 rounded-lg border border-[var(--p-border)] px-3.5 py-2 text-sm font-medium text-[var(--p-ink)] hover:border-[var(--p-ink)]">
+            <Icon name="receipt" size={15} /> IPD charges
+          </Link>
+        </div>
       </div>
 
       {/* ── SEARCH & FILTER CONTROLS ── */}

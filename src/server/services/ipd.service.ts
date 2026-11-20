@@ -15,7 +15,7 @@ import { publishLive } from "@/server/realtime/publish";
 import { EVENTS, TOPICS } from "@/lib/realtime/topics";
 import { mergeAdvice } from "@/lib/advised-lab";
 import type { AuthUser } from "@/lib/auth/types";
-import type { Prisma, PaymentMode, ChargeCategory } from "@prisma/client";
+import type { Prisma, PaymentMode, ChargeCategory, ServiceGroup } from "@prisma/client";
 import { bedLabel } from "@/lib/beds";
 import { minutesAgo, repeatWindowStart, type RepeatBlock } from "@/lib/repeat-guard";
 import { isSettled, owed, roundBill } from "@/lib/money-round";
@@ -2363,10 +2363,6 @@ export async function removeAdmissionCharge(
     },
   });
   if (!charge) throw new ApiError(404, "Charge not found");
-  if (charge.sourceRef) {
-    // Deleting it here would silently un-bill medicine that physically left the shelf.
-    throw new ApiError(400, "This came from a pharmacy dispense. Reverse it in the pharmacy, not here.");
-  }
   const closed = isClosed(charge.admission.status as AdmissionStatusValue);
 
   await withInvoiceInStep(
@@ -5449,4 +5445,290 @@ export async function undoLastTransfer(
   });
   await publishLive([TOPICS.IPD, TOPICS.RECEPTION, TOPICS.INSURANCE, TOPICS.ADMIN], EVENTS.ADMISSION_CORRECTED);
   return { movedBackTo: result.backTo };
+}
+
+export async function updateAdmissionDoctor(
+  actor: AuthUser,
+  admissionId: string,
+  input: { doctorId: string; reason?: string },
+  ctx: { ipAddress?: string; userAgent?: string } = {},
+) {
+  const admission = await prisma.admission.findUnique({
+    where: { id: admissionId },
+    select: {
+      id: true,
+      doctorId: true,
+      ipNumber: true,
+      doctor: { select: { id: true, name: true, department: true } },
+    },
+  });
+  if (!admission) throw new ApiError(404, "Admission not found");
+
+  const newDoctor = await prisma.doctor.findUnique({
+    where: { id: input.doctorId },
+    select: { id: true, name: true, department: true, active: true },
+  });
+  if (!newDoctor) throw new ApiError(404, "Doctor not found");
+  if (!newDoctor.active) throw new ApiError(400, "Doctor is inactive");
+
+  if (admission.doctorId === input.doctorId) {
+    return admission;
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const res = await tx.admission.update({
+      where: { id: admissionId },
+      data: { doctorId: input.doctorId },
+      include: {
+        doctor: { select: { id: true, name: true, department: true } },
+      },
+    });
+
+    const noteReason = input.reason?.trim() ? ` Reason: ${input.reason.trim()}` : "";
+    await tx.admissionNote.create({
+      data: {
+        admissionId,
+        kind: "NURSING",
+        body: `Attending doctor updated from Dr. ${admission.doctor.name} to Dr. ${newDoctor.name}.${noteReason}`,
+        authorId: actor.id,
+      },
+    });
+
+    return res;
+  });
+
+  await logAudit(actor, {
+    action: "ADMISSION_DOCTOR_UPDATED",
+    targetTable: "Admission",
+    targetId: admissionId,
+    meta: {
+      ipNumber: admission.ipNumber,
+      previousDoctor: { id: admission.doctor.id, name: admission.doctor.name },
+      newDoctor: { id: newDoctor.id, name: newDoctor.name },
+      reason: input.reason ?? null,
+    },
+    ...ctx,
+  });
+
+  await publishLive([TOPICS.IPD, TOPICS.RECEPTION, TOPICS.INSURANCE, TOPICS.ADMIN], EVENTS.ADMISSION_CORRECTED);
+  return updated;
+}
+
+// ---------------------------------------------------------------------------
+// IPD RATE CARD & SERVICE CHARGES
+//
+// The hospital's published rate card for IP procedures, surgeries, oxygen,
+// nursing and consumables. Managed from Front Desk / Reception so rates can
+// be added, edited, updated or retired just like lab tests.
+// ---------------------------------------------------------------------------
+
+export async function listServiceCharges(opts?: { all?: boolean }) {
+  const where = opts?.all ? {} : { active: true };
+  const rows = await prisma.serviceCharge.findMany({
+    where,
+    orderBy: [{ group: "asc" }, { name: "asc" }],
+    select: {
+      id: true,
+      name: true,
+      group: true,
+      category: true,
+      price: true,
+      gstRatePct: true,
+      perDay: true,
+      active: true,
+    },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    group: r.group,
+    category: r.category,
+    price: Number(r.price).toFixed(2),
+    gstRatePct: Number(r.gstRatePct).toFixed(2),
+    perDay: r.perDay,
+    active: r.active,
+  }));
+}
+
+export async function upsertServiceCharge(
+  actor: AuthUser,
+  input: {
+    id?: string;
+    name: string;
+    group: ServiceGroup;
+    category: ChargeCategory;
+    price: number;
+    gstRatePct?: number;
+    perDay?: boolean;
+    active?: boolean;
+  },
+  ctx: { ipAddress?: string; userAgent?: string }
+) {
+  const cleanName = input.name.trim();
+  if (input.id) {
+    const existing = await prisma.serviceCharge.findUnique({
+      where: { id: input.id },
+    });
+    if (!existing) throw new ApiError(404, "Service charge not found");
+
+    if (existing.name.toLowerCase() !== cleanName.toLowerCase()) {
+      const duplicate = await prisma.serviceCharge.findFirst({
+        where: {
+          name: { equals: cleanName, mode: "insensitive" },
+          id: { not: input.id },
+        },
+      });
+      if (duplicate) {
+        throw new ApiError(400, `A service named "${cleanName}" already exists`);
+      }
+    }
+
+    const updated = await prisma.serviceCharge.update({
+      where: { id: input.id },
+      data: {
+        name: cleanName,
+        group: input.group,
+        category: input.category,
+        price: input.price.toFixed(2),
+        gstRatePct: (input.gstRatePct ?? 0).toFixed(2),
+        perDay: input.perDay ?? false,
+        active: input.active ?? true,
+      },
+    });
+
+    await logAudit(actor, {
+      action: "IPD_SERVICE_UPDATED",
+      targetTable: "ServiceCharge",
+      targetId: updated.id,
+      meta: {
+        name: updated.name,
+        group: updated.group,
+        category: updated.category,
+        price: Number(updated.price),
+        gstRatePct: Number(updated.gstRatePct),
+        perDay: updated.perDay,
+        active: updated.active,
+      },
+      ...ctx,
+    });
+
+    return updated;
+  } else {
+    const duplicate = await prisma.serviceCharge.findFirst({
+      where: { name: { equals: cleanName, mode: "insensitive" } },
+    });
+    if (duplicate) {
+      throw new ApiError(400, `A service named "${cleanName}" already exists`);
+    }
+
+    const created = await prisma.serviceCharge.create({
+      data: {
+        name: cleanName,
+        group: input.group,
+        category: input.category,
+        price: input.price.toFixed(2),
+        gstRatePct: (input.gstRatePct ?? 0).toFixed(2),
+        perDay: input.perDay ?? false,
+        active: input.active ?? true,
+      },
+    });
+
+    await logAudit(actor, {
+      action: "IPD_SERVICE_CREATED",
+      targetTable: "ServiceCharge",
+      targetId: created.id,
+      meta: {
+        name: created.name,
+        group: created.group,
+        category: created.category,
+        price: Number(created.price),
+        gstRatePct: Number(created.gstRatePct),
+        perDay: created.perDay,
+        active: created.active,
+      },
+      ...ctx,
+    });
+
+    return created;
+  }
+}
+
+export async function deleteServiceCharge(
+  actor: AuthUser,
+  id: string,
+  ctx: { ipAddress?: string; userAgent?: string }
+) {
+  const service = await prisma.serviceCharge.findUnique({
+    where: { id },
+  });
+  if (!service) throw new ApiError(404, "Service charge not found");
+
+  const usedCount = await prisma.admissionCharge.count({
+    where: { description: service.name },
+  });
+
+  if (usedCount > 0) {
+    throw new ApiError(
+      400,
+      `"${service.name}" was billed ${usedCount} time${usedCount === 1 ? "" : "s"} on patient stays. Untick "Active" to retire it instead of deleting to protect patient billing history.`
+    );
+  }
+
+  await prisma.serviceCharge.delete({
+    where: { id },
+  });
+
+  await logAudit(actor, {
+    action: "IPD_SERVICE_DELETED",
+    targetTable: "ServiceCharge",
+    targetId: id,
+    meta: { name: service.name, group: service.group, price: Number(service.price) },
+    ...ctx,
+  });
+
+  return { name: service.name };
+}
+
+export async function bulkUpdateServicePrices(
+  actor: AuthUser,
+  updates: { id: string; price: number }[],
+  ctx: { ipAddress?: string; userAgent?: string }
+) {
+  const existing = await prisma.serviceCharge.findMany({
+    where: { id: { in: updates.map((u) => u.id) } },
+    select: { id: true, name: true, price: true },
+  });
+  const map = new Map(existing.map((e) => [e.id, e]));
+
+  const changed: { id: string; name: string; oldPrice: number; newPrice: number }[] = [];
+
+  for (const u of updates) {
+    const row = map.get(u.id);
+    if (!row) continue;
+    const oldPrice = Number(row.price);
+    if (Math.abs(oldPrice - u.price) > 0.001) {
+      changed.push({ id: u.id, name: row.name, oldPrice, newPrice: u.price });
+    }
+  }
+
+  if (changed.length > 0) {
+    await prisma.$transaction(
+      changed.map((c) =>
+        prisma.serviceCharge.update({
+          where: { id: c.id },
+          data: { price: c.newPrice.toFixed(2) },
+        })
+      )
+    );
+
+    await logAudit(actor, {
+      action: "IPD_SERVICE_PRICES_UPDATED",
+      targetTable: "ServiceCharge",
+      targetId: "bulk",
+      meta: { count: changed.length, changes: changed },
+      ...ctx,
+    });
+  }
+
+  return { updated: changed.length };
 }
