@@ -168,13 +168,29 @@ const MODE_LABEL: Record<string, string> = {
  * print with no heading rather than under a fabricated one.
  */
 function groupLinesByDate(lines: BillLine[]): [string, BillLine[]][] {
+  // Sort lines chronologically so items on the same day and across days are in date order
+  const sorted = [...lines].sort((a, b) => {
+    if (!a.date && !b.date) return 0;
+    if (!a.date) return -1;
+    if (!b.date) return 1;
+    return new Date(a.date).getTime() - new Date(b.date).getTime();
+  });
   const byDay = new Map<string, BillLine[]>();
-  for (const l of lines) {
+  for (const l of sorted) {
     const day = d(l.date);
     byDay.set(day, [...(byDay.get(day) ?? []), l]);
   }
   // Undated lines lead: they belong to the stay as a whole, not to one day.
-  return [...byDay.entries()].sort(([a], [z]) => (a === "" ? -1 : z === "" ? 1 : 0));
+  return [...byDay.entries()].sort(([a], [z]) => {
+    if (a === "") return -1;
+    if (z === "") return 1;
+    // d(iso) produces "DD-MM-YYYY". Parse to compare dates correctly:
+    const [d1, m1, y1] = a.split("-").map(Number);
+    const [d2, m2, y2] = z.split("-").map(Number);
+    const t1 = new Date(y1, m1 - 1, d1).getTime();
+    const t2 = new Date(y2, m2 - 1, d2).getTime();
+    return t1 - t2;
+  });
 }
 
 /**

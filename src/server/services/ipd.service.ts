@@ -4391,7 +4391,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
       },
       invoices: {
         where: { status: { not: "CANCELLED" } },
-        orderBy: { createdAt: "desc" },
+        orderBy: { createdAt: "asc" },
         select: {
           receiptNo: true, source: true, createdAt: true, payer: true,
           // THE DATE THIS BILL SHOWS, where a desk corrected it. Every date on
@@ -4692,7 +4692,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   push("LAB INVESTIGATION CHARGES", [
     ...labLines.filter((l) => !invoicedInvestigations.has(l.description.trim().toLowerCase())),
     ...(bySection.get("INVESTIGATIONS") ?? []),
-  ], true);
+  ].sort((x, y) => (x.date && y.date ? x.date.localeCompare(y.date) : 0)), true);
 
   // ── MEDICINES ORDERED BUT NOT YET BILLED ──
   //
@@ -4776,7 +4776,10 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
       };
     });
 
-  push("PHARMACY CHARGES", [...(bySection.get("PHARMACY") ?? []), ...draftMedLines], true);
+  push("PHARMACY CHARGES", [
+    ...(bySection.get("PHARMACY") ?? []),
+    ...draftMedLines,
+  ].sort((x, y) => (x.date && y.date ? x.date.localeCompare(y.date) : 0)), true);
 
   // ── The money block ──
   //
