@@ -4445,7 +4445,13 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   const groups: BillGroupDTO[] = [];
   const push = (title: string, lines: BillLineDTO[], byDate = false) => {
     if (!lines.length) return;
-    groups.push({ title, lines, byDate, total: m2(lines.reduce((s, l) => round2(s + Number(l.amount)), 0)) });
+    const sortedLines = [...lines].sort((x, y) => {
+      if (!x.date && !y.date) return 0;
+      if (!x.date) return -1;
+      if (!y.date) return 1;
+      return new Date(x.date).getTime() - new Date(y.date).getTime();
+    });
+    groups.push({ title, lines: sortedLines, byDate, total: m2(sortedLines.reduce((s, l) => round2(s + Number(l.amount)), 0)) });
   };
 
   // ── WARD ── one line per LEG, so a General to ICU transfer prints as two rows
@@ -4692,7 +4698,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   push("LAB INVESTIGATION CHARGES", [
     ...labLines.filter((l) => !invoicedInvestigations.has(l.description.trim().toLowerCase())),
     ...(bySection.get("INVESTIGATIONS") ?? []),
-  ].sort((x, y) => (x.date && y.date ? x.date.localeCompare(y.date) : 0)), true);
+  ], true);
 
   // ── MEDICINES ORDERED BUT NOT YET BILLED ──
   //
@@ -4779,7 +4785,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   push("PHARMACY CHARGES", [
     ...(bySection.get("PHARMACY") ?? []),
     ...draftMedLines,
-  ].sort((x, y) => (x.date && y.date ? x.date.localeCompare(y.date) : 0)), true);
+  ], true);
 
   // ── The money block ──
   //
