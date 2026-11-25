@@ -4457,33 +4457,24 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   // ── WARD ── one line per LEG, so a General to ICU transfer prints as two rows
   // at two rates. An insurer paying an ICU entitlement has to see which nights
   // were actually ICU, and one averaged line cannot tell them.
+  const clampDate = (d: Date): Date => {
+    const t = d.getTime();
+    const start = a.admittedAt.getTime();
+    const finish = end.getTime();
+    if (t < start) return a.admittedAt;
+    if (t > finish) return end;
+    return d;
+  };
+
   const billLegDays = billedLegDays(a.admittedAt, end, a.bedStays);
   const wardLines: BillLineDTO[] = a.bedStays.length
     ? a.bedStays.map((st, i) => {
         const d = billLegDays[i];
         const rate = num(st.dailyCharge);
         return {
-          // THE DAY THE PATIENT MOVED INTO THIS BED, not null.
-          //
-          // Every other hospital-services line carries its date, and a bed leg
-          // without one printed as the only undated row in the section - on a
-          // stay with a transfer, the two ward rows then gave no way to tell
-          // which nights were which. The leg's own start date says it.
-          date: st.fromDate.toISOString(),
+          // THE DAY THE PATIENT MOVED INTO THIS BED, clamped inside stay window.
+          date: clampDate(st.fromDate).toISOString(),
           issueNo: null, code: null,
-          // NAMED, AND IN THE WARD'S OWN WORDS.
-          //
-          // This printed the stored bed id straight out of the column -
-          // "General Ward - GW-01" - which says the ward twice on any bed whose
-          // id carries its ward as a prefix, and reads as a database row on the
-          // one document a family and a TPA both keep. `bedLabel` is the single
-          // definition of how a bed reads to a person ("General Ward BED 1");
-          // every screen and the GST invoice already use it, and this sheet was
-          // the last place still spelling it its own way.
-          //
-          // "Bed charges ·" because the row sits under HOSPITAL SERVICES beside
-          // "Nursing Charges" - without it, the first line of the bill is a
-          // place rather than a charge.
           description: `Bed charges · ${bedLabel(st.wardName, st.bed?.bedNo)}`,
           batchNo: null, expiry: null,
           rate: m2(rate), qty: d, amount: m2(rate * d),
@@ -4512,7 +4503,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
     bySection.set(section, [
       ...(bySection.get(section) ?? []),
       {
-        date: c.createdAt.toISOString(),
+        date: clampDate(c.createdAt).toISOString(),
         issueNo: c.sourceRef, code: null,
         description: c.description,
         batchNo: null, expiry: null,
@@ -4606,16 +4597,17 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
         isSettled(round2(total - paid)) ? "PAID" : paid > 0.01 ? "PART" : "DUE";
       sourceBills.push({
         receiptNo: inv.receiptNo, source: inv.source,
-        date: effectiveBillDate(inv).toISOString(),
+        date: clampDate(effectiveBillDate(inv)).toISOString(),
         total: m2(total), paid: m2(paid), status,
       });
 
       const section = SECTION_OF[inv.source] ?? "SERVICES";
+      const lineDate = clampDate(effectiveBillDate(inv)).toISOString();
       for (const it of inv.items) {
         bySection.set(section, [
           ...(bySection.get(section) ?? []),
           {
-            date: effectiveBillDate(inv).toISOString(),
+            date: lineDate,
             // The receipt number doubles as the issue number, so an assessor
             // querying one line can be pointed at the document it came from.
             issueNo: inv.receiptNo,
@@ -4676,7 +4668,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   // when it is ordered and snapshotted onto the row, so the amount is the real
   // one and not a guess.
   const labLines: BillLineDTO[] = (finalised ? [] : a.labTests).map((t) => ({
-    date: t.createdAt.toISOString(),
+    date: clampDate(t.createdAt).toISOString(),
     issueNo: t.orderGroupId ? t.orderGroupId.slice(-8).toUpperCase() : null,
     code: t.catalog?.code ?? null,
     description: t.testName,
@@ -4769,7 +4761,7 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
       const rate = it.medicineId ? unitPriceOf.get(it.medicineId) : undefined;
       const priced = rate != null && rate > 0;
       return {
-        date: it.at.toISOString(),
+        date: clampDate(it.at).toISOString(),
         issueNo: null, code: null,
         // Name only, same as the billed pharmacy lines above - the dosage is on
         // the prescription, and this column is not where anyone reads it.
@@ -4830,10 +4822,10 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
   const payments: BillPaymentDTO[] = [
     ...a.advances.map((x) => ({
       invoiceNo: x.receiptNo ?? "ADVANCE",
-      date: x.createdAt.toISOString(),
+      date: clampDate(x.createdAt).toISOString(),
       mode: String(x.mode),
       amount: m2(num(x.amount)),
-      at: x.createdAt.getTime(),
+      at: clampDate(x.createdAt).getTime(),
     })),
     ...a.invoices.flatMap((i) => {
       // ON THE BILL'S OWN DATE, where a desk corrected it.
@@ -4850,13 +4842,16 @@ export async function detailedBillData(admissionId: string): Promise<DetailedBil
         // the row above with its own slip number. Listed again it made the
         // column add up to more than was ever received.
         .filter((p) => !isAdvanceAdjustment(p.reference))
-        .map((p) => ({
-          invoiceNo: i.receiptNo,
-          date: (on ?? p.createdAt).toISOString(),
-          mode: String(p.mode),
-          amount: m2(num(p.amount)),
-          at: (on ?? p.createdAt).getTime(),
-        }));
+        .map((p) => {
+          const clamped = clampDate(on ?? p.createdAt);
+          return {
+            invoiceNo: i.receiptNo,
+            date: clamped.toISOString(),
+            mode: String(p.mode),
+            amount: m2(num(p.amount)),
+            at: clamped.getTime(),
+          };
+        });
     }),
   ]
     .sort((x, y) => x.at - y.at)
