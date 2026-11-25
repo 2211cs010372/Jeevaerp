@@ -11,6 +11,7 @@ export default function PharmacyDayClosePage() {
       subtitle="What should be in the pharmacy drawer, and whether it is."
       accent="blue"
       topics={[TOPICS.PHARMACY]}
+      printHref="/pharmacy/print/day-close?till=PHARMACY"
     />
   );
 }

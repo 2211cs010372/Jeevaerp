@@ -6,6 +6,7 @@ import { api, ApiClientError } from "@/lib/api-client";
 import { amountInWords } from "@/lib/amount-words";
 import { PRINT_CSS, PrintToolbar, BillHead, FooterBand, type HospitalInfo } from "@/components/print/stationery";
 import type { DayCloseExport } from "@/lib/export/day-close-xlsx";
+import { PharmacyDayCloseSheet } from "./pharmacy-day-close-sheet";
 
 /**
  * The day-close statement - the sheet a receptionist signs and hands over with
@@ -106,6 +107,11 @@ function DayCloseSheetInner() {
    * wrong drawer.
    */
   const till = params.get("till") ?? "";
+
+  if (till.toUpperCase() === "PHARMACY") {
+    return <PharmacyDayCloseSheet />;
+  }
+
   const [d, setD] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
 

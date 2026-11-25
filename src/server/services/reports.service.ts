@@ -156,6 +156,16 @@ export interface DayClose {
    *  separately so the print sheet needs one round trip and no ADMIN-only
    *  config call - same pattern as opdPrintData / advancePrintData. */
   hospital: { legalName: string; addressLine: string; city: string; state: string; stateCode: string; pincode: string; gstin: string | null; phone: string | null } | null;
+  /** GST and sales breakdown across closed invoices for this day close. */
+  gst?: {
+    subtotal: number;
+    discount: number;
+    taxable: number;
+    cgst: number;
+    sgst: number;
+    totalTax: number;
+    total: number;
+  };
 }
 
 /**
@@ -215,6 +225,7 @@ export async function dayClose(opts?: { dateISO?: string; till?: Till }): Promis
       select: {
         receiptNo: true, totalAmount: true, status: true,
         payer: true, payerName: true,
+        subtotal: true, discountAmount: true, taxableAmount: true, cgstAmount: true, sgstAmount: true,
         patient: { select: { fullName: true } },
         payments: { select: { amount: true } },
         refunds: { select: { amount: true } },
@@ -336,6 +347,11 @@ export async function dayClose(opts?: { dateISO?: string; till?: Till }): Promis
   type InvoiceRow = {
     receiptNo: string; totalAmount: { toString(): string }; status: string;
     payer: string; payerName: string | null;
+    subtotal?: { toString(): string };
+    discountAmount?: { toString(): string };
+    taxableAmount?: { toString(): string };
+    cgstAmount?: { toString(): string };
+    sgstAmount?: { toString(): string };
     patient: { fullName: string } | null;
     payments: { amount: { toString(): string } }[];
     refunds: { amount: { toString(): string } }[];
@@ -343,6 +359,20 @@ export async function dayClose(opts?: { dateISO?: string; till?: Till }): Promis
   const live = (invoices as InvoiceRow[]).filter((i) => i.status !== "CANCELLED");
   const selfPayBills = live.filter((i) => i.payer !== "INSURANCE");
   const insuranceBills = live.filter((i) => i.payer === "INSURANCE");
+
+  const gst = live.reduce(
+    (acc, i) => {
+      acc.subtotal = r2(acc.subtotal + Number(i.subtotal?.toString() ?? 0));
+      acc.discount = r2(acc.discount + Number(i.discountAmount?.toString() ?? 0));
+      acc.taxable = r2(acc.taxable + Number(i.taxableAmount?.toString() ?? 0));
+      acc.cgst = r2(acc.cgst + Number(i.cgstAmount?.toString() ?? 0));
+      acc.sgst = r2(acc.sgst + Number(i.sgstAmount?.toString() ?? 0));
+      acc.totalTax = r2(acc.cgst + acc.sgst);
+      acc.total = r2(acc.total + Number(i.totalAmount?.toString() ?? 0));
+      return acc;
+    },
+    { subtotal: 0, discount: 0, taxable: 0, cgst: 0, sgst: 0, totalTax: 0, total: 0 }
+  );
 
   return {
     hospital,
@@ -401,6 +431,7 @@ export async function dayClose(opts?: { dateISO?: string; till?: Till }): Promis
         .reduce((s, p) => r2(s + Number(p.amount.toString())), 0)
     ),
     insurerReceiptCount: (payments as P[]).filter((p) => !isCounterMode(p.mode)).length,
+    gst,
   };
 }
 
