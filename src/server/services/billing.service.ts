@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { computeInvoiceTotals, fitTendersToTotal, assertRefundable, assertPaymentsWithinTotal, invoiceStatusFrom, netPaid, totalRefunded, refundable, r2, resolveBillDate, BillDateError, assertTotalCoversCollected, billTrimsPaymentOnShortfall, InvoiceMathError, planPaymentTrim } from "@/server/billing/calc";
 import { nextId } from "@/lib/ids";
@@ -629,6 +630,10 @@ export async function updateInvoice(
   await assertMayEditBills(actor);
   const billDate = billDateOrThrow(input.billDate);
 
+  let newlyCreatedLabTestsCount = 0;
+  let labAdmissionId: string | null = null;
+  let isLabInvoice = false;
+
   await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const inv = await tx.invoice.findUnique({
       where: { id: input.invoiceId },
@@ -639,7 +644,7 @@ export async function updateInvoice(
         createdAt: true, billDate: true,
         // Whether this bill is on a stay's running tab. A LAB or PHARMACY bill
         // that is decides the floor below - see trimToTotal.
-        source: true, admissionId: true,
+        source: true, admissionId: true, patientId: true,
         payments: { select: { id: true, amount: true, reference: true, createdAt: true } },
         refunds: { select: { amount: true } },
         eInvoice: { select: { status: true } },
@@ -647,6 +652,9 @@ export async function updateInvoice(
     });
     if (!inv) throw new ApiError(404, "Invoice not found");
     if (inv.status === "CANCELLED") throw new ApiError(400, "This invoice was cancelled and can't be edited");
+
+    isLabInvoice = inv.source === "LAB";
+    labAdmissionId = inv.admissionId;
 
     // ── A TEST COMES OFF A STAY'S BILL EVEN AFTER IT IS COLLECTED ──
     //
@@ -860,6 +868,171 @@ export async function updateInvoice(
       select: { description: true, batchId: true, labTestId: true },
     });
 
+    const prevLabTestIds = prevLines.map((l) => l.labTestId).filter((id): id is string => Boolean(id));
+    let orderGroupId: string | null = null;
+    let refTest: {
+      appointmentId: string | null;
+      referringDoctorId: string | null;
+      referringName: string | null;
+    } | null = null;
+
+    if (isLabInvoice) {
+      const existingLabTests = prevLabTestIds.length > 0
+        ? await tx.labTest.findMany({
+            where: { id: { in: prevLabTestIds } },
+            select: {
+              id: true,
+              orderGroupId: true,
+              patientId: true,
+              admissionId: true,
+              appointmentId: true,
+              referringDoctorId: true,
+              referringName: true,
+              orderedAt: true,
+            },
+          })
+        : [];
+
+      refTest = existingLabTests[0] ?? null;
+      orderGroupId = existingLabTests.find((t) => t.orderGroupId)?.orderGroupId ?? null;
+
+      // If no orderGroupId from linked tests, check other tests on this admission if any
+      if (!orderGroupId && inv.admissionId) {
+        const stayTest = await tx.labTest.findFirst({
+          where: { admissionId: inv.admissionId },
+          select: {
+            orderGroupId: true,
+            appointmentId: true,
+            referringDoctorId: true,
+            referringName: true,
+          },
+        });
+        if (stayTest) {
+          orderGroupId = stayTest.orderGroupId ?? null;
+          if (!refTest) refTest = stayTest;
+        }
+      }
+
+      // If still none, mint a new group
+      if (!orderGroupId) {
+        orderGroupId = randomUUID();
+      }
+
+      // If existing tests lacked an orderGroupId, unite them under this orderGroupId
+      if (existingLabTests.length > 0 && existingLabTests.some((t) => !t.orderGroupId)) {
+        await tx.labTest.updateMany({
+          where: { id: { in: existingLabTests.filter((t) => !t.orderGroupId).map((t) => t.id) } },
+          data: { orderGroupId },
+        });
+      }
+
+      // If the bill was re-dated, keep the lab tests' orderedAt in sync
+      if (moveTo && existingLabTests.length > 0) {
+        await tx.labTest.updateMany({
+          where: { id: { in: existingLabTests.map((t) => t.id) } },
+          data: { orderedAt: moveTo },
+        });
+      }
+    }
+
+    const usedPrevIdxs = new Set<number>();
+    const newlyCreatedLabTestIds: string[] = [];
+    const keptLabTestIds = new Set<string>();
+
+    const itemCreateRecords = [];
+    for (let idx = 0; idx < items.length; idx++) {
+      const it = items[idx];
+      let carried = null;
+      if (
+        prevLines[idx] &&
+        !usedPrevIdxs.has(idx) &&
+        prevLines[idx].description.trim().toLowerCase() === it.description.trim().toLowerCase()
+      ) {
+        carried = prevLines[idx];
+        usedPrevIdxs.add(idx);
+      } else {
+        const altIdx = prevLines.findIndex(
+          (p, i) =>
+            !usedPrevIdxs.has(i) &&
+            p.description.trim().toLowerCase() === it.description.trim().toLowerCase()
+        );
+        if (altIdx !== -1) {
+          carried = prevLines[altIdx];
+          usedPrevIdxs.add(altIdx);
+        }
+      }
+
+      let labTestId = it.labTestId ?? carried?.labTestId ?? null;
+
+      // If this is a LAB invoice and this line has no lab test attached, create one!
+      if (isLabInvoice && !labTestId) {
+        const catalogMatch = await tx.labTestCatalog.findFirst({
+          where: {
+            OR: [
+              { name: { equals: it.description.trim(), mode: "insensitive" } },
+              { code: { equals: it.description.trim(), mode: "insensitive" } },
+            ],
+            active: true,
+          },
+          select: { id: true, name: true },
+        });
+
+        const createdTest = await tx.labTest.create({
+          data: {
+            orderGroupId,
+            patientId: inv.patientId,
+            admissionId: inv.admissionId,
+            appointmentId: refTest?.appointmentId ?? null,
+            referringDoctorId: refTest?.referringDoctorId ?? null,
+            referringName: refTest?.referringName ?? "Hospital",
+            catalogId: catalogMatch?.id ?? null,
+            testName: catalogMatch?.name ?? it.description.trim(),
+            priceAtOrder: s2(it.unitPrice),
+            status: "PENDING",
+            orderedAt: moveTo ?? inv.billDate ?? inv.createdAt,
+          },
+          select: { id: true },
+        });
+        labTestId = createdTest.id;
+        newlyCreatedLabTestIds.push(createdTest.id);
+      }
+
+      if (labTestId) keptLabTestIds.add(labTestId);
+
+      itemCreateRecords.push({
+        description: it.description,
+        hsnSac: it.hsnSac ?? null,
+        qty: it.qty,
+        unitPrice: s2(it.unitPrice),
+        amount: s2(it.amount),
+        gstRatePct: s2(it.gstRatePct),
+        batchId: carried?.batchId ?? null,
+        labTestId,
+      });
+    }
+
+    newlyCreatedLabTestsCount = newlyCreatedLabTestIds.length;
+
+    // Clean up removed pending tests if an item was deleted from a LAB bill
+    if (isLabInvoice && prevLabTestIds.length > 0) {
+      const removedLabTestIds = prevLabTestIds.filter((id) => !keptLabTestIds.has(id));
+      if (removedLabTestIds.length > 0) {
+        const pendingRemovals = await tx.labTest.findMany({
+          where: {
+            id: { in: removedLabTestIds },
+            status: "PENDING",
+            results: { none: {} },
+          },
+          select: { id: true },
+        });
+        if (pendingRemovals.length > 0) {
+          await tx.labTest.deleteMany({
+            where: { id: { in: pendingRemovals.map((r) => r.id) } },
+          });
+        }
+      }
+    }
+
     // swap the items wholesale (receiptNo is preserved - same invoice, corrected)
     await tx.invoiceItem.deleteMany({ where: { invoiceId: inv.id } });
     await tx.invoice.update({
@@ -879,20 +1052,7 @@ export async function updateInvoice(
         // among these fields - see the schema note on billDate.
         ...(billDate === undefined ? {} : { billDate }),
         items: {
-          create: items.map((it, idx) => {
-            // Same slot, same description -> the same physical line, so whatever
-            // it pointed at still applies. See the note above deleteMany.
-            const prev = prevLines[idx];
-            const carried = prev && prev.description === it.description ? prev : null;
-            return {
-              description: it.description, hsnSac: it.hsnSac ?? null, qty: it.qty,
-              unitPrice: s2(it.unitPrice), amount: s2(it.amount), gstRatePct: s2(it.gstRatePct),
-              batchId: carried?.batchId ?? null,
-              // An explicit test from the caller wins; otherwise keep the one the
-              // line already had, which is what a date or price correction means.
-              labTestId: it.labTestId ?? carried?.labTestId ?? null,
-            };
-          }),
+          create: itemCreateRecords,
         },
       },
     });
@@ -925,6 +1085,16 @@ export async function updateInvoice(
       ...ctx,
     }, tx);
   });
+
+  if (isLabInvoice && newlyCreatedLabTestsCount > 0) {
+    await publishLive(
+      labAdmissionId
+        ? [TOPICS.LABS, TOPICS.RECEPTION, TOPICS.IPD, TOPICS.ADMIN]
+        : [TOPICS.LABS, TOPICS.RECEPTION, TOPICS.ADMIN],
+      EVENTS.LAB_ORDERED,
+      newlyCreatedLabTestsCount
+    );
+  }
 
   return getInvoice(input.invoiceId);
 }

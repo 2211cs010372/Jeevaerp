@@ -21,7 +21,7 @@ export const dynamic = "force-dynamic";
  * list it vanished from is the only list you can see.
  */
 export const GET = handler(async (req) => {
-  await requireRole(req, "LAB_TECH", "RECEPTIONIST", "ADMIN");
+  await requireRole(req, "LAB_TECH", "RECEPTIONIST", "PHARMACIST", "INSURANCE_DESK", "ADMIN");
   const all = new URL(req.url).searchParams.get("all") === "1";
   return NextResponse.json({ catalog: all ? await listAllCatalog() : await listCatalog() });
 });

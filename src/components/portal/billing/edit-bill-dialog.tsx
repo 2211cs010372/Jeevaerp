@@ -118,6 +118,7 @@ export function EditBillDialog({
   const [date, setDate] = useState("");
   /** Stack of removed line items so mistakes can be undone immediately. */
   const [removedStack, setRemovedStack] = useState<{ item: EditableInvoice["items"][number]; index: number }[]>([]);
+  const [labCatalog, setLabCatalog] = useState<{ id: string; name: string; price: number | string; code?: string }[]>([]);
 
   const undoRemoveItem = useCallback(() => {
     setRemovedStack((prev) => {
@@ -145,6 +146,14 @@ export function EditBillDialog({
       .catch((e) => { if (live) setError(e instanceof ApiClientError ? e.message : "Couldn't open the bill."); });
     return () => { live = false; };
   }, [invoiceId]);
+
+  useEffect(() => {
+    if (inv?.source === "LAB") {
+      api.get<{ catalog: { id: string; name: string; price: number | string; code?: string }[] }>("/labs/catalog")
+        .then((r) => setLabCatalog(r.catalog || []))
+        .catch(() => setLabCatalog([]));
+    }
+  }, [inv?.source]);
 
   /** The real date/time this bill was raised - what the box goes back to on Reset. */
   const realDate = inv ? formatDateTimeForInput(inv.createdAt) : "";
@@ -388,11 +397,35 @@ export function EditBillDialog({
               <div className="mb-2 grid grid-cols-[1fr_70px_90px_80px] gap-2 text-[10.5px] font-semibold uppercase tracking-wide text-[var(--p-muted)]">
                 <span>Description</span><span>Qty</span><span>Rate</span><span />
               </div>
+              {inv.source === "LAB" && labCatalog.length > 0 && (
+                <datalist id={`lab-catalog-list-${invoiceId}`}>
+                  {labCatalog.map((c) => (
+                    <option key={c.id} value={c.name}>
+                      ₹{c.price}
+                    </option>
+                  ))}
+                </datalist>
+              )}
               <div className="space-y-3">
                 {inv.items.map((it, idx) => (
                   <div key={idx} className="grid grid-cols-[1fr_70px_90px_80px] items-center gap-2">
-                    <input className={fld} value={it.description}
-                      onChange={(e) => patch(idx, { description: e.target.value })} />
+                    <input
+                      className={fld}
+                      value={it.description}
+                      list={inv.source === "LAB" ? `lab-catalog-list-${invoiceId}` : undefined}
+                      placeholder={inv.source === "LAB" ? "Test name or select from list..." : "Description"}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (inv.source === "LAB") {
+                          const match = labCatalog.find((c) => c.name.toLowerCase() === val.trim().toLowerCase());
+                          if (match && (!it.unitPrice || it.unitPrice === "0")) {
+                            patch(idx, { description: val, unitPrice: String(match.price) });
+                            return;
+                          }
+                        }
+                        patch(idx, { description: val });
+                      }}
+                    />
                     <input className={fld} value={it.qty} inputMode="numeric"
                       onChange={(e) => patch(idx, { qty: Number(e.target.value.replace(/\D/g, "")) || 1 })} />
                     <input className={fld} value={it.unitPrice} inputMode="decimal"
@@ -411,11 +444,19 @@ export function EditBillDialog({
                   </div>
                 ))}
               </div>
-              <button
-                onClick={() => setInv({ ...inv, items: [...inv.items, { description: "", qty: 1, unitPrice: "0", amount: "0", gstRatePct: "0", hsnSac: null }] })}
-                className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
-                <Icon name="plus" size={13} /> Add line
-              </button>
+              <div className="mt-3 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setInv({ ...inv, items: [...inv.items, { description: "", qty: 1, unitPrice: "0", amount: "0", gstRatePct: "0", hsnSac: null }] })}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] px-3 py-2 text-[12px] font-medium text-[var(--p-teal)] hover:border-[var(--p-teal)]">
+                  <Icon name="plus" size={13} /> Add line
+                </button>
+                {inv.source === "LAB" && (
+                  <span className="text-[11px] text-[var(--p-muted)]">
+                    Added tests will appear in the Labs queue for result entry &amp; reports.
+                  </span>
+                )}
+              </div>
 
               <div className="mt-5 max-w-[220px]">
                 <DiscountInput
