@@ -130,6 +130,38 @@ function ReceiveInner() {
   const [recent, setRecent] = useState<Grn[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+
+  // ── Delivery list filtering (Month-wise, Day-wise, All) ────────────────────
+  const [filterMode, setFilterMode] = useState<"ALL" | "THIS_MONTH" | "MONTH" | "DAY">("ALL");
+  const [filterMonth, setFilterMonth] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  });
+  const [filterDate, setFilterDate] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
+  const [filterSupplier, setFilterSupplier] = useState<string>("");
+  const [filterQuery, setFilterQuery] = useState<string>("");
+  const [receiptsLoading, setReceiptsLoading] = useState(false);
+
+  const summaryTotals = useMemo(() => {
+    let totalVal = 0;
+    let totalTax = 0;
+    let totalBilled = 0;
+    for (const g of recent) {
+      totalVal += Number(g.receivedValue) || 0;
+      totalTax += Number(g.receivedTax) || 0;
+      totalBilled += Number(g.invoiceAmount) || 0;
+    }
+    return {
+      count: recent.length,
+      value: totalVal,
+      tax: totalTax,
+      total: totalVal + totalTax,
+      billed: totalBilled,
+    };
+  }, [recent]);
   /**
    * Whether the grid is marking its missing boxes yet.
    *
@@ -330,6 +362,49 @@ function ReceiveInner() {
     if (mobileRafRef.current) cancelAnimationFrame(mobileRafRef.current);
   }
 
+  const loadReceipts = useCallback(
+    async (opts?: {
+      mode?: "ALL" | "THIS_MONTH" | "MONTH" | "DAY";
+      month?: string;
+      date?: string;
+      supplierId?: string;
+      q?: string;
+    }) => {
+      const mode = opts?.mode ?? filterMode;
+      const m = opts?.month ?? filterMonth;
+      const d = opts?.date ?? filterDate;
+      const sId = opts?.supplierId !== undefined ? opts.supplierId : filterSupplier;
+      const query = opts?.q !== undefined ? opts.q : filterQuery;
+
+      setReceiptsLoading(true);
+      try {
+        const qp = new URLSearchParams();
+        if (mode === "ALL") {
+          qp.set("all", "1");
+        } else if (mode === "THIS_MONTH") {
+          const now = new Date();
+          const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+          qp.set("month", thisMonth);
+        } else if (mode === "MONTH" && m) {
+          qp.set("month", m);
+        } else if (mode === "DAY" && d) {
+          qp.set("date", d);
+        }
+
+        if (sId) qp.set("supplierId", sId);
+        if (query.trim()) qp.set("q", query.trim());
+
+        const r = await api.get<{ receipts: Grn[] }>(`/pharmacy/receipts?${qp.toString()}`);
+        setRecent(r.receipts);
+      } catch (e) {
+        setError(e instanceof ApiClientError ? e.message : "Couldn't load deliveries.");
+      } finally {
+        setReceiptsLoading(false);
+      }
+    },
+    [filterMode, filterMonth, filterDate, filterSupplier, filterQuery]
+  );
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -337,7 +412,7 @@ function ReceiveInner() {
         api.get<{ suppliers: Supplier[] }>("/pharmacy/suppliers"),
         api.get<{ medicines: Med[] }>("/pharmacy/medicines"),
         api.get<{ orders: OpenPo[] }>("/pharmacy/purchase-orders?status=OPEN"),
-        api.get<{ receipts: Grn[] }>("/pharmacy/receipts?days=60"),
+        api.get<{ receipts: Grn[] }>("/pharmacy/receipts?all=1"),
       ]);
       setSuppliers(s.suppliers); setMeds(m.medicines);
       setOpenPos(p.orders.filter((o) => o.status !== "DRAFT"));
@@ -753,12 +828,194 @@ function ReceiveInner() {
 
       {/* ── Booked in ─────────────────────────────────────────────────────── */}
       <section data-rise className="surface overflow-hidden">
-        <div className="border-b border-[var(--p-border)] px-5 py-3.5">
-          <h3 className="text-[13.5px] font-semibold text-[var(--p-ink)]">Recent deliveries</h3>
-          <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">Last 60 days. A receipt is never edited - it&apos;s the record of what arrived.</p>
+        <div className="border-b border-[var(--p-border)] p-4 sm:p-5">
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-[14px] font-semibold text-[var(--p-ink)]">Deliveries &amp; Received Bills</h3>
+                <p className="mt-0.5 text-[12px] text-[var(--p-muted)]">
+                  Supplier medicine bills and stock entries. Filter month-wise or day-wise.
+                </p>
+              </div>
+
+              {/* Summary Stats */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] px-2.5 py-1 text-[12px] font-medium text-[var(--p-ink)]">
+                  <Icon name="box" size={13} className="text-[var(--p-muted)]" />
+                  <span>{summaryTotals.count} {summaryTotals.count === 1 ? "Bill" : "Bills"}</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-cyan-soft)] bg-[var(--p-cyan-soft)]/50 px-2.5 py-1 text-[12px] font-semibold text-[var(--p-cyan-deep)]">
+                  <span>Goods: {inr(summaryTotals.value, 2)}</span>
+                </span>
+                {summaryTotals.tax > 0 && (
+                  <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] px-2.5 py-1 text-[12px] font-medium text-[var(--p-muted)]">
+                    <span>GST: +{inr(summaryTotals.tax, 2)}</span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Filter Bar */}
+            <div className="flex flex-wrap items-center gap-2.5 pt-1">
+              {/* Presets: All, This Month, Month Wise, Day Wise */}
+              <div className="inline-flex rounded-lg border border-[var(--p-border)] bg-[var(--p-bg)] p-0.5 text-[12px]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterMode("ALL");
+                    loadReceipts({ mode: "ALL" });
+                  }}
+                  className={`rounded-md px-3 py-1.5 font-medium transition ${
+                    filterMode === "ALL"
+                      ? "bg-white text-[var(--p-ink)] shadow-2xs font-semibold"
+                      : "text-[var(--p-muted)] hover:text-[var(--p-ink)]"
+                  }`}
+                >
+                  All Bills
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterMode("THIS_MONTH");
+                    loadReceipts({ mode: "THIS_MONTH" });
+                  }}
+                  className={`rounded-md px-3 py-1.5 font-medium transition ${
+                    filterMode === "THIS_MONTH"
+                      ? "bg-white text-[var(--p-ink)] shadow-2xs font-semibold"
+                      : "text-[var(--p-muted)] hover:text-[var(--p-ink)]"
+                  }`}
+                >
+                  This Month
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterMode("MONTH");
+                    loadReceipts({ mode: "MONTH", month: filterMonth });
+                  }}
+                  className={`rounded-md px-3 py-1.5 font-medium transition ${
+                    filterMode === "MONTH"
+                      ? "bg-white text-[var(--p-ink)] shadow-2xs font-semibold"
+                      : "text-[var(--p-muted)] hover:text-[var(--p-ink)]"
+                  }`}
+                >
+                  Month Wise
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterMode("DAY");
+                    loadReceipts({ mode: "DAY", date: filterDate });
+                  }}
+                  className={`rounded-md px-3 py-1.5 font-medium transition ${
+                    filterMode === "DAY"
+                      ? "bg-white text-[var(--p-ink)] shadow-2xs font-semibold"
+                      : "text-[var(--p-muted)] hover:text-[var(--p-ink)]"
+                  }`}
+                >
+                  Day Wise
+                </button>
+              </div>
+
+              {/* Month Picker when MONTH mode selected */}
+              {filterMode === "MONTH" && (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="month"
+                    value={filterMonth}
+                    onChange={(e) => {
+                      setFilterMonth(e.target.value);
+                      loadReceipts({ mode: "MONTH", month: e.target.value });
+                    }}
+                    className="rounded-lg border border-[var(--p-border)] bg-white px-2.5 py-1.5 text-[12.5px] font-medium text-[var(--p-ink)] outline-none focus:border-[var(--p-cyan)]"
+                  />
+                </div>
+              )}
+
+              {/* Day Picker when DAY mode selected */}
+              {filterMode === "DAY" && (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="date"
+                    value={filterDate}
+                    onChange={(e) => {
+                      setFilterDate(e.target.value);
+                      loadReceipts({ mode: "DAY", date: e.target.value });
+                    }}
+                    className="rounded-lg border border-[var(--p-border)] bg-white px-2.5 py-1.5 text-[12.5px] font-medium text-[var(--p-ink)] outline-none focus:border-[var(--p-cyan)]"
+                  />
+                </div>
+              )}
+
+              {/* Supplier Dropdown */}
+              {suppliers.length > 0 && (
+                <select
+                  value={filterSupplier}
+                  onChange={(e) => {
+                    setFilterSupplier(e.target.value);
+                    loadReceipts({ supplierId: e.target.value });
+                  }}
+                  className="rounded-lg border border-[var(--p-border)] bg-white px-2.5 py-1.5 text-[12.5px] text-[var(--p-ink)] outline-none focus:border-[var(--p-cyan)]"
+                >
+                  <option value="">All Suppliers</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {/* Search query input */}
+              <div className="relative min-w-[200px] flex-1 sm:max-w-[260px]">
+                <input
+                  type="text"
+                  placeholder="Search bill no, GRN..."
+                  value={filterQuery}
+                  onChange={(e) => {
+                    setFilterQuery(e.target.value);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      loadReceipts({ q: filterQuery });
+                    }
+                  }}
+                  className="w-full rounded-lg border border-[var(--p-border)] bg-white px-3 py-1.5 text-[12.5px] text-[var(--p-ink)] placeholder:text-[var(--p-muted)] outline-none focus:border-[var(--p-cyan)]"
+                />
+                {filterQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilterQuery("");
+                      loadReceipts({ q: "" });
+                    }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-[var(--p-muted)] hover:text-[var(--p-ink)]"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {receiptsLoading && (
+                <span className="flex items-center gap-1.5 text-[11.5px] text-[var(--p-muted)]">
+                  <Spinner size={12} /> Loading…
+                </span>
+              )}
+            </div>
+          </div>
         </div>
-        {!recent.length && !loading ? (
-          <p className="px-5 py-10 text-center text-[12.5px] text-[var(--p-muted)]">Nothing received yet.</p>
+        {!recent.length && !loading && !receiptsLoading ? (
+          <div className="px-5 py-12 text-center">
+            <Icon name="inbox" size={24} className="mx-auto text-[var(--p-muted)] opacity-50 mb-2" />
+            <p className="text-[13px] font-medium text-[var(--p-ink)]">No deliveries found</p>
+            <p className="mt-1 text-[12px] text-[var(--p-muted)]">
+              {filterMode === "DAY"
+                ? `No bills received on ${filterDate}. Try selecting another date or switch to Month Wise / All Bills.`
+                : filterMode === "MONTH" || filterMode === "THIS_MONTH"
+                ? "No bills received for the selected month. Try switching to All Bills."
+                : "No purchase bills or deliveries have been recorded."}
+            </p>
+          </div>
         ) : (
           <div className="divide-y divide-[var(--p-border)]">
             {recent.map((g, i) => (
@@ -1422,7 +1679,7 @@ function ReceiveInner() {
         </Modal>
       )}
 
-      {!loading && !openPos.length && !recent.length && (
+      {!loading && !openPos.length && !recent.length && filterMode === "ALL" && !filterQuery && !filterSupplier && (
         <div className="mt-5">
           <EmptyState
             icon="inbox"

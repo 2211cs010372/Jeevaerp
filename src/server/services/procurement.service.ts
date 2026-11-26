@@ -1089,16 +1089,68 @@ export async function receiveGoods(
   };
 }
 
-export async function listGoodsReceipts(filter?: { supplierId?: string; query?: string; days?: number }) {
-  const since = filter?.days ? new Date(Date.now() - filter.days * 86400000) : undefined;
+export async function listGoodsReceipts(filter?: {
+  supplierId?: string;
+  query?: string;
+  days?: number;
+  month?: string;
+  date?: string;
+  fromDate?: string;
+  toDate?: string;
+}) {
+  let dateWhere: Prisma.GoodsReceiptWhereInput = {};
+
+  if (filter?.date) {
+    const [y, m, d] = filter.date.split("-").map(Number);
+    if (y && m && d) {
+      const localStart = new Date(y, m - 1, d, 0, 0, 0, 0);
+      const localEnd = new Date(y, m - 1, d, 23, 59, 59, 999);
+      const utcStart = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
+      const utcEnd = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
+      const minDate = new Date(Math.min(localStart.getTime(), utcStart.getTime()));
+      const maxDate = new Date(Math.max(localEnd.getTime(), utcEnd.getTime()));
+      dateWhere = {
+        OR: [
+          { createdAt: { gte: minDate, lte: maxDate } },
+          { invoiceDate: { gte: minDate, lte: maxDate } },
+        ],
+      };
+    }
+  } else if (filter?.month) {
+    const [y, m] = filter.month.split("-").map(Number);
+    if (y && m) {
+      const startOfMonth = new Date(y, m - 1, 1, 0, 0, 0, 0);
+      const endOfMonth = new Date(y, m, 0, 23, 59, 59, 999);
+      dateWhere = {
+        OR: [
+          { createdAt: { gte: startOfMonth, lte: endOfMonth } },
+          { invoiceDate: { gte: startOfMonth, lte: endOfMonth } },
+        ],
+      };
+    }
+  } else if (filter?.fromDate || filter?.toDate) {
+    const start = filter.fromDate ? new Date(`${filter.fromDate}T00:00:00.000`) : new Date(0);
+    const end = filter.toDate ? new Date(`${filter.toDate}T23:59:59.999`) : new Date();
+    dateWhere = {
+      OR: [
+        { createdAt: { gte: start, lte: end } },
+        { invoiceDate: { gte: start, lte: end } },
+      ],
+    };
+  } else if (filter?.days) {
+    const since = new Date(Date.now() - filter.days * 86400000);
+    dateWhere = { createdAt: { gte: since } };
+  }
+
   const rows = await prisma.goodsReceipt.findMany({
     where: {
       ...(filter?.supplierId ? { supplierId: filter.supplierId } : {}),
-      ...(since ? { createdAt: { gte: since } } : {}),
+      ...dateWhere,
       ...(filter?.query
         ? { OR: [
             { grnNumber: { contains: filter.query, mode: "insensitive" as const } },
             { invoiceNo: { contains: filter.query, mode: "insensitive" as const } },
+            { supplier: { name: { contains: filter.query, mode: "insensitive" as const } } },
           ] }
         : {}),
     },

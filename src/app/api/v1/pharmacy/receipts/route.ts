@@ -10,11 +10,21 @@ export const GET = handler(async (req) => {
   await requireRole(req, "PHARMACIST", "ADMIN");
   const { searchParams } = new URL(req.url);
   const days = Number(searchParams.get("days") ?? "");
+  const all = searchParams.get("all") === "1" || searchParams.get("all") === "true";
+  const month = searchParams.get("month")?.trim() || undefined;
+  const date = searchParams.get("date")?.trim() || undefined;
+  const fromDate = searchParams.get("fromDate")?.trim() || undefined;
+  const toDate = searchParams.get("toDate")?.trim() || undefined;
+
   return NextResponse.json({
     receipts: await listGoodsReceipts({
       supplierId: searchParams.get("supplierId")?.trim() || undefined,
       query: searchParams.get("q")?.trim() || undefined,
-      days: Number.isFinite(days) && days > 0 ? days : undefined,
+      month,
+      date,
+      fromDate,
+      toDate,
+      days: all || month || date || fromDate || toDate ? undefined : (Number.isFinite(days) && days > 0 ? days : undefined),
     }),
   });
 });
